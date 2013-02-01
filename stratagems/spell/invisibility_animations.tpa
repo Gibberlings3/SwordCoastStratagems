@@ -1,0 +1,327 @@
+DEFINE_ACTION_FUNCTION invisibility_animations BEGIN
+
+   ACTION_GET_STRREF 14045 visible
+   ACTION_GET_STRREF 396 invisible
+   ADD_SECTYPE HideAnimations ~%visible%~
+   ADD_SECTYPE ShowAnimations ~%invisible%~
+
+   LAF mislead_compatibility END
+   LAF core_spells END
+   LAF weapons_break_invisibility END
+   LAF spellcasting_breaks_invisibility END
+   LAF divining_and_invisibility END
+   
+   <<<<<<<< .../stratagems-inline/hidden_animations.2da
+   spell                            sectype                      animation1       animation2      match       check
+   WIZARD_FIRE_SHIELD_RED           FireShieldRedAnimation       SPFIRESR         SPFIREST        opcode      30
+   WIZARD_FIRE_SHIELD_BLUE          FireShieldBlueAnimation      SPFIRESA         SPFIRESB        opcode      28
+   CLERIC_AURA_OF_FLAMING_DEATH     FireShieldRedAnimation       SPAURAFF         SPAURAFB        opcode      30
+   CLERIC_BLADE_BARRIER             BladeBarrierAnimation        SPBLDBTM         SPBLDTOP        opcode      142
+   NPC_BLADE_BARRIER                BladeBarrierAnimation        SPBLDBTM         SPBLDTOP        opcode      142
+   CLERIC_GLOBE_OF_BLADES           BladeBarrierAnimation        SPGLBBLD         null            opcode      142
+   WIZARD_AEGIS                     AegisAnimation               LI#AMSH          null            opcode      87
+   WIZARD_SPELL_SHIELD              SpellShieldAnimation         SPTURNI2         null            opcode      142
+   >>>>>>>>
+   COPY ~.../stratagems-inline/hidden_animations.2da~ ~%workspace%~
+        READ_2DA_ENTRIES_NOW anim_data 6
+        FOR (i=1;i<anim_data;i+=1) BEGIN
+           READ_2DA_ENTRY_FORMER anim_data i 0 spellname
+           SPRINT spell EVALUATE_BUFFER ~%%spellname%%~
+           FOR(j=1;j<6;j+=1) BEGIN
+              READ_2DA_ENTRY_FORMER anim_data i j val
+              READ_2DA_ENTRY_FORMER anim_data 0 j var
+              SPRINT EVALUATE_BUFFER ~%var%~ ~%val%~
+           END
+           INNER_ACTION BEGIN
+              LAF hide_animation_for_this_spell STR_VAR spell sectype animation1 animation2 match check END
+           END
+        END
+   BUT_ONLY
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION mislead_compatibility BEGIN
+
+   MAKE_PATCH
+       WIZARD_FIRE_SHIELD_RED=>dw#mlfsr
+       WIZARD_FIRE_SHIELD_RED=>dw#mlfsb
+   END
+   ACTION_PHP_EACH patch_data AS spell_in=>spell_out BEGIN
+        OUTER_SPRINT spell EVALUATE_BUFFER ~%%spell_in%%=>%spell_out%~
+   END
+   LAF clone_spell STR_VAR spell END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION core_spells BEGIN
+ 
+  MAKE_PATCH
+     add_basic_ability=>null
+     secondary=>~%HideAnimations%~
+     add_effect_inline=>~opcode=>291 parameter2=>1 duration=>2 target=>2~
+  END
+  LAF make_spell STR_VAR spell=dw#hdani edits=patch_data  END
+  LAF make_casting_effect INT_VAR target=1 STR_VAR effect=dw#hdani spell=EVALUATE_BUFFER dw#hdani END
+
+
+
+   MAKE_PATCH
+       secondary=>~%ShowAnimations%~
+       add_basic_ability=>null
+       add_effect_inline=>~opcode=>206 target=>1 parameter1=>"-1" duration=>7200 resource=>dw#hdani~
+   END
+   LAF make_spell STR_VAR spell=dw#blhda edits=patch_data END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION weapons_break_invisibility BEGIN
+
+    COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
+       LPF ADD_ITEM_EFFECT INT_VAR opcode=146 target=1 parameter1=1 parameter2=1 timing=1  type=1 STR_VAR resource=dw#blhda END
+       LPF ADD_ITEM_EFFECT INT_VAR opcode=221 target=1 parameter1=9 parameter2=EVALUATE_BUFFER ~%HideAnimations%~ type=1 END
+       LPF ADD_ITEM_EFFECT INT_VAR opcode=146 target=1 parameter1=1 parameter2=1 timing=1  type=2 STR_VAR resource=dw#blhda END
+       LPF ADD_ITEM_EFFECT INT_VAR opcode=221 target=1 parameter1=9 parameter2=EVALUATE_BUFFER ~%HideAnimations%~ type=2 END
+    BUT_ONLY
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION spellcasting_breaks_invisibility BEGIN
+
+    OUTER_SPRINT spell ~~
+    COPY_EXISTING_REGEXP GLOB ~.*\.spl~ ~override~
+             SPRINT filename ~%SOURCE_RES%~
+          SET found=0
+          READ_BYTE 0x27 sectype
+          PATCH_MATCH sectype WITH
+              4 10 11
+          BEGIN 
+             SET found =1
+          END
+          DEFAULT
+             LPF SPL_read_breaks_invisibility RET found=value END
+          END
+          PATCH_IF found=1 BEGIN
+             PUSH spell ~%filename%~
+          END
+    BUT_ONLY
+    
+    MAKE_PATCH
+       type=>effect_global
+       opcode=>221
+       target=>1
+       parameter1=>9
+       probability1=>100
+       parameter2=>~%HideAnimations%~
+    END
+    ACTION_CLEAR_ARRAY patch_data2
+    ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data2 BEGIN
+       type=>effect_global
+       opcode=>146
+       target=>1
+       parameter1=>1
+       parameter2=>1
+       probability1=>100
+       resource=>dw#blhda
+    END
+   LAF edit_spell STR_VAR spell editstring=~add_entry=>patch_data add_entry=>patch_data2~ END
+ END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION divining_and_invisibility BEGIN
+
+      OUTER_SPRINT spell_invis ~~
+      OUTER_SPRINT spell_divin ~~
+      
+      COPY_EXISTING_REGEXP GLOB ~.*\.spl~ ~override~
+          SET div=0
+          SET inv=0
+          READ_LONG 0x6a offset
+          WHILE (offset<~%SOURCE_SIZE%~) BEGIN
+               READ_SHORT offset opcode
+               PATCH_MATCH opcode WITH
+               20 BEGIN SET inv=1 END
+               116 BEGIN SET div=1 END
+               DEFAULT END
+               SET offset+=0x30
+          END
+          PATCH_IF div=1 BEGIN
+             PUSH spell_divin ~%SOURCE_RES%~
+          END
+          PATCH_IF inv=1 BEGIN
+             PUSH spell_invis ~%SOURCE_RES%~
+          END
+      BUT_ONLY
+      
+      OUTER_SPRINT item_invis ~~
+      OUTER_SPRINT item_divin ~~
+      COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
+          SET div=0
+          SET inv=0
+          READ_LONG 0x6a offset
+          WHILE (offset<~%SOURCE_SIZE%~) BEGIN
+               READ_SHORT offset opcode
+               PATCH_MATCH opcode WITH
+               20 BEGIN SET inv=1 END
+               116 BEGIN SET div=1 END
+               DEFAULT END
+               SET offset+=0x30
+          END
+          PATCH_IF div=1 BEGIN
+             PUSH item_divin ~%SOURCE_RES%~
+          END
+          PATCH_IF inv=1 BEGIN
+             PUSH item_invis ~%SOURCE_RES%~
+          END
+      BUT_ONLY
+
+  MAKE_PATCH
+     clone_entry_inline'=>~match=>opcode
+                           check=>20
+                           type=>effect
+                           opcode=>221
+                          parameter1=>9
+                          parameter2=>%ShowAnimations%
+                          duration=>1
+                          resource=>dw#blhda~
+     clone_entry_inline=>~match=>opcode
+                          check=>20
+                          type=>effect
+                          opcode=>272
+                          parameter1=>1
+                          parameter2=>3
+                          resource=>dw#hdani~
+  END
+  LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%spell_invis%~ END
+  LAF edit_item STR_VAR item=EVALUATE_BUFFER ~%item_invis%~ END
+  MAKE_PATCH
+    clone_entry_inline=>~match=>opcode
+                         check=>116
+                         type=>effect
+                         opcode=>221
+                         parameter1=>9
+                         parameter2=>%HideAnimations%~
+     
+    clone_entry_inline'=>~match=>opcode
+                         check=>116
+                         type=>effect
+                         opcode=>146
+                         target=>1
+                         parameter1=>1
+                         parameter2=>1
+                         resource=>dw#blhda~
+
+  END
+  LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%spell_divin%~ END
+  LAF edit_item STR_VAR spell=EVALUATE_BUFFER ~%item_divin%~ END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION hide_animation_for_this_spell
+STR_VAR spell=""
+        sectype=""
+        animation1=""
+        animation2="null"
+        match=""
+        check=""
+BEGIN
+   ACTION_IF FILE_EXISTS_IN_GAME ~%spell%.spl~ BEGIN
+     // make the new sectype
+
+     ADD_SECTYPE ~%sectype%~ ~~
+     OUTER_SET sectypecode= EVALUATE_BUFFER ~%%sectype%%~
+
+     // get the new spellname
+        OUTER_INNER_PATCH ~%spell%~ BEGIN
+           READ_ASCII 0x0 type (4)
+           TO_UPPER type
+           PATCH_MATCH ~%type%~ WITH
+             SPWI BEGIN
+                SPRINT prefix w
+             END
+             SPPR BEGIN
+                SPRINT prefix p
+             END
+             SPIN BEGIN
+                SPRINT prefix i
+             END
+             DEFAULT
+                PATCH_PRINT ~warning, hide_animation_for_this_spell can't think of a name~
+             END
+           READ_ASCII 0x4 code (3)
+        END
+        
+   // modify existing spell
+   MAKE_PATCH
+       delete_opcodes=>215
+       clone_entry_inline=>~match=>%match% check=>%check% type=>effect opcode=>272 power=>0 parameter1=>1 parameter2=>3 resource=>dw#%prefix%%code%a~
+       clone_entry_inline'=>~match=>%match% check=>%match% type=>effect opcode=>206 parameter1=>"-1" power=>0 parameter1=>0 parameter2=>0 resource=>dw#%prefix%%code%b~
+   END
+   LAF edit_spell STR_VAR spell END
+   
+   // make the animation-caster
+
+  LAF make_casting_effect INT_VAR target=1 STR_VAR effect=EVALUATE_BUFFER ~dw#%prefix%%code%a~ spell=EVALUATE_BUFFER ~dw#%prefix%%code%a~ END
+
+   MAKE_PATCH
+      secondary=>~%sectypecode%~
+      add_basic_ability=>null
+      add_effect_inline=>~opcode=>215  target=>1 parameter2=>1 dispel_resist=>0 duration=>1500 resource=>%animation1%~   // actual animations
+      add_effect_inline''=>~opcode=>272 target=>1 parameter1=>1 parameter2=>3 duration=>1500 resource=>dw#%prefix%%code%b~ // cast dispel-self code
+      add_effect_inline'''=>~opcode=>206 target=>1 parameter1=>"-1" duration=>1500 resource=>dw#%prefix%%code%a~
+   END
+   ACTION_IF ~%animation2%~ STRING_COMPARE_CASE ~null~ BEGIN
+      OUTER_SPRINT $patch_data(~add_effect_inline'~) ~opcode=>215 target=>1 parameter2=>1 dispel_resist=>0 duration=>1500 resource=>%animation2% insert_point=>0~
+   END
+
+   LAF make_spell STR_VAR spell=EVALUATE_BUFFER ~dw#%prefix%%code%a~ edits=patch_data END
+
+   // make the animation-remover
+ 
+  LAF make_casting_effect INT_VAR target=1 STR_VAR effect=EVALUATE_BUFFER ~dw#%prefix%%code%b~ spell=EVALUATE_BUFFER ~dw#%prefix%%code%b~ END
+
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>~opcode=>221 target=>1 parameter2=>%sectypecode%~
+   END
+   LAF make_spell STR_VAR spell=EVALUATE_BUFFER ~dw#%prefix%%code%b~ edits=patch_data END
+
+   // add to dw#hdani
+  MAKE_PATCH
+     add_effect_inline=>~opcode=>206 target=>2 parameter1=>"-1" duration=>1 resource=>dw#%prefix%%code%a~ // immunity to the animation
+      add_effect_inline'=>~opcode=>221 target=>2 parameter2=>%sectypecode%~  // zap the animation
+  END
+  LAF edit_spell STR_VAR spell=dw#hdani edits=patch_data END
+ END
+
+
+
+END
+
+

@@ -1,0 +1,149 @@
+DEFINE_ACTION_FUNCTION celestial STR_VAR version="" BEGIN
+
+   LAF action_check_ini STR_VAR ini=celestials_cast_slowly RET value=value END
+   ACTION_IF value=0 BEGIN
+         LAF make_label STR_VAR label=dw#celestial_innate END
+   END
+   ACTION_IF (version=1) BEGIN
+         LAF make_label STR_VAR label=dw#celestial_hp END
+   END
+
+
+   LAF celestial_scripts END
+   LAF deva END
+   LAF planetar END
+   LAF solar END
+   LAF celestial_summoning END
+   LAF celestial_compatibility END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION celestial_scripts BEGIN
+
+    LAF ssl_to_bcs STR_VAR script=~dw#deva dw#plane dw#solar~ location=~celestial/ssl~ END
+
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION planetar BEGIN
+
+   MAKE_PATCH
+      strip_script=>~plangood dvplane dvmelee~
+      strip_scs_scripts=>null
+      insert_script_high=>dw#plane
+      make_casting_innate=>dw#celestial_innate
+      celestial_staying_power => null
+   END
+   LAF clone_creature STR_VAR creature=~planevil=>dw#plane~ edits=patch_data END
+
+   LAF edit_creature STR_VAR creature=~plangood planevil~ editstring=~make_casting_innate=>dw#celestial_innate celestial_staying_power=>null~ END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION deva BEGIN
+
+   MAKE_PATCH
+      strip_script=>~devagood dvdevae dvmelee~
+      strip_scs_scripts=>null
+      insert_script_high=>dw#devae
+      make_casting_innate=>dw#celestial_innate
+      celestial_staying_power => null
+   END
+   LAF clone_creature STR_VAR creature=~devaevil=>dw#devae~ editstring=~insert_script_high=>dw#deva strip_script=>"plangood dvplane dvmelee"~ END
+
+   LAF edit_creature STR_VAR creature=~devagood devaevil~ editstring=~make_casting_innate=>dw#celestial_innate celestial_staying_power=>null~ END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION solar BEGIN
+
+	/// Solar
+
+        LAF install STR_VAR files=~finsol01.itm finsol02.itm dw#solra.cre dw#solra.itm dw#solra.baf dw#soldi.spl~ location=resource END
+
+        MAKE_PATCH
+           say_both_names=>3210
+           script_override=>dw#solra
+           dv=>dw#solra
+           add_items=>~dw#solra(ring)~
+        END
+        LAF edit_creature STR_VAR creature=dw#solra END
+
+        LAF edit_spell STR_VAR spell=dw#soldi editstring=~say_name=>3211~ END
+
+        LAF install STR_VAR files=dw#fitel.spl locbase=~fiend/resource~ END
+
+        MAKE_PATCH
+           level_all=>35
+           make_casting_innate=>dw#celestial_innate
+           resist_fire=>100
+           resist_acid=>0
+           class=>FIGHTER_MAGE_CLERIC
+           make_casting_innate=>dw#celestial_innate
+           celestial_staying_power => null
+        END
+        LAF edit_creature STR_VAR creature=~finsol04 finsola2 dw#grsol~ allow_missing=yes END
+
+        LAF clone_script STR_VAR script=~dw#solar=>finsol04~ END
+	COPY ~override/dw#solar.bcs~ ~override/finsol04.bcs~
+
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION celestial_summoning BEGIN
+
+
+	// the AI boost affects only enemy-summoned Planetars - not the ones summoned by the PC.
+	// So we need new versions of the planetar-summoning spells. They won't actually be used
+	// unless Smarter Mages is installed (no vanilla mage summons a planetar)
+
+        LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_SUMMON_PLANATAR_EVIL%=>dw#plane %CLERIC_SUMMON_FALLEN_DEVA%=>dw#devae~ END
+
+        LAF swap_text STR_VAR files=dw#plane.spl swaps=~spplan2=>dw#plane~ END
+        LAF swap_text STR_VAR files=dw#devae.spl swaps=~spdeva2=>dw#devae~ END
+
+        LAF clone_effect STR_VAR effect=~spplan2=>dw#plane~ editstring=~resource=>dw#plane~ END
+        LAF clone_effect STR_VAR effect=~spdeva2=>dw#devae~ editstring=~resource=>dw#devae~ END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION celestial_compatibility BEGIN
+
+   	// allow for SR
+
+	ACTION_IF FILE_EXISTS_IN_GAME ~dvimhere.mrk~ THEN BEGIN
+	   LAF ssl_to_bcs STR_VAR script=dw#dvdev.ssl rename_to=dw#devae location=~celestial/ssl~ END
+	   LAF ssl_to_bcs STR_VAR script=dw#dvpla.ssl rename_to=dw#plane location=~celestial/ssl~ END
+	END 
+
+END
+
+DEFINE_PATCH_FUNCTION celestial_staying_power BEGIN
+   LPF check_label STR_VAR label=dw#celestial_hp RET continue=value END
+   PATCH_IF continue BEGIN
+      LPF CRE_read_hp_current RET value=value END
+      PATCH_IF value<120 BEGIN
+         SET value = (value * 3) / 2
+         LPF CRE_hitpoints STR_VAR arguments=EVALUATE_BUFFER ~%value%~ END
+      END
+   END
+END

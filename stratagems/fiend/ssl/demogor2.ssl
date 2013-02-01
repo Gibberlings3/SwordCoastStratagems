@@ -1,0 +1,455 @@
+///////////////////////////////////////////////////////////////////////////////////////////
+////
+//// Demogorgon's powers in Ascension:
+////
+//// - Timestop 1/day
+//// - Summon the Infernal Host 1/day (1 balor, 1 marilith, 2 glabrezu?)
+//// - Charm demons, no save, 1/4 seconds
+//// - Stoneskin, 1/10 seconds
+//// - Summon demons if none are present, 1/round, summons Marilith, Balor, 2x glabrezu, and sets MR to 90, adds 50 to hp
+//// - Truesight 1/5 rounds
+//// - Death Spell 1/2 rounds
+//// - Gaze attack 1/2 rounds - either confusion+feeblemind, save at -2, or charm, save at-2, with -5 to MR
+//// - Storm of Vengeance, 1/day
+//// - Dragon's Breath, 1/day
+//// - Implosion, 1/15 rounds
+//// - Finger of Death, 1/2.5 rounds
+//// - Earthquake, 1/10 rounds
+//// - Harm, 1/3 rounds
+//// - Unholy Word, 1/5 rounds
+////
+////	We replace the Harm with a Spellstrike and a Breach, on the same timescale. We lose the
+////	Timestop, as combined with instant casting it's just too lethal. We reduce the renewed summoning
+////	to once per two rounds. We allow gazes as a free attack.
+//// 
+///////////////////////////////////////////////////////////////////////////////////////////
+
+VARIABLE(NoTimestop=True)
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Redefine spellcasting to include gazes and lots of timed attacks
+//////////////////////////////////////////////////////////////////////////////////////////
+INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions.ssl)
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellTimer)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellMyselfTimer)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(Myself,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellTimerRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDecRES(scsargument1,scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellTimerGaze)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+		DisplayStringHead(Myself,71004) // Feel my beguiling gaze!
+		ReallyForceSpellRES("beguile",[PC]) // Beguiling Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+		DisplayStringHead(Myself,71005) // Suffer under my gaze of insanity!
+		ReallyForceSpellRES("insanity",[PC]) // Insanity Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+		DisplayStringHead(Myself,71004) // Feel my beguiling gaze!
+		ReallyForceSpellRES("beguile",SecondNearest([PC])) // Beguiling Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+		DisplayStringHead(Myself,71005) // Suffer under my gaze of insanity!
+		ReallyForceSpellRES("insanity",SecondNearest([PC])) // Insanity Gaze
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(Gaze)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,71004) // Feel my beguiling gaze!
+		ReallyForceSpellRES("beguile",[PC]) // Beguiling Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,71005) // Suffer under my gaze of insanity!
+		ReallyForceSpellRES("insanity",[PC]) // Insanity Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,71004) // Feel my beguiling gaze!
+		ReallyForceSpellRES("beguile",SecondNearest([PC])) // Beguiling Gaze
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,71005) // Suffer under my gaze of insanity!
+		ReallyForceSpellRES("insanity",SecondNearest([PC])) // Insanity Gaze
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Vanilla stuff
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	AreaCheck("ar3020")
+	Global("Destroy3020Demo","GLOBAL",1)
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+IF
+	OnCreation()
+THEN
+	RESPONSE #100
+		StartTimer(77,6)
+		TriggerActivation("DemoGorgonInfo",FALSE)
+		Continue()
+END
+
+IF
+	TimerExpired(77)
+THEN
+	RESPONSE #100
+		StartTimer(77,6)
+		Continue()
+END
+
+IF
+	HPLT(Myself,30)
+	Global("DemoEffects","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		MoveViewObject(Myself,INSTANT)
+		StartTimer(77,6)
+		ClearAllActions()
+		SetGlobal("DemoEffects","LOCALS",1)
+		StartCutSceneMode()
+		DisplayStringHead(Myself,71009) // NO!  NOOOOO!!  THIS CANNOT BE!!
+		CreateVisualEffectObject("spflsrin",Myself)
+		Wait(1)
+		CreateVisualEffectObject("sppowrrd",Myself)
+		Wait(2)
+		CreateVisualEffectObject("spfirepi",Myself)
+		Wait(1)
+		CreateVisualEffectObject("spplanar",Myself)
+		Wait(2)
+		SetGlobal("SPRITE_IS_DEADDEMOGOR2","GLOBAL",1)
+		EndCutSceneMode()
+		DestroySelf()
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Contingency
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
+IF
+	Detect([GOODCUTOFF])
+	Allegiance(Myself,ENEMY)
+	!GlobalTimerNotExpired("Contingency1","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("Contingency1","LOCALS",1000)
+		DisplayString(Myself,34634) // Chain Contingency
+		ReallyForceSpellRES("melstone",Myself) // Stoneskin
+		ReallyForceSpell(Myself,CLERIC_AURA_OF_FLAMING_DEATH)
+		ReallyForceSpell(Myself,WIZARD_SPELL_TURNING) // Globe of Invulnerability
+		DisplayString(Myself,25942) // Contingency
+		ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Renew defences
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(Myself)
+	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(SpellTimer,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS,proMW,36|150|50)
+END
+
+IF TRIGGER
+	Target(Myself)
+	!CheckStatGT(Myself,0,STONESKINS)
+		BEGIN LOOP(scsnear||Nearest;SecondNearest;ThirdNearest)
+		BEGIN LOOP(scscarsomyr||sw2h10;sw2h19)
+			OR(3)
+				!HasItem("scscarsomyr",scsnearEnemyOf(Myself))
+				StateCheck(scsnearEnemyOf(Myself),STATE_IMMOBILE)
+				!Range(scsnearEnemyOf(Myself),10)
+		END LOOP
+	END LOOP
+THEN DO
+	Action(SpellTimerRES,"melstone",stoneskin,12|150|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Timestop
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Global("DMWWDemogorgonTS","GLOBAL",1)
+	See([PC])
+THEN DO
+	Action(SpellMyselfTimer,WIZARD_TIME_STOP,timestop,1000)
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Infernal Host
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([PC])
+	Global("DMWWDemogorgonHost","GLOBAL",1)
+THEN DO
+	Action(SpellTimer,SUMMON_INFERNAL_HOST,host,1000)
+	DisplayStringHead(Myself,70999) // Now you will pay, foolish mortals!
+	SetGlobalTimer("reinforce","LOCALS",12)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Storm of Vengeance
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([PC])
+THEN DO
+	Action(SpellTimer,CLERIC_STORM_OF_VENGEANCE,vengeance,1000)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider moving to a more interesting location in the battle
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/jump.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Charm hostile demons
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	Detect([GOODCUTOFF.0.DEMONIC.TANARI])
+	!GlobalTimerNotExpired("CharmDemon","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("CharmDemon","LOCALS",4)
+		DisplayStringHead(Myself,71008) // No!  You shall not use my own against me!!
+		ReallyForceSpellRES("demochm",[GOODCUTOFF.0.DEMONIC.TANARI]) // Domination
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Auxiliary demons
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	Detect(NearestEnemyOf(Myself))
+	!NumCreatureGT([ENEMY.0.DEMONIC],1)
+THEN DO
+		DisplayStringHead(Myself,70998) // Come, my minions!
+		Action(SpellMyselfTimer,DEMOGORGON_GATE,reinforce,12)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	High-powered magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Implosion
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;CheckStatGT(scstarget,40,RESISTMAGIC))
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(Celestials)
+	TriggerBlock(SpellTurn|SIEvocation|Enemy|Helpless)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(SpellTimerGaze,CLERIC_IMPLOSION,implosion,180|150|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Earthquake (may hurt demons too, but c'est la vie)
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See([PC])
+THEN DO
+	Action(SpellMyselfTimer,CLERIC_EARTHQUAKE,earthquake,120|150|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Attack PC defences
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellTurn|SIAbjuration|Enemy|Helpless)
+	OR(5)
+		CheckStatGT(scstarget,99,MAGICDAMAGERESISTANCE)
+		!CheckStatGT(scstarget,-10,SAVEVSSPELL) // a rough indicator of a potion of Magic Shielding
+		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		CheckStatGT(scstarget,2,STONESKINS)
+	!GlobalTimerNotExpired("DMWW_breach","LOCALS")
+THEN DO
+	SetGlobalTimer("DMWW_breach","LOCALS",18)
+	Action(SpellTimerGaze,WIZARD_BREACH,breach,18|150|150)
+END
+
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	OR(5)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_TURNING)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_DEFLECTION)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_TRAP)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_IMMUNITY)
+		CheckStatGT(scstarget,0,MINORGLOBE)
+	TriggerBlock(Enemy|Helpless)
+	!GlobalTimerNotExpired("DMWW_antimagic","LOCALS")
+THEN DO
+	SetGlobalTimer("DMWW_antimagic","LOCALS",18)
+	Action(SpellTimerGaze,WIZARD_SPELL_STRIKE,spellstrike,18|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Dragon's Breath 
+///////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(ResistFire|Enemy)
+	!StateCheck(scstarget,STATE_MIRRORIMAGE)
+THEN DO
+	Combine()
+	Action(SpellTimerGaze,WIZARD_DRAGONS_BREATH,dragon,1000|200|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Truesight
+///////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	!CheckStatGT(Myself,0,TRUE_SIGHT)
+	TargetBlock(EnemiesInOrder)
+	OR(2)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		Gender(scstarget,ILLUSIONARY)
+	!Allegiance(scstarget,ENEMY)
+	TriggerBlock(SIDivination)
+THEN DO
+	Action(SpellMyselfTimer,WIZARD_TRUE_SIGHT,truesight,30|150|150)
+END
+
+///////////////////////////////////////////////////////////////////////////
+////	KILL SUMMONS
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	CheckStatGT(scstarget,10,Level)
+	OR(2)
+		Gender(scstarget,SUMMONED)
+		Gender(scstarget,20)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(SpellTimer,WIZARD_DEATH_SPELL,deathspell,30|150|50)
+END
+
+
+///////////////////////////////////////////////////////////////////////
+///	Unholy word
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,10)
+	TriggerBlock(MR|Enemy|Helpless|SIConjuration)
+	Alignment(scstarget,MASK_GOOD)
+	!Alignment(Myself,MASK_GOOD)
+THEN DO
+	Action(SpellTimerGaze,CLERIC_UNHOLY_WORD,unholyword,30|200|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Finger of Death
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SpellTurn|Slay|SINecromancy|Enemy)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(SpellTimerGaze,WIZARD_FINGER_OF_DEATH,finger,18|150|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+
+ //////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+
+BEGIN LOOP(MyWeaponStrength||5)
+BEGIN LOOP(MyWeaponDamageType||Crushing)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+INCLUDE FILE(%scsroot%/fiend/ssl/chase.ssl)
+END LOOP
+END LOOP

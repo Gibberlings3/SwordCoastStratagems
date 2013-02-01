@@ -1,0 +1,127 @@
+DEFINE_ACTION_FUNCTION ~hla_innate~ BEGIN    // legacy
+
+  COPY_EXISTING ~luabbr.2da~ ~override~
+    READ_2DA_ENTRIES_NOW ~luabbr_grid~ 0
+    FOR (j=3;j<~luabbr_grid~;j=j+1) BEGIN
+          READ_2DA_ENTRY_FORMER ~luabbr_grid~ j 1 ~abbr_value~
+          INNER_ACTION BEGIN
+                OUTER_SPRINT ~filename~ ~lu%abbr_value%.2da~
+                ACTION_IF FILE_EXISTS_IN_GAME ~%filename%~ BEGIN
+                   COPY_EXISTING ~%filename%~ ~override~
+                         COUNT_2DA_ROWS  10 ~rowcount~
+                         FOR (i=0;i<~rowcount~;i=i+1) BEGIN
+                            READ_2DA_ENTRY i 1 10 ~ability~
+                            // paladins only get 1 deva
+                            PATCH_IF ~%ability%~ STRING_EQUAL_CASE GA_SPCL923 BEGIN
+                               SET_2DA_ENTRY i 6 10 1
+                            END
+
+                            PATCH_IF ~%ability%~ STRING_COMPARE_CASE ~*~ BEGIN
+                              INNER_PATCH_SAVE ~ability~ ~%ability%~ BEGIN
+                                READ_ASCII 0x0 ~type~ (3)
+                                SET ~patchme~=0
+                                PATCH_IF ~%type%~ STRING_EQUAL_CASE ~GA_~ BEGIN
+                                   DELETE_BYTES 0x0 3
+                                   SET ~patchme~=1
+                                END
+                              END
+                              PATCH_IF ~patchme~=1 BEGIN
+                                   SET ~abtype~=4
+                                   INNER_ACTION BEGIN
+                                      ACTION_IF FILE_EXISTS_IN_GAME ~%ability%.spl~ BEGIN
+                                         OUTER_INNER_PATCH ~~ BEGIN
+                                            TO_LOWER ~ability~
+                                         END
+                                         OUTER_SPRINT $is_hla_innate_spell(EVALUATE_BUFFER ~%ability%~) ~~
+                                         COPY_EXISTING ~%ability%.spl~ ~override~
+                                               READ_SHORT 0x1c ~abtype~
+                                               PATCH_IF (~abtype~=1 OR ~abtype~=2) BEGIN
+                                                  WRITE_SHORT 0x1c 4
+                                                  WRITE_LONG  0x34 1
+                                                  INNER_ACTION BEGIN
+                                                      COPY_EXISTING 
+                                                                ~simulacr.spl~ ~override~
+                                                                ~projimag.spl~ ~override~
+                                                         LAUNCH_PATCH_FUNCTION ~ADD_SPELL_EFFECT~
+                                                            INT_VAR opcode=172
+                                                                    target=1
+                                                                    timing=1
+                                                            STR_VAR resource=EVALUATE_BUFFER ~%ability%~
+                                                         END
+                                                      BUT_ONLY
+                                                  END
+                                               END
+                                         BUT_ONLY
+                                      END
+                                   END
+                                END
+
+                              PATCH_FOR_EACH ~checkme~ IN FM0 FT0 MT0 CM0 CT0 FD0 CR0 FMT FMC BEGIN
+                                      PATCH_IF ~%checkme%~ STRING_EQUAL_CASE ~%abbr_value%~ BEGIN
+                                         PATCH_IF ~abtype~=1 BEGIN
+                                              SET_2DA_ENTRY i 4 10 32
+                                         END
+                                         PATCH_IF ~abtype~=2 BEGIN
+                                              SET_2DA_ENTRY i 4 10 16
+                                         END
+                                      END
+                              END
+                            END
+                         END
+                   BUT_ONLY
+                END
+       END
+    END
+
+
+    COPY_EXISTING_REGEXP ~.*\.cre~ ~override~
+//    COPY_EXISTING ~amlich01.cre~ ~override~
+             GET_OFFSET_ARRAY ~spell_known_array~ 0x2a0 4 0x2a4 4 0 0 0xc
+             PHP_EACH spell_known_array AS int => spl_off BEGIN
+                    READ_ASCII spl_off ~spellcheck~
+                    TO_LOWER ~spellcheck~
+                    PATCH_IF VARIABLE_IS_SET $is_hla_innate_spell(EVALUATE_BUFFER ~%spellcheck%~) BEGIN
+                             WRITE_SHORT 0x8+spl_off 0 // level 1
+                             WRITE_SHORT 0xa+spl_off 2 // innate
+                    END
+             END
+             SET ~spells_to_remove~=0
+             GET_OFFSET_ARRAY ~spell_mem_array~ 0x2b0 4 0x2b4 4 0 0 0xc
+             PHP_EACH spell_mem_array AS int => spl_off BEGIN
+                      READ_ASCII spl_off ~spellcheck~
+                    TO_LOWER ~spellcheck~
+                      PATCH_IF VARIABLE_IS_SET $is_hla_innate_spell(EVALUATE_BUFFER ~%spellcheck%~) BEGIN
+                              SPRINT $spells_to_remove_array(~%spells_to_remove%~) ~%spellcheck%~
+                              SET ~spells_to_remove~=~spells_to_remove~+1
+                      END
+             END
+             PATCH_IF ~spells_to_remove~>0 BEGIN
+                 FOR (i=0;i<~spells_to_remove~;i=i+1) BEGIN
+                     SPRINT ~thespell~  $spells_to_remove_array(~%i%~)
+                     REMOVE_MEMORIZED_SPELL ~%thespell%~
+                 END
+                 FOR (i=0;i<~spells_to_remove~;i=i+1) BEGIN
+                     ADD_MEMORIZED_SPELL ~%thespell%~ #0 ~innate~
+                 END
+             END
+    BUT_ONLY
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+END

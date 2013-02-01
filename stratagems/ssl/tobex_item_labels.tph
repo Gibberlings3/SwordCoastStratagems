@@ -1,0 +1,94 @@
+DEFINE_ACTION_FUNCTION tobex_item_labels BEGIN
+
+   <<<<<<<< .../stratagems-inline/autolib.slb
+   >>>>>>>>
+   
+   COPY ~.../stratagems-inline/autolib.slb~ ~%workspace%~
+
+   COPY ~%scsroot%/ssl/libdata.txt~ ~%scsroot%/ssl~
+       READ_2DA_ENTRIES_NOW stats_data 4
+       FOR (i=0;i<stats_data;i+=1) BEGIN
+          READ_2DA_ENTRY_FORMER stats_data i 0 parameter
+          READ_2DA_ENTRY_FORMER stats_data i 1 opcode
+          READ_2DA_ENTRY_FORMER stats_data i 2 trigger
+          READ_2DA_ENTRY_FORMER stats_data i 3 statname
+          PATCH_MATCH opcode WITH
+          101 BEGIN
+             SPRINT $101_stat(~%parameter%~) ~%statname%~
+             LPF append_autolib STR_VAR trigger statname END
+          END
+          206 BEGIN
+             TO_UPPER parameter
+             SPRINT $206_stat(~%parameter%~) ~%statname%~
+             LPF append_autolib STR_VAR trigger statname END
+          END
+          DEFAULT
+             PATCH_PRINT ~Unrecognised opcode in %scsroot%/ssl/libdata.txt~
+          END
+       END
+   BUT_ONLY
+
+   <<<<<<<< .../stratagems-inline/item_stats.2da
+   >>>>>>>>
+   
+   COPY ~.../stratagems-inline/item_stats.2da~ ~%workspace%~
+
+   COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override
+        GET_OFFSET_ARRAY fx_eq_array ITM_V10_GEN_EFFECTS
+        PHP_EACH fx_eq_array AS int=>offset BEGIN
+             LPF add_ds_item_entry INT_VAR offset STR_VAR type=g END
+        END
+        GET_OFFSET_ARRAY ab_array ITM_V10_HEADERS
+        PHP_EACH ab_array AS int=>offset_base BEGIN
+           GET_OFFSET_ARRAY2 fx_array offset_base ITM_V10_HEAD_EFFECTS
+           PHP_EACH fx_array AS int2=>offset BEGIN
+               LPF add_ds_item_entry INT_VAR offset STR_VAR type=a END
+           END
+        END
+   BUT_ONLY
+
+   INCLUDE ~%scsroot%/ds/ds.tph~
+   LAF detectable_spells STR_VAR path=~%workspace%~ table = ~item_stats.2da~ END
+
+
+END
+
+DEFINE_PATCH_FUNCTION append_autolib
+       STR_VAR trigger=""
+               statname=""
+BEGIN
+       INNER_ACTION BEGIN
+          APPEND_OUTER ~%workspace%/autolib.slb~ ~TRIGGER=%trigger%~
+          APPEND_OUTER ~%workspace%/autolib.slb~ ~OR(2)!CheckStatGT(scstarget,0,%statname%)GlobalTimerNotExpired("seedefences","LOCALS")~
+       END
+END
+
+DEFINE_PATCH_FUNCTION add_ds_item_entry 
+    INT_VAR offset=0
+    STR_VAR type=g
+BEGIN
+           PATCH_MATCH SHORT_AT offset WITH
+              101 BEGIN
+                    READ_LONG 0x8+offset parameter2
+                    PATCH_IF VARIABLE_IS_SET $101_stat(~%parameter2%~) BEGIN
+                       SPRINT temp $101_stat(~%parameter2%~)
+                       INNER_ACTION BEGIN
+                          OUTER_SPRINT to_add ~%SOURCE_RES%.itm     318     1     %temp%  101   n    %type%~
+                          APPEND_OUTER ~%workspace%/item_stats.2da~ ~%to_add%~ UNLESS ~%to_add%~
+                       END
+                    END
+              END
+              206 BEGIN
+                    READ_ASCII 0x14+offset resource
+                    TO_UPPER resource
+                    PATCH_IF VARIABLE_IS_SET $206_stat(~%resource%~) BEGIN
+                       SPRINT temp $206_stat(~%resource%~)
+                       INNER_ACTION BEGIN
+                          OUTER_SPRINT to_add ~%SOURCE_RES%.itm     318     1     %temp%  206   n    %type%~
+                          APPEND_OUTER ~%workspace%/item_stats.2da~ ~%to_add%~ UNLESS ~%to_add%~
+                       END
+                    END
+              END
+              DEFAULT END
+
+END

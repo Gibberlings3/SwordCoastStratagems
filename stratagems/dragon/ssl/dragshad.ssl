@@ -1,0 +1,255 @@
+///////////////////////////////////////////////////////////////////////
+///	Dialog section
+///////////////////////////////////////////////////////////////////////
+
+IF
+	IgnoreBlock(IsPrideDragon)
+	OR(3)
+		!PartyHasItem("MISC6P") // Shadow Dragon Wardstone
+		AttackedBy([ANYONE],DEFAULT)
+		Allegiance(Myself,ENEMY)
+	NumTimesTalkedTo(0)
+THEN
+	RESPONSE #100
+		StartDialogueNoSet([PC])
+END
+
+
+///////////////////////////////////////////////////////////////////////
+///	Usual pre-battle stuff
+///////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/dragondef.ssl)
+INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
+
+
+/////////////////////////////////////////////////////////////////////////
+///Contingency PMW
+/////////////////////////////////////////////////////////////////////////
+IF
+	!GlobalTimerNotExpired("contingency","LOCALS")
+	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		DisplayStringHead(Myself,25942)
+		SetGlobalTimer("contingency","LOCALS",600)
+		ReallyForceSpell(Myself,PROTECTION_MAGIC_WEAPON_NOEFF)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///  Pursue!
+///////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
+
+///////////////////////////////////////////////////////////////////////
+///Initial dragonfear
+///////////////////////////////////////////////////////////////////////
+
+IF 
+	See(NearestEnemyOf(Myself))
+	!GlobalTimerNotExpired("dragonfear","LOCALS")
+THEN
+	RESPONSE #100
+		ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
+		SetGlobalTimer("dragonfear","LOCALS",600)
+		SetGlobalTimer("dragonbreath","LOCALS",1)
+		Continue()
+END
+
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsPrideDragon) // Irenicus should be covering this base, so wait a bit
+	TargetBlock(PCsInOrder)
+THEN DO
+	Action(Spell,WIZARD_DISPEL_MAGIC)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Use breath weapon as often as possible
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!Range(scstarget,10)
+	Range(scstarget,30)
+	TriggerBlock(LevelDrain)
+THEN DO
+	Action(DragonBreath,SHADOW_DRAGON_BREATH,"dragonbreath",black05)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	!Range(scstarget,10)
+	Range(scstarget,30)
+THEN DO
+	Action(DragonBreath,SHADOW_DRAGON_BREATH,"dragonbreath",black05)
+END
+
+
+IF
+	!GlobalTimerNotExpired("dragonbreath","LOCALS")
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("trytorun","LOCALS")
+THEN
+	RESPONSE #100
+	         SetGlobalTimer("trytorun","LOCALS",6)
+		RunAwayFrom(NearestEnemyOf(Myself),30)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Use wing buffet to drive away anything at all dangerous
+//////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/dragon/ssl/wingbuffet.ssl)
+
+
+////////////////////////////////////////////////////////////////////
+//	Protect from magical weapons
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	GlobalTimerExpired("redefend","LOCALS")
+	CheckStat(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	Target(Myself)
+THEN DO
+	Action(SpellInnate,PROTECTION_MAGIC_WEAPON_NOEFF)
+END
+
+///////////////////////////////////////////////////////////////////////////
+///	Malison
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsPrideDragon)
+	TargetBlock(PCsInOrder)
+THEN DO
+	Action(Spell,WIZARD_GREATER_MALISON)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+///	Kill summons
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	Gender(scstarget,SUMMONED)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_DEATH_SPELL|150|50)
+END
+
+
+/////////////////////////////////////////////////////////////
+///	Cloak self in shadows
+///////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TriggerBlock(TruesightSafe)
+	!StateCheck(Myself,STATE_INVISIBLE)
+THEN DO
+	Action(SpellNoDecMyself,SHADOW_DRAGON_SHADOWS|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+///	Breach enemy defences
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellTurn|Enemy|Helpless)
+	OR(3)
+		CheckStatGT(scstarget,0,SCRIPTINGSTATE1)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		CheckStatGT(scstarget,2,STONESKINS)
+THEN DO
+	Action(Spell,WIZARD_BREACH|200|100)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(IsPrideDragon) // Irenicus should be covering this base, so wait a bit
+	TargetBlock(PCsInOrder)
+THEN DO
+	Action(Spell,WIZARD_DISPEL_MAGIC)
+END
+
+
+///////////////////////////////////////////////////////////////////////
+///  Chaos
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(MR|Confused|SIEnchantment|Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_CHAOS|150|50)
+END
+
+
+///////////////////////////////////////////////////////////////////////////
+////	Slow
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR100|Slow|SIAlteration|Enemy|MinorGlobe|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_SLOW|150|50)
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////
+///	Chromatic orbs
+/////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
+THEN DO
+	Action(Spell,WIZARD_CHROMATIC_ORB)
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/////	Melee phase
+//////////////////////////////////////////////////////////////////////////////////
+
+IF
+	StateCheck(Myself,STATE_INVISIBLE)
+THEN
+	RESPONSE #100
+		RandomWalkContinuous()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/////	Melee phase
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/melee.ssl)
+
+////////////////////////////////////////////////////////
+///	Closedown: avoid interaction with other scripts
+////////////////////////////////////////////////////////////
+
+IF
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		NoAction()
+END

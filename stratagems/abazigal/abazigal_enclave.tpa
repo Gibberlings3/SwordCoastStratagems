@@ -1,0 +1,406 @@
+LAF include STR_VAR file=dragon_shared.tph locbase=dragon END
+LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
+INCLUDE ~%scsroot%/lib_stratagems/ai_wrap.tph~
+LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
+
+
+DEFINE_ACTION_FUNCTION abazigal_enclave BEGIN
+
+
+      // core
+
+      ACTION_FOR_EACH func IN misc beholder fourdragons yellowdragon BEGIN
+         LAF ~abazigal_%func%~ END
+      END
+
+      // WoP compatibility
+	ACTION_IF FILE_EXISTS_IN_GAME ~dw#melis.cre~ THEN BEGIN
+	   LAF abazigal_wheels END
+	END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_misc BEGIN
+
+     // restored weapon animations - more kilobytes than the rest of the mod put together!
+    
+     MAKE_BIFF dw#liza BEGIN ~%scsroot%/%component_loc%/animations~ ~.*\.bam~ END
+
+     // undroppable armour
+
+     LAF clone_item STR_VAR item=~plat05=>dw#lizpl~ editstring=~droppable=>0~ END
+
+     // legacy code- changes animation type
+
+	COPY_EXISTING
+		~blun34.itm~ ~override/dw#lzwp3.itm~
+		WRITE_ASCII 0x22 ~CL~ #2
+		WRITE_BYTE 0x18 0 //undroppable
+
+     // generic warriors
+
+     MAKE_PATCH
+        remove_items=>~plat05 halb02~
+        add_items=>~dw#lizpl halb03~
+        enforce_charclass=>null
+     END
+     LAF edit_creature STR_VAR creature=bazliz03 END
+
+     MAKE_PATCH
+        level=>25
+        remove_items=>~plat05 halb07~
+        add_items=>~dw#lizpl dw#lzwp3~
+        enforce_charclass=>null
+     END
+     LAF edit_creature STR_VAR creature=bazliz04 END
+
+     // create lizard men shamans (high-level druids)
+
+     MAKE_PATCH
+	   levelGT=>25
+	   class=>druid
+	   enforce_charclass=>null
+     END
+     LAF clone_creature STR_VAR creature=~bazliz01=>dw#lzsh1 bazliz01=>dw#lzsh2~ edits=patch_data END
+
+     // create fiends
+     
+     LAF clone_creature STR_VAR creature=~telpit1=>dw#bazpf~ editstring=~dv=>dw#bazpf~ END
+
+     // replace frost salamanders in first area with lizard men, and set up fiend ambush
+
+     LAF swap_text STR_VAR files=~ar6008.are~ swaps=~salgrice=>bazliz03~ END
+     LAF extend_area_script STR_VAR area=ar6008 bottom=ar6008add location=resource END
+
+     // replace lesser earth elementals with lizard men
+     
+     LAF swap_text STR_VAR files=~ar6001.are~ swaps=~elearl01=>bazliz03~ END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_beholder BEGIN
+
+   // tyrant golems
+
+   LAF color STR_VAR blue=20 RET tygol_color=color END
+   MAKE_PATCH
+      say_both_names=>2201
+      resist_acid=>100
+      resist_fire=>100
+      resist_cold=>100
+      resist_electricity=>100
+      resist_magic=>100
+      xp_value=>20000
+      resist_crushing=>90
+      resist_slashing=>90
+      resist_piercing=>90
+      resist_missile=>90
+      hitpoints=>120
+      quick_effect=>~opcode=>193 parameter2=>1~ // detect invisible
+      quick_effect'=>~opcode=>52 parameter1=>%tygol_color% parameter2=>2~
+      add_items=>~immune3 irongol~
+   END
+
+   ACTION_IF !FILE_EXISTS_IN_GAME ~dw#tygol.bcs~ BEGIN
+      COPY_EXISTING ~behold01.bcs~ ~override/dw#tygol.bcs~
+   END
+
+   // place them
+   
+   LAF extend_area_script STR_VAR area=ar6003 bottom=ar6003add location=resource END
+
+
+   // eyes get the "Beholder" item and marginally-better scripts
+
+   LAF edit_creature STR_VAR creature=~eyesek01 eyeegl01 eyesnt01~ editstring=~add_items=>beholder~ END
+   LAF ssl_to_bcs STR_VAR script=~eyesnt01 eyesek01 eyeegl01~ location=EVALUATE_BUFFER ~%component_loc%/ssl~ END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_rope BEGIN
+
+	// Monk no longer supplies rope; Amkethran merchant does
+
+        LAF edit_creature STR_VAR creature=bazmonk editstring=~remove_items=>bazplo05~ END
+
+	OUTER_SPRINT ~monkreply~ @3001
+	OUTER_SPRINT ~monkjournal~ @3011
+
+        LAF install STR_VAR file=~monk.d~ location=resource END   // this also contains the changes to the merchant's dialogue
+
+	<<<<<<<< .../stratagems-inline/monk2.d
+
+	REPLACE_SAY bazmonk 8 @3000
+
+	>>>>>>>>
+
+	LAF install STR_VAR file=~monk2.d~ inline=yes END
+
+        // random peasant with rope
+
+        MAKE_PATCH
+           script_override=>wtrunsgt
+           dialog=>dw#abrop
+           add_items=>bazplo05
+        END
+        LAF clone_creature STR_VAR creature=~yscara01=>dw#abrop~ END
+
+<<<<<<<< .../stratagems-inline/ar5501.baf
+
+IF
+	Dead("AMbar01")
+	Global("DMWWMonkRope","GLOBAL",1)
+THEN
+	RESPONSE #100
+		CreateCreature("dw#abrop",[340.630],0)
+		SetGlobal("DMWWMonkRope","GLOBAL",2)
+		Continue()
+END
+
+>>>>>>>>
+
+        LAF extend_area_script STR_VAR area=ar5501 top=ar5501 inline=yes END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
+
+      LAF abazigal_rope END
+
+      // black dragons are clones of an unaltered Nizi
+      
+      COPY ~%scsroot%/%component_loc%/unaltered/dragblac.cre~ ~override/dw#abbl1.cre~
+      
+      MAKE_PATCH
+       script_override=>~~
+       script_class=>dw#abbld
+       script_race=>dw#abbl1
+       dialog=>dw#abbl1
+       dv=>dw#abbl2
+       allegiance=>enemy
+       say_both_names=>3021
+       dragon_general=>null
+       dragon_staying_power=>null
+       level_all=>23
+       immunity=>acid
+       immunity=>insects
+       immunity=>poison
+       remove_spells=>all
+       add_spells=>~MAGIC_MISSILE(2) MELF_ACID_ARROW(2) WIZARD_DISPEL_MAGIC WIZARD_HASTE
+                    WIZARD_DIRE_CHARM(2) DRAGON_STONE_SKIN~
+       remove_items=>~misc41 miscb2 misc42 amul11 amul12 amul13 chan16 dart04 bolt06 bull03 arow07 arow11~
+
+      END
+      LAF edit_creature STR_VAR creature=dw#abbl1 END
+      LAF clone_creature STR_VAR creature=~dw#abbl1=>dw#abbl2~ editstring=~say_both_names=>3022 dialog=>dw#abbl2 dv=>dw#abbl2~ END
+
+      // green dragon is a clone of the WK dragon with minor variations
+
+   
+   COPY ~%scsroot%/%component_loc%/unaltered/fsdragon.cre~ ~override/dw#abgre.cre~
+
+   MAKE_PATCH
+        script_override=>~~
+        script_class=>dw#abgre
+        dialog=>dw#abgre
+        dv=>dw#abgre
+        say_both_names=>3023
+        dragon_general=>null
+        dragon_staying_power=>null
+        level_all=>25
+        immunity=>poison
+        immunity=>insects
+        remove_spells=>all
+        add_spells=>~UNHOLY_BLIGHT(2) DEFENSIVE_HARMONY(2) CLERIC_TRUE_SIGHT HEAL
+                     MAGIC_MISSILE(4) MELF_ACID_ARROW(4) WIZARD_DISPEL_MAGIC(2)
+                     SPELL_THRUST(2) BREACH(2) DOMINATION DEATH_SPELL PROTECTION_FROM_MAGIC_WEAPONS
+                     WARDING_WHIP POWER_WORD_STUN DRAGON_STONE_SKIN(3) BLACK_DRAGON_PLANT
+                     CLERIC_RIGHTEOUS_MAGIC~
+        remove_items=>~plot05d sw1h70 rndtre04~
+        strip_script=>wtasight
+   END
+   LAF edit_creature STR_VAR creature=dw#abgre END
+
+   // red dragon uses Saladrex as starting point
+
+   COPY ~%scsroot%/%component_loc%/unaltered/gorsal.cre~ ~override/dw#abred.cre~
+
+   MAKE_PATCH
+         say_both_names=>3024
+         script_override=>~~
+         script_class=>dw#abred
+         dv=>dw#abred
+         dialog=>dw#abred
+         allegiance=>enemy
+         dragon_general=>null
+         dragon_staying_power=>null
+         level_all=>26
+         immunity=>fire
+         remove_spells=>all
+         add_spells=>~MAGIC_MISSILE(5) MELF_ACID_ARROW(3) WIZARD_DISPEL_MAGIC(2) SLOW
+                   GREATER_MALISON BREACH(3) DEATH_SPELL DRAGON_STONE_SKIN(3)
+                   DRAGON_SILENCE PROTECTION_MAGIC_WEAPON_NOEFF(2) POWER_WORD_BLIND
+                   RUBY_RAY_OF_REVERSAL(2)~
+         remove_items=>~rndtre04 rndtre05 misc45 staf21~
+   END
+   LAF edit_creature STR_VAR creature=dw#abred END
+
+   // scripts
+   
+   LAF install STR_VAR files=~dw#abct0.baf dw#abct1.baf dw#abct2.baf multidragon.d~ location=resource END
+   LAF ssl_to_bcs STR_VAR files=~dw#abgre dw#abred~ location=~%component_loc%/ssl~ END
+   LAF clone_extend STR_VAR arguments=~dragblac=>dw#abbld~ location=resource END
+   LAF extend_area_script STR_VAR area=ar6000 top=ar6000add location=resource END
+   LAF extend STR_VAR script=tp6001 top=tp6001add location=resource END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_yellowdragon BEGIN
+
+     /// Copy the area, which is basically a clone of ar6008. Unideal, I know.
+     // Place dragon into it
+
+     LAF install STR_VAR files=~ar6012.are ar6012.baf~ location=resource END
+
+    // Create the yellow dragon Anadramatis
+    // Start with an unmodified version of the Yellow Dragon - we'll hot-modify
+
+   COPY ~%scsroot%/%component_loc%/unaltered/dragyell.cre~ ~override/dw#abdgy.cre~
+    MAKE_PATCH
+        say_both_names=>16050
+        allegiance=>neutral
+        hitpoints=>250
+        thac0=>8
+        level_all=>28
+        dragon_general=>null
+        dragon_staying_power=>null
+        resist_magic=>65
+        resist_piercing=>75
+        resist_missile=>75
+        immunity=>fire
+        add_items=>~dragred1 minhp1 dw#abyds(INV)~
+        strip_script=>wtasight
+        script_override=>dw#abdgy
+        dialog=>dw#abdgy
+        dv=>dw#abdgy
+        color_metal=>50
+        color_minor=>51
+        color_major=>50
+        color_skin=>51
+        color_leather=>50
+        color_armor=>51
+        color_hair=>50
+        animation=>DRAGON_BROWN
+        remove_spells=>all
+        add_spells=>~MAGIC_MISSILE(6) WIZARD_DISPEL_MAGIC(3) WIZARD_FLAME_ARROW(3) GREATER_MALISON BREACH(4)
+                     ORACLE(2) DEATH_SPELL(2) PROTECTION_MAGIC_WEAPON_NOEFF(3) IMPROVED_HASTE  RUBY_RAY_OF_REVERSAL(2)
+                     WARDING_WHIP(2) POWER_WORD_STUN(2) PIERCE_SHIELD(2) INCENDIARY_CLOUD ABI_DALZIMS_HORRID_WILTING(3)
+                     WAIL_OF_THE_BANSHEE(2) SPELL_TRAP(2) POWER_WORD_KILL(2) DRAGON_STONE_SKIN(6)~
+    END
+    LAF edit_creature STR_VAR creature=dw#abdgy END
+
+    LAF ssl_to_bcs STR_VAR script=dw#abdgy location=EVALUATE_BUFFER ~%component_loc%/ssl~ END
+
+   // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
+   // (may also be built by main Dragon code)
+
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_SPELL_IMMUNITY_ABJURATION_INSTANT%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION_INSTANT%=>dw#0d592~
+                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
+   END
+
+   // misc
+
+   LAF install STR_VAR files=~yellow.d dw#abyda.itm dw#abamu.itm~ location=resource END
+   
+   // dragon armour
+   LAF edit_item STR_VAR item=dw#abyda editstring=~say_both_names=>3016 say_both_descriptions=>3017~ END
+   APPEND ~ITEMEXCL.2DA~ ~dw#abyda 1~
+
+   // dragon amulet
+   LAF edit_item STR_VAR item=dw#abamu editstring=~say_name=>3018 say_description=>3019~ END
+
+   // dragon scales
+   LAF clone_item STR_VAR item=~scaleb=>dw#abyds~ editstring=~say_both_names=>3014 say_both_descriptions=>3015~ END
+
+   // Cespenar addition
+   
+   LAF extend STR_VAR files=botsmith bottom=cespenar_add location=resource END
+
+   // AR6005 addition
+   
+   LAF extend_area_script STR_VAR area=ar6005 bottom=ar6005add location=resource END
+   
+   // 12POOL1 addition
+   
+   LAF extend STR_VAR files=12pool1 top=pooladd location=resource END
+
+   // make exit to Yellow Dragon lair party-only
+   
+
+     MAKE_PATCH
+        type=>trigger
+        match=>trigger_name
+        check=>Tran6008
+        party_required=>1
+     END
+     LAF edit_area STR_VAR area=ar6012 editstring=~patch_conditionally=>patch_data~ END
+
+     MAKE_PATCH
+        type=>trigger
+        match=>trigger_name
+        check=>Tran6012
+        party_required=>1
+     END
+     LAF edit_area STR_VAR area=ar6008 editstring=~patch_conditionally=>patch_data~ END
+
+
+   // magically seal the exit to the yellow dragon's area
+
+     OUTER_INNER_PATCH ~~ BEGIN SET anastring=RESOLVE_STR_REF (@2702) END
+     MAKE_PATCH
+        type=>trigger
+        match=>trigger_name
+        check=>Tran6008
+        trigger_name=>DMWWFYExit
+        trigger_info=>~%anastring%~
+        trigger_type=>1
+     END
+     LAF edit_area STR_VAR area=ar6012 editstring=~clone_entry=>patch_data~ END
+
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION abazigal_wheels BEGIN
+
+    // Wheels compatibility
+    
+    LAF clone_creature STR_VAR creature=~bazliz03=>dw#viliz~ editstring=~script_override=>dw#viliz script_class=>"" gender=>14~ END
+    LAF clone_creature STR_VAR creature=~eyesek01=>dw#visek eyeegl01=>dw#viegl~     editstring=~script_override=>dw#vilat gender=>15~ END
+
+
+END

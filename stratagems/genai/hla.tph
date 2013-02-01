@@ -1,0 +1,189 @@
+DEFINE_PATCH_FUNCTION assign_hlas
+STR_VAR filename=""
+BEGIN
+    LPF num_hlas RET num_warrior=num_warrior num_thief=num_thief END
+    LPF customize_hlas INT_VAR num_warrior num_thief  STR_VAR filename RET num_warrior=num_warrior num_thief=num_thief END
+    PATCH_IF (num_warrior>0 || num_thief>0) BEGIN
+           LPF CRE_read_kit RET kit=value END 
+           INNER_ACTION BEGIN
+               LAUNCH_ACTION_MACRO read_in_hla_preferences
+               LAUNCH_ACTION_MACRO read_in_hla_prerequisites
+           END
+           PATCH_IF (num_warrior>0) BEGIN
+              // wipe preexisting HLAs
+               LPF CRE_remove_spells STR_VAR arguments=~WARRIOR_WHIRLWIND WARRIOR_WAR_CRY WARRIOR_GREATER_WHIRLWIND WARRIOR_CRITICAL_STRIKE WARRIOR_POWER_ATTACK WARRIOR_RESIST_MAGIC WARRIOR_HARDINESS~ END
+               PATCH_IF VARIABLE_IS_SET $HLAcount(EVALUATE_BUFFER ~%kit%~) BEGIN
+                   SPRINT basename ~%kit%~
+               END ELSE
+               PATCH_IF VARIABLE_IS_SET $HLAcount(EVALUATE_BUFFER ~%class%~) BEGIN
+                   SPRINT basename ~%class%~
+               END ELSE BEGIN
+                   SPRINT basename ~FIGHTER~
+               END
+               SET max=$HLAcount(~%basename%~)
+               WHILE (num_warrior>0) BEGIN
+                  SET num_warrior=num_warrior - 1
+                  SET random =RANDOM (1 max)
+                  SPRINT arguments $HLA(EVALUATE_BUFFER ~%basename%~ ~%random%~)
+                  LPF add_this_hla STR_VAR arguments END
+               END
+           END
+           PATCH_IF (num_thief>0) BEGIN
+              // wipe preexisting HLAs
+               LPF CRE_remove_spells STR_VAR arguments=~ROGUE_ASSASINATION ROGUE_EVASION ROGUE_GREATER_EVASION~ END
+               PATCH_IF VARIABLE_IS_SET $HLAcount(EVALUATE_BUFFER ~%kit%~) BEGIN
+                   SPRINT basename ~%kit%~
+               END ELSE
+               PATCH_IF VARIABLE_IS_SET $HLAcount(EVALUATE_BUFFER ~%class%~) BEGIN
+                   SPRINT basename ~%class%~
+               END ELSE BEGIN
+                   SPRINT basename ~THIEF~
+               END
+               SET max=$HLAcount(~%basename%~)
+               WHILE (num_thief>0) BEGIN
+                  SET num_thief=num_thief - 1
+                  SET random =RANDOM (1 max)
+                  SPRINT arguments $HLA(EVALUATE_BUFFER ~%basename%~ ~%random%~)
+                  LPF add_this_hla STR_VAR arguments END
+               END
+           END
+    END
+END
+
+
+DEFINE_PATCH_FUNCTION customize_hlas
+INT_VAR num_warrior=0
+        num_thief=0
+STR_VAR filename=""
+RET     num_warrior
+        num_thief
+BEGIN
+        TO_UPPER filename
+        INNER_ACTION BEGIN
+                 LAUNCH_ACTION_MACRO read_in_hla_preferences
+                 LAUNCH_ACTION_MACRO read_in_hla_prerequisites
+        END
+        PATCH_FOR_EACH type IN warrior thief BEGIN
+           PATCH_IF VARIABLE_IS_SET EVALUATE_BUFFER ~hla_override_%type%_%filename%~ BEGIN
+              SET number=EVALUATE_BUFFER ~%num_%type%%~
+              SPRINT arguments EVALUATE_BUFFER ~%hla_override_%type%_%filename%%~
+              LPF add_this_hla INT_VAR number STR_VAR arguments RET number=number END
+              SET ~num_%type%~=number
+           END
+        END
+
+
+END
+
+DEFINE_PATCH_FUNCTION add_this_hla
+   INT_VAR number=0
+   STR_VAR arguments=""
+   RET     number
+BEGIN
+   PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+      INNER_ACTION BEGIN
+               LAUNCH_ACTION_MACRO read_in_hla_preferences
+               LAUNCH_ACTION_MACRO read_in_hla_prerequisites
+      END
+      LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%arguments%~ RET hla=entry arguments=list END
+      PATCH_IF !VARIABLE_IS_SET $hla_prerequisite(EVALUATE_BUFFER ~%hla%~) BEGIN
+         LPF CRE_add_spells STR_VAR arguments=~%hla%~ END
+         SET number=number - 1
+      END ELSE BEGIN
+         SPRINT pre_req $hla_prerequisite(~%hla%~)
+         LPF CRE_has_spell STR_VAR arguments=EVALUATE_BUFFER ~%pre_req%~ RET value=value END
+         PATCH_IF value=1 BEGIN
+            LPF CRE_add_spells STR_VAR arguments=~%hla%~ END
+            SET number = number - 1
+         END ELSE BEGIN
+            LPF add_this_hla INT_VAR number STR_VAR arguments=~%pre_req%~ RET number=number END
+         END
+      END
+      LPF add_this_hla INT_VAR number STR_VAR arguments RET number=number END
+   END
+END
+
+DEFINE_PATCH_FUNCTION num_hlas
+RET num_warrior num_thief
+BEGIN
+   LPF CRE_read_level RET level=value END
+   LPF CRE_read_class RET class=value END
+   LPF CRE_is_warrior STR_VAR class RET is_warrior=value END
+   PATCH_IF is_warrior=1 BEGIN
+      PATCH_IF (~%class%~ STRING_EQUAL_CASE PALADIN || ~%class%~ STRING_EQUAL_CASE RANGER) BEGIN
+         SET num_warrior=level > 17? level - 17 : 0
+      END ELSE BEGIN
+         SET num_warrior=level > 19? level - 19 : 0
+      END
+   END ELSE BEGIN
+       SET num_warrior=0
+   END
+   LPF CRE_is_thief STR_VAR class RET is_thief=value END
+   PATCH_IF is_thief=1 BEGIN
+         SET num_thief=level > 23? level - 23 : 0
+   END ELSE BEGIN
+       SET num_thief=0
+   END
+END
+
+DEFINE_ACTION_MACRO read_in_hla_preferences
+BEGIN
+ ACTION_IF !VARIABLE_IS_SET read_in_hla_preferences BEGIN
+   OUTER_SET read_in_hla_preferences=1
+   ACTION_IF refinements=1 BEGIN
+        OUTER_SPRINT filebase refinements
+   END ELSE BEGIN
+        OUTER_SPRINT filebase core
+   END
+   COPY ~%scsroot%/genai/hla_choices/%filebase%.2da~ ~%workspace%~
+         READ_2DA_ENTRIES_NOW hla_choices_read 0
+         COUNT_2DA_COLS colcount
+         FOR (i=1;i<hla_choices_read;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER hla_choices_read i 0 basename
+            SET count=0
+            FOR (j=1;j<colcount;j+=1) BEGIN
+               READ_2DA_ENTRY_FORMER hla_choices_read i j data
+               PATCH_IF ~%data%~ STRING_COMPARE_CASE ~NULL~ BEGIN
+                  SPRINT EVALUATE_BUFFER ~HLA_%basename%_%j%~ ~%data%~
+                  SET count+=1
+               END
+            END
+            SET EVALUATE_BUFFER ~HLAcount_%basename%~=count
+         END
+     BUT_ONLY
+     ACTION_FOR_EACH type IN warrior thief BEGIN
+     COPY ~%scsroot%/genai/hla_choices/override_%type%.2da~ ~%workspace%~
+         READ_2DA_ENTRIES_NOW hla_override_read 0
+         FOR (i=1;i<hla_override_read;i+=1) BEGIN
+             READ_2DA_ENTRY_FORMER hla_override_read i 0 key
+             READ_2DA_ENTRY_FORMER hla_override_read i 1 value
+             INNER_PATCH_SAVE value ~%value%~ BEGIN
+                REPLACE_TEXTUALLY ~-~ ~ ~
+             END
+             TO_UPPER key
+             SPRINT $hla_override(~%type%~ ~%key%~) ~%value%~
+         END
+       BUT_ONLY
+     END
+   END
+END
+
+DEFINE_ACTION_MACRO read_in_hla_prerequisites
+BEGIN
+   ACTION_IF !VARIABLE_IS_SET read_in_hla_prerequisites BEGIN
+     OUTER_SET read_in_hla_prerequisites=1
+     ACTION_CLEAR_ARRAY hla_prerequisite
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY hla_prerequisite BEGIN
+      WARRIOR_CRITICAL_STRIKE=>WARRIOR_POWER_ATTACK
+      WARRIOR_SMITE=>WARRIOR_CRITICAL_STRIKE
+      ROGUE_GREATER_EVASION=>ROGUE_EVASION
+      WARRIOR_GREATER_DEATHBLOW =>WARRIOR_DEATHBLOW
+      WARRIOR_GREATER_WHIRLWIND =>WARRIOR_WHIRLWIND
+      MONK_DRAGON_FIST => MONK_SHADOWLESS_KICK
+      MONK_TIGER_STRIKE => MONK_DRAGON_FIST
+      MONK_CHANT =>  MONK_DIAMOND_SOUL
+      BARBARIAN_GREATER_WAR_CRY=> WARRIOR_WAR_CRY
+      END
+   END
+END
+

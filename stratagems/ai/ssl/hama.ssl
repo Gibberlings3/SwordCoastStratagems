@@ -1,0 +1,461 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////    Hamadryad script
+//////////////////
+//////////////////    She has:
+//////////////////    (i) Entangle 3/day
+//////////////////    (ii) Dire Charm 3/day
+//////////////////    (iii) Hold Person 3/day
+//////////////////    (iv) swift Dimension Door 6/day
+//////////////////    Iron Skins, precast
+//////////////////
+//////////////////    Starts hostile, so no need to handle that
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+////// easy version
+
+INCLUDE FILE(%scsroot%/genai/ssl/easy_definitions.ssl)
+
+IF TRIGGER
+   RequireBlock(EasyOptionAvailable)
+   TargetBlock(EnemiesInOrderShort)
+THEN DO
+     Combine()
+     Action(EasySpellHama,WIZARD_DIRE_CHARM,0,1,1023,3021)
+     Action(EasySpellHama,WIZARD_DIRE_CHARM,1,2,1351,3018)
+     Action(EasySpellHama,CLERIC_HOLD_PERSON,2,3,1234,3383)
+     Action(EasySpellHama,CLERIC_HOLD_PERSON,5,6,1202,3397)
+END
+
+IF TRIGGER
+   RequireBlock(EasyOptionAvailable)
+   Target(NearestEnemyOf(Myself))
+THEN DO
+   Action(EasySpellAreaHama,CLERIC_ENTANGLE,3,4,872,3352)
+   Action(EasySpellAreaHama,CLERIC_ENTANGLE,4,5,1126,2992)
+END
+
+IF TRIGGER
+        RequireBlock(EasyOptionAvailable)
+	See(NearestEnemyOf(Myself))
+	TriggerBlock(EasyMinus)
+THEN DO
+		Action(Literal)
+                AttackReevaluate(NearestEnemyOf(Myself),45)
+END
+
+IF TRIGGER
+          RequireBlock(EasyOptionAvailable)
+          TriggerBlock(EasyMinus)
+THEN DO
+         Action(Nothing)
+END
+
+
+////// main version
+
+BEGIN LOOP(scsspellsubstitute1||!StateCheck(scstarget,STATE_NOT_TARGETABLE))
+BEGIN LOOP(scsspellsubstitute2||!StateCheck(scstarget,STATE_INVISIBLE))
+	INCLUDE FILE(%scsroot%/mage/ssl/mage_definitions.ssl)
+END LOOP
+END LOOP
+
+/////////// prep
+
+IF
+  IgnoreBlock(EasyOptionAvailable)
+  !GlobalTimerNotExpired("preptimer","LOCALS")
+  See(NearestEnemyOf(Myself))
+THEN
+    RESPONSE #100
+        SetGlobalTimer("preptimer","LOCALS",2000)
+        ApplySpellRES("%CLERIC_IRONSKIN_PREBUFF%",Myself)
+        SetGlobal("loc","LOCALS",1)
+        Continue()
+END
+
+
+
+IF TRIGGER
+  RequireBlock(EasyOptionAvailable)
+  !GlobalTimerNotExpired("preptimer","LOCALS")
+  See(NearestEnemyOf(Myself))
+  TriggerBlock(HardPlus)
+THEN DO
+        Action(Literal)
+        SetGlobalTimer("preptimer","LOCALS",2000)
+        ApplySpellRES("%CLERIC_IRONSKIN_PREBUFF%",Myself)
+        SetGlobal("loc","LOCALS",1)
+        Continue()
+END
+
+IF TRIGGER
+  RequireBlock(EasyOptionAvailable)
+  !GlobalTimerNotExpired("preptimer","LOCALS")
+  See(NearestEnemyOf(Myself))
+  TriggerBlock(CoreMinus)
+THEN DO
+        Action(Literal)
+        SetGlobalTimer("preptimer","LOCALS",2000)
+        SetGlobal("loc","LOCALS",1)
+        Continue()
+END
+
+/////////// spellcasting actions
+
+/// heal
+
+IF TRIGGER
+	StateCheck(Myself,STATE_POISONED)
+THEN DO
+	Action(Potion,"%tutu_var%potn20",@1020)
+END
+
+
+/// dire charm any strong target
+
+IF TRIGGER
+        !GlobalTimerNotExpired("castspell","LOCALS")
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR|Charm|SpellTurn|Enemy|Helpless|MinorGlobe)
+	!CheckStatLT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Action(Spell,WIZARD_DIRE_CHARM|100|100)
+END
+
+/// hold anyone, prioritise casters
+
+IF TRIGGER
+        !GlobalTimerNotExpired("castspell","LOCALS")
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR|Hold|SpellTurn|Enemy|Helpless|MinorGlobe)
+	!CheckStatLT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Action(Spell,CLERIC_HOLD_PERSON|100|100)
+END
+
+/// entangle people
+
+IF TRIGGER
+        !GlobalTimerNotExpired("castspell","LOCALS")
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Helpless|MinorGlobe)
+THEN DO
+	Action(Spell,CLERIC_ENTANGLE)
+END
+
+
+////	 ordinary healing potions
+
+IF TRIGGER
+	HPPercentLT(Myself,75)
+THEN DO
+	Action(Potion,"%tutu_var%potn08",@1008)
+END
+
+
+/////////// teleport actions
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",1)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",2)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",3)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",4)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",5)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",6)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",7)
+          ReallyForceSpellPoint([1202.3397],PHASE_SPIDER_TELEPORT)
+END
+IF
+  See(NearestEnemyOf(Myself))
+  Global("loc","LOCALS",7)
+  !GlobalGT("teleport","LOCALS",5)
+  !GlobalTimerNotExpired("teleporttimer","LOCALS")
+  OR(3)
+       RandomNum(1,2)
+       Range(NearestEnemyOf(Myself),10)
+       HPPercentLT(Myself,60)
+
+THEN
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",2)
+          ReallyForceSpellPoint([1023.3021],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",3)
+          ReallyForceSpellPoint([1351.3018],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",4)
+          ReallyForceSpellPoint([1234.3383],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",5)
+          ReallyForceSpellPoint([872.3352],PHASE_SPIDER_TELEPORT)
+    RESPONSE #100
+          SetGlobalTimer("teleporttimer","LOCALS",6)
+          IncrementGlobal("teleport","LOCALS",1)
+          SetGlobal("loc","LOCALS",6)
+          ReallyForceSpellPoint([1126.2992],PHASE_SPIDER_TELEPORT)
+END
+
+/////////// combat
+
+
+IF TRIGGER
+   TargetBlock(EnemiesInOrderShort)
+   TriggerBlock(Helpless)
+  OR(2)
+       HaveSpell(WIZARD_DIRE_CHARM)
+       HaveSpell(CLERIC_HOLD_PERSON)
+  Range(scstarget,10)
+THEN DO
+   Action(Literal)
+   RunAwayFrom(scstarget,60)
+END
+
+IF TRIGGER
+   TargetBlock(EnemiesInOrderShort)
+   TriggerBlock(Helpless)
+  OR(2)
+       HaveSpell(WIZARD_DIRE_CHARM)
+       HaveSpell(CLERIC_HOLD_PERSON)
+THEN DO
+   Action(Literal)
+   RandomWalk()
+END
+
+IF
+   GlobalTimerNotExpired("preptimer","LOCALS")
+   !Detect(NearestEnemyOf(Myself))
+THEN
+    RESPONSE #100
+       MoveToObject(Player1)
+END
+
+/// general combat will be handled by the genai block

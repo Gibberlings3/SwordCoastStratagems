@@ -1,0 +1,73 @@
+DEFINE_ACTION_FUNCTION ~reputation~ INT_VAR probA=0 probB=0 BEGIN    // basically legacy code
+
+
+ACTION_IF !(MOD_IS_INSTALLED ~setup-bg2fixpack.tp2~ ~0~) && enhanced_edition=0 BEGIN
+   LAF install STR_VAR files=fixpack-dlg.d END
+END
+
+COPY_EXISTING_REGEXP GLOB ~%tutu_var%.*\.dlg~ ~override~
+  PATCH_IF FILE_CONTAINS_EVALUATED (~%SOURCE_RES%.dlg~ ~ReputationInc~) THEN BEGIN
+    PATCH_TRY
+     PATCH_SILENT
+     DECOMPILE_DLG_TO_D
+     REPLACE_TEXTUALLY ~ReputationInc(1)~ ~SetGlobal("DMWWRepBoost","GLOBAL",1)~
+     REPLACE_TEXTUALLY ~ReputationInc(2)~ ~ReputationInc(1)~
+     COMPILE_D_TO_DLG
+     PATCH_VERBOSE
+    WITH DEFAULT
+       PATCH_PRINT ~SCS warning: could not recompile %SOURCE_RES%.dlg (don't worry, this is harmless, though it points to a problem in some other mod)~
+    END
+  END
+BUT_ONLY
+
+
+ACTION_FOR_EACH ~script~ IN 
+baldur baldur25 // Viconia's Rep decrease/increase upon joining/leaving party
+sola            // ditto for Solaufein
+  BEGIN
+   OUTER_INNER_PATCH ~~ BEGIN
+     TO_LOWER ~script~ // guard against own incompetence
+   END
+   OUTER_SPRINT $rep_skip_script(EVALUATE_BUFFER ~%script%~) ~~
+END
+
+
+COPY_EXISTING_REGEXP GLOB ~%tutu_var%.*\.bcs~ ~override~
+    PATCH_IF FILE_CONTAINS_EVALUATED (~%SOURCE_RES%.bcs~ ~%WNL%163OB~) THEN BEGIN
+   SPRINT ~script~ ~%SOURCE_RES%~
+   TO_LOWER ~script~
+    PATCH_IF !(VARIABLE_IS_SET $rep_skip_script(EVALUATE_BUFFER ~%script%~)) BEGIN
+       PATCH_TRY
+         PATCH_SILENT
+         DECOMPILE_BCS_TO_BAF
+         REPLACE_TEXTUALLY ~ReputationInc(1)~ ~SetGlobal("DMWWRepBoost","GLOBAL",1)~
+         REPLACE_TEXTUALLY ~ReputationInc(2)~ ~ReputationInc(1)~
+         COMPILE_BAF_TO_BCS
+         PATCH_VERBOSE
+       WITH DEFAULT
+            PATCH_PRINT ~SCS warning: could not recompile %SOURCE_RES%.bcs (don't worry, this is harmless, though it points to a problem in some other mod)~
+       END
+    END
+  END
+BUT_ONLY
+
+
+<<<<<<<< .../scsii-inlined/repadd.baf
+IF
+  Global("DMWWRepBoost","GLOBAL",1)
+THEN
+    RESPONSE #%probA%
+             SetGlobal("DMWWRepBoost","GLOBAL",0)
+             ReputationInc(1)
+             Continue()
+    RESPONSE #%probB%
+             SetGlobal("DMWWRepBoost","GLOBAL",0)
+             Continue()
+END
+>>>>>>>>
+
+EXTEND_TOP ~baldur.bcs~ ~.../scsii-inlined/repadd.baf~ EVALUATE_BUFFER
+EXTEND_TOP ~baldur25.bcs~ ~.../scsii-inlined/repadd.baf~ EVALUATE_BUFFER
+
+END
+

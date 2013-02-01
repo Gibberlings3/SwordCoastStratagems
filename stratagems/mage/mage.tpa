@@ -1,0 +1,1073 @@
+LAF include STR_VAR file=mage_shared.tph END
+
+DEFINE_ACTION_FUNCTION mage
+        STR_VAR version="1"
+BEGIN
+      OUTER_SET prebuff=version
+      OUTER_SPRINT type mage
+      LAF make_label STR_VAR label=EVALUATE_BUFFER ~dw#mage_%version%~ END
+
+      // data read-in
+      LAUNCH_ACTION_MACRO read_in_spells_per_level
+      LAUNCH_ACTION_MACRO read_in_spell_choices
+      LAUNCH_ACTION_MACRO read_in_individual_overrides
+      LAUNCH_ACTION_MACRO read_in_mage_scripts
+
+      // instant and prebuff spells
+
+      LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
+
+      // scripts
+
+      LAF build_individual_mage_scripts INT_VAR prebuff END
+      ACTION_IF is_bg2=1 BEGIN
+         LAF build_clone_scripts END
+      END
+
+      // resources
+
+      LAF make_mage_resources END
+      ACTION_IF is_bg2=1 BEGIN
+         LAF build_wish_spell END
+         LAF mislead END
+
+      END
+
+      // core
+
+      LAF mage_edits_before END
+      LAF mage_edits_main INT_VAR prebuff END
+      LAF mage_edits_after END
+
+      // cleric-mages
+
+      LAF check_label STR_VAR label=dw#priest RET value=value END
+      ACTION_IF value=1 BEGIN
+         OUTER_SPRINT component_loc ~caster_shared/clericmage~
+         LAF run STR_VAR file=clericmage END
+      END
+
+      // alhoon
+
+      LAF check_label STR_VAR label=dw#flayer RET value=value END
+      ACTION_IF value=1 BEGIN
+          OUTER_SPRINT component_loc psionic
+          LAF run STR_VAR file=alhoon END
+      END
+
+      // Abazigal finale
+
+      LAF check_label STR_VAR label=dw#asc_abazigal RET value=value END
+      ACTION_IF value BEGIN
+         OUTER_SPRINT component_loc ascension
+         LAF run STR_VAR file=abazigal_finale END
+      END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////               Primary edit
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mage_edits_main
+       INT_VAR prebuff=1
+BEGIN
+    OUTER_SPRINT arguments ~prebuff=%prebuff%~
+    ACTION_IF FILE_EXISTS ~override/dw#standardise_nobg2.mrk~ BEGIN
+       OUTER_SPRINT arguments ~%arguments% spells_are_bg1~
+    END ELSE BEGIN
+       OUTER_SPRINT arguments ~%arguments% spells_are_not_bg1~
+    END
+
+    // load in the innocent mages
+    
+    LAUNCH_ACTION_FUNCTION innocent_mages RET list=list END
+
+    // get a list of wizards (this is hardcoded, on speed grounds)
+
+    COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+        READ_BYTE 0x273 class
+        PATCH_MATCH class WITH
+        1 // mage
+        13 // mage_thief
+        126 // ogre_mage
+        7 // fighter_mage
+        10 // fighter_mage_thief
+        5 // bard
+        166 // rakshasa
+        BEGIN
+             SPRINT filename ~%SOURCE_RES%~
+             LPF CRE_is_PC RET is_pc=value END
+             LPF CRE_is_dead RET is_dead=value END
+             LPF skipped_mage RET is_skipped=value END
+             PATCH_IF (!is_dead && !is_pc && !is_skipped) BEGIN
+                PUSH list ~%filename%~
+             END
+
+        END
+        DEFAULT END
+    BUT_ONLY
+
+
+    MAKE_PATCH
+        mage_edits_main_patch=>~%arguments%~
+        remove_items=>stonskin
+    END
+    LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%list%~ END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION mage_edits_main_patch
+      STR_VAR filename=""
+              arguments=""
+BEGIN
+      PATCH_SILENT
+      LPF CRE_find_mage_scripts STR_VAR filename RET value=value END
+      PATCH_IF value=1 BEGIN
+          SPRINT arguments ~%arguments% game_is_bg1~
+      END
+      PATCH_IF value>0 BEGIN
+         PATCH_PRINT ~Determining spells and script for %filename%~
+         PATCH_SILENT
+         LPF enforce_mage STR_VAR filename arguments END
+      END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION skipped_mage
+      STR_VAR filename=""
+      RET value
+BEGIN
+      SET value=0
+      PATCH_FOR_EACH skip IN xzar ppsanik BEGIN
+         PATCH_IF ~%filename%~ STRING_EQUAL_CASE ~%skip%~ BEGIN
+            SET value=1
+         END
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////               Pre-main edits (put things here if possible)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
+   ACTION_IF is_bg2=1 BEGIN
+     
+     // most mages in bg2 are listed as "conjurer", but this is just junk - wipe it
+
+     LAF edit_creature STR_VAR creature=~AMLICH01 AMMAG01 AMTMAG01  AR18MAGE BDTURM03 
+     BREG01   C6HARP   CORNEIL COWENF1  COWENF3  COWENF4  DADROW16 DADROW2  DARIO    DCOWL1   DEMILICH
+     DROW06   E35      FIRMAG01 FSMAGE01 FSMAGE02 FSMAGE03 GAIUS    GENMAG01
+     GMAGE14  GORSKU01 GPMAGE1  GRVLCH01 HGMAG01  HGMAG02  HGSKU01  HLDEMI
+     HLKANG   HLLAYEN  HLSHANG  HLSION   JADE3    JAGA3    JAHEI3   JAMAGE1
+     JAMAGE2  JAREV3   JARLICH  MAGE14A  MAGE14B  MAGE14C  MAGE14M  MAGE16A
+     MAGE16B  MAGE16C  MAGE16M  MAGE18A  MAGE18B  MAGE18C  MAGE18D  MAGE18E
+     MAGE18Y  MAGE18Z  MEKRAT   MGBILL01 MGKHOL01 MGTEOS01 OBSHAL05 PBHUNT03
+     PIRMUR07 PPAPH2   PPAPHRIL PPCOWLED PPDRA2   PPDRADEE PPSANIK  PPWANEV
+     PPWANEV2 PPWORKER REDRAD01 RUMAR01  SARMIST  SENLICH  STMAGE   TANWIZ02
+     TANWIZ03 TANWIZ04 TERRECE  TRCUT05  TRFUED01 UDDOOR05 UDDROW19 UDTRAP02
+     UDTRAP04 UDVITH   VARA     WYVMAG14 YARMY03  YSMAGE02~
+                               editstring=~kit=>NO_KIT~
+     END
+
+
+     // missing scripts
+
+     LAF edit_creature STR_VAR creature=~iogremag c6tanov plass01 ppnalj2~ editstring=~insert_script_low=>mage6c~ END
+     LAF edit_creature STR_VAR creature=garrick editstring=~swap_script=>"mage2=>mage6c"~ END
+
+     // scripts not needed
+     
+     LAF edit_creature STR_VAR creature=~bodtan c6tanov c6bguard~ editstring=~strip_script=>vampir01~ END
+     LAF edit_creature STR_VAR creature=slmage2 editstring=~strip_script=>"areawarn antifire"~ END
+     LAF edit_creature STR_VAR creature=scroll01 editstring=~strip_script=>runenemy~ END
+     LAF edit_creature STR_VAR creature=~gith04~ editstring=~strip_script=>gith04~ END
+     LAF edit_creature STR_VAR creature=~gith05~  editstring=~strip_script=>gith05~ END
+
+      // not really mages
+
+     LAF edit_creature STR_VAR creature="daelf daelf2" editstring=~strip_script=>mage8a~ END
+
+     // shouldn't prep
+     
+     LAF edit_creature STR_VAR creature=~clone1 ppireni2~ editstring=~add_items=>dw#nopre~ END
+
+     // shouldn't use sequencers
+     
+     LAF edit_creature STR_VAR creature=bazdra01 editstring=~add_items=>dw#noseq~ END // saved for dragon form
+
+     // class corrections
+     
+     LAF edit_creature STR_VAR creature=~amfaheed drshch01 c6bguard c6tanov~ editstring=~class=>FIGHTER_MAGE~ END
+     LAF edit_creature STR_VAR creature=~repthf1~ editstring=~class=>MAGE_THIEF~ END
+     LAF edit_creature STR_VAR creature=~kobscr01 kobwit01 mekimp01 sevpat03 telwrai sarmag01 rumar03 c6tanov ~ editstring=~class=>MAGE~ END
+
+     // illegal items
+
+     LAF edit_creature STR_VAR creature=kruin editstring=~remove_items=>plat01~ END
+     LAF edit_creature STR_VAR creature=gorcamb editstring=~remove_items=>chan07~ END
+
+     // Maevar needs to lose his armour (unless IR is installed)
+     ACTION_IF !(MOD_IS_INSTALLED ~item_rev/item_rev.tp2~ 0) THEN BEGIN
+	   LAF edit_creature STR_VAR creature=maevar editstring=~remove_items=>leat08~ END
+     END
+
+     // Gith captains are fighter/mages who foolishly wear plate mail.
+     // Make it special can-cast-in undroppable plate.
+
+     LAF clone_item STR_VAR item=~plat01=>dw#gplat~ editstring=~delete_opcodes=>145 droppable=>0~ END
+     LAF edit_creature STR_VAR creature=gith06 editstring=~swap_items=>"plat01=>dw#gplat"~ END
+
+     // yuan-ti in Keep  use haste sequencers (and need to be L14 to *have* sequencers)
+     // the same group of yuan-ti turn up in a random spawn. This is a little too powerful so
+     // we tone it down a bit
+
+     LAF clone_creature STR_VAR creature=~icyuan03=>dw#icyua~ END
+     LAF edit_creature STR_VAR creature=icyuan03 editstring=~level=>14 add_items=>dw#haste~ END
+
+     LAF swap_text STR_VAR files=spwnmon.bcs
+                           swaps=~CreateCreature("icyuan03",[-1.-1],0)=>NULL
+                                   CreateCreature("icyuan02",[-1.-1],0)=>CreateCreature("icyuan02",[-1.-1],0)CreateCreature("icyuan03",[-1.-1],0)CreateCreature("dw#icyua",[-1.-1],0)CreateCreature("dw#icyua",[-1.-1],0)~
+
+     END
+
+     // irenicus isn't a lich, but should be immune to normal and +1 weapons (the player is)
+     LAF edit_creature STR_VAR creature=hellslay editstring=~race=>DEMONIC class=>FIGHTER_MAGE add_items=>immune2~ END
+     // slight glitch in Irenicus's hp caused by helllsay/helljon mismatch
+     LAF edit_creature STR_VAR creature=helljon editstring=~hitpoints=>217~ END
+
+
+     // copies of lich01 for variety
+     OUTER_FOR (i=1;i<=9;i+=1) BEGIN
+        LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~lich01=>dw#lich%i%~ END
+     END
+     LAF install STR_VAR file=~makelich.cre dw#mklch.baf~ location=resource END
+
+     // The drow duelist shouldn't leave the pit
+     LAF edit_creature STR_VAR creature=uddrow17 editstring=~add_items=>dw#notel~ END
+
+     // Fire lich (only for improved Yaga Shura's lair)
+
+     LAF edit_creature STR_VAR creature=firlch01 editstring=~immunity_to_spell=>"INCENDIARY_CLOUD METEOR_SWARM"~ END
+
+     // Kuo-toa wizards need a Continue() in their truesight
+
+     ACTION_IF !FILE_EXISTS_IN_GAME ~dw#priest.mrk~ BEGIN
+        LAF swap_text STR_VAR files=~kuotoa.bcs~ swaps=~ReallyForceSpell(Myself,KOA_TRUE_SIGHT_NO_VIS)=>ReallyForceSpell(Myself,KOA_TRUE_SIGHT_NO_VIS)Continue()~ END
+     END
+     // remove pointless truesight requested by the AR5002 area file
+
+     MAKE_PATCH
+        type=>actor
+        check=>gromg05
+        match=>actor_resource
+        script_override=>~~
+     END
+     
+     LAF edit_area STR_VAR area=ar5002 editstring=~patch_conditionally=>patch_data~ END
+
+    // no pre-buffing deer, please.
+
+	<<<<<<<< .../stratagems-inline/dw#drow61.baf
+	IF
+		!Allegiance(Myself,ENEMY)
+	THEN
+		RESPONSE #100
+			NoAction()
+	END
+	>>>>>>>>
+
+     LAF extend STR_VAR file=61drow bottom=dw#drow61 inline=yes END
+
+     // liches who lack detect-invisible-by-script
+     LAF edit_creature STR_VAR creature=~grvlch01 hlshang~ editstring=~quick_effect=>"opcode=>173 parameter2=>1"~ END
+
+     // Let the Crooked Crane lich bar the door
+     OUTER_INNER_PATCH ~~ BEGIN SET lichstring=RESOLVE_STR_REF (@217) END
+
+     MAKE_PATCH
+        type=>trigger
+        match=>trigger_name
+        check=>Tran0021
+        trigger_name=>DMWWFakeExit
+        trigger_info=>~%lichstring%~
+        trigger_type=>1
+     END
+
+     LAF edit_area STR_VAR area=ar0082 editstring=~clone_entry=>patch_data~ END
+     OUTER_SPRINT $patch_data(~check~) Tran0082
+     LAF edit_area STR_VAR area=ar0021 editstring=~clone_entry=>patch_data~ END
+
+     ACTION_FOR_EACH area IN ar0021 ar0082 BEGIN
+        LAF extend_area_script STR_VAR area bottom=EVALUATE_BUFFER ~%area%~ location=resource END
+     END
+
+       COPY_EXISTING ~ppjon.bcs~ ~override~
+              DECOMPILE_AND_PATCH BEGIN
+              REPLACE_TEXTUALLY
+              		       ~ForceSpell(Myself,DO_NOTHING)~
+              		       ~ReallyForceSpell(Myself,WIZARD_STONE_SKIN)
+              		       ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
+              		       ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_ELECTRICITY)
+              		       SetGlobal("ChainContingencyFired","LOCALS",1)
+			       DisplayStringHead(Myself,26328)
+			       ReallyForceSpell(Myself,WIZARD_IMPROVED_MANTLE)
+			       ReallyForceSpell(Myself,WIZARD_SPELL_TURNING)
+			       ReallyForceSpell(Myself,WIZARD_SPELL_IMMUNITY_ABJURATION)
+			       ForceSpell(Myself,DO_NOTHING)~
+              END
+              
+              
+              	// Vithal needs access to mage scripts
+
+     COPY_EXISTING ~udvith.cre~ ~override~
+	   READ_ASCII 0x258 ~script~
+	   WRITE_ASCII 0x258 ~dwvith~ #8
+     LAF swap_text STR_VAR files=dwvith.bcs swaps=EVALUATE_BUFFER ~mage18z=>%script%~ END
+
+            
+       // Meronia needs to vanish if the Harper quest is done
+        
+
+        COPY_EXISTING ~harper.bcs~ ~override/dw#hrpme.bcs~
+        COPY_EXISTING ~harpclr.bcs~ ~override~
+        EXTEND_TOP ~dw#hrpme.bcs~ ~override/harpclr.bcs~
+        LAF edit_creature STR_VAR creature=meronia editstring=~insert_script_high=>dw#hrpme~ END
+
+     // Sendai statue needs to be quiet till activated
+     
+     	<<<<<<<< .../stratagems-inline/dw#send7.baf
+	IF
+		HasItem("stonring",Myself)
+	THEN
+		RESPONSE #100
+			NoAction()
+	END
+
+	>>>>>>>>
+
+        LAF install STR_VAR file=dw#send7.baf inline=yes END
+        LAF edit_creature STR_VAR creature=sendai7 editstring=~insert_script_high=>dw#send7~ END
+
+
+    // if the vampire component is installed, strip vampire weapons from bodtan, c6tanov, and c6bguard
+
+     LAF check_label STR_VAR label=dw#vampire RET value=value END
+     ACTION_IF value BEGIN
+        LAF edit_creature STR_VAR creature=~bodtan c6tanov c6bguard~ editstring=~remove_items=>"dw#vmbat dw#vmwol dw#bldd dw#bldd2 dw#bldd3 dw#bldd4 dw#bldd5"~ END
+     END
+
+     // compatibility issues
+
+     // questpack bug with Tanova (also, skip unneeded scripts)
+     LAF edit_creature STR_VAR creature=bodtan editstring=~strip_script=>"mage16c1 vamemi01 d0pqtan2 insert_script_high=>mage6c"~ END
+     // questback bug in kpsham01
+     LAF edit_creature STR_VAR creature=kpsham01 editstring=~swap_script=>"mage12dg=>mage12d"~ END
+
+     	// Mordenkainen's Sword should have 36 hp, but TheBigg's max-hp patch shifts its hp to 80. I assume this
+	// is unintentional, so we fix it.
+     LAF edit_creature STR_VAR creature=sword01 editstring=~hp_currentLT=>36 hp_maxLT=>36~ END
+
+
+
+
+   END
+   ACTION_IF is_bg1=1 BEGIN
+
+   LAF action_check_ini STR_VAR ini=Enable_Easy_Option RET allow_easy=value END
+
+
+     // unneeded protective items
+     
+     ACTION_IF allow_easy=0 BEGIN
+        LAF edit_creature STR_VAR creature=~ashiru flamsco flamwiz galdor kahrk semaj tellan davaeo andris cowled garan shaldr~ editstring=EVALUATE_BUFFER ~remove_items=>"%tutu_var%mage03 %tutu_scriptm%agebrac"~ tv=yes END
+     END
+
+     // illegal items
+     
+     LAF edit_creature STR_VAR creature=dopfue tv=yes editstring=EVALUATE_BUFFER ~remove_items=>%tutu_var%chan01~ END
+
+      // class corrections
+      
+     LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_var%surgeo %tutu_scriptd%uplica3 %tutu_scriptd%uplica6 %tutu_var%islann %tutu_var%larria %tutu_var%tellan~ editstring=~class=>MAGE~ END
+     LAF edit_creature STR_VAR creature=fuerne tv=yes editstring=~class=>BARD~ END
+
+     // doppelgangers
+
+     LAF edit_creature STR_VAR creature=~dopfue d2fue~ editstring=~class=>FIGHTER_MAGE remove_items=>dw#nopre add_items=>dw#nopre~ tv=yes END
+
+     // shouldn't prep
+     
+     LAF edit_creature STR_VAR creature=~arlin pargus silke~ editstring=~remove_items=>dw#nopre add_items=>dw#nopre~ tv=yes END
+
+     // should casually use AoE magic
+     
+     LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scripto%grema_a %tutu_scripto%grema_b %tutu_scripto%grema_c %tutu_scripto%grema_d %tutu_var%ogrema %tutu_var%natash %tutu_var%davaeo~
+                               editstring=~remove_items=>dw#area add_items=>dw#area~
+     END
+
+     //unneeded scripts
+     
+     LAF edit_creature STR_VAR creature=silke editstring=EVALUATE_BUFFER ~strip_script=>%tutu_scripts%eeenemy~ tv=yes END
+
+     // Centeol: presumably has lost her magic, but might as well use her frost wand
+
+     LAF edit_creature STR_VAR creature=centeo editstring=EVALUATE_BUFFER ~remove_items=>%tutu_var%wand06 add_items=>%tutu_var%wand06~ tv=yes END
+     LAF edit_area STR_VAR area=EVALUATE_BUFFER ~%CloakwoodNestSpiderNest%~ editstring=EVALUATE_BUFFER ~delete_entries_inline=>"type=>item match=>item_resource check=>%tutu_var%wand06"~ END
+
+     // Tarnesh should melee
+
+     LAF edit_creature STR_VAR creature=tarnes tv=yes editstring=~remove_items=>dw#magme add_items=>dw#magme~ END
+
+    // chess team arguably shouldn't buff
+    
+    LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scriptbg%queen %tutu_scriptbg%king~ editstring=~add_items=>dw#nopre~ END
+
+
+     ACTION_IF allow_easy=0 BEGIN // for the sake of efficiency and safety, block this out on diff-sensitive install
+
+	// Lendarn and the Firewine Ogre Mage
+	// Lendarn begins out of sight, with a Wizard Eye securing his original position
+	
+        LAF install STR_VAR file=~lendarn.baf dw#lespy.baf~ location=resource END
+        LAF edit_creature STR_VAR creature=lendar tv=yes editstring=~insert_script_high=>lendarn add_items=>"dw#noinv dw#area"~ END
+
+        // get the "wizard eye" string
+        
+        COPY_EXISTING ~%WIZARD_EYE%.spl~ override
+             READ_LONG 0x8 wizardeye
+        BUT_ONLY
+        COPY ~%scsroot%/%component_loc%/resource/dw#lenwi.cre~ ~override~
+           WRITE_LONG 0x8 wizardeye
+           WRITE_ASCII 0x248 dw#lespy (8)
+
+
+        // Andris: has a script allowing him to DD away and re-buff, plus a necessary start-dialog block.
+
+        LAF edit_creature STR_VAR creature=andris tv=yes editstring=~add_items=>minhp1~ END
+        LAF install STR_VAR file=dw#andri.spl location=resource END
+    
+          // get the "Contingency" string
+    
+    COPY_EXISTING ~%WIZARD_CONTINGENCY%.spl~ ~override~
+         READ_LONG 0x8 contingency
+    BUT_ONLY
+    COPY_EXISTING ~dw#andri.spl~ ~override~
+         WRITE_LONG 0x8 contingency
+
+     // debugging code for andris
+     
+     <<<<<<<< .../stratagems-inline/killandris.baf
+IF
+  Global("DMWWKillAndris","GLOBAL",1)
+THEN
+    RESPONSE #100
+             SetGlobal("DMWWKillAndris","GLOBAL",0)
+             Kill("andris")
+             Continue()
+END
+>>>>>>>>
+
+    LAF extend_area_script STR_VAR area=EVALUATE_BUFFER ~%IceIslandMaze_L1%~ top=killandris inline=yes END
+
+   END
+
+   END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////               Post-main edits (if possible put things in pre-main instead)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mage_edits_after BEGIN
+   ACTION_IF is_bg2=1 BEGIN
+
+     // flag Kruin as Wild Mage
+     LAF edit_creature STR_VAR creature=kruin editstring=~kit=>WILDMAGE~ END
+
+     // creatures with their own scripts
+     
+     MAKE_PATCH
+        ppaph2=>dw#aphri
+        ppdra2=>dw#drade
+        ppwanev2=>dw#wanev
+        ppnalj2=>dw#nalje
+        irethf05=>dw#ireth
+        kruin=>dw#kruin
+        ppireni2=>ppjon2
+        gorlic01=>gorlic01
+        firlch01=>firlch01
+        hellslay=>hellslay
+     END
+     ACTION_PHP_EACH patch_data AS creature=>script BEGIN
+        LAF edit_creature STR_VAR creature editstring=EVALUATE_BUFFER ~strip_scs_scripts=>null insert_script_low=>%script%~ END
+     END
+
+     // party allies
+     
+     LAF edit_creature STR_VAR creature=~ppaph2 ppdra2 ppwanev2 ppnalj2 irethf05~ editstring=~add_items=>dw#mally~ END
+
+
+      // Azamantes needs at least one Alacrity
+
+      LAF edit_creature STR_VAR creature=gorlic01 editstring=~patch_cond_inline=>"type=>none match=>has_spell match_parameter=>spwi924 check=>1 add_spells=>IMPROVED_ALUCRITY"~ END
+
+
+
+
+   END
+
+   ACTION_IF is_bg1=1 BEGIN
+
+
+     // Davaeorn
+     
+     LAF edit_creature STR_VAR creature=davaeo tv=yes editstring=EVALUATE_BUFFER ~strip_scs_scripts=>null strip_script=>%tutu_scriptd%avaeorn insert_script_low=>%tutu_scriptd%avaeorn~ END
+
+      // Daitel
+
+     LAF edit_creature STR_VAR creature=daitel tv=yes editstring=EVALUATE_BUFFER ~strip_scs_scripts=>null strip_script=>%tutu_var%daitel insert_script_low=>%tutu_var%daitel~ END
+     
+     // Liia Jannath
+
+     ACTION_IF GAME_IS ~tutu tutu_totsc~ BEGIN
+        LAF clone_script STR_VAR script=~liia=>_liia~ END
+     END
+
+     LAF edit_creature STR_VAR creature=~liia~ tv=yes editstring=~remove_items=>dw#mally add_items=>dw#mally strip_scs_scripts=>null~ END
+
+   
+   END
+
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////               Handle INNOCENTs
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION innocent_mages RET list BEGIN
+
+    OUTER_SPRINT list ~~
+    LAF install STR_VAR file=dw#innmg.baf location=resource END
+    ACTION_IF is_bg1=1 BEGIN
+       ACTION_FOR_EACH innocent IN
+          BENTHA BENTLY BRIELB ENTILL LANDRI LIIA PHLYDI PHLYDI2
+          RINNIE ULRAUN FIREB1 FIREBE
+       BEGIN
+          OUTER_PUSH list ~%tutu_var%%innocent%~
+       END
+    END
+    ACTION_IF is_bg2=1 BEGIN
+       OUTER_PUSH list ~SCROLL01~
+    END
+    LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%list%~ editstring=~strip_script=>dw#innmg insert_script_high=>dw#innmg~ END
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////               Build scripts for clones to use
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_clone_scripts BEGIN
+   OUTER_SPRINT simulacrum ~IsOption3=True&HasNoPrep=True&HasNoContingency=True&MageTypeContingencyFile=chaincont_core&HasL1=True&HasL2=True&HasL3=True&HasL4=True&HasL5=True&HasL6=True&HasL7=True&HasL8=True&HasL9=True&optiontwosub1=&optiontwosub2=&HasNoSequencer=True~
+   ACTION_FOR_EACH kit IN INV ENC NEC CON BEGIN
+      ACTION_MATCH ~%kit%~ WITH
+            ENC BEGIN
+                OUTER_SPRINT variables ~IsEnchanter=True&IsEnchanterStreamline=True~
+            END
+            INV BEGIN
+                OUTER_SPRINT variables ~IsEvoker=True&IsEvokerStreamline=True~
+            END
+            NEC BEGIN
+                OUTER_SPRINT variables ~IsNecromancer=True&IsNecromancerStreamline=True~
+            END
+            CON BEGIN
+                OUTER_SPRINT variables ~IsConjurer=True&IsConjurerStreamline=True~
+            END
+            DEFAULT
+                LAF display_warning STR_VAR warning=~Major Error in Clone-making script!~ END
+            END
+     OUTER_SPRINT variables ~%variables%&%simulacrum%~
+     LAF ssl_to_baf STR_VAR script=dw#mage variables location=~mage/ssl/bg2/main~ END
+     OUTER_SPRINT variables ~%variables%&IsLich=True&ImmuneToL5=True&ImmuneToNormal=True~
+     LAF ssl_to_baf STR_VAR script=dw#lich variables location=~mage/ssl/bg2/main~ END
+     COPY ~%workspace%/ssl_out/dw#mage.baf~ ~%workspace%/dw#2%kit%i.baf~
+     COPY ~%workspace%/ssl_out/dw#lich.baf~ ~%workspace%/dw#2%kit%j.baf~
+     COMPILE EVALUATE_BUFFER ~%workspace%/dw#2%kit%i.baf~
+     COMPILE EVALUATE_BUFFER ~%workspace%/dw#2%kit%j.baf~
+   END
+
+   OUTER_SPRINT variables ~%simulacrum%&IsHighLevel=True&IsKensai=True&IsBerserker=True&IsBarbarian=True~
+   LAF ssl_to_bcs STR_VAR script=dw#fgmag variables location= ~mage/ssl/bg2/main~ rename_to=dw#imgfm END
+   OUTER_SPRINT variables ~%variables%&ImmuneToNormal=True~
+   LAF ssl_to_bcs STR_VAR script=dw#fminv variables location=~mage/ssl/bg2/main~ rename_to=dw#fmiim END
+   LAF ssl_to_bcs STR_VAR script=dw#mvamp variables location=~mage/ssl/bg2/main~ rename_to=dw#mvaim END
+
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////            Build scripts for individual mages                 //////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_individual_mage_scripts 
+    INT_VAR prebuff=1
+BEGIN
+
+   ACTION_FOR_EACH game IN bg1 bg2 BEGIN
+      ACTION_IF $is(~%game%~)=1 BEGIN
+         ACTION_IF ~%game%~ STRING_EQUAL_CASE bg1 BEGIN
+            OUTER_SPRINT tv ~%tutu_var%~
+         END ELSE BEGIN
+            OUTER_SPRINT tv ~~
+         END
+         LAF get_mage_prebuff_variables STR_VAR game prebuff RET variables=variables END
+         ACTION_BASH_FOR ~%scsroot%/mage/ssl/%game%/special~ ~.*\.ssl~ BEGIN
+            LAF ssl_to_bcs STR_VAR variables=EVALUATE_BUFFER ~MageTypeContingencyFile=chaincont_core&%variables%~ script=EVALUATE_BUFFER ~%BASH_FOR_RES%~ location=EVALUATE_BUFFER ~mage/ssl/%game%/special~ rename_to=EVALUATE_BUFFER ~%tv%%BASH_FOR_RES%~  END
+         END
+      END
+   END
+   
+   // davaeorn is special case
+
+   ACTION_IF FILE_EXISTS_IN_GAME ~_davaeorn.bcs~ BEGIN
+      COPY_EXISTING ~_davaeorn.bcs~ ~override/_avaeorn.bcs~
+   END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+///      Find mage scripts. Return 1 if found with a BG1 script, 2 if with a BG2 script. If there's a replacement in mage/scripts,
+///      compile it; otherwise, blank the slot
+///////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_find_mage_scripts
+   STR_VAR filename=""
+   RET value
+BEGIN
+   LAUNCH_PATCH_MACRO read_in_mage_scripts
+   SET value=0
+   FOR (i=0x248;i<0x270;i+=8) BEGIN
+      READ_ASCII i script
+      TO_LOWER script
+      INNER_PATCH_SAVE script ~%script%~ BEGIN
+         REPLACE_TEXTUALLY "_" ""
+      END
+      SET here=0
+      PATCH_FOR_EACH game IN 1 2 BEGIN
+         PATCH_IF ($is(EVALUATE_BUFFER ~bg%game%~)=1 && VARIABLE_IS_SET $mage_script(EVALUATE_BUFFER ~bg%game%~ ~%script%~)) BEGIN
+            SET here=1
+            SET value=game
+         END
+      END
+      PATCH_IF here=1 BEGIN
+         SET replace=0
+         INNER_ACTION BEGIN
+              ACTION_IF FILE_EXISTS ~%scsroot%/%component_loc%/scripts/%script%.baf~ BEGIN
+                 ACTION_IF GAME_IS ~tutu tutu_totsc~ BEGIN
+                    COPY ~%scsroot%/%component_loc%/scripts/%script%.baf~ ~%workspace%/_%script%.baf~
+                    COMPILE EVALUATE_BUFFER ~%workspace%/_%script%.baf~
+                    SILENT
+                 END ELSE BEGIN
+                    LAF install STR_VAR file=EVALUATE_BUFFER ~%script%.baf~ location=scripts END
+                    SILENT
+                 END
+                 OUTER_SET replace=1
+              END
+         END
+         PATCH_IF replace=0 BEGIN
+            WRITE_ASCII i ~~ (8)
+         END
+      END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////            Make needed resources                 //////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
+
+
+   // markers (I'm not sure all are used in current scripts, but we'll err on the side of caution)
+
+   ACTION_FOR_EACH marker IN fgmag dispe notel mally fminv haste nopre noseq deseq diseq area morhw magme BEGIN
+      LAF clone_item STR_VAR item=EVALUATE_BUFFER ~misc16=>dw#%marker%~ editstring=~droppable=>0~ END
+   END
+   
+   // reckless dweomer
+
+   LAF install STR_VAR files=dw#nahal.spl location=resource END
+
+   // melf, and EB
+
+   LAF install STR_VAR files=dw#melf.spl location=resource END
+   LAF clone_item STR_VAR item=~melfmet=>dw#melf eneblade=>dw#eneb~ allow_missing=yes END // may not be present on BG1 install
+   COPY_EXISTING dw#melf.spl override WRITE_ASCII 0xae dw#melf (8)              // legacy coding - but I control the file
+   COPY_EXISTING dw#melf.spl ~override/dw#eneb.spl~ WRITE_ASCII 0xae dw#eneb (8)
+
+  ACTION_IF is_bg2=1 BEGIN
+
+   // if SR is not installed, mark Mord. swords as vulnerable to ADHW
+
+   ACTION_IF demivrgvs=0 BEGIN
+        LAF edit_creature STR_VAR creature=sword01 editstring=~add_items=>dw#morhw~ END
+   END
+    
+    // if SR is installed, make NPC versions of Symbol spells
+
+    ACTION_IF ~demivrgvs~=1 BEGIN
+       LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_SYMBOL_FEAR%=>%WIZARD_NPC_SYMBOL_FEAR%
+                                                      %WIZARD_SYMBOL_DEATH%=>%WIZARD_NPC_SYMBOL_DEATH%
+                                                      %WIZARD_SYMBOL_STUN%=>%WIZARD_NPC_SYMBOL_STUN%~
+       END
+    END
+
+    // if Refinements is installed, copy its versions of HLAs back over the originals
+
+    ACTION_IF refinements=1 BEGIN
+       LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~tg#come=>%WIZARD_COMET% tg#drgb=>%WIZARD_DRAGONS_BREATH%~ END
+    END
+    
+    // faster version of Alacrity
+    
+    MAKE_PATCH
+       type=>effect
+       match=>SPL_read_opcode
+       check=>188
+       opcode=>189
+       parameter1=>1
+       parameter2=>0
+    END
+    LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_IMPROVED_ALUCRITY%=>dw#qalac~ editstring=~clone_entry=>patch_data~ END
+
+    // timestop that labels its existence better
+    OUTER_SPRINT temp $patch_data(~type~)
+    PRINT ~%temp%~
+    ACTION_CLEAR_ARRAY patch_data
+    OUTER_SPRINT temp $patch_data(~type~)
+    PRINT ~%temp%~
+    MAKE_PATCH
+        opcode=>177
+        target=>1
+        power=>9
+        parameter1=>0
+        parameter2=>3
+        duration=>6
+        resource=>dw#time
+    END
+    LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_TIME_STOP%~ editstring=~add_effect=>patch_data~ END
+    LAF install STR_VAR files=~dw#time.cre dw#time.eff dw#time.baf~ location=resource END
+    
+    // summoning spells in the absence of Improved Fiends[etc]
+    
+    MAKE_PATCH
+      ~%WIZARD_MORDENKAINENS_SWORD%~=>dw#sumgl
+      ~%WIZARD_MORDENKAINENS_SWORD%~=>dw#cacof
+      ~%WIZARD_MORDENKAINENS_SWORD%~=>dw#sumef
+      ~%WIZARD_WAIL_OF_THE_BANSHEE%~=>dw#basum
+      ~%WIZARD_COMET%~=>dw#plane
+    END
+    ACTION_PHP_EACH patch_data AS base=>replace BEGIN
+       ACTION_IF !FILE_EXISTS_IN_GAME ~%replace%.spl~ BEGIN
+          LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%base%=>%replace%~ END
+       END
+    END
+    
+    // smart clone resources
+    
+    LAF install STR_VAR files=~dw#licim.spl dw#vamim.spl~ location=resource END
+
+    // fix for weird vanilla-game Phantom Blade bug
+
+    ACTION_IF !FILE_EXISTS_IN_GAME ~dvimhere.mrk~ BEGIN
+       LAF edit_item STR_VAR item=phanblad editstring=~patch_cond_inline=>"type=>ability match=>ability_type check=>1 dicenum=>1 dicesize=>8"~ END
+    END
+    
+    // without ToBEx, we can't stop even zero-damage effects from disrupting spells. This stymies Invokers, who would like to stand around in Incendiary Clouds and Meteor Swarms. We get around this
+    // (in an admittedly hacky way) by allowing Pro/Elements to protect entirely from Incendiary Cloud and Meteor Swarm
+    
+    ACTION_IF skip_tobex=0 BEGIN
+       MAKE_PATCH
+       END
+    END ELSE BEGIN
+       MAKE_PATCH
+          clone_entry_inline=>~type=>effect
+                               match=>opcode
+                               check=>84
+                               opcode=>206
+                               parameter1=>0
+                               parameter2=>0
+                               resource=>%WIZARD_INCENDIARY_CLOUD%~
+          clone_entry_inline'=>~type=>effect
+                               match=>opcode
+                               check=>84
+                               opcode=>206
+                               parameter1=>0
+                               parameter2=>0
+                               resource=>%WIZARD_METEOR_SWARM%~
+       END
+       LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_PROTECTION_FROM_THE_ELEMENTS%=>dw#proel~ edits=patch_data END
+
+    END
+
+  
+  END // end of BG2-only section
+
+    // tutu fixes
+
+    ACTION_IF GAME_IS ~tutu tutu_totsc~ BEGIN
+       INCLUDE ~%scsroot%/%component_loc%/fixpack_for_tutu.tph~
+       LAF fixpack_for_tutu END
+
+    END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+///      Build enemy-usable Wish
+///////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ~build_wish_spell~ BEGIN
+
+       MAKE_PATCH
+          patch_cond_inline=>~type=>ability
+                              casting_time=>5
+                              ~
+          patch_cond_inline'=>~type=>effect
+                               match=>opcode
+                               check=>139
+                               timing=>4
+                               duration=>1
+                               ~
+          patch_cond_inline''=>~type=>effect
+                               match=>target
+                               check=>3
+                               target=>5
+                               ~
+          patch_cond_inline'''=>~type=>effect
+                               match=>target
+                               check=>5
+                               target=>3
+                               ~
+       END
+
+       LAF clone_spell STR_VAR spell=~spwish38=>dw#wish1 spwish37=>dw#wish2 spwish17=>dw#wish3 spwish12=>dw#wish4~
+                               edits=patch_data
+       END
+
+       LAF edit_spell STR_VAR spell=dw#wish3 editstring="add_effect_inline=>~opcode=>177 target=>1 power=>9 parameter2=>3 duration=>6 resource=>dw#wtime~" END
+       LAF clone_effect STR_VAR effect=~dw#time=>dw#wtime~ editstring=~resource=>dw#wtime~ END
+       LAF clone_creature STR_VAR creature=~dw#time=>dw#wtime~ edistring=~swap_script=>"dw#time=>dw#wtime"~ END
+
+       ACTION_FOR_EACH ind IN 1 2 3 4 BEGIN
+          LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~spwi919=>dw#wisg%ind%~ editstring=EVALUATE_BUFFER ~patch_cond_inline=>"type=>effect match=>SPL_read_opcode check=>67 resource=>dw#wish%ind%"~ END
+          LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~wish02=>dw#wish%ind%~ editstring=EVALUATE_BUFFER ~swap_script=>"wish01=>dw#wish%ind%" immunity_to_spell=>%DRAGON_WING_BUFFET%~ END
+       END
+
+       LAF install STR_VAR files=~dw#wish1.baf~ location=resource END
+       COPY ~%scsroot%/%component_loc%/resource/dw#wish1.baf~ ~%workspace%~
+       COPY ~%workspace%/dw#wish1.baf~ ~%workspace%/dw#wish2.baf~
+		REPLACE_TEXTUALLY ~@1201~ ~@1202~
+		REPLACE_TEXTUALLY ~@1205~ ~@1206~
+		REPLACE_TEXTUALLY ~dw#wish1~ ~dw#wish2~
+       COPY ~%workspace%/dw#wish1.baf~ ~%workspace%/dw#wish3.baf~
+		REPLACE_TEXTUALLY ~@1201~ ~@1203~
+		REPLACE_TEXTUALLY ~@1205~ ~@1207~
+		REPLACE_TEXTUALLY ~dw#wish1~ ~dw#wish3~
+       COPY ~%workspace%/dw#wish1.baf~ ~%workspace%/dw#wish4.baf~
+		REPLACE_TEXTUALLY ~@1201~ ~@1204~
+		REPLACE_TEXTUALLY ~@1205~ ~@1208~
+		REPLACE_TEXTUALLY ~dw#wish1~ ~dw#wish4~
+		
+	ACTION_FOR_EACH ind IN 1 2 3 4 BEGIN
+	  COMPILE EVALUATE_BUFFER ~%workspace%/dw#wish%ind%.baf~
+        END
+		
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+///      Handle the Mislead spell
+///////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mislead BEGIN
+
+   // make the spells
+   
+   // offensive spells - strip all abilities, all effects
+   
+   MAKE_PATCH
+      FIREBALL=>dw#mlfir
+      ABI_DALZIMS_HORRID_WILTING =>dw#mlwil
+      SYMBOL_STUN=>dw#mlstu
+      SYMBOL_DEATH=>dw#mldea
+      DOMINATION=>dw#mldom
+      FINGER_OF_DEATH=>dw#mlfin
+      POWER_WORD_BLIND=>dw#mlpwb
+      POWER_WORD_STUN=>dw#mlpws
+      CONE_OF_COLD=>dw#mlcoc
+      SUN_FIRE=>dw#mlsun
+   END
+
+   ACTION_PHP_EACH patch_data AS spell_in=>spell_out BEGIN
+      OUTER_SPRINT spellcode EVALUATE_BUFFER ~%WIZARD_%spell_in%%~
+      LAF mislead_offensive_spell STR_VAR spellcode spell_out END
+      OUTER_SPRINT EVALUATE_BUFFER ~WIZARD_%spell_in%_VISUALS_ONLY~ ~%spell_out%~
+   END
+
+   // defensive spells - strip opcodes that actually do something
+
+   MAKE_PATCH
+       PROTECTION_FROM_MAGIC_WEAPONS =>dw#mlpmw
+       IMPROVED_MANTLE =>dw#mlman
+       MINOR_GLOBE_OF_INVULNERABILITY =>dw#mlglb
+       FIRE_SHIELD_RED=>dw#mlfsr
+       FIRE_SHIELD_BLUE=>dw#mlfsb
+       SPELL_TURNING=>dw#mlstn
+       GHOST_ARMOR=>dw#mlgho
+       SPELL_IMMUNITY_ABJURATION=>dw#mlsia
+   END
+
+
+   ACTION_PHP_EACH patch_data AS spell_in=>spell_out BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME ~%spell_out%.spl~ BEGIN
+         LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%spell_out%~ editstring= ~delete_opcodes=>"101 102 120 206 28 85 30 232 142 200 221"~ END
+      END ELSE BEGIN
+        OUTER_SPRINT spell EVALUATE_BUFFER ~%WIZARD_%spell_in%%=>%spell_out%~
+        LAF clone_spell STR_VAR spell editstring=~delete_opcodes=>"101 102 120 206 28 85 30 232 142 200 221"~ END
+        OUTER_SPRINT EVALUATE_BUFFER ~WIZARD_%spell_in%_VISUALS_ONLY~ ~%spell_out%~
+      END
+   END
+   
+   // install the script
+
+   LAF ssl_to_bcs STR_VAR script=dw#mislm location=~mage/ssl/bg2/main~ END
+
+   // attach the script
+   
+   ACTION_IF FILE_EXISTS_IN_GAME ~d0mislea.baf~ BEGIN
+      EXTEND_TOP d0mislea.baf ~override/dw#mislm.bcs~
+   END ELSE BEGIN
+           LAF edit_spell STR_VAR spell=mislead editstring=~add_effect_inline=>"opcode=>82 target=>1 power=>0 parameter2=>6 timing=>9 resource=>dw#mislm"~ END
+   END
+
+   // remove visual difference between image and original
+
+   LAF edit_spell STR_VAR spell=mislead editstring=~delete_opcodes=>8~ END
+
+   // hide telltale features of the sequencer version of Mislead
+   
+   LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_MISLEAD_INSTANT%~ editstring=~delete_opcodes=>"215 139"~ END
+
+END
+
+////////////////////////////////////// subsidary function ///////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mislead_offensive_spell
+STR_VAR spellcode=""
+        spell_out=""
+BEGIN
+   COPY_EXISTING ~%spellcode%.spl~ override
+         READ_ASCII 0x0 header (0x72) //   header
+         READ_SHORT 0x64 ab_off
+         READ_ASCII ab_off ability (0x28)
+   BUT_ONLY
+
+   COPY ~.../stratagems-inline/blank~ ~override/%spell_out%.spl~
+         INSERT_BYTES 0x0 0x28
+         WRITE_ASCIIE 0x0 ~%ability%~
+         INSERT_BYTES 0x0 0x72
+         WRITE_ASCIIE 0x0 ~%header%~
+         WRITE_LONG 0x64 0x72
+         WRITE_SHORT 0x68 1
+         WRITE_LONG 0x6a 0x9a
+         WRITE_SHORT 0x70 0
+         WRITE_SHORT 0x90 0
+         WRITE_SHORT 0x92 0
+END
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+///      Read in mage scripts (i.e. those we aim to replace)
+///////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_mage_scripts BEGIN
+   OUTER_INNER_PATCH ~~ BEGIN
+      LAUNCH_PATCH_MACRO read_in_mage_scripts
+   END
+END
+
+DEFINE_PATCH_MACRO read_in_mage_scripts BEGIN
+    PATCH_IF !(VARIABLE_IS_SET ~mage_scripts_read~) BEGIN
+       SET mage_scripts_read=1
+       PATCH_FOR_EACH script IN
+            mage1 mage2 mage3 mage4 mage5 mage6 mage7 mage8 ogremage gremage
+            daitel galdor semaj andris davaeorn avaeorn angelo silke niemain resar
+       BEGIN
+          TO_LOWER ~script~
+          SPRINT $mage_script_bg1(EVALUATE_BUFFER ~%script%~) ~~
+       END
+       PATCH_FOR_EACH script IN
+mage18d magehigh mage10a mage10b mage10c mage10d mage11  mage12a mage12b mage12c mage12d
+mage12e mage14a mage14b mage14c mage14d mage14m mage14t mage16a
+mage16b mage16c mage16m mage18a mage18b mage18c mage18d mage18e
+mage18y mage18z mage20a mage20b mage20c mage4a  mage4b  mage6a  mage6b
+mage6c  mage8a  mage8b  mage8c  mage8d  mage8e  amlich02 draconis
+cmage20a zilmag01 gpmage1  tief3 teltief3 cmage20a cmage20b ogmagi01 clone1   cowenf02
+cowenf01 cowenf03 cowenf04 degard2 kuomag01 duemag01 gpmage2  kproen02
+neva     obshal03 demmag   gorcamb2 lyros    hgwiz01  ppjon2   sujon
+hlsion   gorstam  BPCMAG2A BPCMAG2B BPGPMAG1 BPGPMAG2 BPMAGE3  BPMAGE5
+BPMAGE6  BPMAGE6A BPMAGE6B BPMAGE6C BPMAGE7  BPMAGE8  BPMAGE8A BPMAGE8B
+BPMAGE8C BPMAGE8D BPMAGE8E BPMAG10A BPMAG10B BPMAG10C BPMAG10D BPMAGE11
+BPMAG12A BPMAG12B BPMAG12C BPMAG12D BPMAG12E BPMAG14A BPMAG14B PMAG14C
+BPMAG14D BPMAG14M BPMAG14T BPMAG16A BPMAG16B BPMAG16C BPMAG16M BPMAG18A
+BPMAG18B BPMAG18C BPMAG18D BPMAG18E BPMAG18Y BPMAG18Z BPMAG20A BPMAG20B BPMAG20C
+figmag06 figmag10 figmag16 figmag06 fgtmag14 trfued05 ckmag20b ppmag01
+gith06   githfgmg jangit01 illasera magthf14 thiefmag shadmt1 maevar chgood08
+BPMAEVAR BPCKMG2B BPCFIG3B aesgar lavok01    d0mvcler tolger mekrat raksha02
+rakmah01 rakruh01 rerak01  rerak02 spseq12a spseq14a spseq16a pwarden
+telwrai  gororc03 bg2mage2
+BEGIN
+          TO_LOWER ~script~
+          SPRINT $mage_script_bg2(EVALUATE_BUFFER ~%script%~) ~~
+       END
+    END
+END
+
+
+

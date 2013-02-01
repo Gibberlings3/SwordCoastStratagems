@@ -1,0 +1,489 @@
+/*
+
+Vanilla fallen solar:
+
+- heal 1/5 rds
+- vocalise at will
+- free action at will (used to avoid web/entangle/slow)
+- truesight 1/10 rds
+- death spell 1/5 rds
+- confusion three times total
+- earthquake three times total
+- creeping doom once
+- remove magic at will
+- finger of death once
+- fire storm once
+- unholy word three times
+- imprisonment once
+- improved invisibility at will
+- "nalmissra_charm" three times (save at -2; other minor effects)
+- prismatic spray once
+
+Also casts startlingly fast, has permanent haste, immune to basically any movement-blocking attacks.
+170-odd hp, regenerates at 40 hp/round (maybe faster given haste, not sure). Immune to all damage
+types except fire; 50% resistance to physical damage; 85% magic resistance.
+
+Immune to +3 weapons. Armed with a bow whose arrows have a dispel effect (and sometimes kill on 
+contact) and a vorpal mace.
+
+
+Ascension one replaces Nalmissra charm with Erinyes charm (save at -5)
+
+We'll go with the Ascension version, but we'll replace Imprisonment (which is ridiculously lethal
+if cast instantly) with a "Disjunction" power that strips all magic defences and is usable once per 4 rounds. We'll also allow teleportation.
+
+We'll de-chunkify the mace (as with Balors), shift the resistances to be 50% vs electricity/acid
+and 100% vs fire. We'll not bother with vocalise, on the grounds that probably we've got instacasting
+installed.
+
+*/
+
+INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions.ssl)
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackRanged)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		EquipRanged()
+		Attack(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellTimer)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellMyselfTimer)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(Myself,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellTimerRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDecRES(scsargument1,scstarget)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Death agonies
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+IF
+	Die()
+THEN
+	RESPONSE #100
+		CreateVisualEffectObject("SPUNHOLY",Myself)
+		DestroySelf()
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Spawn rat
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	!Global("spawnedrat","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("spawnedrat","LOCALS",1)
+		CreateCreatureObject("dw#solra",Myself,0,0,0)
+		Continue()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Initialise
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)
+
+
+IF
+	Detect(NearestEnemyOf(Myself))
+	!Global("lostparty","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("lostparty","LOCALS",0)
+		Continue()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	If injured, heal (we won't waste it on allies)
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	HPPercentLT(Myself,60)
+THEN DO
+	Action(SpellMyselfTimer,CLERIC_HEAL,heal,30|100|50)
+END
+
+IF TRIGGER
+	HPPercentLT(Myself,30)
+THEN DO
+	Action(SpellMyselfTimer,CLERIC_HEAL,heal,30|100|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	If no truesights active, consider invisibility. 
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	!StateCheck(Myself,STATE_IMPROVEDINVISIBILITY)
+	TriggerBlock(TruesightSafe)
+THEN DO
+	Action(SpellNoDecMyself,WIZARD_IMPROVED_INVISIBILITY|100|100)
+	SetGlobalTimer("invis","LOCALS",5)
+END
+
+IF 
+	GlobalTimerNotExpired("invis","LOCALS")
+	StateCheck(Myself,STATE_INVISIBLE)
+THEN 
+	RESPONSE #100
+		RandomWalkContinuous()
+END
+
+//////////////////////////////////////////////////////////////////////
+//	Consider running away
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	ActionListEmpty()
+	TargetBlock(PCsInOrder)
+	Range(scstarget,8)
+	!Range("dw#solra",20)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Action(Literal|100|100)
+	ForceSpellRES("dw#fitel","dw#solra")
+	SetGlobalTimer("castspell","LOCALS",6)
+END
+
+////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+///	High-powered magic
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Creeping Doom
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TargetBlock(PCsInOrderShort)
+	TargetBlock(Celestials)
+	TriggerBlock(MR100|SIConjuration|Enemy|Helpless)
+THEN DO
+	Action(SpellTimer,CLERIC_CREEPING_DOOM,insects,1000|200|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Earthquake (may hurt allies too, but c'est la vie)
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See([PC])
+	!GlobalGT("earthquake","LOCALS",2)
+THEN DO
+	Action(SpellMyselfTimer,CLERIC_EARTHQUAKE,earthquake,24|100|100)
+	IncrementGlobal("earthquake","LOCALS",1)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Fire Storm
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+THEN DO
+	Combine()
+	Action(SpellTimer,CLERIC_FIRE_STORM,firestorm,1000|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+///	Attack defences
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Disjunction
+///////////////////////////////////////////////////////////////////////////
+// first priority: defence buffs
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellTurn|SIAbjuration|Enemy|Helpless)
+	OR(2)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		CheckStatGT(scstarget,2,STONESKINS)
+THEN DO
+	Action(SpellTimerRES,"dw#soldi",disjunction,24|200|100)
+END
+
+// then antimagic
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	OR(5)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_TURNING)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_DEFLECTION)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_TRAP)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_IMMUNITY)
+		CheckStatGT(scstarget,0,MINORGLOBE)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Action(SpellTimerRES,"dw#soldi",disjunction,24|100|100)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Truesight
+///////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	!CheckStatGT(Myself,0,TRUE_SIGHT)
+	TargetBlock(EnemiesInOrder)
+	OR(2)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		Gender(scstarget,ILLUSIONARY)
+	!Allegiance(scstarget,ENEMY)
+	TriggerBlock(SIDivination)
+THEN DO
+	Action(SpellMyselfTimer,WIZARD_TRUE_SIGHT,truesight,60|150|150)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+///	Lower-powered magic
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////
+////	KILL SUMMONS
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	CheckStatGT(scstarget,10,Level)
+	OR(2)
+		Gender(scstarget,SUMMONED)
+		Gender(scstarget,20)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(SpellTimer,WIZARD_DEATH_SPELL,deathspell,30|150|50)
+END
+
+///////////////////////////////////////////////////////////////////////
+///	Unholy word
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	Range(scstarget,10)
+	TriggerBlock(MR|Enemy|Helpless|SIConjuration)
+	Alignment(scstarget,MASK_GOOD)
+	!Alignment(Myself,MASK_GOOD)
+THEN DO
+	Combine()
+	Action(SpellTimer,CLERIC_UNHOLY_WORD,unholyword,30|200|50)
+END
+
+///////////////////////////////////////////////////////////////////////////
+////	Charm
+///////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Enemy|Helpless|MR|SpellTurn|Charm)
+	CheckStatGT(scstarget,0,SAVEVSSPELL)
+	!GlobalGT("charm","LOCALS",2)
+THEN DO
+	Action(SpellNoDec,ERINYES_CHARM|200|100)
+	IncrementGlobal("charm","LOCALS",1)
+END
+
+///////////////////////////////////////////////////////////////////////
+///	Prismatic spray
+///////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Disabled)
+	Range(scstarget,20)
+THEN DO
+	Combine()
+	Action(SpellTimer,WIZARD_PRISMATIC_SPRAY,spray,1000|100|50)
+END
+
+
+///////////////////////////////////////////////////////////////////////////
+////	Confusion
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(MR100|Confused|SIEnchantment|Enemy|Helpless)
+	!GlobalGT("confusion","LOCALS",2)
+THEN DO
+	Combine()
+	Action(SpellNoDec,WIZARD_CONFUSION|100|100)
+	IncrementGlobal("confusion","LOCALS",1)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Finger of Death
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SpellTurn|Slay|SINecromancy|Enemy)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(SpellTimer,WIZARD_FINGER_OF_DEATH,finger,1000|150|50)
+END
+
+
+///////////////////////////////////////////////////////////////////
+///	Reset targetting
+////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	!Range(NearestEnemyOf(Myself),8)
+	GlobalTimerExpired("stayontarget","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("stayontarget","LOCALS",4)
+		ClearActions(Myself)
+END
+
+
+
+//////////////////////////////////////////////////////////////////////
+//	Melee
+////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(MyWeaponStrength||5)
+BEGIN LOOP(MyWeaponDamageType||Slashing)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+END LOOP
+END LOOP
+
+//////////////////////////////////////////////////////////////////////
+////	Take down magical defences
+//////////////////////////////////////////////////////////////////////
+
+IF TRIGGER 
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|MR)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	!CheckStatGT(scstarget,0,CLERIC_INSECT_PLAGUE)
+	OR(13)
+		CheckStatGT(scstarget,0,STONESKINS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		StateCheck(scstarget,STATE_IMPROVEDINVISIBILITY)
+		StateCheck(scstarget,STATE_BLESS)
+		StateCheck(scstarget,STATE_CHANT)
+		StateCheck(scstarget,STATE_HASTED)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		CheckStatGT(scstarget,0,CLERIC_DEFENSIVE_HARMONY)
+		CheckStatGT(scstarget,0,PROTECTION_FROM_EVIL)
+		CheckStatGT(scstarget,0,CLERIC_PHYSICAL_MIRROR)
+		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_PETRIFICATION)
+		CheckStatGT(scstarget,0,SCRIPTINGSTATE2)
+
+THEN DO
+	Combine()
+	Action(AttackRanged|100|50)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	Just shoot stuff
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackRanged)
+END
+
+IF TRIGGER
+	TargetBlock(PlayersInRandomOrder)
+	TriggerBlock(ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackRanged)
+END
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	Global("lostparty","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("lostparty","LOCALS",1)
+		SetGlobalTimer("losttimer","LOCALS",4)
+END
+
+IF 
+	!Detect(NearestEnemyOf(Myself))
+	Global("lostparty","LOCALS",1)
+	GlobalTimerNotExpired("losttimer","LOCALS")
+THEN
+	RESPONSE #100
+		RandomWalkContinuous()
+END
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	GlobalGT("lostparty","LOCALS",0)
+	!GlobalTimerNotExpired("losttimer","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobal("lostparty","LOCALS",2)
+		MoveToObject(Player1)
+END

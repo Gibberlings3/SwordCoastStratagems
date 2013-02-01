@@ -1,0 +1,179 @@
+////////////////////////////////////////////////////////////////////////
+////        Controlling table
+////////////////////////////////////////////////////////////////////////
+
+<<<<<<<< .../stratagems-inline/clouds.2da
+dw#cldki   spwi502   spl   404    52 True()
+dw#incen   spwi810   spl   409    52 True()
+dw#meteo   spwi911   spl   405    18 False()
+dw#fstor   sppr705   spl   405    18 False()
+dw#vstor   sppr722   spl   407    13 False()
+dw#defog   spwi614   spl   408    52 True()
+dw#cldki   wand13   itm   404	    52 True()
+dw#clweb   spwi215  spl    410    52 False()
+dw#stink   spwi213  spl    411    52 True()
+dw#sweet   sppr318  spl    123    99 True()
+>>>>>>>>
+
+////////////////////////////////////////////////////////////////////////
+////        Scripts
+////////////////////////////////////////////////////////////////////////
+
+<<<<<<<<    .../stratagems-inline/dw#sweet.baf
+IF
+	!Global("init","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("init","LOCALS",1)
+		SetGlobalTimer("DMWWZoneOfSweetAir","GLOBAL",3)
+END
+
+IF
+	GlobalTimerExpired("DMWWZoneOfSweetAir","GLOBAL")
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+>>>>>>>>
+
+<<<<<<<<    .../stratagems-inline/cloud_template.baf
+IF
+	Global("CKInit","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("CKInit","LOCALS",1)
+		SetGlobalTimer("CKtimer","LOCALS",3)
+		SetGlobalTimer("CKtimer2","LOCALS",%timerlength%)
+END
+
+IF
+	%zone%
+	GlobalTimerNotExpired("DMWWZoneOfSweetAir","GLOBAL")
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+
+IF
+	GlobalTimerExpired("CKtimer2","LOCALS")
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+
+
+IF
+	GlobalTimerExpired("CKtimer","LOCALS")
+THEN
+	RESPONSE #100
+		Shout(%shout%)
+END
+>>>>>>>>
+	
+<<<<<<<< .../stratagems-inline/storm_add.baf
+
+	IF
+		Allegiance(LastSummonerOf(Myself),ENEMY)
+	THEN
+		RESPONSE #100
+			DestroySelf()
+	END
+
+>>>>>>>>
+
+////////////////////////////////////////////////////////////////////////
+////        Main function
+////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION detect_cloud BEGIN
+
+  ACTION_IF is_bg2=1 BEGIN
+     //// enemy version of Storm of Vengeance; versions of Met.Sw. and Inc. Cl. for traps
+     
+     LAF clone_spell 
+             STR_VAR spell=EVALUATE_BUFFER ~%CLERIC_STORM_OF_VENGEANCE% => dw#vstor
+                                           %WIZARD_INCENDIARY_CLOUD% => dw#trpin
+                                           %WIZARD_METEOR_SWARM% => dw#trpms~
+             END
+     
+     /// replace the trap spells in scripts
+     
+     LAF swap_text STR_VAR files=~gt016.bcs~ swaps=~ForceSpell(LastTrigger,WIZARD_INCENDIARY_CLOUD) => ForceSpellRES("dw#trpin",LastTrigger)~ END
+     LAF swap_text STR_VAR files=~gt020.bcs~ swaps=~ForceSpell(LastTrigger,WIZARD_METEOR_SWARM) => ForceSpellRES("dw#trpms",LastTrigger)~ END
+
+   END
+     // main work
+     
+
+
+     COPY -  ~.../stratagems-inline/clouds.2da~ ~override~
+		COUNT_2DA_ROWS 1 ~rowcount~
+		FOR (i=0;i<~%rowcount%~;i=i+1) BEGIN
+			READ_2DA_ENTRY i 0 1 ~code~
+			READ_2DA_ENTRY i 1 1 ~resource~
+			READ_2DA_ENTRY i 2 1 ~type~
+			READ_2DA_ENTRY i 3 1 ~shout~
+			READ_2DA_ENTRY i 4 1 ~timerlength~
+			READ_2DA_ENTRY i 5 1 ~zone~
+			INNER_ACTION BEGIN
+			  ACTION_IF FILE_EXISTS_IN_GAME ~%resource%.spl~ BEGIN
+			      //////////////////////////////////////////
+			      // the script for the invisible creature
+                              //////////////////////////////////////////
+
+			      COPY ~.../stratagems-inline/cloud_template.baf~ ~%workspace%/%code%.baf~
+			      COMPILE EVALUATE_BUFFER ~%workspace%/%code%.baf~
+			      
+			      //////////////////////////////////////////
+                              // the creature itself
+                              //////////////////////////////////////////
+
+			      COPY ~%scsroot%\%component_loc%\cre\dw#cloud.cre~ ~override/%code%.cre~
+			      LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%code%~ editstring=EVALUATE_BUFFER ~script_override => %code%~ END
+                              
+                              //////////////////////////////////////////
+                              // the effect that summons it
+                              //////////////////////////////////////////
+
+                              ACTION_CLEAR_ARRAY patch_data
+                              ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+                                  opcode=>67
+                                  target=>1
+                                  power=>9
+                                  parameter1=>0
+                                  timing=>1
+                                  duration=>6
+                                  vvc=>NONE
+                                  resource=>EVALUATE_BUFFER ~%code%~
+                              END
+                              LAF make_effect STR_VAR effect=EVALUATE_BUFFER ~%code%~ edits=patch_data END
+
+			      //////////////////////////////////////////
+                              // the spell
+                              //////////////////////////////////////////
+
+                              ACTION_CLEAR_ARRAY patch_data
+                              ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+                                    opcode=>177
+                                    target=>1
+                                    power=>9
+                                    parameter2=>3
+                                    duration=>60
+                                    resource=>EVALUATE_BUFFER ~%code%~
+                              END
+                              COPY_EXISTING ~%resource%.%type%~ override
+                                  LPF add_effect STR_VAR arguments=patch_data file_prefix=EVALUATE_BUFFER ~%type%~ END
+                              BUT_ONLY
+                           END
+			END
+		END
+       BUT_ONLY
+       
+       ACTION_IF is_bg2=1 BEGIN
+          EXTEND_TOP ~dw#vstor.bcs~ ~.../stratagems-inline/storm_add.baf~
+       END
+       COMPILE ~.../stratagems-inline/dw#sweet.baf~
+
+END

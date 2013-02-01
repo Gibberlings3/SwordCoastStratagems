@@ -1,0 +1,152 @@
+DEFINE_ACTION_FUNCTION golem BEGIN
+        LAF golem_creature_patch END
+        LAF golem_scripts END
+        LAF golem_weapons END
+        LAF golem_spawns END
+        LAF iron_golem_cosmetic END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////// // check if a golem script is installed
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION has_golem_script RET value BEGIN
+       SET value=0
+       PATCH_FOR_EACH arguments IN golcly01 golsto01 goliro01 golice01 golbra01 BEGIN
+          LPF CRE_match_script STR_VAR arguments RET value_here=value END
+          SET value=value=1? 1: value_here
+       END
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////// // grant immunity to poison and lower-resistance effects; strip unneeded scripts
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION golem_creature_patch BEGIN
+
+    // collect golems (hardcoded for speed)
+
+    OUTER_SPRINT creature ~~
+    COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+
+         PATCH_IF BYTE_AT 0x272=144 BEGIN
+           LPF CRE_read_class RET class=value END
+           PATCH_IF ~%class%~ STRING_COMPARE_CASE ~ELEMENTAL_FIRE~ BEGIN // not Burning Men
+            PUSH creature ~%SOURCE_RES%~
+           END
+         END
+    BUT_ONLY
+
+    MAKE_PATCH
+       immunity_to_spell=>~%WIZARD_LOWER_RESISTANCE% %WIZARD_PIERCE_MAGIC% %WIZARD_PIERCE_SHIELD%~
+       immunity_to_opcode=>25
+       quick_effect=>~opcode=>173 parameter1=>100~
+       patch_cond_inline=>~type=>none match=>has_golem_script check=>1 strip_scs_scripts=>null~
+    END
+
+    LAF edit_creature STR_VAR creature edits=patch_data END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////// weapons
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION golem_weapons BEGIN
+
+    MAKE_PATCH
+       type=>ability
+       ability_rangeGT=>2
+    END
+    LAF edit_item STR_VAR item="golbra golcla golfle goliro golsto" editstring=~patch_conditionally=>patch_data~ END
+    LAF action_check_ini STR_VAR ini=no_cursed_golem_wounds RET value=value END
+    ACTION_IF value=0 BEGIN
+       LAF edit_item STR_VAR item=golcla editstring="add_effect_inline=>~type=>1 opcode=>146 target=>2 parameter2=>1 timing=>1 resource=>dw#curse~" END
+    END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////// scripting
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ~golem_scripts~ BEGIN
+
+     LAF ssl_to_bcs STR_VAR script=golem location=~ai/ssl~ variables=~IsMoron=True&IsIronGolem=True~ rename_to=goliro01 END
+     LAF ssl_to_bcs STR_VAR script=golem location=~ai/ssl~ variables=~IsMoron=True&IsStoneGolem=True~ rename_to=golsto01 END
+     LAF ssl_to_bcs STR_VAR script=golem location=~ai/ssl~ variables=~IsMoron=True&IsClayGolem=True~ rename_to=golcly01 END
+     LAF ssl_to_bcs STR_VAR script=golem location=~ai/ssl~ variables=~IsMoron=True&IsIceGolem=True~ rename_to=golice01 END
+     LAF ssl_to_bcs STR_VAR script=golem location=~ai/ssl~ variables=~IsBrainGolem=True~ rename_to=golbra01 END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////// spawning
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION golem_spawns BEGIN
+
+    // Iron and adamantite golems shouldn't spawn where they don't physically fit
+
+    LAF clone_script STR_VAR script=~spwngol=>dw#spng~ END
+    LAF swap_text STR_VAR files=dw#spng.bcs swaps=~golada01=>goljug01~ END
+    LAF swap_text STR_VAR files=~ar0411.are ar0413.are ar1201.are~ swaps=~spwngol=>dw#spng~ END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////// cosmetic [legacy code]
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION iron_golem_cosmetic BEGIN
+
+
+  COPY_EXISTING ~spin979.spl~ ~override~   // for cosmetic reasons, iron golem gas cloud casting time increases
+     READ_LONG 0x64 ~ab_off~
+     READ_SHORT 0x68 ~ab_num~
+     FOR (i=0;i<~ab_num~;i=i+1) BEGIN
+        WRITE_SHORT 0x12+0x28*~i~+~ab_off~ 3
+     END
+
+     ACTION_IF !FILE_EXISTS ~override/migog22.bam~ BEGIN // it's faintly possible something else has done this
+
+	COPY_EXISTING ~migog22.bam~ ~override\migog25.bam~
+			READ_ASCII 0x0 ~type~ (4)
+			PATCH_IF ~%type%~ STRING_EQUAL_CASE ~BAMC~ THEN BEGIN
+				READ_LONG 0x8 ~uncompressed_length~
+				SET ~compressed_length~=~%SOURCE_SIZE%~-0xc
+				DECOMPRESS_REPLACE_FILE 0xc ~%compressed_length%~ ~%uncompressed_length%~
+			END
+			READ_SHORT 0x8 ~framecount~
+			READ_LONG 0xc ~frame_off~
+			SET ~cycle_off~=~frame_off~+0xc*~framecount~
+			FOR (i=0;i<9;i=i+1) BEGIN
+			   READ_LONG ~cycle_off~+0x4*(18+~i~) ~cycledata_long~
+			   READ_LONG ~cycle_off~+0x4*~i~ ~cycledata_short~
+			   WRITE_LONG ~cycle_off~+0x4*~i~ ~cycledata_long~
+                           WRITE_LONG ~cycle_off~+0x4*(18+~i~) ~cycledata_short~
+			END
+
+         COPY_EXISTING ~migog25.bam~ ~override/migog26.bam~
+
+	COPY_EXISTING ~migog21.bam~ ~override\migog22.bam~
+			READ_ASCII 0x0 ~type~ (4)
+			PATCH_IF ~%type%~ STRING_EQUAL_CASE ~BAMC~ THEN BEGIN
+				READ_LONG 0x8 ~uncompressed_length~
+				SET ~compressed_length~=~%SOURCE_SIZE%~-0xc
+				DECOMPRESS_REPLACE_FILE 0xc ~%compressed_length%~ ~%uncompressed_length%~
+			END
+			READ_SHORT 0x8 ~framecount~
+			READ_LONG 0xc ~frame_off~
+			SET ~cycle_off~=~frame_off~+0xc*~framecount~
+			FOR (i=0;i<9;i=i+1) BEGIN
+			   READ_LONG ~cycle_off~+0x4*(9+~i~) ~cycledata_long~
+			   READ_LONG ~cycle_off~+0x4*(18+~i~) ~cycledata_short~
+			   WRITE_LONG ~cycle_off~+0x4*(18+~i~) ~cycledata_long~
+                           WRITE_LONG ~cycle_off~+0x4*(9+~i~) ~cycledata_short~
+			END
+   END
+
+END
+

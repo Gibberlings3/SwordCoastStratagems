@@ -1,0 +1,112 @@
+DEFINE_ACTION_FUNCTION npc_proficiencies BEGIN
+
+
+   // make a spell to subtract 20 hp, using a BGT version as base
+   MAKE_PATCH
+             add_basic_ability=>innate
+             add_effect_inline=>~opcode=>18 target=>1 timing=>1 parameter1=>"-20"~
+   END
+   LAF make_spell STR_VAR spell=dw#hp edits=patch_data END
+
+   //grants rangers' 2-weapon proficiencies
+   LAF install STR_VAR files=~dw#rang.spl~ END
+
+   // reduce to level 0
+
+   MAKE_PATCH
+      xp_total=>0
+      hitpoints=>20  // a somewhat notional guess so that potentially antagonistic NPCS
+		     // (e.g. Minsc or Shar-Teel) aren't easy kills!
+
+      level1=>0
+      level2=>0
+      level3=>0
+      hide_in_shadows=>0
+      detect_illusions=>0
+      set_traps=>0
+      lore=>0
+      open_locks=>0
+      move_silently=>0
+      find_traps=>10
+      pick_pockets=>0
+      delete_opcodes=> 233
+   END
+
+   ACTION_FOR_EACH npc IN ajanti alora branwe coran dynahe edwin eldoth faldor
+                          garric jaheir kagain khalid kivan minsc montar
+                          safana sharte skie tiax viconi yeslic BEGIN
+
+      ACTION_FOR_EACH suffix IN ~~ 1 2 3 4 5 6 BEGIN
+         LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%npc%%suffix%~ tv=yes allow_missing=yes edits=patch_data END
+      END
+   END
+
+   ACTION_FOR_EACH npc IN quayle xan xzar BEGIN
+      ACTION_FOR_EACH suffix IN ~~ 1 2 3 4 5 6 BEGIN
+         LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%npc%%suffix%~ tv=yes allow_missing=yes edits=patch_data END
+      END
+   END
+
+   LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scriptbg%quayle %tutu_scriptbg%xan %tutu_scriptbg%xzar
+                                                       %tutu_var%imoen %tutu_var%imoen2 %tutu_var%imoen4 %tutu_imoen6%~
+                             edits=patch_data
+   END
+
+   LAF edit_creature STR_VAR creature=~a#murn sufinch1 sufinch2 sufinch4 j#indi01 j#indi03 j#indi04~
+                             allow_missing=yes
+                             edits=patch_data
+   END
+
+
+// Ajantis, Minsc, and Shar-Teel, who plausibly fight the party before / instead of joining it, get a faux-magic weapon
+// to compensate for their lack of proficiency. (Based on a BG2 base to avoid shattering problems)s
+
+   ACTION_CLEAR_ARRAY patch_data
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+      droppable=>0
+      enchantment=>0
+      patch_cond_inline=>~type=>ability
+                          to_hit=>2
+                          damage_bonus=>4
+                          speed=>5~
+   END
+
+   LAF clone_item STR_VAR item=~sw1h41=>dw#npc10~ edits=patch_data END
+
+   LAF edit_creature STR_VAR creature=~sharte sharte4 sharte6 ajanti ajanti4 ajanti6 minsc minsc2 minsc4 minsc6~
+                             editstring=~add_items=>dw#npc10(WEAPON)~
+                             tv=yes
+   END
+
+// Manually set IMOEN_BCS due to BG1NPC/BGT conflict [DW: this copied directly from Taimon hotfix; I don't understand it]
+   COPY_EXISTING - ~%tutu_var%imoen1.cre~ ~%workspace%~
+	READ_ASCII 0x248 IMOEN_BCS
+   BUT_ONLY
+
+
+   COPY_EXISTING - ~%tutu_var%imoen1.cre~ ~.../scs-inlined/temp~
+	READ_ASCII 0x248 IMOEN_BCS
+   BUT_ONLY
+
+   COPY ~%scsroot%/%component_loc%/levelup.baf~ ~%workspace%~
+    REPLACE ~4444444~ @20501
+
+   ACTION_FOR_EACH script IN ajantis alora branwen coran dynaheir edwin
+                          eldoth faldorn garrick imoen jaheira kagain
+                          khalid kivan minsc montaron quayle safana
+                          skie sharteel tiax viconia xan xzar yeslick BEGIN
+       OUTER_INNER_PATCH ~~ BEGIN
+          TO_UPPER script
+       END
+       OUTER_SPRINT temp EVALUATE_BUFFER ~%%script%_BCS%~
+       EXTEND_TOP ~%temp%.bcs~ ~%workspace%/levelup.baf~
+   END
+
+   ACTION_FOR_EACH script IN a#murn j#indi sufinch BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME ~%script%.bcs~ BEGIN
+       EXTEND_TOP  ~%script%.bcs~ ~%workspace%/levelup.baf~
+      END
+   END
+
+
+END

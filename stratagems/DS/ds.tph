@@ -1,0 +1,924 @@
+
+
+// Detectable Spells v3
+// 
+// Assembled by Ardanis/GeN1e, using DavidW's version (SCS) as a base
+// 
+// Changes from previous version (SCS):
+//  - if Khelben's Warding Whip is broken, we first will attempt to repair it
+//  - removing older Ascension version of DS is less destructive
+//  - patching STATS.IDS is compatible with ToBEx
+//  - scripts from Kiara-Zaiya mod are also being updated to use new DS
+//  - core code is more compatibility-friendly with spell-altering mods
+//  - removed EFF-patching, it is not being used anywhere anyway
+//  - removed ~134 LEVELDRAIN~ stat, until somebody shows me a live example of the 200th stat NOT working
+//  - new ToBEx stats may be added on the fly, similar to how ADD_SPELL WeiDU command works (suggested by i30817 and aigleborgne)
+// 
+// Contents (don't change any, unless you're the next update maintainer!!!):
+//   ds.tph
+//   spwi705.spl
+//   stats.2da
+//   fix_old_ds.2da
+//   old_ds_swap.2da
+// 
+// Usage (basic):
+//   copypaste code below into your TP2, and set the path to match the directory
+/*
+OUTER_SPRINT path ~mymod/ds_folder~ // change it to your mod folder
+INCLUDE ~%path%/ds.tph~
+LAF detectable_spells_setup STR_VAR path END
+LAF detectable_spells STR_VAR table=~%path%/cddetect.2da~ END
+*/
+// 
+// Advanced options:
+//   1) table's format is:
+//        FILE - which file (SPL or ITM) you want patched
+//        OPCODE - which opcode will be added to the FILE (233 is proficiency, 282 is scripting state)
+//        PAR_1 - the first parameter of OPCODE (stat value for 233/282 opcodes)
+//        PAR_2 - the second paramater of OPCODE (stat's index in STATS.IDS, substract 156 for scripting states);
+//                if set to a string, it will be looked up in STATS.IDS and the corresponding index will be used instead
+//        CLONE - the opcode used as a marker (duration, etc.) for generating OPCODE; if CLONE is not found, OPCODE will not be added
+//        TICK - see the 4th option (below) for detailed explanation
+//        PATCH_WHAT - the location within FILE where OPCODE should be added to (and where CLONE is looked up):
+//                     "g" - global (equipped) effects
+//                     "a" - all ability headers
+//                     if you want only specific header patched, set PATCH_WHAT to that header's index (starting from 0)
+// 
+//   2) you can launch the second macro multiple times with different tables (change path, if required)
+// 
+//   3) you can use stats' ID names in your table instead of fixed values; to avoid compatibility issues with other ToBEx-using mods,
+//      consider using only strings (with your personal modder's prefix) for ToBEx stats, rather than values - DS then will find the
+//      lowerest unclaimed 400+ slot in STATS.IDS and use it for further patching
+// 
+//   4) you can update painlessly spells with ticking effects (Khelben's Whip, clouds) - change the letter in "tick" column to a value;
+//      DS will find the effect with the longest delay and use it for the cloning purpose, your value will be added to the total duration;
+//      non-zero values may be required in cases when the spell only has one effect in header and relies on the projectile to apply it
+//      multiple times (clouds)
+// 
+//   5) if you have altered some spells, so that their duration can no longer be correctly detected by the opcode in "clone" column, you
+//      must update the "ag#dsalt.2da" table in the "override" folder, to let other mods know of your changes; if you don't, those mods will
+//      erroneously assume that the spell's detection is invalid and delete it; this is how we'd proceed with the Spell Shield fix (SCS):
+/*
+LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END
+*/
+//   6) you can install detectable weapon enchantment, as per SCS:
+/*
+LAF detectable_weapon_enchantment END
+*/
+// 
+// 
+// 
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Tightly based on Nythrun's ~fj_spl_itm_reindex~ patch library
+// 
+// - wrapped into patch function
+// - added the missing ~WRITE_SHORT 0x6e 0~ line
+// - added SOURCE_SIZE check
+
+DEFINE_PATCH_FUNCTION ag_spl_itm_validity RET valid BEGIN
+
+PATCH_IF SOURCE_SIZE>0x71 BEGIN
+
+PATCH_IF !(~%SOURCE_FILE%~ STRING_MATCHES_REGEXP ~^.+\.spl~) BEGIN
+  hs = 0x28
+  WRITE_LONG 0xc ~-1~ //Identified name
+  WRITE_LONG 0x54 ~-1~ //Identified description
+  PATCH_FOR_EACH tz IN 0x44 0x48 0x58 0x5c BEGIN
+    WRITE_LONG tz 0
+  END
+END ELSE PATCH_IF !(~%SOURCE_FILE%~ STRING_MATCHES_REGEXP ~^.+\.itm~) BEGIN
+  hs = 0x38
+END
+READ_LONG 0x64 hf //Extended header offset
+READ_SHORT 0x68 hc //Extended header count
+READ_LONG 0x6a fb //Feature block table offset
+READ_SHORT 0x70 fc //Feature block count
+PATCH_IF ((hf > fb) AND (hc > 1)) BEGIN
+  READ_ASCII hf ~eh~ ELSE ~fail~ (hs * hc)
+  PATCH_IF (~%eh%~ STRING_EQUAL ~fail~) BEGIN
+    WHILE ((~%eh%~ STRING_EQUAL ~fail~) AND (hc > 0)) BEGIN
+      READ_ASCII hf ~eh~ ELSE ~fail~ (hs * hc)
+      hc -= 1
+    END
+  END
+  DELETE_BYTES hf (hs * hc)
+  hf = 0x72
+  WRITE_LONG 0x64 hf
+  WRITE_SHORT 0x68 hc
+  fb = (0x72 + (hs * hc))
+  WRITE_LONG 0x6a fb
+  PATCH_IF !(~%eh%~ STRING_EQUAL ~fail~) BEGIN
+    INSERT_BYTES hf (hs * hc)
+    WRITE_ASCIIE hf ~%eh%~
+  END
+END ELSE PATCH_IF ((hf != 0x72) AND (hc = 0)) BEGIN
+  hf = 0x72
+  WRITE_LONG 0x64 hf
+END
+FOR (i1 = 0; i1 < (hs * hc); i1 += hs) BEGIN
+  WRITE_SHORT (hf + i1 + 0x20) fc
+  READ_SHORT (hf + i1 + 0x1e) cx
+  fc += cx
+END
+WRITE_SHORT 0x6e 0
+PATCH_IF (SOURCE_SIZE > (0x72 + (hs * hc) + (0x30 * fc))) BEGIN
+  DELETE_BYTES (0x72 + (hs * hc) + (0x30 * fc)) (SOURCE_SIZE - (0x72 + (hs * hc) + (0x30 * fc)))
+END
+
+valid=1
+
+END ELSE BEGIN
+
+valid=0
+
+END
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Just a wrapper for preliminary one-time patches
+
+DEFINE_ACTION_FUNCTION detectable_spells_setup BEGIN
+
+// append stats.ids with new entries
+COPY_EXISTING stats.ids override
+  INSERT_FILE SOURCE_SIZE ~%path%/stats.2da~
+LAM reorder_stats_ids
+
+// fix the bug in G3's DS
+COPY_EXISTING ~misc01.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
+LAM fix_khelben
+
+// fix old Ascension DS
+COPY_EXISTING ~misc01.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
+LAM fix_old_scripts
+LAM fix_old_ds
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Core patch
+// 
+// Now using intelligent compatibility-friendly check:
+//   we start by looking for existing 233/282 (with parameters matching CDDETECT.2DA) and opcode-to-be-detected
+//   - if both are present, we check if 233/282 has correct settings (timing, power, etc.)
+//     -- if yes, we do nothing
+//     -- if not, we delete 233/282 and generate new effect via cloning o-t-b-d
+//   - if o-t-b-d is present and 233/282 is not, we generate new effect via cloning o-t-b-d
+//   - if 233/282 is present and o-t-b-d is not, we delete 233/282
+//   - if neither is present, we do nothing
+// 
+// New features:
+//   - we allow for spells to have been changed by mods and use a different duration marker opcode (aka 'clone') than stated in %table%
+//   - you can define stats in %table% by their ID names rather than values (case insensitive)
+//   - you can add new ToBEx stats (opcode 318) on the fly, filling in the empty slots
+
+DEFINE_ACTION_FUNCTION detectable_spells BEGIN
+
+OUTER_SET ds_alter=0
+ACTION_IF FILE_EXISTS_IN_GAME ~ag#dsalt.2da~ BEGIN
+  COPY - ~ag#dsalt.2da~ ~override~
+    READ_2DA_ENTRIES_NOW ds_alter 3
+END
+
+COPY - ~%path%/%table%~ ~override~
+  READ_2DA_ENTRIES_NOW ds_table 7
+  FOR (r=0;r<ds_table;r+=1) BEGIN
+    READ_2DA_ENTRY_FORMER ds_table r 0 file
+    READ_2DA_ENTRY_FORMER ds_table r 1 new_op
+    READ_2DA_ENTRY_FORMER ds_table r 2 p1
+    READ_2DA_ENTRY_FORMER ds_table r 3 p2
+    READ_2DA_ENTRY_FORMER ds_table r 4 clone_op
+    READ_2DA_ENTRY_FORMER ds_table r 5 tick
+    READ_2DA_ENTRY_FORMER ds_table r 6 type
+
+    PATCH_IF FILE_EXISTS_IN_GAME EVAL ~%file%~ BEGIN
+      abort=0
+
+      // check if this spell has been altered and it's original clonable opcode is no longer reliable
+      FOR (k=1;k<ds_alter;k+=1) BEGIN  // skip the first row with column descriptions
+        PATCH_IF (~%file%~ STRING_EQUAL_CASE EVAL ~%ds_alter_%k%_0%~) && (clone_op = EVAL ~ds_alter_%k%_1~) BEGIN
+          clone_op = EVAL ~ds_alter_%k%_2~
+          k=ds_alter
+        END
+      END
+
+      // resolve stat's index, if it was defined as a string
+      PATCH_IF NOT (IS_AN_INT ~%p2%~) BEGIN
+        INNER_ACTION BEGIN
+          LAF resolve_stat STR_VAR id= EVAL ~%p2%~ RET stat_ind=stat_ind END
+        END
+        PATCH_IF stat_ind>200 && new_op != 318 BEGIN
+          PATCH_PRINT ~Warning: unable to add %p2% to STATS.IDS! New stats may not be added on the fly if they don't use ToBEx's 318th opcode!~
+          abort=1
+          INNER_ACTION BEGIN
+            LAF resolve_stat INT_VAR index=stat_ind delete=1 END
+          END
+        END
+        PATCH_IF stat_ind<201 && new_op=318 BEGIN
+          PATCH_PRINT ~Warning: %p2% already exists in %stat_ind%th slot! ToBEx's 318th opcode may not use values below 401!~
+          abort=1
+        END
+        PATCH_IF new_op=282 BEGIN // scripting states start from 156
+          stat_ind -= 156
+          PATCH_IF stat_ind<0 BEGIN
+            PATCH_PRINT ~Warning: unable to resolve %p2%! Scripting states may not exist in slots below 156th!~
+            abort=1
+          END
+        END
+        p2=stat_ind
+      END
+    END ELSE BEGIN
+      abort=1
+    END
+
+    INNER_ACTION BEGIN ACTION_IF abort=0 BEGIN
+      COPY_EXISTING ~%file%~ ~override~ LPF ag_spl_itm_validity RET valid=valid END PATCH_IF valid BEGIN
+        READ_LONG  0x64 ab_off
+        READ_SHORT 0x68 ab_num
+        READ_LONG  0x6a ef_off
+        READ_SHORT 0x6e ef_ind
+        READ_SHORT 0x70 ef_num
+        PATCH_IF ~%SOURCE_EXT%~ STRING_EQUAL_CASE ~spl~ BEGIN size=0x28 END // if spell
+                                                   ELSE BEGIN size=0x38 END // if not spell, then it's item
+        delta=0
+
+        // run through global effects
+        PATCH_IF ~%type%~ STRING_EQUAL_CASE ~g~ BEGIN
+          LPM ds_eval
+          WRITE_SHORT 0x70 ef_num+delta
+        END
+
+        // run through ability headers
+        FOR (j=0;j<ab_num;j+=1) BEGIN
+          READ_SHORT ab_off+j*size+0x20 ef_ind
+          WRITE_SHORT ab_off+j*size+0x20 ef_ind+delta
+          PATCH_IF (~%type%~ STRING_EQUAL_CASE ~a~) || (~%type%~ STRING_EQUAL_CASE ~%j%~) BEGIN
+            READ_SHORT ab_off+j*size+0x1e ef_num
+            LPM ds_eval
+            WRITE_SHORT ab_off+j*size+0x1e ef_num+local_delta
+          END
+        END
+
+      END BUT_ONLY // PATCH_IF valid
+    END END // INNER_ACTION, FILE_EXISTS_IN_GAME
+  END
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO ds_eval BEGIN
+
+  CLEAR_ARRAY clonable
+  CLEAR_ARRAY detectable
+  CLEAR_ARRAY auxil
+
+  // calculate the longest duration if the effect is ticking
+  dur=0
+  PATCH_IF IS_AN_INT ~%tick%~ BEGIN
+    FOR (i=0;i<ef_num;i+=1) BEGIN
+      offset=ef_off+(ef_ind+i+delta)*0x30
+      READ_SHORT offset opcode
+      PATCH_IF opcode=clone_op BEGIN // if clonable opcode exists
+        READ_LONG offset+0xe d
+        dur = (d>dur) ? d : dur // the longest duration
+      END
+    END
+  END
+
+  // look for existing effects
+  FOR (i=0;i<ef_num;i+=1) BEGIN
+    offset=ef_off+(ef_ind+i+delta)*0x30
+    READ_SHORT offset opcode
+    PATCH_IF opcode=clone_op BEGIN // if clonable opcode exists
+      READ_LONG offset+0xe d
+      PATCH_IF (NOT IS_AN_INT ~%tick%~) || (IS_AN_INT ~%tick%~ && d=dur) BEGIN
+        READ_ASCII offset cloned_effect (0x30)
+        INNER_PATCH_SAVE $clonable("%i%") ~%cloned_effect%~ BEGIN
+          WRITE_SHORT 0 new_op
+          WRITE_LONG  4 p1
+          WRITE_LONG  8 p2
+          PATCH_IF IS_AN_INT ~%tick%~ BEGIN
+            WRITE_LONG 0xc 0
+            WRITE_LONG 0xe dur+tick
+          END
+        END
+      END
+    END
+    PATCH_IF opcode=new_op BEGIN // if detectable stat exists
+      READ_LONG offset+4 par1
+      READ_LONG offset+8 par2
+      PATCH_IF (par1=p1) && (par2=p2) BEGIN
+        READ_ASCII offset $detectable("%i%") (0x30)
+      END
+    END
+  END
+
+  // check if there're mismatching 233/282s
+  PHP_EACH detectable AS i1 => r1 BEGIN
+    nomatch=1
+    PHP_EACH clonable AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        nomatch=0
+      END
+    END
+    PATCH_IF nomatch BEGIN
+      SPRINT $auxil("%i1%") ~0~
+    END
+  END
+
+  // check if the matching 233/282 already exists
+  PHP_EACH clonable AS i1 => r1 BEGIN
+    exists=0
+    PHP_EACH detectable AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        exists=1
+      END
+    END
+    PHP_EACH auxil AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        exists=1
+      END
+    END
+    PATCH_IF exists=0 BEGIN
+      SPRINT $auxil("%i1%") ~%r1%~
+    END
+  END
+
+  // insert or delete data
+  local_delta=0
+  PHP_EACH auxil AS ind => res BEGIN
+    // 0 = delete, anything else = insert
+    PATCH_IF ~%res%~ STRING_EQUAL_CASE ~0~ BEGIN
+      DELETE_BYTES ef_off+(ef_ind+ind+delta)*0x30 0x30
+      delta -= 1
+      local_delta -= 1
+    END ELSE BEGIN
+      INSERT_BYTES ef_off+(ef_ind+ind+delta+1)*0x30 0x30
+      WRITE_ASCIIE ef_off+(ef_ind+ind+delta+1)*0x30 ~%res%~ (0x30)
+      delta += 1
+      local_delta += 1
+    END
+  END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Warding Whip can be broken by older versions of DS. Check it up.
+//
+// If broken, but in a recognizable shape, we try to fix it first, before resorting to replacement with a backup file.
+//
+// While it likely is possible to write sufficiently sophisticated code to reanimate the file even if it has
+// suffered the most dire kind of abuse, I feel that's rather excessive to do so.
+
+DEFINE_ACTION_MACRO fix_khelben BEGIN
+
+COPY_EXISTING ~spwi705.spl~ override
+  READ_LONG  0x64 ab_off
+  READ_SHORT 0x68 ab_num
+  READ_LONG  0x6a ef_off
+  fubar=0
+
+  // check if the file is ok
+  repair=0
+  total=0
+  FOR (i=0;i<ab_num;i+=1) BEGIN
+    READ_SHORT ab_off+i*0x28+0x1e ef_num
+    total+=ef_num
+  END
+  PATCH_IF SOURCE_SIZE != ef_off+total*0x30 BEGIN
+    repair=1
+    PATCH_PRINT ~SPWI705.SPL is broken, attempting to repair the file~
+  END
+
+  PATCH_IF repair BEGIN
+
+    // calculate the number of effects
+    total=0
+    size = SOURCE_SIZE - ef_off
+    WHILE (size - 0x30) >= 0 BEGIN
+      total +=1
+      size -=0x30
+    END
+    PATCH_IF size > 0 && size < 0x30 BEGIN
+      fubar=1
+      PATCH_PRINT ~SPWI705.SPL is broken in unknown manner, restoring from a backup~
+    END
+
+    // check if the first effect in each header is the expected 233/1/132
+    PATCH_IF fubar=0 BEGIN
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        READ_SHORT ef_off+ef_ind*0x30 opcode
+        READ_LONG ef_off+ef_ind*0x30+4 par1
+        READ_LONG ef_off+ef_ind*0x30+8 par2
+        PATCH_IF (opcode!=233 || par1!=1 || par2!=132) // 
+              && (opcode!=233 || par1!=0 || par2!=116) // 
+              && (opcode!=233 || par1!=0 || par2!=129) // 
+              && (opcode!=282 || par1!=0 || par2!=5)   // 
+              && (opcode!=282 || par1!=0 || par2!=7)   // 
+              && (opcode!=282 || par1!=0 || par2!=21)  // 
+        BEGIN
+          fubar=1
+          PATCH_PRINT ~SPWI705.SPL is broken in unknown manner, restoring from a backup~
+        END
+      END
+    END
+
+    // write the real number of effects per header
+    PATCH_IF fubar=0 BEGIN
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        PATCH_IF i+1 < ab_num BEGIN // if not the last header
+          READ_SHORT ab_off+i*0x28+0x48 next_ind
+          number = next_ind - ef_ind
+          total -= number
+        END ELSE BEGIN // if the last
+          number = total
+        END
+        WRITE_SHORT ab_off+i*0x28+0x1e number
+      END
+    END
+
+    // now kill off the shit
+    PATCH_IF fubar=0 BEGIN
+      delta=0
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x1e ef_num
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        ef_ind +=delta
+        WRITE_SHORT ab_off+i*0x28+0x20 ef_ind
+        local_delta=0
+        FOR (k=0;k<ef_num;k+=1) BEGIN
+          READ_SHORT ef_off+(k+ef_ind+local_delta)*0x30 opcode
+          READ_LONG ef_off+(k+ef_ind+local_delta)*0x30+4 par1
+          READ_LONG ef_off+(k+ef_ind+local_delta)*0x30+8 par2
+          PATCH_IF (opcode=233 && par1=1 && par2=132) // 
+                || (opcode=233 && par1=0 && par2=116) // 
+                || (opcode=233 && par1=0 && par2=129) // 
+                || (opcode=282 && par1=0 && par2=5)   // 
+                || (opcode=282 && par1=0 && par2=7)   // 
+                || (opcode=282 && par1=0 && par2=21)  // 
+          BEGIN
+            DELETE_BYTES ef_off+(k+ef_ind+local_delta)*0x30 0x30
+            delta -=1
+            local_delta -=1
+          END
+        END
+        WRITE_SHORT ab_off+i*0x28+0x1e ef_num+local_delta
+      END
+      PATCH_PRINT ~SPWI705.SPL has been repaired~
+    END
+
+  END // PATCH_IF repair=1
+BUT_ONLY
+
+ACTION_IF fubar BEGIN
+  COPY ~%path%/spwi705.spl~ override
+  PRINT ~SPWI705.SPL has been restored from a backup~
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Rebuild STATS.IDS
+
+DEFINE_ACTION_MACRO reorder_stats_ids BEGIN
+
+COPY_EXISTING - stats.ids override
+  max=1
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (i=0;i<stats;i+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats i 0 num
+    READ_2DA_ENTRY_FORMER stats i 1 str
+    max = (num>max) ? num : max
+    SET $arr1("%num%") = 1
+    SPRINT $arr2("%num%") ~%str%~
+  END
+  PHP_EACH arr1 AS i1 => r1 BEGIN
+    min=max
+    PHP_EACH arr2 AS i2 => r2 BEGIN
+      PATCH_IF (i2<min) && (~%r2%~ STR_CMP ~~) BEGIN
+        min = (i2<min) ? i2 : min
+      END
+    END
+    SPRINT $stats("%min%") $arr2("%min%")
+    SPRINT $arr2("%min%") ~~
+  END
+
+<<<<<<<<...ds/inline/blank
+>>>>>>>>
+COPY ~...ds/inline/blank~ ~override/stats.ids~
+ACTION_PHP_EACH stats AS ind => res BEGIN
+  APPEND stats.ids ~%ind% %res%~
+END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resolve_stat INT_VAR index=0 delete=0 RET stat_ind BEGIN
+
+COPY_EXISTING stats.ids override
+  stat_ind=0
+  min_new=401
+  found=0
+
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (row=0;row<stats;row+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats row 0 ind
+    READ_2DA_ENTRY_FORMER stats row 1 str
+    SET $stat("%row%") = ind
+    PATCH_IF index BEGIN
+      PATCH_IF ind=index BEGIN
+        REMOVE_2DA_ROW row 2
+        found=1
+        PATCH_IF delete=0 BEGIN
+          INSERT_2DA_ROW row 2 ~%index% %id%~
+        END
+        row=stats
+      END
+    END ELSE BEGIN
+      PATCH_IF ~%str%~ STRING_EQUAL_CASE ~%id%~ BEGIN
+        stat_ind=ind
+        found=1
+     /* row=stats */ // don't stop looking, the same ID may be assigned to a greater index, which takes priority when compiling
+      END
+    END
+  END
+
+  PATCH_IF found=0 BEGIN
+    stat_ind=min_new
+    PHP_EACH stat AS row => ind BEGIN
+      PATCH_IF found=0 && (row+1 < stats) BEGIN // not at the end of file
+        next_row = row+1
+        next_ind = EVAL $stat("%next_row%")
+        PATCH_IF index BEGIN
+          PATCH_IF index<next_ind && index>ind BEGIN
+            INSERT_2DA_ROW next_row 2 ~%index% %id%~
+            found=1
+          END
+        END ELSE BEGIN
+          PATCH_IF stat_ind<next_ind BEGIN
+            PATCH_IF ind<stat_ind BEGIN
+              INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+              found=1
+            END ELSE BEGIN
+              stat_ind+=1
+              PATCH_IF stat_ind<next_ind BEGIN
+                INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+                found=1
+              END
+            END
+          END
+        END
+      END ELSE BEGIN // at the end of file
+        PATCH_IF found=0 BEGIN
+          PATCH_IF index BEGIN
+            INSERT_2DA_ROW stats 2 ~%index% %id%~
+          END ELSE BEGIN
+            PATCH_IF stat_ind>ind BEGIN
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END ELSE BEGIN
+              stat_ind+=1
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END
+          END
+        END
+      END
+    END // PHP_EACH
+  END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Check if there're scripts using older version of DS and fix them if needed
+
+DEFINE_ACTION_MACRO fix_old_scripts BEGIN
+
+COPY - ~%path%/old_ds_swap.2da~ override
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (row=0;row<stats;row+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats row 0 old
+    READ_2DA_ENTRY_FORMER stats row 1 new
+    SPRINT $swap("%old%") ~%new%~
+  END
+
+// Ascension
+ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixasc~) && (FILE_EXISTS_IN_GAME ~finbodhi.bcs~) THEN BEGIN
+  COPY_EXISTING ~misc01.itm~ ~override/dw#fixasc~
+ACTION_FOR_EACH file IN
+finabaz
+finaluf
+finbabau
+finbalor
+finbalth
+finbodh
+finbodhi
+fincamb2
+finglab
+fingrom
+finilla
+finiren
+finmaril
+finmel
+finnabas
+finsarev
+finsend
+finsol04
+finsucc
+finyaga
+BEGIN
+  LAM fix_scripts
+END
+END
+
+// Kelsey
+ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixkelsey~) && (FILE_EXISTS_IN_GAME ~j#ceara.bcs~) THEN BEGIN
+  COPY_EXISTING ~misc01.itm~ ~override/dw#fixkelsey~
+ACTION_FOR_EACH file IN
+j#ceara
+j#clinn
+j#cossun
+j#mert15
+j#pura
+j#vlamin
+BEGIN
+  LAM fix_scripts
+END
+END
+
+// Kiara-Zaiya
+ACTION_IF !(FILE_EXISTS_IN_GAME ~ag#fixkiara~) && (FILE_EXISTS_IN_GAME ~amafight.bcs~) THEN BEGIN
+  COPY_EXISTING ~misc01.itm~ ~override/ag#fixkiara~
+ACTION_FOR_EACH file IN
+kzjao
+kzwuje
+vampkia
+kz#dmlrd
+kz#rakma
+kiara
+kiarfigt
+sujon
+amafight
+amafigt1
+c6drud
+keriafit
+morticia
+BEGIN
+  LAM fix_scripts
+END
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// The actual swap
+
+DEFINE_ACTION_MACRO fix_scripts BEGIN
+
+ACTION_IF FILE_EXISTS_IN_GAME ~%file%.bcs~ BEGIN
+  COPY_EXISTING ~%file%.bcs~ override
+    DECOMPILE_BCS_TO_BAF
+    PHP_EACH swap AS ind => res BEGIN
+      REPLACE_TEXTUALLY ~,%ind%)~ ~,%res%)~
+    END
+    COMPILE_BAF_TO_BCS
+  BUT_ONLY
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Update older Ascension's version of DS
+
+DEFINE_ACTION_MACRO fix_old_ds BEGIN
+
+COPY - ~%path%/fix_old_ds.2da~ ~override~
+  READ_2DA_ENTRIES_NOW row 8
+  FOR (t=0;t<row;t+=1) BEGIN
+    READ_2DA_ENTRY_FORMER row t 0 file
+    READ_2DA_ENTRY_FORMER row t 1 old_op
+    READ_2DA_ENTRY_FORMER row t 2 old_p2
+    READ_2DA_ENTRY_FORMER row t 3 old_p1
+    READ_2DA_ENTRY_FORMER row t 4 new_op
+    READ_2DA_ENTRY_FORMER row t 5 new_p1
+    READ_2DA_ENTRY_FORMER row t 6 new_p2
+    READ_2DA_ENTRY_FORMER row t 7 type
+
+    INNER_ACTION BEGIN ACTION_IF FILE_EXISTS_IN_GAME EVAL ~%file%~ BEGIN 
+      COPY_EXISTING ~%file%~ ~override~ LPF ag_spl_itm_validity RET valid=valid END PATCH_IF valid BEGIN
+
+        READ_LONG  0x64 ab_off
+        READ_SHORT 0x68 ab_num
+        READ_LONG  0x6a ef_off
+        READ_SHORT 0x6e ef_ind
+        READ_SHORT 0x70 ef_num
+        PATCH_IF ~%SOURCE_EXT%~ STRING_EQUAL_CASE ~spl~ BEGIN size=0x28 END // if spell
+                                                   ELSE BEGIN size=0x38 END // if not spell, then it's item
+        delta=0
+
+        // run through global effects
+        PATCH_IF ~%type%~ STRING_EQUAL_CASE ~g~ BEGIN
+          FOR (i=0;i<ef_num;i+=1) BEGIN
+            offset=ef_off+(ef_ind+i+delta)*0x30
+            READ_SHORT offset opcode
+            READ_LONG offset+4 par1
+            READ_LONG offset+8 par2
+            PATCH_IF opcode=old_op && par1=old_p1 && par2=old_p2 BEGIN
+              PATCH_IF new_op<0 BEGIN
+                DELETE_BYTES ef_off+(ef_ind+i+delta)*0x30 0x30
+                delta -= 1
+              END ELSE BEGIN
+                WRITE_SHORT offset new_op
+                WRITE_LONG offset+4 new_p1
+                WRITE_LONG offset+8 new_p2
+              END
+            END
+          END
+          WRITE_SHORT 0x70 ef_num+delta
+        END
+
+        // run through ability headers
+        FOR (j=0;j<ab_num;j+=1) BEGIN
+          READ_SHORT ab_off+j*size+0x20 ef_ind
+          WRITE_SHORT ab_off+j*size+0x20 ef_ind+delta
+          PATCH_IF (~%type%~ STRING_EQUAL_CASE ~a~) || (~%type%~ STRING_EQUAL_CASE ~%j%~) BEGIN
+            READ_SHORT ab_off+j*size+0x1e ef_num
+            local_delta=0
+            FOR (i=0;i<ef_num;i+=1) BEGIN
+              offset=ef_off+(ef_ind+i+delta)*0x30
+              READ_SHORT offset opcode
+              READ_LONG offset+4 par1
+              READ_LONG offset+8 par2
+              PATCH_IF opcode=old_op && par1=old_p1 && par2=old_p2 BEGIN
+                PATCH_IF new_op<0 BEGIN
+                  DELETE_BYTES ef_off+(ef_ind+i+delta)*0x30 0x30
+                  delta -= 1
+                  local_delta -= 1
+                END ELSE BEGIN
+                  WRITE_SHORT offset new_op
+                  WRITE_LONG offset+4 new_p1
+                  WRITE_LONG offset+8 new_p2
+                END
+              END
+            END
+            WRITE_SHORT ab_off+j*size+0x1e ef_num+local_delta
+          END
+        END
+
+      END BUT_ONLY // PATCH_IF valid
+    END END // INNER_ACTION, FILE_EXISTS_IN_GAME
+  END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Since SCS occupies one of DS slots for weapons, I see no reason not to include it
+
+DEFINE_ACTION_FUNCTION detectable_weapon_enchantment BEGIN
+
+LAF resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END
+
+COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override LPF ag_spl_itm_validity RET valid=valid END PATCH_IF valid BEGIN
+  READ_LONG  0x64 ab_off
+  READ_SHORT 0x68 ab_num
+
+  weapon=0
+  FOR (i=0;i<ab_num;i+=1) BEGIN
+    READ_BYTE ab_off+i*0x38 typ
+    READ_BYTE ab_off+i*0x38+2 loc
+    PATCH_IF (typ=1 || typ=2) && loc=1 BEGIN
+      weapon=1
+    END
+  END
+
+  PATCH_IF weapon BEGIN
+    READ_LONG  0x60 ench
+    READ_LONG  0x6a ef_off
+    READ_SHORT 0x70 global
+    exists=0
+    FOR (i=0;i<global;i+=1) BEGIN
+      READ_SHORT ef_off+i*0x30 opc
+      READ_LONG ef_off+i*0x30+4 p1
+      READ_LONG ef_off+i*0x30+8 p2
+      PATCH_IF opc=233 && p2=109 BEGIN
+        PATCH_IF p1 !=ench BEGIN
+          WRITE_LONG ef_off+i*0x30+4 ench
+        END
+        i=global
+        exists=1
+      END
+    END
+
+    PATCH_IF exists=0 BEGIN
+      INSERT_BYTES ef_off 0x30
+      WRITE_SHORT ef_off 233
+      WRITE_BYTE ef_off+2 1
+      WRITE_LONG ef_off+4 ench
+      WRITE_LONG ef_off+8 109
+      WRITE_BYTE ef_off+0xc 2
+      WRITE_LONG ef_off+0x12 100
+
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        WRITE_SHORT ab_off+i*0x38+0x20 THIS+1
+      END
+
+      WRITE_SHORT 0x70 global+1
+    END
+
+  END // PATCH_IF weapon=1
+END BUT_ONLY
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// If we've altered some spells significantly (Spell Revisions v4 in particular),
+// then we must let other mods know how to react to that
+
+DEFINE_ACTION_FUNCTION ds_altered_spell BEGIN
+
+ACTION_IF NOT FILE_EXISTS_IN_GAME ~ag#dsalt.2da~ BEGIN
+<<<<<<<<...ds/inline/blank
+FILE          OLD  NEW
+>>>>>>>>
+COPY ~...ds/inline/blank~ ~ag#dsalt.2da~
+END
+
+COPY_EXISTING ~ag#dsalt.2da~ override
+  found=0
+  READ_2DA_ENTRIES_NOW ds_table 3
+  FOR (r=1;r<ds_table;r+=1) BEGIN  // skip the first row with column descriptions
+    READ_2DA_ENTRY_FORMER ds_table r 0 f
+    READ_2DA_ENTRY_FORMER ds_table r 1 old
+    READ_2DA_ENTRY_FORMER ds_table r 2 new
+    PATCH_IF ~%f%~ STRING_EQUAL_CASE ~%file%~ && old=old_clone BEGIN
+      PATCH_IF new != new_clone BEGIN // some mod has already altered the spell, but in a different way
+        REMOVE_2DA_ROW r 3
+        INSERT_2DA_ROW r 3 ~%file%  %old_clone%  %new_clone%~
+      END
+      found=1
+      r=ds_table
+    END
+  END
+
+  PATCH_IF found=0 BEGIN
+    INSERT_2DA_ROW ds_table 3 ~%file%  %old_clone%  %new_clone%~
+  END
+BUT_ONLY
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

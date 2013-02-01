@@ -1,0 +1,218 @@
+DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
+
+   LAF check_label STR_VAR label=dw#psionic_shared RET value=value END
+   ACTION_IF value=0 BEGIN
+
+        LAF make_label STR_VAR label=dw#psionic_shared END
+        // Chaotic commands needs to give immunity to psionic version of Maze
+        MAKE_PATCH
+           type=>effect
+           match=>resource
+           check=>~%WIZARD_MAZE%~
+           resource=>~%PSIONIC_MAZE%~
+        END
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%CLERIC_CHAOTIC_COMMANDS%~ editstring=~clone_entry=>patch_data~ END
+
+	// astral travel (clone of Dimension Door)
+
+        LAF install STR_VAR file=dw#mftel.spl location=resource END
+        LAF edit_spell STR_VAR spell=dw#mftel editstring=~say_name=>301~ END
+
+	// make prep version of psionic invisibility
+
+        LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_SUPERIOR_INVISIBILITY%=>dw#illin~ 
+                                editstring=~delete_opcodes=>"139 141 174"~
+        END
+
+	// increase Life Drain damage to 5d6+4
+
+        MAKE_PATCH
+           patch_cond_inline=>~type=>effect
+                               match=>opcode
+                               check=>12
+                               dicenum=>5
+                               dicesize=>6~
+        END
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_LIFE_DRAIN%~  END
+
+	// increase Ballistic Attack damage to 5d12
+
+        MAKE_PATCH
+           patch_cond_inline=>~type=>effect
+                               match=>opcode
+                               check=>12
+                               dicenum=>5
+                               dicesize=>12~
+        END
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_BALLISTIC%~  END
+
+	// increase Detonate damage to 5d6, and change projectile to an enemy-only one; 
+        // remove the (de facto infinite range) TargetParty
+
+        MAKE_PATCH
+           patch_cond_inline=>~type=>effect
+                               match=>opcode
+                               check=>12
+                               dicenum=>5
+                               dicesize=>6~
+           patch_cond_inline'=>~type=>effect
+                                match=>target
+                                check=>3
+                                target=>2~
+           patch_cond_inline''=>~type=>ability
+                                 projectile=>159~
+        END
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_DETONATE%~ END
+
+        // make psionic versions of Remove Magic and blur
+
+        LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_DISPEL_MAGIC%=>dw#psirm~ editstring=~say_name=>300~ END
+        LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_BLUR%=>dw#psibl~ END
+
+	// give the Mind Blast power a name
+
+	LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_MIND_BLAST%~ editstring=~say_name=>303~ END
+
+	// ensure all psionic powers have CT 0 and bypass MR / dispel
+
+        MAKE_PATCH
+           patch_cond_inline=>~type=>effect resist_dispel=>0~
+           patch_cond_inline'=>~type=>ability casting_time=>0~
+        END
+
+        ACTION_FOR_EACH power IN DETONATE BALLISTIC DOMINATION EGOWHIP EMOTION_KILL MIND_BLAST
+                                 MAZE PROJECT_FORCE INERTIAL_BARRIER LIFE_DRAIN SUPERIOR_INVISIBILITY
+                                 INFLICT_PAIN DISINTEGRATE 
+        BEGIN
+           OUTER_SPRINT spell EVALUATE_BUFFER ~%PSIONIC_%power%%~
+           LAF edit_spell STR_VAR spell END
+        END
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%MIND_FLAYER_DOMINATION% %MIND_FLAYER_PSIONIC_BLAST% %ULITHARID_PSIONIC_BLAST% 
+                                                      %BRAIN_PSIONIC_BLAST% dw#psirm dw#psibl dw#mftel~ 
+        END
+
+
+	// exempt psionic domination from the Fixpack protections for elves and half-elves
+
+        LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%PSIONIC_DOMINATION% %PSIONIC_MIND_BLAST%~ editstring=~delete_opcodes=>177~ END
+
+        // exempt physical psionic powers (ballistic attack, detonate, project force, maze) from blanket protect-from-psionics
+
+        DEFINE_PATCH_FUNCTION is_psi_phys 
+           INT_VAR offset_secondary=0
+           STR_VAR offset_base=""
+           RET value
+        BEGIN
+           SET value=0
+           LPF ITM_read_opcode INT_VAR offset_secondary STR_VAR offset_base RET opcode=value END
+           PATCH_IF opcode=206 BEGIN
+                LPF ITM_read_resource INT_VAR offset_secondary STR_VAR offset_base RET spell=value END
+                TO_UPPER spell
+                PATCH_MATCH ~%spell%~ WITH
+                ~%PSIONIC_BALLISTIC%~ ~%PSIONIC_DETONATE%~ ~%PSIONIC_PROJECT_FORCE%~ ~%PSIONIC_MAZE%~ BEGIN
+                   SET value=1
+                END
+                DEFAULT END
+           END
+        END
+        
+        LAF edit_item STR_VAR item=~amul17 misc9y~
+                              editstring=~patch_cond_inline=>"match=>is_psi_phys check=>1 type=>effect opcode=>999" delete_opcodes=>999~
+        END
+        LAF edit_item STR_VAR item=~sw2h21 c2helm02 c2shld01~ allow_missing=yes
+                              editstring=~patch_cond_inline=>"match=>is_psi_phys check=>1 type=>effect_global opcode=>999" delete_opcodes=>999~
+        END
+   END // end of outer IF-THEN
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////
+///// Used for all illithids
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION illithid_general BEGIN
+
+      PATCH_MAKE_PATCH
+         resist_fire=>0
+         resist_cold=>0
+         resist_acid=>0
+         resist_electricity=>0
+         resist_magic_cold=>0
+         resist_magic_fire=>0
+         morale=>10
+         morale_break=>0 // illithids who panic flee by script, astrally
+      END
+      LPF check_label STR_VAR label=dw#flayer_detect_invisible RET value=value END
+      PATCH_IF value=1 BEGIN
+           SPRINT $patch_data(quick_effect) ~opcode=>193 parameter2=>1~
+      END
+      LPF check_label STR_VAR label=dw#flayer_resistance RET value=value END
+      PATCH_IF value=1 BEGIN
+           SPRINT $patch_data(resist_slashingGT) 50
+           SPRINT $patch_data(resist_piercingGT) 50
+           SPRINT $patch_data(resist_crushingGT) 50
+           SPRINT $patch_data(resist_missileGT) 50
+      END
+      LPF apply_patches STR_VAR edits=patch_data file_prefix=CRE END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////
+///// Used for generic flayers
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION make_illithid BEGIN
+
+      LPF illithid_general END
+      PATCH_MAKE_PATCH
+           resist_magic=>90       // from mindfl01
+           save_vs_deathLT=>5
+           save_vs_wandLT=>6
+           save_vs_polyLT=>6
+           save_vs_breathLT=>5
+           save_vs_spellLT=>5
+           levelGT=>12
+      END
+      LPF apply_patches STR_VAR edits=patch_data file_prefix=CRE END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////
+///// Used for ulitharids
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION make_ulitharid BEGIN
+
+      LPF illithid_general END
+      PATCH_MAKE_PATCH
+           resist_magic=>95       // from mindul01
+           save_vs_deathLT=>3
+           save_vs_wandLT=>4
+           save_vs_polyLT=>4
+           save_vs_breathLT=>4
+           save_vs_spellLT=>3
+           levelGT=>14
+           swap_items=>~mindflay=>dw#ulith~
+      END
+      LPF apply_patches STR_VAR edits=patch_data file_prefix=CRE END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////
+///// Used for vampire illithids
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION make_vampiric_illithid BEGIN
+
+      LPF illithid_general END
+      PATCH_MAKE_PATCH
+           resist_magic=>90       // from mindfl01
+           save_vs_deathLT=>5
+           save_vs_wandLT=>6
+           save_vs_polyLT=>6
+           save_vs_breathLT=>5
+           save_vs_spellLT=>5
+           levelGT=>12
+      END
+      LPF apply_patches STR_VAR edits=patch_data file_prefix=CRE END
+
+END

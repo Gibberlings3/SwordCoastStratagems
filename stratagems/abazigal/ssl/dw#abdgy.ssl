@@ -1,0 +1,544 @@
+VARIABLE(slowspell=)
+
+//////////////////////////////////////////////////////////////////////////
+///	Initial chat
+//////////////////////////////////////////////////////////////////////////
+
+IF
+	NumTimesTalkedTo(0)
+	Detect([PC])
+THEN
+	RESPONSE #100
+		StartDialogueNoSet(Player1)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+////	Yielding block
+//////////////////////////////////////////////////////////////////////////
+
+IF
+	Allegiance(Myself,ENEMY)
+	!Global("DMWWYellowFight","GLOBAL",1)
+	!Global("DMWWYellowFight","GLOBAL",2)
+THEN
+	RESPONSE #100
+		SetGlobal("DMWWYellowFight","GLOBAL",2)
+		Continue()
+END
+
+
+IF
+	GlobalGT("DMWWYellowFight","GLOBAL",1)
+	HasItem("minhp1",Myself)
+THEN
+	RESPONSE #100
+		DestroyItem("minhp1")
+END
+
+IF
+	HasItem("minhp1",Myself)
+	HPPercentLT(Myself,25)
+THEN
+	RESPONSE #100
+		ClearActions(Myself)
+		ChangeEnemyAlly(Myself,NEUTRAL)
+		StartDialogNoSet(Player1)
+END
+
+IF
+	Dead("Abazigal")
+	!Global("DMWWYellowGloat","GLOBAL",1)
+	!Detect(Player1)
+THEN
+	RESPONSE #100
+		MoveToObject(Player1)
+END
+
+IF
+	Dead("Abazigal")
+	!Global("DMWWYellowGloat","GLOBAL",1)
+	Detect(Player1)
+THEN
+	RESPONSE #100
+		StartDialogueNoSet(Player1)
+END
+
+IF
+	Dead("Abazigal")
+	HPPercentGT(Myself,0)
+	AreaCheck("ar6012")
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+IF
+	!Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		FaceObject([PC])
+END
+
+IF
+	!Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+///////////////////////////////////////////////////////////////////////
+///	Usual pre-battle stuff
+///////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsspellsubstitute1||!GlobalTimerNotExpired("castspell","LOCALS"))
+BEGIN LOOP(scsspellsubstitute2||!GlobalTimerNotExpired("castspell","LOCALS"))
+	INCLUDE FILE(%scsroot%/mage/ssl/mage_definitions.ssl)
+END LOOP
+END LOOP
+INCLUDE FILE(%scsroot%/dragon/ssl/dragondef.ssl)
+INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+/// initial buffing
+////////////////////////////////////////////////////////////////////////////
+
+IF	
+	!GlobalTimerNotExpired("initialstoneskin","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("initialstoneskin","LOCALS",1000)
+		ApplySpell(Myself,DRAGON_STONE_SKIN)
+		ApplySpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
+		Continue()
+END
+
+
+
+////////////////////////////////////////////////////////////////////////////
+////	Chain Contingency, plus dragonfear
+////////////////////////////////////////////////////////////////////////////
+
+
+IF
+	!Global("ChainContingencyFired","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("ChainContingencyFired","LOCALS",1)
+		DisplayStringHead(Myself,26328)
+		ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		ReallyForceSpell(Myself,WIZARD_IMPROVED_HASTE)
+		ReallyForceSpell(Myself,SPELL_DEFLECTION_NO_VISUAL)
+		ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
+		SetGlobalTimer("dragonbreath","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",3)
+		Continue()
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+///  Pursue!
+///////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+////	Contingency
+////////////////////////////////////////////////////////////////////////////
+
+IF
+	GlobalTimerExpired("redefend","LOCALS")
+	Global("contingency","LOCALS",0)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TURNING)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TRAP)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_DEFLECTION)
+	Detect(NearestEnemyOf(Myself))
+	!StateCheck(Myself,STATE_INVISIBLE)
+THEN
+	RESPONSE #100
+		DisplayStringHead(Myself,25942)
+		SetGlobal("contingency","LOCALS",1)
+		ReallyForceSpellRES("spin710",Myself)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+////	Wish enemy defences down
+/////////////////////////////////////////////////////////////////////////////
+
+IF
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("wish","LOCALS")
+	OR(6)
+		See(Player1) // i.e. don't waste on riff-raff
+		See(Player2)
+		See(Player3)
+		See(Player4)
+		See(Player5)
+		See(Player6)
+THEN
+	RESPONSE #200
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("wish","LOCALS",1000)
+		SpellNoDecRES("dw#wisg1",Myself) //breach
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////
+///	Use breath weapon as often as possible
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrderShort)
+	CheckStat(scstarget,0,STONESKINS)
+THEN DO
+	Action(DragonBreath,YELLOW_DRAGON_BREATH,"dragonbreath",black05)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+///	Use wing buffet to drive away anything at all dangerous
+//////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/dragon/ssl/wingbuffet.ssl)
+
+
+/////////////////////////////////////////////////////////////////////////////
+///	Renew defences
+/////////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER	
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	!GlobalTimerNotExpired("redefend","LOCALS")
+	Detect(NearestEnemyOf(Myself))
+THEN DO
+	Action(SpellMyself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	SetGlobal("redefend","LOCALS",8) // don't get stuck in a defend-defend-defend loop and forget to do any damage
+END
+
+//////////////////////////////////////////////////////////////////////////
+////	Fire off a defensive trigger if appropriate
+////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(Myself)
+	GlobalTimerExpired("redefend","LOCALS")
+	!CheckStatGT(Myself,1,STONESKINS)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TURNING)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TRAP)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_DEFLECTION)
+THEN DO
+	Action(SequencerRESMyself,%DRAGON_STONE_SKIN_INSTANT%,%SPELL_DEFLECTION_NO_VISUAL_INSTANT%,%WIZARD_FIREBALL_INSTANT%)
+END
+
+IF TRIGGER
+	Target(Myself)
+	GlobalTimerExpired("redefend","LOCALS")
+	HPPercentLT(Myself,50)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TURNING)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_TRAP)
+	!CheckStatGT(Myself,0,WIZARD_SPELL_DEFLECTION)
+THEN DO
+	Action(SequencerRESMyself,%DRAGON_STONE_SKIN_INSTANT%,%SPELL_DEFLECTION_NO_VISUAL_INSTANT%,%WIZARD_FIREBALL_INSTANT%)
+END
+
+IF TRIGGER
+	Target(Myself)
+	GlobalTimerExpired("redefend","LOCALS")
+	HPPercentLT(Myself,50)
+	!CheckStatGT(Myself,1,STONESKINS)
+THEN DO
+	Action(SequencerRESMyself,%DRAGON_STONE_SKIN_INSTANT%,%SPELL_DEFLECTION_NO_VISUAL_INSTANT%,%WIZARD_FIREBALL_INSTANT%)
+END
+
+IF TRIGGER
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	CheckStat(Myself,0,STONESKINS)
+	GlobalTimerExpired("redefend","LOCALS")
+	Target(Myself)
+THEN DO
+	Action(SequencerRESMyself,%DRAGON_STONE_SKIN_INSTANT%,%SPELL_DEFLECTION_NO_VISUAL_INSTANT%,%WIZARD_FIREBALL_INSTANT%)
+END
+
+
+IF TRIGGER
+	!CheckStatGT(Myself,0,IMPROVEDHASTE)
+THEN DO
+	Action(SpellMyself,WIZARD_IMPROVED_HASTE|100|100)
+END
+
+////////////////////////////////////////////////////////////////////////
+////  Renew anti-magic defences 
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(Myself)
+THEN DO
+	Action(TriggerRESMyself,dw#0d590,dw#0d592,%WIZARD_IMPROVED_INVISIBILITY_INSTANT%)
+END
+
+IF TRIGGER
+	GlobalTimerExpired("redefend","LOCALS")
+	See(NearestEnemyOf(Myself))
+	CheckStat(Myself,0,WIZARD_SPELL_TRAP)
+	CheckStat(Myself,0,WIZARD_SPELL_TURNING)
+	CheckStat(Myself,0,WIZARD_SPELL_DEFLECTION)
+THEN DO
+	Action(SpellMyself,WIZARD_SPELL_TRAP)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+////  Attack enemy defences
+/////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+////	Hit people with Stoneskin, Chaotic Commands, Protection from Magic
+////	Energy, Death Ward or Protection from Magic Weapons with a Breach
+////
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellTurn|Enemy|Helpless)
+	OR(5)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
+		CheckStatGT(scstarget,0,SCRIPTINGSTATE2)
+		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		CheckStatGT(scstarget,2,STONESKINS)
+	!GlobalTimerNotExpired("DMWW_breach","LOCALS")
+THEN DO
+	Combine()
+	SetGlobalTimer("DMWW_dispel","LOCALS",12)
+	SetGlobalTimer("DMWW_breach","LOCALS",18)
+	Action(Spell,WIZARD_BREACH|150|150)
+END
+
+
+
+
+IF TRIGGER
+	!GlobalTimerNotExpired("DMWW_dispel","LOCALS")
+	TargetBlock(PCsInOrder)
+	OR(14)
+		!CheckStatGT(scstarget,-10,SAVEVSSPELL) // a rough indicator of a potion of Magic Shielding
+		CheckStatGT(scstarget,0,STONESKINS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		StateCheck(scstarget,STATE_IMPROVEDINVISIBILITY)
+		StateCheck(scstarget,STATE_BLESS)
+		StateCheck(scstarget,STATE_CHANT)
+		StateCheck(scstarget,STATE_HASTED)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		CheckStatGT(scstarget,0,CLERIC_DEFENSIVE_HARMONY)
+		CheckStatGT(scstarget,0,PROTECTION_FROM_EVIL)
+		CheckStatGT(scstarget,0,CLERIC_PHYSICAL_MIRROR)
+		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_PETRIFICATION)
+		CheckStatGT(scstarget,0,SCRIPTINGSTATE2)
+	BEGIN LOOP(scsvar||1;2;3;4;5;6)
+		!StateCheck(Playerscsvar,STATE_DISABLED)
+		!CheckStatGT(Playerscsvar,0,WIZARD_GREATER_MALISON)
+		!Allegiance(Playerscsvar,ENEMY)
+	END LOOP
+	TriggerBlock(SIAbjuration|Enemy)
+THEN DO
+	Combine()
+	SetGlobalTimer("DMWW_dispel","LOCALS",18)
+	Action(Spell,WIZARD_DISPEL_MAGIC|100|50)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy)
+	!GlobalTimerNotExpired("malison","LOCALS")
+	!CheckStatGT(scstarget,0,WIZARD_GREATER_MALISON)
+THEN DO
+	SetGlobalTimer("malison","LOCALS",24)
+	Action(Spell,WIZARD_GREATER_MALISON)
+END
+
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	!CheckStatLT(scstarget,40,RESISTMAGIC)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(SpellArea,WIZARD_LOWER_RESISTANCE|150|50)
+	Action(SpellArea,WIZARD_PIERCE_SHIELD|150|50)
+END
+
+////////////////////////////////////////////////////////////////////////////
+////	Attack PM scrolls
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	CheckStat(scstarget,2,WIZARD_SPELL_TRAP)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Action(vsPMscroll|200|50)
+END
+
+
+
+////////////////////////////////////////////////////////////////////////////
+////	Attack magical defences
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	OR(5)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_TURNING)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_DEFLECTION)
+		CheckStat(scstarget,1,WIZARD_SPELL_TRAP)
+		CheckStatGT(scstarget,0,WIZARD_SPELL_IMMUNITY)
+		CheckStatGT(scstarget,0,MINORGLOBE)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(SpellArea,WIZARD_SPELL_STRIKE|100|100)
+	Action(SpellArea,WIZARD_PIERCE_SHIELD|100|100)
+	Action(SpellArea,WIZARD_RUBY_RAY_OF_REVERSAL|100|100)
+	Action(SpellArea,WIZARD_WARDING_WHIP|100|100)
+END
+
+///////////////////////////////////////////////////////////////////////////
+////	Kill swords (don't worry about other summons)
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([GOODCUTOFF.0.SWORD])
+	Gender(scstarget,SUMMONED)
+	TriggerBlock(Enemy|Helpless)
+	HasItem("morsword",scstarget)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_DEATH_SPELL|150|50)
+	Action(MinorSequencer,WIZARD_MAGIC_MISSILE,WIZARD_MAGIC_MISSILE)
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Wilting
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	OR(2)
+		!Gender(scstarget,SUMMONED)
+		HasItem("morsword",scstarget)
+	TriggerBlock(ResistMagicDamage|MR|SINecromancy|Enemy|MirrorImage)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_ABI_DALZIMS_HORRID_WILTING|200|100)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+///	Incendiary Cloud
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(MR100|ResistFire|SIEvocation|Enemy)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(SpellArea,WIZARD_INCENDIARY_CLOUD|200|50)
+END
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Power words
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/combatblocks/kill-maze-stun.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+///// Oracle
+//////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	!CheckStatGT(FourthNearest([ENEMY]),0,TRUE_SIGHT)
+	!CheckStatGT(ThirdNearest([ENEMY]),0,TRUE_SIGHT)
+	!CheckStatGT(SecondNearest([ENEMY]),0,TRUE_SIGHT)
+	!CheckStatGT([ENEMY],0,TRUE_SIGHT)
+	!CheckStatGT(Myself,0,TRUE_SIGHT)
+	OR(2)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		Gender(scstarget,ILLUSIONARY)
+	!Allegiance(scstarget,ENEMY)
+	TriggerBlock(SIDivination)
+THEN DO
+	Action(SpellMyself,WIZARD_ORACLE)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+///	Use flame arrows
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;HPPercentLT(scstarget,40))
+	TargetBlock(PCsPreferringWeak)
+	!HasItemEquiped("clck26",scstarget)
+	TriggerBlock(MR|ResistFire|Enemy|ArrowSafe|SpellTurn|Stoneskin|MinorGlobe|MirrorImage|Helpless|SIConjuration)
+THEN DO
+	Action(Spell,WIZARD_FLAME_ARROW|150|50)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+///  Use magic missiles to bring down mirror images
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(MR100|SIEvocation|Enemy)
+	StateCheck(scstarget,STATE_MIRRORIMAGE)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Now hit basically anyone with MMs 
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/////	Melee phase
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/melee.ssl)
+
+////////////////////////////////////////////////////////
+///	Closedown: avoid interaction with other scripts
+////////////////////////////////////////////////////////////
+
+IF
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		NoAction()
+END

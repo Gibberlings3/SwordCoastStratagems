@@ -1,0 +1,270 @@
+//
+//"Darkling aura" (everyone loses 1 level) once per round irrespective of other activity
+//"Shadow mantle" (Protection from Magic Weapons, Spell Turning) once per 10 rounds
+//Blade barrier once/5 rds
+//Mirror Image at will
+//Finger of Death once/3 rds
+//Chromatic Orb at will
+//Power Word Blind once/5 rds
+//Black Blade of Disaster once/10 rds
+//Death Spell once/3 rds
+//170 hp
+//50% resistance to physical damage
+//Immunity to scrolls of Protection from Undead
+
+// The Shade Lord's powers aren't actually psionic but it's convenient to use the psionic code
+
+BEGIN_ACTION_DEFINITION
+	Name(Power)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+		!CheckStatGT(scstarget,0,SANCTUARY)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(PowerMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!GlobalTimerNotExpired("scsargument2","LOCALS")
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetGlobalTimer("scsargument2","LOCALS",scsargument3)
+		SpellNoDec(Myself,scsargument1)
+END
+
+
+
+BEGIN_ACTION_DEFINITION
+	Name(Attack)
+	TRIGGER
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		AttackOneRound(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackIfEmpty)
+	TRIGGER
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		AttackOneRound(scstarget)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(MoveIfEmpty)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		MoveToObject(scstarget)
+END
+
+
+VARIABLE(IsNotMoron=True)
+
+/////////////////////////////////////////////////////////
+/////              Rest and recover
+////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	Global("rest","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobal("rest","LOCALS",1)
+		Continue()
+END
+
+IF
+	Global("rest","LOCALS",1)
+	GlobalTimerExpired("rtime","LOCALS")
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+// reset all variables here
+		ApplySpell(Myself,RESTORE_FULL_HEALTH) //healing spell
+		Rest()
+END
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	!Global("inafight","LOCALS",1)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+/////////////////////////////////////////////////////////////////
+/////	Make shadows
+/////////////////////////////////////////////////////////////////
+
+IF
+	Killed([ANYONE])
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		ReallyForceSpell(LastTrigger,MAKE_SHADOW)
+		SetInterrupt(TRUE)
+END
+
+
+/////////////////////////////////////////////////////////////////
+/////	Block pro/undead scrolls
+/////////////////////////////////////////////////////////////////
+
+IF                                                               
+       !GlobalTimerNotExpired("blockproundead","LOCALS")
+       See(NearestEnemyOf(Myself))
+THEN
+       RESPONSE #100
+           ApplySpellRES("dw#nprun",Player1)
+           ApplySpellRES("dw#nprun",Player2)
+           ApplySpellRES("dw#nprun",Player3)
+           ApplySpellRES("dw#nprun",Player4)
+           ApplySpellRES("dw#nprun",Player5)
+           ApplySpellRES("dw#nprun",Player6)
+           SetGlobalTimer("blockproundead","LOCALS",300)
+           Continue()
+END
+
+
+
+/////////////////////////////////////////////////////////////////
+/////	Darkling Aura
+/////////////////////////////////////////////////////////////////
+
+IF	
+	Global("aurainitialised","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("aurainitialised","LOCALS",1)
+		SetGlobalTimer("aura","LOCALS",6)
+END
+
+IF
+	!GlobalTimerNotExpired("aura","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("aura","LOCALS",6)
+		ReallyForceSpellRES("dw#darkl",Myself)
+END
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
+
+//////////////////////////////////////////////////////////////////
+////	Buff
+//////////////////////////////////////////////////////////////////
+
+IF
+	!GlobalTimerNotExpired("mantle","LOCALS")
+	!GlobalTimerNotExpired("castspell","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("mantle","LOCALS",48)
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayString(Myself,@1501)
+		ApplySpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		ApplySpell(Myself,WIZARD_SPELL_TURNING)
+		ApplySpell(Myself,WIZARD_MIRROR_IMAGE)
+END
+
+////////////////////////////////////////////////////////////////////
+///	Black Blade
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	!HasItem("blakblad",Myself)
+THEN DO
+	Action(PowerMyself,WIZARD_BLACK_BLADE_OF_DISASTER,blackblade,48)
+END
+
+/////////////////////////////////////////////////////////////////////
+////	Blade Barrier
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Range(NearestEnemyOf(Myself),5)
+	!CheckStatGT(Myself,0,CLERIC_BLADE_BARRIER)
+THEN DO
+	Action(PowerMyself,CLERIC_BLADE_BARRIER,bladebarrier,36)
+END
+
+/////////////////////////////////////////////////////////////////////
+///	PW:Blind
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TargetBlock(Celestials)
+	!Gender(scstarget,SUMMONED)
+	TriggerBlock(MR|Enemy|SIConjuration)
+THEN DO
+	Combine()
+	Action(Power,WIZARD_POWER_WORD_BLIND,powerword,30|200|100)
+END
+
+/////////////////////////////////////////////////////////////////////
+////	Kill summons
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	Gender(scstarget,SUMMONED)
+	TriggerBlock(Enemy|Helpless)	
+	CheckStatGT(scstarget,8,Level)
+THEN DO
+	Combine()
+	Action(Power,WIZARD_DEATH_SPELL,death,18|150|50)
+END
+
+//////////////////////////////////////////////////////////////////////
+////	Finger of Death
+//////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SpellTurn|Slay|SINecromancy|Enemy)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(Power,WIZARD_FINGER_OF_DEATH,finger,24|150|50)
+END
+
+//////////////////////////////////////////////////////////////////////
+////	Orbs
+//////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	!HasItemEquiped("clck26",scstarget)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy|L1safe)
+THEN DO
+	Action(Power,WIZARD_CHROMATIC_ORB,orb,6)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+
+DEFAULT TRIGGER()
+BEGIN LOOP(MyWeaponStrength||4)
+BEGIN LOOP(MyWeaponDamageType||Piercing)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
+END LOOP
+END LOOP

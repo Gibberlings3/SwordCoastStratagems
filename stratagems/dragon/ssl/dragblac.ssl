@@ -1,0 +1,221 @@
+///////////////////////////////////////////////////////////////////////
+///	Usual pre-battle stuff
+///////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/dragondef.ssl)
+
+IF	
+	!GlobalTimerNotExpired("initialstoneskin","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("initialstoneskin","LOCALS",1000)
+		ApplySpell(Myself,DRAGON_STONE_SKIN)
+END
+
+
+INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
+
+///////////////////////////////////////////////////////////////////////
+///Initial  Haste, plus dragonfear and initial stoneskin
+///////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	!GlobalTimerNotExpired("initialfear","LOCALS")
+THEN
+	RESPONSE #100
+	SetGlobalTimer("initialfear","LOCALS",600)
+	ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
+	SetGlobalTimer("dragonbreath","LOCALS",1)
+	Continue()
+END
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+THEN DO
+	Action(SpellMyself,WIZARD_HASTE)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///  Pursue!
+///////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+///	Use breath weapon as often as possible
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!Range(scstarget,10)
+	Range(scstarget,30)
+	!CheckStatGT(scstarget,65,RESISTACID)
+THEN DO
+	Action(DragonBreath,BLACK_DRAGON_BREATH,"dragonbreath",black05)
+END
+
+IF
+ 	!GlobalTimerNotExpired("dragonbreath","LOCALS")
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("trytorun","LOCALS")
+	OR(5)
+		!CheckStatGT(NearestEnemyOf(Myself),65,RESISTACID)
+		!CheckStatGT(SecondNearestEnemyOf(Myself),65,RESISTACID)
+		!CheckStatGT(ThirdNearestEnemyOf(Myself),65,RESISTACID)
+		!CheckStatGT(FourthNearestEnemyOf(Myself),65,RESISTACID)
+		!CheckStatGT(FifthNearestEnemyOf(Myself),65,RESISTACID)
+THEN
+	RESPONSE #100
+	         SetGlobalTimer("trytorun","LOCALS",6)
+		RunAwayFrom(NearestEnemyOf(Myself),15)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Use wing buffet to drive away anything at all dangerous
+//////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/dragon/ssl/wingbuffet.ssl)
+
+/////////////////////////////////////////////////////////////////////////////
+///	Renew stoneskin
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	CheckStat(Myself,0,STONESKINS)
+	GlobalTimerExpired("redefend","LOCALS")
+	Target(Myself)
+THEN DO
+	Action(SpellInnate,DRAGON_STONE_SKIN|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////////
+/// Try a dispel magic first
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([PC])
+THEN DO
+	Action(Spell,WIZARD_DISPEL_MAGIC)
+END
+
+
+/////////////////////////////////////////////////////////////////////////
+///	Creeping Doom
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	AreaCheck("ar2807") // Nizi can use these powers, being in a natural location; the hell dragon can't
+	TargetBlock(PCsPreferringWeak)
+THEN DO
+	Action(SpellInnate,BLACK_DRAGON_INSECT)
+END
+
+///////////////////////////////////////////////////////////////////////////
+///	Plant growth
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	AreaCheck("ar2807") // Nizi can use these powers, being in a natural location; the hell dragon can't
+	TargetBlock(PCsInOrder)
+	!Range(scstarget,15)
+THEN DO
+	Action(SpellInnate,BLACK_DRAGON_PLANT)
+END
+
+//////////////////////////////////////////////////////////////////////////
+/// Charm
+/////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR|Charm|SIEnchantment|SpellTurn|Enemy|Helpless)
+	!CheckStatLT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_DIRE_CHARM|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////
+/// Kill swords
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([GOODCUTOFF.0.SWORD])
+THEN DO
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///  Use magic missiles to bring down mirror images
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(MR100|SIEvocation|Enemy)
+	StateCheck(scstarget,STATE_MIRRORIMAGE)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+///////////////////////////////////////////////////////////////////////////
+// Hit spellcasters with Melf
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCSpellcasters;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy)
+	!HasItem("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(MinorSequencer,WIZARD_MELF_ACID_ARROW,WIZARD_MELF_ACID_ARROW)
+	Action(Spell,WIZARD_MELF_ACID_ARROW)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Now hit basically anyone with MMs and acid arrows
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
+	!HasItem("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_MAGIC_MISSILE)
+END
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn)
+	!HasItem("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_MELF_ACID_ARROW)
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/////	Melee phase
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/melee.ssl)
+
+////////////////////////////////////////////////////////
+///	Closedown: avoid interaction with other scripts
+////////////////////////////////////////////////////////////
+
+IF
+	!See(NearestEnemyOf(Myself))
+	Global("inafight","LOCALS",0)
+THEN
+	RESPONSE #100
+		NoAction()
+END

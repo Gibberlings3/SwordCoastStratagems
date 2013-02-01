@@ -1,0 +1,359 @@
+///////////////////////////////////////////////////////////////////////////////////
+/////	SCS II style Illasera script
+///////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/genai/ssl/genai_definitions.ssl)
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackSlot)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		SelectWeaponAbility(scsargument1,0)
+		Attack(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackRandom)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		SelectWeaponAbility(SLOT_WEAPON1,0)
+		Attack(scstarget)
+		RESPONSE #scsprob1
+		SelectWeaponAbility(SLOT_WEAPON2,0)
+		Attack(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackMelee)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		SelectWeaponAbility(SLOT_WEAPON3,0)
+		Attack(scstarget)
+END
+
+IF
+	!Global("inafight","LOCALS",1)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("inafight","LOCALS",1)
+		SetGlobalTimer("seedefences","LOCALS",0)
+		SetGlobalTimer("stayontarget","LOCALS",4)
+		Continue()
+END
+
+
+/////////////////////////////////////////////////////
+///	Cancel the "chase" move so you actually stop and shoot
+/////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	!Global("chasePC","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("chasePC","LOCALS",0)
+		ClearActions(Myself)
+END
+
+/////////////////////////////////////////////////////////////
+////	Become ethereal if it's an option and if there's an 
+////	enemy too close
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ActionListEmpty()
+	!GlobalTimerNotExpired("Ethereal","LOCALS")
+	GlobalLT("EtherealCount","LOCALS",5)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Helpless)
+	Range(scstarget,8)
+THEN DO
+	Action(Literal)
+	SetGlobalTimer("Ethereal","LOCALS",24)
+	SetGlobalTimer("Retreat","LOCALS",5)
+	IncrementGlobal("EtherealCount","LOCALS",1)
+	ForceSpellRES("illainv",Myself)
+END
+
+IF TRIGGER
+	StateCheck(Myself,STATE_INVISIBLE)
+	GlobalTimerNotExpired("Retreat","LOCALS")
+	TargetBlock(PCsInOrder)
+	Range(scstarget,30)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	RunAwayFrom(NearestEnemyOf(Myself),30)
+	Action(Literal)
+END
+
+
+/////////////////////////////////////////////////////////////
+////	Failing which, use Hardiness
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	!StateCheck(Myself,STATE_INVISIBLE)
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Helpless)
+	CheckStatLT(Myself,40,RESISTSLASHING)
+	Range(scstarget,8)
+THEN DO
+	Action(SpellMyself,WARRIOR_HARDINESS)
+END
+
+////////////////////////////////////////////////////////////////
+///	Heal myself
+////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	HPPercentLT(Myself,75)
+THEN DO
+	Action(Potion,"potn55",@1055)
+END
+
+IF TRIGGER
+	HPPercentLT(Myself,75)
+	GlobalLT("HealCount","LOCALS",2)
+	!GlobalTimerNotExpired("CriticalWounds","LOCALS")
+THEN DO
+	SetGlobalTimer("CriticalWounds","LOCALS",18)
+	IncrementGlobal("HealCount","LOCALS",1)
+		Action(SpellNoDecMyself,CLERIC_CURE_CRITICAL_WOUNDS)
+END
+
+/////////////////////////////////////////////////////////////
+////	Become ethereal again
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	!GlobalTimerNotExpired("Ethereal","LOCALS")
+	GlobalLT("EtherealCount","LOCALS",5)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	See(NearestEnemyOf(Myself))
+THEN DO
+	SetGlobalTimer("Ethereal","LOCALS",24)
+	IncrementGlobal("EtherealCount","LOCALS",1)
+	Action(ForceSpellRESMyself,"illainv"|100|100)
+	OnContinue(SetGlobalTimer("Ethereal","LOCALS",3))
+END
+
+///////////////////////////////////////////////////////////////////
+///	Reset targetting
+////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	GlobalTimerExpired("stayontarget","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("stayontarget","LOCALS",4)
+		ClearActions(Myself)
+END
+
+//////////////////////////////////////////////////////////////////////
+//	Consider running away even if visible
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ActionListEmpty()
+	!GlobalTimerNotExpired("considerflight","LOCALS")
+	TargetBlock(PCsInOrder)
+	Range(scstarget,8)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Action(Literal|100|100)
+	RunAwayFrom(NearestEnemyOf(Myself),30)
+	SetGlobalTimer("considerflight","LOCALS",5)
+	OnContinue(SetGlobalTimer("considerflight","LOCALS",3))
+END
+
+/////////////////////////////////////////////////////////////////////
+///	Kill illusions
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([GOODCUTOFF.0.0.0.0.ILLUSIONARY])
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackSlot,SLOT_WEAPON)
+END
+
+
+/////////////////////////////////////////////////////////////////////
+///	Kill Mordenkainen's Sword
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	TriggerBlock(Enemy)
+	HasItem("morsword",scstarget)
+THEN DO
+	Action(AttackSlot,SLOT_WEAPON)
+END
+
+/////////////////////////////////////////////////////////////////////
+///	Shoot any close target with repulsion arrows
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrderShort)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	Range(scstarget,8)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackSlot,SLOT_WEAPON2|150|50)
+END
+
+/////////////////////////////////////////////////////////////////////
+///	Cause casting failure
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	!CheckStatGT(scstarget,0,SPELLFAILUREPRIEST)
+	!CheckStatGT(scstarget,0,SPELLFAILUREMAGE)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Combine()
+	Action(AttackSlot,SLOT_WEAPON|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////
+///	Stun vulnerable people
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER 
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|MR|Stun)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	CheckStatGT(scstarget,1,SAVEVSPOLY)
+THEN DO
+	Combine()
+	Action(AttackSlot,SLOT_WEAPON1|100|50)
+END
+
+/////////////////////////////////////////////////////////////////////
+///	Slow vulnerable people
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER 
+	TargetBlock(PCsPreferringStrong)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|MR|Slow)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	CheckStatGT(scstarget,1,SAVEVSPOLY)
+THEN DO
+	Combine()
+	Action(AttackSlot,SLOT_WEAPON1|100|50)
+END
+
+//////////////////////////////////////////////////////////////////////
+////	Take down magical defences
+//////////////////////////////////////////////////////////////////////
+
+IF TRIGGER 
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|MR)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	OR(13)
+		CheckStatGT(scstarget,0,STONESKINS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		StateCheck(scstarget,STATE_IMPROVEDINVISIBILITY)
+		StateCheck(scstarget,STATE_BLESS)
+		StateCheck(scstarget,STATE_CHANT)
+		StateCheck(scstarget,STATE_HASTED)
+		StateCheck(scstarget,STATE_MIRRORIMAGE)
+		CheckStatGT(scstarget,0,CLERIC_DEFENSIVE_HARMONY)
+		CheckStatGT(scstarget,0,PROTECTION_FROM_EVIL)
+		CheckStatGT(scstarget,0,CLERIC_PHYSICAL_MIRROR)
+		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_PETRIFICATION)
+		CheckStatGT(scstarget,0,SCRIPTINGSTATE2)
+
+THEN DO
+	Combine()
+	Action(AttackSlot,SLOT_WEAPON|100|50)
+END
+
+
+//////////////////////////////////////////////////////////////////////
+////	Weaken magic resistance
+//////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	CheckStatGT(scstarget,20,RESISTMAGIC)
+THEN DO
+	Combine()
+	Action(AttackSlot,SLOT_WEAPON|100|50)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	Just shoot stuff
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Disabled|ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackRandom)
+END
+
+IF TRIGGER
+	TargetBlock(PlayersInRandomOrder)
+	TriggerBlock(ArrowSafe)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackRandom)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	If I'm failing to find a target by this stage, assume everyone is protected
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(Celestials)
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Disabled)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackMelee)
+END
+
+IF TRIGGER
+	TargetBlock(PlayersInRandomOrder)
+	!CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(AttackMelee)
+END
+
+
+
+//////////////////////////////////////////////////////////////////////
+/////	Chase
+///////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)

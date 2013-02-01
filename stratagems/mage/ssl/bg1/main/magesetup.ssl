@@ -1,0 +1,165 @@
+
+/////////////////////////////////////////////////////////
+/////      Initial material
+////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/mage/ssl/bg1\generalblocks\rest.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg1\generalblocks\findhidden.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg1\generalblocks\gohostile.ssl)
+
+////////////////////////////////////////////////////////////
+///            Go invisible (prior to combat)
+////////////////////////////////////////////////////////////
+
+IF
+	Global("invnc","LOCALS",0)
+	!HasItem("dw#noinv",Myself)
+	RequireBlock(HasL3)
+	HaveSpell(WIZARD_INVISIBILITY)
+	IgnoreBlock(IsNecromancer)
+	Allegiance(Myself,ENEMY)
+	!Race(Myself,OGRE) // several ogremages have dialog, so this is convenient. Also doesn't seem their style...
+	!Detect(NearestEnemyOf(Myself))
+	!Detect(Player1)
+	!Detect(Player2)
+	!Detect(Player3)
+	!Detect(Player4)
+	!Detect(Player5)
+	!Detect(Player6)
+THEN
+	RESPONSE #200
+		SetGlobal("invnc","LOCALS",1)
+		ApplySpellRES("dw#silin",Myself)  // this is a secret Invisibility spell that doesn't display a string
+		SetGlobalTimer("invimp","LOCALS",3) // wander a bit to confuse position
+		RemoveSpell(WIZARD_INVISIBILITY)
+	RESPONSE #100
+		SetGlobal("invnc","LOCALS",1)
+END
+
+IF
+	Global("invnc","LOCALS",0)
+	!Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		SetGlobal("invnc","LOCALS",1)
+END
+
+///////////////////////////////////////////////////////////////////
+// "Instant-up" defences
+///////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg1\prepblocks\instantprep.ssl)
+
+
+///////////////////////////////////////////////////////
+// Long-term defences
+//////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/mage/ssl/bg1\prepblocks\longprep.ssl)
+
+
+IF
+	GlobalTimerNotExpired("invimp","LOCALS")
+THEN
+	RESPONSE #100
+		RandomWalk()
+END
+
+///////////////////////////////////////////////////////////////////
+///  Set the redefend timer, to avoid recasting everything
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsOptionThree)
+	HardPlusLine
+	Global("instantprep","LOCALS",0)
+	See(NearestEnemyOf(Myself))
+THEN DO
+                Action(Literal)
+		SetGlobal("instantprep","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",5)
+		Continue()
+END
+
+IF
+	RequireBlock(IsOptionThree)
+	Global("instantprep","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("instantprep","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",0)
+END
+
+IF TRIGGER
+        RequireBlock(EasyOptionAvailable)
+	IgnoreBlock(IsOptionThree)
+	CoreMinusLine
+	Global("instantprep","LOCALS",0)
+THEN DO
+                Action(Literal)
+		SetGlobal("instantprep","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",0)
+END
+
+////////////////////////////////////////////////////////////////////////
+// Set up spell triggers
+////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg1\prepblocks\magetrig.ssl)
+
+
+/////////////////////////////////////////////////////////////////////////
+///	Enter fight mode if you detect trouble (mostly for undead)
+/////////////////////////////////////////////////////////////////////////
+
+IF
+	Allegiance(Myself,ENEMY)
+    OR(12)
+      AttackedBy([GOODCUTOFF.0.0.0.0.SUMMONED],DEFAULT)
+      AttackedBy([PC],DEFAULT)
+      AttackedBy([FAMILIAR],DEFAULT)
+      AttackedBy([ALLY],DEFAULT)
+      AttackedBy([CONTROLLED],DEFAULT)
+      AttackedBy([CHARMED],DEFAULT)
+      SpellCastOnMe([GOODCUTOFF.0.0.0.0.SUMMONED],0)
+      SpellCastOnMe([PC],0)
+      SpellCastOnMe([FAMILIAR],0)
+      SpellCastOnMe([ALLY],0)
+      SpellCastOnMe([CONTROLLED],0)
+      SpellCastOnMe([CHARMED],0) 
+!Global("inafight","LOCALS",1)
+  !See(NearestEnemyOf(Myself))
+THEN
+  RESPONSE #100
+    SetGlobal("inafight","LOCALS",1)
+    Continue()
+END	
+
+////////////////////////////////////////////////////////////////////////
+// Initialise for combat
+////////////////////////////////////////////////////////////////////////
+
+IF
+	Global("inafight","LOCALS",0)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("inafight","LOCALS",1)
+		Continue()
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////
+///CPU saver
+//////////////////////////////////////////////////////////////////////
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	!HPPercentLT(Myself,100)
+	!Global("inafight","LOCALS",1)
+THEN
+	RESPONSE #100
+		NoAction()
+END

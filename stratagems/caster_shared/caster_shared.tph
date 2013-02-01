@@ -1,0 +1,883 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_instant_prebuff_spells BEGIN
+  ACTION_IF !VARIABLE_IS_SET prebuff_spells_read_in BEGIN
+   OUTER_SET prebuff_spells_read_in=1
+   COPY ~%workspace%/instant_prebuff_spells.2da~ override
+         COUNT_2DA_ROWS 2 rowcount
+         FOR(i=0;i<rowcount;i+=1) BEGIN
+            READ_2DA_ENTRY i 0 2 macro_spell_ID
+            READ_2DA_ENTRY i 1 2 macro_spell_code
+            SPRINT EVALUATE_BUFFER ~%macro_spell_ID%~ ~%macro_spell_code%~
+         END
+   BUT_ONLY
+  END
+END
+
+DEFINE_ACTION_FUNCTION build_prebuff_spells BEGIN
+   LAUNCH_ACTION_MACRO read_in_spellcodes
+   LAUNCH_ACTION_MACRO add_extra_spell_entries
+   LAF read_in_list STR_VAR file=~%scsroot%/caster_shared/prebuff_bg1.2da~ RET list=list END
+   ACTION_IF is_bg2=1 BEGIN
+      LAF read_in_list STR_VAR file=~%scsroot%/caster_shared/prebuff.2da~ RET list2=list END
+      OUTER_SPRINT list ~%list% %list2%~
+   END
+   OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
+         LAF action_return_first_entry STR_VAR list RET list=list spell_ID=entry END
+         LAF build_prebuff_spell STR_VAR spell_ID RET fullname=fullname newcode=newcode END
+         ACTION_IF !FILE_CONTAINS_EVALUATED  (~%workspace%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
+             LAF log_this STR_VAR file=instant_prebuff_spells.2da input=EVALUATE_BUFFER ~%fullname%_PREBUFF %newcode%~ END
+         END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_instant_spells  BEGIN
+   LAUNCH_ACTION_MACRO read_in_spellcodes
+   LAUNCH_ACTION_MACRO add_extra_spell_entries
+   LAF read_in_list STR_VAR file=~%scsroot%/caster_shared/instant_bg1.2da~ RET list=list END
+   ACTION_IF is_bg2=1 BEGIN
+      LAF read_in_list STR_VAR file=~%scsroot%/caster_shared/instant.2da~ RET list2=list END
+      OUTER_SPRINT list ~%list% %list2%~
+   END
+   OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
+         LAF action_return_first_entry STR_VAR list RET list=list spell_ID=entry END
+         LAF build_instant_spell STR_VAR spell_ID RET fullname=fullname oldcode=spellcode newcode=newcode END
+         ACTION_IF !FILE_CONTAINS_EVALUATED (~%workspace%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
+          LAF log_this STR_VAR file=instant_prebuff_spells.2da input=EVALUATE_BUFFER ~%fullname%_INSTANT %newcode%~ END
+
+         ACTION_IF FILE_EXISTS ~%workspace%/immune_cre.2da~ BEGIN
+          COPY ~%workspace%/immune_cre.2da~ ~%workspace%~
+             COUNT_2DA_ROWS 2 rowcount
+             FOR (i=0;i<rowcount;i+=1) BEGIN
+                READ_2DA_ENTRY i 0 2 spell_code
+                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
+                   READ_2DA_ENTRY i 1 2 creature
+                   INNER_ACTION BEGIN
+                     MAKE_PATCH
+                               type=>effect
+                               match=>combine_checks
+                               match_parameter=>~CRE_read_opcode=>206 CRE_read_effect_resource=>%oldcode%~
+                               check=>1
+                               effect_resource=>~%newcode%~
+                     END
+                     LAF edit_creature STR_VAR creature editstring=EVALUATE_BUFFER ~clone_entry=>patch_data~ END
+                   END
+                END
+             END
+          BUT_ONLY
+         END
+         ACTION_IF FILE_EXISTS ~%workspace%/immune_spl.2da~ BEGIN
+          COPY ~%workspace%/immune_spl.2da~ ~%workspace%~
+             COUNT_2DA_ROWS 2 rowcount
+             FOR (i=0;i<rowcount;i+=1) BEGIN
+                READ_2DA_ENTRY i 0 2 spell_code
+                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
+                   READ_2DA_ENTRY i 1 2 spell
+                   INNER_ACTION BEGIN
+                     MAKE_PATCH
+                               type=>effect
+                               match=>combine_checks
+                               match_parameter=>~SPL_read_opcode=>206 SPL_read_resource=>%oldcode%~
+                               check=>1
+                               resource=>~%newcode%~
+                     END
+                     LAF edit_spell STR_VAR spell editstring=EVALUATE_BUFFER ~clone_entry=>patch_data~ END
+                   END
+                END
+             END
+          BUT_ONLY
+         END
+         ACTION_IF FILE_EXISTS ~%workspace%/immune_itm.2da~ BEGIN
+          COPY ~%workspace%/immune_itm.2da~ ~%workspace%~
+             COUNT_2DA_ROWS 2 rowcount
+             FOR (i=0;i<rowcount;i+=1) BEGIN
+                READ_2DA_ENTRY i 0 2 spell_code
+                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
+                   READ_2DA_ENTRY i 1 2 item
+                   INNER_ACTION BEGIN
+                     MAKE_PATCH
+                               type=>effect
+                               match=>combine_checks
+                               match_parameter=>~ITM_read_opcode=>206 ITM_read_resource=>%oldcode%~
+                               check=>1
+                               resource=>~%newcode%~
+                     END
+                     LAF edit_item STR_VAR item editstring=EVALUATE_BUFFER ~clone_entry=>patch_data~ END
+                   END
+                END
+             END
+          BUT_ONLY
+         END
+         ACTION_IF FILE_EXISTS ~%workspace%/immune_eq_itm.2da~ BEGIN
+          COPY ~%workspace%/immune_eq_itm.2da~ ~%workspace%~
+             COUNT_2DA_ROWS 2 rowcount
+             FOR (i=0;i<rowcount;i+=1) BEGIN
+                READ_2DA_ENTRY i 0 2 spell_code
+                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
+                   READ_2DA_ENTRY i 1 2 item
+                   INNER_ACTION BEGIN
+                     MAKE_PATCH
+                               type=>effect_global
+                               match=>combine_checks
+                               match_parameter=>~ITM_read_opcode=>206 ITM_read_resource=>%oldcode%~
+                               check=>1
+                               resource=>~%newcode%~
+                     END
+                     LAF edit_item STR_VAR item editstring=EVALUATE_BUFFER ~clone_entry=>patch_data~ END
+                   END
+                END
+             END
+          BUT_ONLY
+          END
+
+         END
+   END
+END
+
+/////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_log_immunity
+   STR_VAR offset_base=""
+           filename=""
+BEGIN
+   LPF CRE_read_effect_resource STR_VAR offset_base RET resource=value END
+   LPF patch_log_this STR_VAR file=~immune_cre.2da~ input=EVALUATE_BUFFER ~%resource% %filename%~ repeat=no END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ITM_log_immunity
+   STR_VAR offset_base=""
+           offset_secondary=""
+           filename=""
+BEGIN
+   LPF ITM_read_resource STR_VAR offset_base offset_secondary RET resource=value END
+   LPF patch_log_this STR_VAR file=~immune_itm.2da~ input=EVALUATE_BUFFER ~%resource% %filename%~ repeat=no END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ITM_log_eq_immunity
+   STR_VAR offset_base=""
+           offset_secondary=""
+           filename=""
+BEGIN
+   LPF ITM_read_resource STR_VAR offset_base offset_secondary RET resource=value END
+   LPF patch_log_this STR_VAR file=~immune_eq_itm.2da~ input=EVALUATE_BUFFER ~%resource% %filename%~ repeat=no END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION SPL_log_immunity
+   STR_VAR offset_base=""
+           filename=""
+           offset_secondary=""
+BEGIN
+   LPF SPL_read_resource STR_VAR offset_base offset_secondary RET resource=value END
+   LPF patch_log_this STR_VAR file=~immune_spl.2da~ input=EVALUATE_BUFFER ~%resource% %filename%~ repeat=no END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION collect_the_immune BEGIN
+
+   ACTION_IF !FILE_EXISTS ~%workspace%/immune_cre.2da~ BEGIN
+    // fast filter: does it *have* any effects?)
+      OUTER_SPRINT creature ~~
+      COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+            PATCH_IF (LONG_AT 0x2c8>0 && BYTE_AT 0x33=1) BEGIN // this includes a sanity check for EFF v0
+              PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0) BEGIN
+                  PUSH creature ~%SOURCE_RES%~
+              END
+            END
+      BUT_ONLY
+      MAKE_PATCH
+         type=>effect
+         match=>CRE_read_opcode
+         check=>206
+         CRE_log_immunity=>null
+      END
+      LAF edit_creature STR_VAR creature editstring=~patch_conditionally=>patch_data~ END
+   END
+   ACTION_IF !FILE_EXISTS ~%workspace%/immune_itm.2da~ BEGIN
+     // fast filter: does it contain "SPWI" or "SPIN"
+      OUTER_SPRINT item ~~
+      COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
+         PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0) BEGIN
+            PUSH item ~%SOURCE_RES%~
+         END
+      BUT_ONLY
+      MAKE_PATCH
+        patch_cond_inline=>~type=>effect
+                            match=>opcode
+                            check=>206
+                            ITM_log_immunity=>null~
+        patch_cond_inline'=>~type=>effect_global
+                             match=>opcode
+                             check=>206
+                            ITM_log_eq_immunity=>null~
+      END
+     LAF edit_item STR_VAR item edits=patch_data END
+   END
+   ACTION_IF !FILE_EXISTS ~%workspace%/immune_spl.2da~ BEGIN
+   // no point doing the filter for spells: they pretty much all contain this phrase
+      MAKE_PATCH
+         type=>effect
+         match=>SPL_read_opcode
+         check=>206
+         SPL_log_immunity=>null
+      END
+     LAF edit_all_spells STR_VAR editstring=~patch_conditionally=>patch_data~ END
+   END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   performs a swap of spells, stored in the master "spell" thread
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION substitute_spells
+STR_VAR spells=""
+        swap_out=""
+        swap_in=""
+RET     spells
+BEGIN
+      PATCH_IF ~%swap_out%~ STRING_COMPARE ~~ BEGIN
+       LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%swap_out%~ RET this_swap_out=entry swap_out=list END
+       SPRINT list ~%swap_in%~
+       SET num_swaps=0
+       WHILE ~%list%~ STRING_COMPARE ~~ BEGIN
+           SET num_swaps=num_swaps+1
+           LPF return_first_entry STR_VAR list RET list=list entry=entry END
+           SPRINT $swap(~%num_swaps%~) ~%entry%~
+       END
+         SPRINT list ~%spells%~
+         SPRINT spells ~~
+         WHILE ~%list%~ STRING_COMPARE ~~ BEGIN
+            LPF return_first_entry STR_VAR list RET list=list entry=entry END
+            PATCH_IF ~%entry%~ STRING_EQUAL_CASE ~%this_swap_out%~ BEGIN
+               PATCH_IF num_swaps>0 BEGIN
+                 SET choice= RANDOM(1 num_swaps)
+                 SPRINT temp $swap(~%choice%~)
+                 PATCH_IF ~%temp%~ STRING_COMPARE_CASE ~null~ BEGIN
+                    PUSH spells ~%temp%~
+                 END
+               END
+            END ELSE BEGIN
+               PUSH spells ~%entry%~
+            END
+         END
+        LPF substitute_spells STR_VAR spells swap_in swap_out RET spells=spells END
+      END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  read in spell choices (spelltype is priest or mage, modtype is core or demivrgvs)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
+
+ ACTION_IF !VARIABLE_IS_SET EVALUATE_BUFFER ~macro_read_in_%type%_spell_choices~ BEGIN
+   OUTER_SET EVALUATE_BUFFER ~macro_read_in_%type%_spell_choices~=1
+   ACTION_IF demivrgvs=1 BEGIN
+      OUTER_SPRINT list demivrgvs
+   END ELSE BEGIN
+      OUTER_SPRINT list core
+   END
+   ACTION_IF refinements=1 BEGIN
+      OUTER_SPRINT list ~%list% refinements~
+   END
+   OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
+     LAF action_return_first_entry STR_VAR list RET list=list folder=entry END
+     ACTION_BASH_FOR ~%scsroot%/%type%/spellchoices/%folder%~ ~.*\.2da~ BEGIN
+        COPY ~%BASH_FOR_FILESPEC%~ ~%workspace%~
+          SPRINT ~macro_kit~ ~%BASH_FOR_RES%~
+          TO_LOWER macro_kit
+          COUNT_2DA_COLS colcount
+          FOR (j=2;j<=colcount;j+=1) BEGIN
+             COUNT_2DA_ROWS j rowcount
+             FOR (i=0;i<rowcount;i+=1) BEGIN
+                READ_2DA_ENTRY i 0 j macro_level
+                TO_UPPER macro_level
+                READ_2DA_ENTRY i 1 j macro_data
+                FOR (k=2;k<j;k+=1) BEGIN
+                   READ_2DA_ENTRY i k j temp
+                   PUSH macro_data ~%temp%~
+                END
+                PATCH_MATCH ~%macro_level%~ WITH 1 2 3 4 5 6 7 8 9 H IO IR BEGIN
+                 SPRINT $spell_choices(~%type%~ ~%macro_kit%~ ~%macro_level%~) ~%macro_data%~
+                 PATCH_IF debug_variable=2 BEGIN
+                    PATCH_PRINT ~assigning spells %macro_data% to $spell_choices(%type% %macro_kit% %macro_level%)~
+                 END
+                END
+                DEFAULT END
+             END
+          END
+        BUT_ONLY
+     END
+    END
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  read in spells per level
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_spells_per_level BEGIN
+  ACTION_IF !VARIABLE_IS_SET macro_read_in_spells_per_level BEGIN
+     OUTER_SET macro_read_in_spells_per_level=1
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY macro_spell_2das BEGIN
+          MXSPLWIZ=>9
+          MXSPLDRU=>7
+          MXSPLPRS=>7
+          MXSPLWIS=>7
+          MXSPLBRD=>6
+     END
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY macro_spell_name_map BEGIN
+          MXSPLWIZ=>mage
+          MXSPLDRU=>druid
+          MXSPLPRS=>cleric
+          MXSPLWIS=>null
+          MXSPLBRD=>bard
+     END
+     ACTION_PHP_EACH macro_spell_2das AS macro_file=>macro_level_num BEGIN
+        OUTER_SPRINT macro_type $macro_spell_name_map(~%macro_file%~)
+        COPY_EXISTING ~%macro_file%.2da~ ~override~
+             READ_2DA_ENTRIES_NOW macro_spell_data (macro_level_num + 1)
+             // get spells per level
+             FOR (i=0;i<macro_spell_data;i+=1) BEGIN
+                READ_2DA_ENTRY_FORMER macro_spell_data i 0 macro_level
+                FOR (j=0;j< macro_level_num;j+=1) BEGIN
+                    READ_2DA_ENTRY_FORMER macro_spell_data i (j+1) temp
+                    SET $spell_mem_data(~%macro_file%~ ~%macro_level%~ ~%j%~)=temp
+                    SET macro_true_level=j+1
+                    PATCH_IF (temp>0 && ! VARIABLE_IS_SET $spell_level_to_caster_level(EVALUATE_BUFFER ~%macro_type%~ ~%macro_true_level%~)) BEGIN
+                       SET $spell_level_to_caster_level(~%macro_type%~ ~%macro_true_level%~)=~%macro_level%~
+                    END
+                END
+             END
+        BUT_ONLY
+        OUTER_FOR (i=1;i<=macro_level_num;i+=1) BEGIN
+              OUTER_SET temp=$spell_level_to_caster_level(~%macro_type%~ ~%i%~)
+              OUTER_SET $caster_level_to_spell_level(~%macro_type%~ ~%temp%~)= ~%i%~
+        END
+        OUTER_SET current=1
+        OUTER_FOR (i=1;i<=50;i+=1) BEGIN
+             ACTION_IF VARIABLE_IS_SET $caster_level_to_spell_level(EVALUATE_BUFFER ~%macro_type%~ ~%i%~) BEGIN
+                OUTER_SET current=$caster_level_to_spell_level(EVALUATE_BUFFER ~%macro_type%~ ~%i%~)
+             END ELSE BEGIN
+                OUTER_SET $caster_level_to_spell_level(EVALUATE_BUFFER ~%macro_type%~ ~%i%~)=current
+             END
+        END
+     END
+  END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  read in individual spell choices and kit/level overrides
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_individual_overrides BEGIN
+ ACTION_IF !VARIABLE_IS_SET $individual_choices_read_in(EVALUATE_BUFFER ~%type%~) BEGIN
+  OUTER_SET $individual_choices_read_in(~%type%~)=1
+  ACTION_FOR_EACH game IN bg1 bg2 BEGIN
+      ACTION_IF $is(EVALUATE_BUFFER ~%game%~)=1 BEGIN
+         ACTION_IF ~%game%~ STRING_EQUAL_CASE ~bg1~ BEGIN OUTER_SPRINT macro_tutuvar ~%tutu_var%~ END ELSE BEGIN OUTER_SPRINT macro_tutuvar ~~ END
+         ACTION_FOR_EACH macro_type IN spellchoice kit level alignment BEGIN
+          COPY ~%scsroot%/%type%/override/%game%/%macro_type%.2da~ ~%workspace%~
+            COUNT_2DA_COLS colcount
+            FOR (i=2;i<=colcount;i+=1) BEGIN
+               COUNT_2DA_ROWS i rowcount
+               FOR (j=0;j<rowcount;j+=1) BEGIN
+                  READ_2DA_ENTRY j 0 i macro_name
+                  READ_2DA_ENTRY j 1 i macro_data
+                  FOR (k=2;k<i;k+=1) BEGIN
+                      READ_2DA_ENTRY j k i temp
+                      PUSH macro_data ~%temp%~
+                  END
+                  TO_UPPER macro_name
+                  SPRINT macro_name ~%macro_tutuvar%%macro_name%~
+                  SPRINT $override(~%macro_type%~ ~%type%~ ~%macro_name%~) ~%macro_data%~
+                  PATCH_IF debug_variable=2 BEGIN
+                      PATCH_PRINT "setting $override(~%macro_type%~ ~%type%~ ~%macro_name%~) to ~%macro_data%~"
+                  END
+               END
+            END
+      //    BUT_ONLY
+         END
+      END
+   END
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  work out available spells
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION determine_number_of_spells
+    INT_VAR level=1
+            wisdom=10
+    STR_VAR class=""
+    RET av_0 av_1 av_2 av_3 av_4 av_5 av_6 av_7 av_8
+BEGIN
+      INNER_ACTION BEGIN
+         LAUNCH_ACTION_MACRO read_in_spells_per_level
+      END
+      TO_LOWER class
+      PATCH_MATCH ~%class%~ WITH
+      cleric fighter_cleric BEGIN
+         SPRINT file MXSPLPRS
+         SET wisdom_bonus=1
+         SET spec_bonus=0
+      END
+      druid fighter_druid BEGIN
+         SPRINT file MXSPLDRU
+         SET wisdom_bonus=1
+         SET spec_bonus=0
+      END
+      bard BEGIN
+         SPRINT file MXSPLBRD
+         SET wisdom_bonus=0
+         SET spec_bonus=0
+      END
+      fighter_mage mage_thief BEGIN
+         SPRINT file MXSPLWIZ
+         SET wisdom_bonus=0
+         SET spec_bonus=0
+      END
+      mage BEGIN
+         SPRINT file MXSPLWIZ
+         SET wisdom_bonus=0
+         SET spec_bonus=1
+      END
+      DEFAULT
+         LPF patch_display_warning STR_VAR warning=EVALUATE_BUFFER ~I don't recognise class %class%~ END
+      END
+      FOR (i=0;i<9;i+=1) BEGIN
+         PATCH_IF VARIABLE_IS_SET $spell_mem_data(EVALUATE_BUFFER ~%file%~ ~%level%~ ~%i%~) BEGIN
+            SET temp=$spell_mem_data(EVALUATE_BUFFER ~%file%~ ~%level%~ ~%i%~)
+            PATCH_IF temp>0 BEGIN
+             PATCH_IF wisdom_bonus=1 BEGIN
+               PATCH_IF VARIABLE_IS_SET $spell_mem_data(MXSPLWIS ~%wisdom%~ ~%i%~) BEGIN
+                 SET temp=temp+ $spell_mem_data(MXSPLWIS ~%wisdom%~ ~%i%~)
+               END
+             END
+             SET $av(~%i%~)=temp+spec_bonus
+            END ELSE BEGIN
+               SET $av(~%i%~)=0
+            END
+         END ELSE BEGIN
+            SET $av(~%i%~)=0
+         END
+         SET temp=$av(~%i%~)
+      END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  add individual spell choices if appropriate
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION individual_choices 
+  STR_VAR spells=""
+          filename=""
+          component="mage"
+  RET spells
+BEGIN
+   TO_UPPER filename
+   PATCH_IF VARIABLE_IS_SET $override_spellchoice(EVALUATE_BUFFER ~%component%~ EVALUATE_BUFFER ~%filename%~) BEGIN
+      SPRINT temp $override_spellchoice(EVALUATE_BUFFER ~%component%~ EVALUATE_BUFFER ~%filename%~)
+      PUSH spells ~%temp%~
+   END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   go through a list of spells, prepend "WIZARD_" or "CLERIC_" as appropriate, and work out how many there
+////   are of each level
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION count_spell_levels
+      STR_VAR spells=""
+              prefix="WIZARD_"
+      RET ct_0
+          ct_1
+          ct_2
+          ct_3
+          ct_4
+          ct_5
+          ct_6
+          ct_7
+          ct_8
+BEGIN
+       INNER_ACTION BEGIN
+          LAUNCH_ACTION_MACRO read_in_spellcodes
+       END
+       FOR (i=0;i<9;i+=1) BEGIN
+          SET $ct(~%i%~)=0
+       END
+       WHILE ~%spells%~ STRING_COMPARE_CASE ~~ BEGIN
+          LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%spells%~ RET entry=entry spells=list END
+          PATCH_IF !VARIABLE_IS_SET EVALUATE_BUFFER ~%%prefix%%entry%_LEVEL%~ BEGIN
+             LPF patch_display_warning STR_VAR warning=EVALUATE_BUFFER ~No recorded level for spell %entry%~ END
+          END ELSE BEGIN
+             SET level=EVALUATE_BUFFER ~%%prefix%%entry%_LEVEL%~
+             SET $ct(~%level%~)+=1
+          END
+       END
+END
+
+
+DEFINE_ACTION_MACRO add_extra_spell_entries    // moved to lib_macro
+BEGIN          /*
+    ACTION_IF !VARIABLE_IS_SET add_extra_spell_entries BEGIN
+     OUTER_SET add_extra_spell_entries=1
+
+     <<<<<<<< .../stratagems-inline/temp.2da
+     >>>>>>>>
+     COPY ~.../stratagems-inline/temp.2da~ ~override~
+          READ_2DA_ENTRIES_NOW temp_array  4
+          FOR (i=0;i<temp_array;i+=1) BEGIN
+             READ_2DA_ENTRY_FORMER temp_array i 0 macro_spell_ID
+             READ_2DA_ENTRY_FORMER temp_array i 1 macro_spellcode
+             READ_2DA_ENTRY_FORMER temp_array i 2 macro_level
+             READ_2DA_ENTRY_FORMER temp_array i 3 macro_type
+             SPRINT EVALUATE_BUFFER ~%macro_spell_ID%~ ~%macro_spellcode%~
+             SPRINT EVALUATE_BUFFER ~%macro_spell_ID%_LEVEL~ ~%macro_level%~
+             SPRINT EVALUATE_BUFFER ~%macro_spell_ID%_TYPE~ ~%macro_type%~
+          END
+     BUT_ONLY
+   END            */
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   check if this creature gets HLA spells
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION check_hla_status
+   STR_VAR filename=""
+   RET value
+BEGIN
+  PATCH_IF is_bg2=0 BEGIN
+   SET value=0
+  END ELSE BEGIN
+   TO_UPPER filename
+   INNER_ACTION BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME ~%workspace%/hla_cre.2da~ BEGIN
+         ACTION_IF (FILE_CONTAINS_EVALUATED (~%workspace%/hla_cre.2da~ ~%filename%~) || FILE_CONTAINS_EVALUATED (~%workspace%/hla_cre.2da~ ~UNIVERSAL~))BEGIN
+            OUTER_SET value=1
+         END ELSE BEGIN
+            OUTER_SET value=0
+         END
+      END ELSE BEGIN
+         OUTER_SET value=0
+      END
+   END
+  END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   check if HLAs function as innate (1=yes, no repeats; 2=yes, with repeats)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION check_if_hlas_are_innate  // [legacy code, mostly]
+   RET hla_innate
+BEGIN
+        OUTER_SET ~hla_innate~=0
+        COPY_EXISTING ~spwi920.spl~ ~override~ // energy blades
+           READ_SHORT 0x1c ~innatecheck~
+           PATCH_IF ~innatecheck~=4 BEGIN
+              SET ~hla_innate~=1
+           END
+        BUT_ONLY
+        ACTION_IF ~hla_innate~=1 BEGIN
+           COPY_EXISTING ~luma0.2da~ ~override~
+                COUNT_2DA_ROWS 6 ~rowcount~
+                FOR (i=0;i<~rowcount~;i=i+1) BEGIN
+                   READ_2DA_ENTRY i 1 6 ~abilcheck~
+                   PATCH_IF ~%abilcheck%~ STRING_EQUAL_CASE ~GA_SPWI920~ BEGIN
+                       READ_2DA_ENTRY i 6 6 ~numcheck~
+                       PATCH_IF ~numcheck~>1 BEGIN
+                          SET ~hla_innate~=2
+                       END
+                       SET i=~rowcount~
+                   END
+                END
+           BUT_ONLY
+        END
+        
+        ACTION_IF ~hla_innate~=2 BEGIN
+           LAF action_check_ini STR_VAR ini=Force_No_HLA_Repeats RET value=value END
+           ACTION_IF value=1 BEGIN
+              OUTER_SET hla_innate=1
+           END
+        END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   modify or sanity-check level, enforce, then return it
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION get_caster_level
+  INT_VAR modify_level=1
+  STR_VAR type=mage
+          castertype=mage
+          filename=""
+  RET level
+BEGIN
+    PATCH_IF debug_variable=2 BEGIN
+       PATCH_PRINT "trying to get caster level"
+    END
+    PATCH_IF modify_level=1 BEGIN
+     TO_UPPER filename
+     PATCH_IF VARIABLE_IS_SET $override_level(EVALUATE_BUFFER ~%type%~ ~%filename%~) BEGIN
+          SET level=$override_level(~%type%~ ~%filename%~)
+          LPF CRE_level_all STR_VAR arguments=EVALUATE_BUFFER ~%level%~ END
+          LPF CRE_enforce_saves STR_VAR arguments=at_worst END
+          LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
+          LPF CRE_enforce_hp STR_VAR arguments=at_worst END
+     END ELSE BEGIN
+       LPF CRE_read_level RET level=value END
+       SET level= level=0?1:level
+       SET should_cast=$caster_level_to_spell_level(~%castertype%~ ~%level%~)
+       LPF CRE_find_highest_spell_level STR_VAR arguments=EVALUATE_BUFFER ~%type%~ RET can_cast=value END
+       PATCH_IF can_cast>should_cast BEGIN
+          PATCH_IF VARIABLE_IS_SET $spell_level_to_caster_level(EVALUATE_BUFFER ~%castertype%~ ~%can_cast%~) BEGIN // guard against misconfigured files with illegal spells, e.g. ppnalj2
+            SET level=$spell_level_to_caster_level(~%castertype%~ ~%can_cast%~)
+            LPF CRE_level_all STR_VAR arguments=EVALUATE_BUFFER ~%level%~ END
+            LPF CRE_enforce_saves STR_VAR arguments=at_worst END
+            LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
+            LPF CRE_enforce_hp STR_VAR arguments=at_worst END
+          END
+       END
+     END
+    END ELSE BEGIN
+       LPF CRE_read_level RET level=value END
+    END
+    LPF patch_check_ini STR_VAR ini=EVALUATE_BUFFER ~%type%_level_add~ RET level_add=value END
+    LPF patch_check_ini STR_VAR ini=EVALUATE_BUFFER ~%type%_level_scale~ RET level_scale=value END
+    PATCH_IF !(level_add = 0 && level_scale=100) BEGIN
+        SET level=( level * level_scale / 100 ) + level_add
+        LPF CRE_level_all STR_VAR arguments=EVALUATE_BUFFER ~%level%~ END
+    END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   setup the caster-enforce code
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION initialise_enforce_caster 
+      STR_VAR filename=""
+              type=""
+              arguments=""
+      RET class
+          race
+          alignment
+          hla
+          game
+          spells_are_bg1
+          modify_level
+          kitdata
+          prebuff
+          script
+
+BEGIN
+   // parse argument
+   SET hla=0
+   SET modify_level=1
+   SET game=2
+   SET spells_are_bg1=~-1~
+   SET prebuff=0
+   SET script=1
+   // parse arguments. Possible values are accept_level, assign_hla, game_is_bg1, spells_are_bg1, spells_are_not_bg1, prebuff=N, no_script
+   WHILE (~%arguments%~ STRING_COMPARE ~~ && ~%arguments%~ STRING_COMPARE_CASE null) BEGIN
+      LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%arguments%~ RET arguments=list entry=entry END
+      PATCH_MATCH ~%entry%~ WITH
+        assign_hla BEGIN
+            SET hla=1
+        END
+        accept_level BEGIN
+            SET modify_level=0
+        END
+        game_is_bg1 BEGIN
+            SET game=1
+        END
+        spells_are_bg1 BEGIN
+            SET spells_are_bg1=1
+        END
+        spells_are_not_bg1 BEGIN
+            SET spells_are_bg1=0
+        END
+        ~prebuff=1~ BEGIN
+           SET prebuff=1
+        END
+        ~prebuff=2~ BEGIN
+           SET prebuff=2
+        END
+        ~prebuff=3~ BEGIN
+           SET prebuff=3
+        END
+        ~prebuff=4~ BEGIN
+           SET prebuff=4
+        END
+        ~prebuff=5~ BEGIN
+           SET prebuff=5
+        END
+        no_script BEGIN
+           SET script=0
+        END
+        DEFAULT PATCH_PRINT ~warning:illegal argument for CRE_enforce~ END
+   END
+   // get data
+   LPF CRE_read_class RET class=value END
+   LPF CRE_read_race RET race=value END
+   TO_UPPER filename
+   // strip "_"
+   INNER_PATCH_SAVE filename ~%filename%~ BEGIN
+      REPLACE_TEXTUALLY "_" ""
+   END
+   PATCH_IF VARIABLE_IS_SET $override_alignment(EVALUATE_BUFFER ~%type%~ ~%filename%~) BEGIN
+       SPRINT alignment $override_alignment(~%type%~ ~%filename%~)
+       LPF CRE_alignment STR_VAR arguments=EVALUATE_BUFFER ~%alignment%~ END
+   END ELSE BEGIN
+       LPF CRE_read_alignment RET alignment=value END
+   END
+   PATCH_IF VARIABLE_IS_SET $override_kit(EVALUATE_BUFFER ~%type%~ ~%filename%~) BEGIN
+       SPRINT kitdata $override_kit(~%type%~ ~%filename%~)
+       LPF CRE_kit STR_VAR arguments=EVALUATE_BUFFER ~%kitdata%~ END
+   END ELSE BEGIN
+       LPF CRE_read_kit RET kitdata=value END
+   END
+   // work out prebuff status
+   PATCH_IF prebuff=0 BEGIN
+     FOR(i=1;i<=5;i+=1) BEGIN
+      LPF check_label STR_VAR label=EVALUATE_BUFFER ~dw#%type%_%i%~ RET value=value END
+      PATCH_IF value BEGIN
+         SET prebuff=i
+      END
+     END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   make the "cursed wound" spell
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ~cursed_wound~ BEGIN
+   
+   ADD_SECTYPE CursedWound @16027
+   OUTER_SET curse_string=RESOLVE_STR_REF (@16026)
+   MAKE_PATCH
+      secondary=>~%CursedWound%~
+      add_basic_ability=>null
+      add_effect_inline=>~opcode=>101
+                          parameter2=>17
+                          timing=>1
+                          target=>2~
+      add_effect_inline'=>~opcode=>142
+                          parameter2=>35
+                          timing=>1
+                          target=>2~
+      add_effect_inline''=>~opcode=>139
+                          parameter1=>%curse_string%
+                          timing=>1
+                          target=>2~
+   END
+   LAF make_spell STR_VAR spell=dw#curse END
+
+   MAKE_PATCH
+     add_effect_inline=>~opcode=>221
+                         parameter2=>%CursedWound%
+                         insert_point=>0
+                         timing=>9
+                         target=>2~
+   END
+
+   LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~devaheal %CLERIC_REMOVE_CURSE% %WIZARD_REMOVE_CURSE% %CLERIC_HEAL% %HEAL_NO_VISUAL% %WISH_HEAL_PARTY% %FINAL_HEAL% %RESTORE_FULL_HEALTH% %GENIE_LIMITED_WISH_HEAL_ALL% tg#rc27~ allow_missing=yes END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   smart clones
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION smart_clones BEGIN
+  ACTION_IF !FILE_EXISTS_IN_GAME dw#image.bcs BEGIN
+      ACTION_IF FILE_CONTAINS_EVALUATED (~simulacr.spl~ ~d0simul~) BEGIN
+           COPY_EXISTING ~simulacr.spl~ override
+              REPLACE_TEXTUALLY ~d0simul~ ~dw#image~ (8)
+      END ELSE BEGIN
+           LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~simulacr~ editstring=~add_effect_inline=>"opcode=>82 target=>1 power=>0 parameter2=>6 timing=>9 resource=>dw#image"~ END
+      END
+
+      LAF install STR_VAR files=dw#image.baf location=resource locbase=caster_shared END
+  END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   hostile clones of the PCs
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
+
+    // to use, just apply ag#immun to Player1, then dw#clone to anyone you want cloned, then ag#ai to Player1
+
+    ACTION_IF !FILE_EXISTS_IN_GAME ~dw#oppos.bcs~ BEGIN // only install once
+
+        // make a spell - ag#ai - that gives all PCs a new AI script in the override slot, dw#oppos
+        
+        MAKE_PATCH
+           add_basic_ability=>null
+           add_effect_inline=>~opcode=>177 target=>4 timing=>1 parameter1=>2 parameter2=>2 resource=>ag#ai~
+        END
+        LAF make_spell STR_VAR spell=ag#ai edits=patch_data END
+
+        MAKE_PATCH
+           opcode=>82
+           target=>2
+           timing=>1
+           resource=>dw#oppos
+        END
+        LAF make_effect STR_VAR effect=ag#ai edits=patch_data END
+
+        // make a spell - ag#immun - that makes all PCs immune to ag#ai
+        
+        MAKE_PATCH
+           add_basic_ability=>null
+           add_effect_inline=>~opcode=>177 target=>4 duration=>60 parameter1=>2 parameter2=>2 resource=>ag#immun~
+        END
+        LAF make_spell STR_VAR spell=ag#immun edits=patch_data END
+
+        MAKE_PATCH
+           opcode=>206
+           target=>2
+           timing=>1
+           resource=>ag#ai
+        END
+        LAF make_effect STR_VAR effect=ag#immun edits=patch_data END
+
+        // install the dw#oppos script itself, along with the actual clone spell
+        
+        LAF install STR_VAR file=~dw#clone.spl dw#oppos.baf~ location=resource locbase=caster_shared END
+
+        COPY_EXISTING ~dw#clone.spl~ ~override~ /// legacy
+            WRITE_LONG 0x8 ~-1~
+            WRITE_LONG 0x72+0x28+8 0
+        
+    END
+END
+

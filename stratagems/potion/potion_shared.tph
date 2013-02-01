@@ -1,0 +1,601 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   main function
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION allocate_potions
+   STR_VAR arguments=""
+           filename=""
+BEGIN
+   WHILE ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+      LPF return_first_pair STR_VAR list=EVALUATE_BUFFER ~%arguments%~ RET key=key value=value arguments=list END
+      SPRINT EVALUATE_BUFFER ~%key%~ ~%value%~
+   END
+
+   PATCH_IF !VARIABLE_IS_SET ~backup~ BEGIN
+      SET backup=0
+   END
+  INNER_ACTION BEGIN
+     ACTION_IF !VARIABLE_IS_SET read_in_potion_data BEGIN
+         LAUNCH_ACTION_MACRO define_potion_data
+         LAF initialise_potions INT_VAR backup END
+         LAUNCH_ACTION_MACRO read_in_potion_data
+     END
+   END
+
+   LPF CRE_read_class RET class=value END
+   LPF CRE_read_level RET level=value END
+   LPF potion_game_check STR_VAR filename RET game=game END
+   SPRINT potion ""
+   LPF allocate_healing_potions INT_VAR game level STR_VAR class potion RET potion=potion END
+   LPF allocate_protection_potions INT_VAR game level STR_VAR class potion RET potion=potion END
+   LPF allocate_battle_potions INT_VAR game level STR_VAR class potion RET potion=potion END
+   LPF allocate_invisibility_potions INT_VAR game level STR_VAR class potion RET potion=potion END
+   LPF actually_give_potions INT_VAR version backup STR_VAR potion END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+DEFINE_ACTION_FUNCTION initialise_potions INT_VAR backup=0 BEGIN
+  ACTION_IF !FILE_EXISTS_IN_GAME ~dw#ptn08.itm~ BEGIN
+      ACTION_IF backup=0 BEGIN
+         LAUNCH_ACTION_FUNCTION add_rndtreas_data END
+         LAUNCH_ACTION_FUNCTION make_rndtre END
+      END
+      LAUNCH_ACTION_FUNCTION make_undroppable_potions END
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_rndtre
+INT_VAR ident_num=0
+RET rndtre
+BEGIN
+   ACTION_IF ident_num<10 BEGIN
+      OUTER_SPRINT rndtre ~rndtre0%ident_num%~
+   END ELSE BEGIN
+      OUTER_SPRINT rndtre ~rndtre%ident_num%~
+   END
+   ACTION_IF !FILE_EXISTS_IN_GAME ~%rndtre%.itm~ BEGIN
+      LAF clone_item STR_VAR item=EVALUATE_BUFFER ~rndtre01=>%rndtre%~ END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_undroppable_potions 
+BEGIN
+  ACTION_IF !FILE_EXISTS_IN_GAME ~dw#ptn08.itm~ BEGIN
+   OUTER_FOR (i=1;i<100;i+=1) BEGIN
+         ACTION_IF i<10 BEGIN
+            OUTER_SPRINT ~padding~ ~0~
+         END ELSE BEGIN
+            OUTER_SPRINT ~padding~ ~~
+         END
+         OUTER_SPRINT ~potion~ ~potn%padding%%i%~
+         ACTION_IF FILE_EXISTS_IN_GAME ~%potion%.itm~ BEGIN
+            LAF clone_item STR_VAR item=EVALUATE_BUFFER ~%potion%=>dw#ptn%padding%%i%~ editstring=~droppable=>0~ END
+         END
+   END
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION pad_to_nineteen
+STR_VAR string="X"
+        prefix=""
+RET     string
+BEGIN
+        OUTER_SPRINT string_new ""
+        OUTER_SPRINT list ~%string%~
+        OUTER_FOR (i=1;i<=19;i+=1) BEGIN
+            ACTION_IF ~%list%~ STRING_EQUAL_CASE "" BEGIN
+               OUTER_SPRINT list ~%string%~
+            END
+            LAF action_return_first_entry STR_VAR list RET entry=entry list=list END
+            ACTION_IF ~%entry%~ STRING_EQUAL ~*~ BEGIN
+               OUTER_PUSH string_new ~*~
+            END ELSE BEGIN
+               OUTER_PUSH string_new ~%prefix%%entry%~
+            END
+        END
+        OUTER_SPRINT string ~%string_new%~
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION potion_race_check
+RET value
+BEGIN
+   LPF CRE_read_race RET race=value END
+   TO_UPPER race
+   PATCH_MATCH ~%race%~ WITH
+      HUMAN ELF HALF_ELF DWARF HALFLING GNOME HALFORC MIND_FLAYER RAKSHASA SAHUAGIN KUO-TOA DUERGAR GIANT GITHYANKI
+   BEGIN
+      SET value=1
+   END
+   DEFAULT
+      SET value=0
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION already_has_potion
+STR_VAR list=""
+RET value
+BEGIN
+   PATCH_IF (~%list%~ STRING_COMPARE_CASE ~~) BEGIN
+      LPF return_first_entry STR_VAR list RET entry=entry list=list END
+      PATCH_IF INDEX_BUFFER (CASE_INSENSITIVE EVALUATE_BUFFER ~%tutu_var%potn%entry%~)>0 BEGIN
+         LPF give_already_marker END
+         SET value=1
+      END ELSE BEGIN
+         LPF already_has_potion STR_VAR list RET value=value END
+      END
+   END ELSE BEGIN
+      SET value=0
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION give_already_marker
+BEGIN
+   PATCH_IF INDEX_BUFFER (CASE_INSENSITIVE ~dw#haspt~) = ~-1~ BEGIN
+      LPF CRE_add_items STR_VAR arguments=dw#haspt END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION potion_game_check
+STR_VAR filename=""
+RET game
+BEGIN
+   SET game=0
+
+   // if only bg1 is present, game is 1
+   PATCH_IF is_bg2=0 BEGIN
+      SET game=1
+   END
+
+   // if both games are present, check bg1 status
+   PATCH_IF (is_bg1=1 && game=0) BEGIN
+      LPF is_bg1_char STR_VAR filename RET bg1check=value END
+      PATCH_IF bg1check BEGIN
+          SET game=1
+      END
+   END
+   // if we haven't yet got an answer, check ToB status
+   PATCH_IF game=0 BEGIN
+      LPF is_tob_char STR_VAR filename RET tobcheck=value END
+      PATCH_IF tobcheck BEGIN
+         SET game=3
+      END ELSE BEGIN
+         SET game=2
+      END
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    actually give the potion
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION actually_give_potions
+INT_VAR version=0
+        backup=0
+STR_VAR potion=""
+BEGIN
+  PATCH_IF ~%potion%~ STRING_COMPARE ~~ BEGIN
+   LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%potion%~ RET entry=entry potion=list END
+   SET random=RANDOM(1 6)
+   PATCH_IF random<=version BEGIN
+      SPRINT dropstatus nodrop
+   END ELSE BEGIN
+      SPRINT dropstatus drop
+   END
+   PATCH_IF backup=0 BEGIN
+      PATCH_IF VARIABLE_IS_SET $potion_rndtre(EVALUATE_BUFFER ~%dropstatus%~ ~%entry%~) BEGIN
+        SPRINT file $potion_rndtre(~%dropstatus%~ ~%entry%~)
+        LPF CRE_add_items STR_VAR arguments=EVALUATE_BUFFER ~%file%(INV)~ END
+      END ELSE BEGIN
+         LPF patch_display_warning STR_VAR warning=EVALUATE_BUFFER ~Unidentified potion code: %dropstatus% %entry%~ END
+      END
+   END ELSE BEGIN
+      SET max = $potion_number(~%entry%~)
+      SET choice = RANDOM(1 max)
+      SPRINT to_give $potion(~%entry%~ ~%choice%~ ~%dropstatus%~)
+      PATCH_IF ~%to_give%~ STRING_COMPARE_CASE ~dw#ptn*~ && ~%to_give%~ STRING_COMPARE_CASE ~potn*~ BEGIN
+        LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%to_give%~ separator="*" RET item=entry mult=list END
+        PATCH_IF ~%mult%~ STRING_COMPARE_CASE ~~ BEGIN
+           SPRINT ~item~ ~%item%(x%mult%)~
+        END
+        LPF CRE_add_items STR_VAR arguments=EVALUATE_BUFFER ~%item%~ END
+      END
+   END
+   LPF actually_give_potions INT_VAR version backup STR_VAR potion END
+  END
+END
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    Healing potions (not filtered by class)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION allocate_healing_potions
+INT_VAR game=0
+        level=0
+STR_VAR class=""
+        potion=""
+RET potion
+BEGIN
+  SPRINT potion_here ~~
+      PATCH_MATCH game WITH
+      1 BEGIN
+           PATCH_IF level<5 BEGIN
+           END ELSE
+           PATCH_IF level<7 BEGIN
+               SPRINT potion_here  healing1
+           END ELSE
+           PATCH_IF level<9 BEGIN
+               SPRINT potion_here  healing2
+           END ELSE BEGIN
+               SPRINT potion_here  healing3
+           END
+      END
+      2 BEGIN
+           PATCH_IF level<7 BEGIN
+           END ELSE
+           PATCH_IF level<10 BEGIN
+               SPRINT potion_here  healing2
+           END ELSE
+           PATCH_IF level<14 BEGIN
+               SPRINT potion_here  healing3
+           END ELSE BEGIN
+               SPRINT potion_here  healing4
+           END
+      END
+      3 BEGIN
+           PATCH_IF level<15 BEGIN
+           END ELSE
+           PATCH_IF level<18 BEGIN
+               SPRINT potion_here  healing3
+           END ELSE
+           PATCH_IF level<21 BEGIN
+               SPRINT potion_here  healing4
+           END ELSE BEGIN
+               SPRINT potion_here  healing5
+           END
+      END
+      DEFAULT
+         LPF patch_display_warning STR_VAR warning=~"allocate_potions" called with unknown game value"~ END
+      END
+      PATCH_IF ~%potion_here%~ STRING_COMPARE_CASE ~~ BEGIN
+         LPF already_has_potion STR_VAR list=~08 52 55~ RET value=value END
+         PATCH_IF value=0 BEGIN
+            PUSH potion ~%potion_here%~
+         END
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    Protection potions (not given to clerics or mages, except a few for BG1 mages)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION allocate_protection_potions
+INT_VAR game=0
+        level=0
+STR_VAR class=""
+        potion=""
+RET potion
+BEGIN
+  SPRINT potion_here ~~
+   PATCH_MATCH ~%class%~ WITH
+    MAGE MAGE_THIEF FIGHTER_MAGE CLERIC DRUID FIGHTER_DRUID FIGHTER_CLERIC FIGHTER_MAGE_THIEF BEGIN
+          PATCH_IF (game=1 && level>6) BEGIN
+             SPRINT potion_here  protectionmage
+          END
+    END
+    DEFAULT
+      PATCH_MATCH game WITH
+      1 BEGIN
+           PATCH_IF level<7 BEGIN
+           END ELSE
+           PATCH_IF level<9 BEGIN
+               SPRINT potion_here  protection1
+           END ELSE
+           PATCH_IF level<11 BEGIN
+               SPRINT potion_here  protection2
+           END ELSE BEGIN
+               SPRINT potion_here  protection3
+           END
+      END
+      2 BEGIN
+           PATCH_IF level<7 BEGIN
+           END ELSE
+           PATCH_IF level<12 BEGIN
+               SPRINT potion_here  protection1
+           END ELSE
+           PATCH_IF level<16 BEGIN
+               SPRINT potion_here  protection2
+           END ELSE BEGIN
+               SPRINT potion_here  protection3
+           END
+      END
+      3 BEGIN
+           PATCH_IF level<17 BEGIN
+           END ELSE
+           PATCH_IF level<21 BEGIN
+               SPRINT potion_here  protection1
+           END ELSE BEGIN
+               SPRINT potion_here  protection2
+           END
+      END
+      DEFAULT
+         LPF patch_display_warning STR_VAR warning=~"allocate_potions" called with unknown game value"~ END
+      END
+    END
+    PATCH_IF ~%potion_here%~ STRING_COMPARE ~~ BEGIN
+       LPF already_has_potion STR_VAR list=~11 24 34 35 45~ RET value=value END
+       PATCH_IF value=0 BEGIN
+          PUSH potion ~%potion_here%~
+       END
+    END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    Combat potions (only given to fighter-types)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION allocate_battle_potions
+INT_VAR game=0
+        level=0
+STR_VAR class=""
+        potion=""
+RET potion
+BEGIN
+  SPRINT potion_here ~~
+  PATCH_MATCH ~%class%~ WITH
+    MAGE CLERIC DRUID CLERIC_MAGE THIEF MAGE_THIEF CLERIC_THIEF BARD  BEGIN
+    END
+    DEFAULT
+      PATCH_MATCH game WITH
+      1 BEGIN
+           PATCH_IF level<5 BEGIN
+           END ELSE
+           PATCH_IF level<7 BEGIN
+               SPRINT potion_here  battle1
+           END ELSE
+           PATCH_IF level<9 BEGIN
+               SPRINT potion_here  battle2
+           END ELSE BEGIN
+               SPRINT potion_here  battle3
+           END
+      END
+      2 BEGIN
+           PATCH_IF level<7 BEGIN
+           END ELSE
+           PATCH_IF level<10 BEGIN
+               SPRINT potion_here  battle1
+           END ELSE
+           PATCH_IF level<14 BEGIN
+               SPRINT potion_here  battle2
+           END ELSE BEGIN
+               SPRINT potion_here  battle3
+           END
+      END
+      3 BEGIN
+           PATCH_IF level<17 BEGIN
+           END ELSE
+           PATCH_IF level<21 BEGIN
+               SPRINT potion_here  battle2
+           END ELSE BEGIN
+               SPRINT potion_here  battle3
+           END
+      END
+      DEFAULT
+         LPF patch_display_warning STR_VAR warning=~"allocate_potions" called with unknown game value"~ END
+      END
+    END
+    PATCH_IF ~%potion_here%~ STRING_COMPARE ~~ BEGIN
+       LPF CRE_read_strength RET strength=value END
+       LPF already_has_potion STR_VAR list=~03 04 05 06 09 14 24 41 ~ RET already=value END
+       PATCH_IF (strength<19 && already=0) BEGIN
+          PUSH potion ~%potion_here%~
+       END
+    END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    Invisibility potions (mostly for thieves)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION allocate_invisibility_potions
+INT_VAR game=0
+        level=0
+STR_VAR class=""
+        potion=""
+RET potion
+BEGIN
+  SPRINT potion_here ~~
+  PATCH_MATCH ~%class%~ WITH
+    THIEF MAGE_THIEF FIGHTER_THIEF  BEGIN
+      PATCH_MATCH game WITH
+      1 BEGIN
+           PATCH_IF level<5 BEGIN
+           END ELSE
+           PATCH_IF level<7 BEGIN
+               SPRINT potion_here  invis1
+           END ELSE
+           PATCH_IF level<9 BEGIN
+               SPRINT potion_here  invis2
+           END ELSE BEGIN
+               SPRINT potion_here  invis3
+           END
+      END
+      2 BEGIN
+           PATCH_IF level<5 BEGIN
+           END ELSE
+           PATCH_IF level<9 BEGIN
+               SPRINT potion_here  invis1
+           END ELSE
+           PATCH_IF level<12 BEGIN
+               SPRINT potion_here  invis2
+           END ELSE
+           PATCH_IF level<15 BEGIN
+               SPRINT potion_here  invis3
+           END ELSE BEGIN
+               SPRINT potion_here  invis4
+           END
+      END
+      3 BEGIN
+           PATCH_IF level<5 BEGIN
+           END ELSE
+           PATCH_IF level<10 BEGIN
+               SPRINT potion_here  invis1
+            END ELSE
+           PATCH_IF level<15 BEGIN
+               SPRINT potion_here  invis2
+            END ELSE
+           PATCH_IF level<20 BEGIN
+               SPRINT potion_here  invis3
+           END ELSE BEGIN
+               SPRINT potion_here  invis4
+           END
+      END
+      DEFAULT
+         LPF patch_display_warning STR_VAR warning=~"allocate_potions" called with unknown game value"~ END
+      END
+    END
+    MAGE FIGHTER_MAGE BARD BEGIN
+       PATCH_IF level<5 BEGIN
+              SPRINT potion_here ~~
+       END ELSE BEGIN
+          PATCH_MATCH RANDOM (1 3) WITH
+          1 BEGIN
+          SPRINT potion_here ~invis1~
+          END
+          DEFAULT 
+          SPRINT potion_here ~~
+          END
+
+       END
+    END
+    DEFAULT
+    END
+    PATCH_IF ~%potion_here%~ STRING_COMPARE ~~ BEGIN
+       LPF already_has_potion STR_VAR list=~10~ RET value=value END
+       PATCH_IF value=0 BEGIN
+          PUSH potion ~%potion_here%~
+       END
+    END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO define_potion_data BEGIN
+   ACTION_CLEAR_ARRAY potion
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY potion BEGIN
+      healing1=>~08 08 * * 08*2 52~
+      healing2=>~08 08*2 * 52 52 52~
+      healing3=>~52 08*2 52*2~
+      healing4=>~52 52*2 55~
+      healing5=>~52*2 55*2 55~
+      protection1=>~45 11 * * *~
+      protection2=>~45 11 45 11 34 34 35 * * *~
+      protection3=>~45 11 34 35~
+      protectionmage=>~11 24 * *~
+      battle1=>~03 09 14 24 * * * *~
+      battle2=>~03 12 09 41 14 14 * * *~
+      battle3=>~04 05 06 14 41~
+      invis1=>~10 10 10*2 *~
+      invis2=>~10 10*2 10*3~
+      invis3=>~10*2 10*3 10*4~
+      invis4=>~10*3 10*4 10*5~
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION add_rndtreas_data BEGIN
+   COPY ~.../stratagems-inline/blank~ ~%workspace%/potion_data.2da~
+
+   COPY_EXISTING rndtreas.2da override
+      COUNT_2DA_ROWS 20 row_num
+   BUT_ONLY
+
+   OUTER_SET count=0
+   ACTION_PHP_EACH potion AS identifier=>string BEGIN
+      OUTER_SET count+=1
+      LAF pad_to_nineteen STR_VAR string prefix=EVALUATE_BUFFER ~%tutu_var%potn~ RET stringnew=string END
+      OUTER_SPRINT stringnew ~POTION%count% %stringnew%~
+      APPEND ~rndtreas.2da~ ~%stringnew%~
+      OUTER_SET ident_num = count + row_num
+      LAF make_rndtre INT_VAR ident_num RET rndtre_drop=rndtre END
+      OUTER_SET count+=1
+      LAF pad_to_nineteen STR_VAR string prefix=dw#ptn RET stringnew=string END
+      OUTER_SPRINT stringnew ~POTION%count% %stringnew%~
+      APPEND ~rndtreas.2da~ ~%stringnew%~
+      OUTER_SET ident_num = count + row_num
+      LAF make_rndtre INT_VAR ident_num RET rndtre_nodrop=rndtre END
+      APPEND_OUTER ~%workspace%/potion_data.2da~ ~%identifier% %rndtre_drop% %rndtre_nodrop%~
+   END
+   ACTION_IF GAME_IS ~tutu tutu_totsc~ BEGIN
+      LAF swap_text STR_VAR files=rndtreas.2da swaps=~_potn52 => potn52 _potn55 => potn55~ END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_potion_data BEGIN
+
+  ACTION_IF !VARIABLE_IS_SET ~read_in_potion_data~ BEGIN
+   OUTER_SET read_in_potion_data=1
+   ACTION_IF backup=0 BEGIN
+     COPY_EXISTING ~%workspace%/potion_data.2da~ ~%workspace%~
+         READ_2DA_ENTRIES_NOW macro_potiondata 3
+         FOR (i=0;i<macro_potiondata;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER macro_potiondata i 0 macro_potion
+            READ_2DA_ENTRY_FORMER macro_potiondata i 1 macro_drop
+            READ_2DA_ENTRY_FORMER macro_potiondata i 2 macro_nodrop
+            TO_LOWER macro_potion
+            SPRINT $potion_rndtre(~drop~ ~%macro_potion%~) ~%macro_drop%~
+            SPRINT $potion_rndtre(~nodrop~ ~%macro_potion%~) ~%macro_nodrop%~
+         END
+     BUT_ONLY
+   END ELSE BEGIN
+     ACTION_PHP_EACH potion AS identifier=>string BEGIN
+        OUTER_SET number=0
+        OUTER_WHILE ~%string%~ STRING_COMPARE_CASE ~~ BEGIN
+           OUTER_SET number+=1
+           LAF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%string%~ RET string=list entry=entry END
+             OUTER_SPRINT $potion(~%identifier%~ ~%number%~ ~drop~) ~potn%entry%~
+             OUTER_SPRINT $potion(~%identifier%~ ~%number%~ ~nodrop~) ~dw#ptn%entry%~
+        END
+        OUTER_SET $potion_number(~%identifier%~)=number
+     END
+   END
+  END
+
+END
+

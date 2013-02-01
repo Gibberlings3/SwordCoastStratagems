@@ -1,0 +1,131 @@
+//////////////////////////////////////////////////////////////////////
+////	Erinyes combat script
+////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions.ssl)
+
+
+/// start invisible
+
+IF	
+	!StateCheck(Myself,STATE_INVISIBLE)
+	Allegiance(Myself,ENEMY)
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#silin",Myself)
+END
+
+
+INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Kill Tanar'ri
+/////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsdemon||CHAOTIC_EVIL)
+	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
+END LOOP
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Try to get out of melee combat
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,8)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	TriggerBlock(Enemy|Helpless|TruesightSafe)
+THEN DO
+	SpellNoDec(Myself,WIZARD_INVISIBILITY)
+END
+
+BEGIN LOOP(scsfriend||FourthNearest([ENEMY]);ThirdNearest([ENEMY]);SecondNearest([ENEMY]);[ENEMY])
+
+IF TRIGGER
+	!GlobalTimerNotExpired("teleportescape","LOCALS")
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,8)
+	!Range(scsfriend,15)
+	!HasItem("bow12",scsfriend) // isn't me
+	!General(scsfriend,HUMANOID) // isn't a party member
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	SetGlobalTimer("teleportescape","LOCALS",12)
+	Action(Literal,SetGlobalTimer("castspell"\"LOCALS"\6)&SpellNoDecRES("dw#fitel"\scsfriend))
+END
+	
+END LOOP
+
+IF
+	StateCheck(Myself,STATE_INVISIBLE)
+	Range(NearestEnemyOf(Myself),15)
+THEN
+	RESPONSE #100
+		RunAwayFrom(NearestEnemyOf(Myself),30)
+END
+
+///////////////////////////////////////////////////////////
+////	Better part of valor
+///////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	HPPercentLT(Myself,25)
+	!StateCheck(Myself,STATE_INVISIBLE)
+THEN
+	RESPONSE #100
+		ForceSpell(Myself,DRYAD_TELEPORT)
+END
+
+///////////////////////////////////////////////////////////
+///	Buff if melee unavoidable
+///////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,5)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	!GlobalTimerNotExpired("mantle","LOCALS")
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	SetGlobalTimer("mantle","LOCALS",1000)
+	Action(SpellNoDecMyself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+END
+
+/////////////////////////////////////////////////////////////
+///	Use charm if you can find a target
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Enemy|Helpless|MR|SpellTurn|Charm)
+	CheckStatGT(scstarget,1,SAVEVSSPELL)
+THEN DO
+	Action(SpellNoDec,ERINYES_CHARM|200|100)
+END
+
+////////////////////////////////////////////////////////////////////////////////////
+///	Unholy Blight
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(MR100|Enemy|Helpless|SINecromancy|MirrorImage)
+	Alignment(scstarget,MASK_GOOD)	
+THEN DO
+	Action(SpellNoDec,CLERIC_UNHOLY_BLIGHT)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	Combat
+///////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(MyWeaponStrength||Unknown)
+BEGIN LOOP(MyWeaponDamageType||Slashing)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+INCLUDE FILE(%scsroot%/fiend/ssl/chase.ssl)
+END LOOP
+END LOOP

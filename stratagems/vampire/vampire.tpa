@@ -1,0 +1,365 @@
+LAF include STR_VAR file=vampire_shared.tph END
+DEFINE_ACTION_FUNCTION vampire BEGIN
+
+        LAF vampire_scripts END
+        LAF vampire_spells END
+        LAF vampire_shapeshifts END
+        LAF vampire_summons END
+        LAF vampire_blood_drain END
+        LAF vampire_cre END
+        LAF vampire_specific END
+        LAF vampire_bodhi END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Compile the scripts
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION vampire_scripts BEGIN
+
+
+    LAF ssl_to_bcs STR_VAR script=~vampir01 dw#vmran~ location=~vampire/ssl~ END
+    ACTION_FOR_EACH script_new IN vamemi01 vamanc01 ppvamp ppvampir  
+                                  c6vampir d0qpvafl sarvam02
+    BEGIN
+       ACTION_IF FILE_EXISTS_IN_GAME ~%script_new%.bcs~ BEGIN
+          LAF clone_script STR_VAR script=EVALUATE_BUFFER ~vampir01=>%script_new%~ END
+       END
+    END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make attack spells (charm, bats, mesmerise etc)
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION vampire_spells BEGIN
+
+   // Bat clouds
+
+   LAF install STR_VAR file=dw#vbat1.spl location=resource END // actually just a clean copy of Summon Insects
+   MAKE_PATCH
+      say_name=>2400
+      primary=>0
+      patch_cond_inline=>~type=>ability casting_time=>0~
+      patch_cond_inline'=>~type=>effect resist_dispel=>0~
+   END
+   LAF edit_spell STR_VAR spell=dw#vbat1 END
+
+   // regeneration
+
+    LAF clone_item STR_VAR item=~vampreg=>dw#vrgwk~ END
+    MAKE_PATCH
+       patch_cond_inline=>~type=>effect_global match=>opcode check=>98 parameter1=>1~
+    END
+    LAF edit_item STR_VAR item=vampreg END
+   // zero casting time for Domination
+
+    MAKE_PATCH
+       patch_cond_inline=>~type=>ability casting_time=>0~
+    END
+    LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%VAMPIRE_DOMINATION%~ END
+
+   // make mesmerism spell
+     
+   MAKE_PATCH
+      say_name=>14508
+      patch_cond_inline=>~type=>effect match=>opcode check=>5 opcode=>76 parameter1=>0 parameter2=>0 savebonus=>"-4"~
+   END
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%VAMPIRE_DOMINATION%=>dw#hypno~ END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make resources needed for shapeshifts
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION vampire_shapeshifts BEGIN
+
+   // gaseous, wolf, rat and bat forms
+
+   LAF install STR_VAR file=~dw#vmwol.itm dw#vmbat.itm dw#vmrat.spl dw#vmnrt.spl dw#vmjum.spl~ location=resource END
+
+   MAKE_PATCH
+      say_name=>14504
+      patch_cond_inline=>~type=>effect match=>opcode check=>135 duration=>18~ // sanity purposes; shouldn't matter
+   END
+   LAF edit_spell STR_VAR spell=dw#vmrat  END
+
+   LAF clone_spell STR_VAR spell=~dw#vmrat=>dw#vmgas~ editstring=~say_name=>14505~ END
+   LAF swap_text STR_VAR files=dw#vmgas.spl swaps=~polyrat=>gasform4~ END
+
+   // hiding spells
+
+   MAKE_PATCH
+      patch_cond_inline=>~type=>effect match=>opcode check=>139 parameter1=>15075~
+   END
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_INVISIBILITY%=>dw#vmhid~ edits=patch_data END
+
+   MAKE_PATCH
+      patch_cond_inline=>~type=>effect match=>opcode check=>139 parameter1=>14506~
+   END
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_INVISIBILITY%=>dw#vmmis~ edits=patch_data END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make summoned rats and wolves
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION vampire_summons BEGIN
+
+   // summoned rats
+
+   MAKE_PATCH
+      say_both_names=>14501
+      script_override=>dw#vmrat
+      strip_scs_scripts=>null
+      resist_slashing=>0
+      resist_piercing=>0
+      resist_crushing=>0
+      resist_missile=>0
+      swap_items=>~p1-2p=>dw#vmrat~
+   END
+   LAF clone_creature STR_VAR creature=~sickrat=>dw#vmrat~ edits=patch_data END
+
+   LAF ssl_to_bcs STR_VAR script=dw#vmrat location=~vampire/ssl~ END
+
+   // summoned wolves
+
+   MAKE_PATCH 
+       script_override=>dw#vmrat
+       strip_script=>direwolf
+       strip_scs_scripts=>null
+   END
+   LAF clone_creature STR_VAR creature=~wolfdi01=>dw#vmwo1~ edits=patch_data END
+   LAF clone_creature STR_VAR creature=~dw#vmwo1=>dw#vmwo2~ editstring=~insert_script_high=>dw#vmwol~ END
+   LAF clone_creature STR_VAR creature=~wolfdr01=>dw#vmwo3~ edits=patch_data END
+   LAF clone_creature STR_VAR creature=~dw#vmwo3=>dw#vmwo4~ editstring=~insert_script_high=>dw#vmwo2~ END
+
+   LAF install STR_VAR file=dw#vmwol.baf location=resource END
+   LAF clone_script STR_VAR script=~dw#vmwol=>dw#vmwo2~ END
+   LAF swap_text STR_VAR files=dw#vmwo2.bcs swaps=~vmwo1=>vmwo3~ END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make blood-drain weapons
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION vampire_blood_drain BEGIN
+
+
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY vamp_weapons BEGIN
+     vamp=>2
+     vamp1=>3
+     vamp2=>4 
+     vamp3=>5
+  END
+  ACTION_PHP_EACH vamp_weapons AS item_old=>drain_amount BEGIN
+   OUTER_SET gain_amount=5 * drain_amount
+   OUTER_INNER_PATCH_SAVE item_new ~%item_old%~ BEGIN
+      REPLACE_TEXTUALLY vamp dw#bldd
+   END
+
+   MAKE_PATCH
+      patch_cond_inline=>~type=>ability backhand=>0 overhand=>0 thrust=>100~
+      patch_cond_inline'=>~type=>effect match=>opcode check=>216 opcode=>10 parameter1=>"-%drain_amount%" timing=>0 duration=>300~ // drain CON
+      patch_cond_inline''=>~type=>effect match=>opcode check=>139 target=>1 blood_string=>null~  // new string
+      patch_cond_inline'''=>~type=>effect match=>opcode check=>141 opcode=>18 parameter1=>%gain_amount% parameter2=>0 target=>1 timing=>0 duration=>3000~  // gain hp
+      add_effect_inline=>~type=>99 opcode=>142 target=>2 duration=>3000 parameter2=>91~
+   END
+
+   LAF clone_item STR_VAR item=EVALUATE_BUFFER ~%item_old%=>%item_new%~ edits=patch_data END
+  END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION blood_string
+   INT_VAR offset_secondary=0
+BEGIN
+   SAY 0x4+offset_secondary @14500
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make core modifications to creature files
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION vampire_cre BEGIN
+
+   // do level overrides
+   COPY ~%scsroot%/%component_loc%/level_override.2da~ ~%workspace%~
+         READ_2DA_ENTRIES_NOW vampire_levels 2
+         FOR (i=0;i<vampire_levels;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER vampire_levels i 0 creature 
+            READ_2DA_ENTRY_FORMER vampire_levels i 1 level
+            INNER_ACTION BEGIN
+               LAF edit_creature STR_VAR creature editstring=EVALUATE_BUFFER ~levelGT=>%level%~ END
+            END
+         END
+   BUT_ONLY
+   
+   // do overall vampire modifications
+   
+   LAF edit_creature STR_VAR creature=~BODTAN BODVAM01 BODVAM02 C6BGUARD C6DEL C6HAREI C6MERE C6SALIA C6TANOV C6VALEN C6VAMP01
+                                       C6VFLM01 CHEVIL08 COHNTA GONCE HLSHYR IVAMP01 LASSAL LASSAL02 LAUNE PPBODHI4 PPDEL
+                                       PPJOYE PPJOYE2 PPPARIS PPVALEN SARVAM01 SARVAM02 SARVAM03 ULVARYL VAMANC01 VAMEMI01 VAMFLF01
+                                       VAMFLM01 VAMMAT01 VAMOLD01 VAMPAER VAMPAMB VAMPANO VAMPAT01 VAMPIF01 VAMPIM01 VAMPIRE1 VAMPJAH
+                                       VAMPM01 VAMPVIC VAMPYM01 VAMVER01 VVBODHI VVDEL VVFEMAL1 VVFEMAL2 VVFEMAL3 VVHAREIS VVMALE1
+                                       VVMALE2 VVMALE3 VVMALE4 VVMALE5 VVMALE6 VVMALE7 VVPARIS VVSALIA VVTANOV~
+                             editstring=~make_vampire=>null~
+   END
+
+    // if the mage component is installed, strip vampire weapons from bodtan, c6tanov, and c6bguard
+
+     LAF check_label STR_VAR label=dw#mage RET value=value END
+     ACTION_IF value BEGIN
+        LAF edit_creature STR_VAR creature=~bodtan c6tanov c6bguard~ editstring=~remove_items=>"dw#vmbat dw#vmwol dw#bldd2 dw#bldd3 dw#bldd4 dw#bldd5"~ END
+     END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make modifications needed to specific files
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION vampire_specific BEGIN
+
+
+      LAF edit_creature STR_VAR creature=~bodvam01 bodvam02~ editstring=~strip_scs_scripts=>null insert_script_low=>vampir01~ END
+
+      LAF edit_creature STR_VAR creature=~c6valen c6del lassal02 vampat01 sarvam01~ editstring=~insert_script_low=>vampir01~ END
+
+      LAF edit_creature STR_VAR creature=vampat01 editstring=~strip_script=>vampat01~ END  // clearing up after QP
+
+      ACTION_FOR_EACH script IN ppjoye vampano vampaer vampjah vampvic lassal BEGIN
+       LAF clone_extend STR_VAR arguments=EVALUATE_BUFFER ~vampir01=>%script%~ location=scripts END
+      END
+
+    ///	Stolen stuff from QP
+
+      LAF edit_creature STR_VAR creature=~vamold01 vamver01~ editstring=~say_both_names=>2401~ END
+      LAF edit_creature STR_VAR creature=~vamanc01 vamemi01 vampat01~ editstring=~say_both_names=>2402~ END
+
+    // Fix Parisa's soundset. (stolen from QP; legacy code)
+COPY_EXISTING ~vvparis.cre~ ~override~
+              ~ppparis.cre~ ~override~
+  WRITE_BYTE 0x275 0x2
+  SAY 0xa4 #61741
+  SAY 0xb8 #61749
+  SAY 0xc8 #61745
+  SAY 0xcc #61746
+  SAY 0xec #61747
+  SAY 0xf0 #61748
+  SAY 0x10c #61741
+  SAY 0x110 #61742
+  SAY 0x114 #61743
+  SAY 0x118 #61744
+  BUT_ONLY_IF_IT_CHANGES
+
+   // Remove a "no action" block from Tanova (this seems to be linked to a "flavour" scene involving
+   // the shadow thieves but there are reports of it not working)
+
+<<<<<<<< .../stratagems-inline/tanova_old.baf
+
+IF
+	Global("ShadowFightBodhi","GLOBAL",1)
+	Global("KachikoTurned","AR0808",0)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+>>>>>>>>
+<<<<<<<< .../stratagems-inline/blank.baf
+>>>>>>>>
+
+	COPY_EXISTING ~c6tanov.bcs~ ~override~
+		REPLACE_BCS_BLOCK ~.../stratagems-inline/tanova_old.baf~ ~.../stratagems-inline/blank.baf~
+	BUT_ONLY_IF_IT_CHANGES
+
+    // Fix an original-game bug where some vampires don't respond to summons
+
+	COPY_EXISTING ~c6weak.bcs~ ~override~
+		DECOMPILE_AND_PATCH BEGIN
+		REPLACE_TEXTUALLY ~Detect(\[PC\])~ ~OR(3) Detect([PC]) Detect([GOODCUTOFF.0.0.0.0.SUMMONED]) Detect([GOODCUTOFF.0.0.0.0.20])~
+		END
+	BUT_ONLY
+
+// If SCSII mage component installed, restore Tanova's magic; if not, give her a vampire combat block
+
+	ACTION_IF FILE_EXISTS_IN_GAME ~dw#mvamp.bcs~ THEN BEGIN
+	   MAKE_PATCH
+	      script_override=>c6tanov
+	      script_class=>c6weak
+	      script_race=>dw#mvamp
+	      dv=>c6tanov
+	      dialog=>c6tanov
+	   END
+	   LAF clone_creature STR_VAR creature=~bodtan=>c6tanov~ edits=patch_data END
+	END ELSE BEGIN
+	   LAF edit_creature STR_VAR creature=c6tanov editstring=~script_race=>vampir01~ END
+	END
+	/// sort out intermittent Saemon/Sime bug (caused by saving at the wrong moment after reaching Brynnlaw?)
+
+       COPY_EXISTING ppsime.dlg override
+          DECOMPILE_AND_PATCH BEGIN
+               REPLACE_TEXTUALLY ~SaveGame(0)~ ~~
+               REPLACE_TEXTUALLY ~MoveToPoint(\[863.2422\])~ ~MoveToPoint([863.2422])SaveGame(0)SetGlobal("DMWWSimeSave","GLOBAL",1)~
+          END
+       BUT_ONLY
+
+<<<<<<<< .../stratagems-inline/saemadd.baf
+IF 
+   OnCreation()
+   !Dead("ppvalen")
+   Global("DMWWSimeSave","GLOBAL",1)
+THEN
+    RESPONSE #100
+             MoveToPointNoInterrupt([769.2172])
+             SetGlobal("DMWWSimeSave","GLOBAL",2)
+END
+>>>>>>>>
+
+     LAF extend STR_VAR file=ppsaem top=saemadd inline=yes END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////  Handle Bodhi
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION vampire_bodhi BEGIN
+
+    <<<<<<<< .../stratagems-inline/dw#ppbod.baf
+IF
+	Die()
+THEN
+	RESPONSE #100
+		ReallyForceSpellDead(Myself,VAMPIRE_GAS_FORM_CHANGE)
+END
+>>>>>>>>
+
+      LAF install STR_VAR file=dw#ppbod.baf inline=yes END
+      
+      LAF edit_creature STR_VAR creature=ppbodhi4 editstring=~swap_script=>"ppvampir=>dw#ppbod"~ END
+
+
+      // Combat, only on the assumption that improved bodhi isn't installed
+
+
+	ACTION_IF !FILE_EXISTS ~override/ibodhi1.spl~ THEN BEGIN
+	     LAF edit_creature STR_VAR creature=~bodhi2 c6bodhi~ editstring=~make_vampire=>null replace_items=>"dw#bldd3(weapon2)"~ END
+	     EXTEND_BOTTOM c6bodhi.bcs ~override/vampir01.bcs~
+	END
+
+
+END

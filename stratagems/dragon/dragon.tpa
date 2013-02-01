@@ -1,0 +1,289 @@
+LAF include STR_VAR file=dragon_shared.tph END
+LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
+LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
+
+DEFINE_ACTION_FUNCTION dragon
+STR_VAR version=""
+BEGIN
+
+
+   ACTION_IF (version=1) BEGIN
+         LAF make_label STR_VAR label=dw#dragon_hp END
+   END
+   LAF action_check_ini STR_VAR ini=dragons_cast_slowly RET value=value END
+   ACTION_IF value=0 BEGIN
+         LAF make_label STR_VAR label=dw#dragon_innate END
+   END
+
+
+   LAF dragon_resources END
+   LAF dragon_scripts END
+   LAF dragon_core END
+   LAF dragon_other END
+   LAF dragon_compatibility END
+
+   LAF check_label STR_VAR label=dw#asc_abazigal RET value=value END
+   ACTION_IF value BEGIN
+         OUTER_SPRINT component_loc ascension
+         LAF run STR_VAR file=abazigal_dragon END
+   END
+
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// Build needed resources
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION dragon_resources BEGIN
+
+   // weapons
+
+   LAF edit_item STR_VAR item=~dragred1 dragsil1 draggre1 dragblaw dragbrow dragblue~ editstring=~dragon_weapon=>null~ END
+
+   // breath weapons
+
+   LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%SHADOW_DRAGON_BREATH% %SILVER_DRAGON_BREATH_COLD% %RED_DRAGON_HIT% %BLACK_DRAGON_BREATH% %BLUE_DRAGON_BREATH% %BROWN_DRAGON_BREATH% %GREEN_DRAGON_BREATH% drgrbrht~
+                          editstring=~dragon_breath=>null~
+   END
+
+   // projectiles
+
+   ACTION_FOR_EACH pro IN dragblck dragsilv BEGIN
+     COPY_EXISTING ~%pro%.pro~ ~override~
+        WRITE_SHORT 0x206 450
+     BUT_ONLY
+   END
+
+   // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
+   // (may also be built by Anadramatis)
+
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_SPELL_IMMUNITY_ABJURATION_INSTANT%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION_INSTANT%=>dw#0d592~
+                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
+   END
+
+   // exits from dragon areas shouldn't be passable by NPCs
+
+    MAKE_PATCH
+       type=>trigger
+       match=>trigger_type
+       check=>2
+       impassable_by_NPC=>1
+    END
+    LAF edit_area STR_VAR area=~ar1203 ar1402 ar2102 ar2807 ar2902 ar3018 ar3024 ar6004 ar6005~ editstring=~patch_conditionally=>patch_data~ END
+
+
+   // fix the bug in hdragsil from QP
+
+   COPY_EXISTING ~hdragsil.cre~ ~override~
+		READ_LONG 0x2c4 ~eff_off~
+		PATCH_IF ~%eff_off%~=0 THEN BEGIN
+			READ_LONG 0x2bc ~itm_off~
+			READ_LONG 0x2c0 ~itm_num~
+			WRITE_LONG 0x2c4 ~itm_num~*0x14+~itm_off~
+		END
+    BUT_ONLY
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// Compile needed scripts
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION dragon_scripts BEGIN
+
+    LAF ssl_to_bcs STR_VAR script=~dragblac dragbrow draggre2 draggree dragred dragshad gorsal dragsilv~ location=~dragon/ssl~END
+    LAF clone_script STR_VAR script=~dragshad=>shadra01 dragblac=>draghell~ END
+
+    ACTION_IF !FILE_EXISTS_IN_GAME ~abazdg02.cre~ BEGIN
+       LAF ssl_to_bcs STR_VAR script=dragblue location=~dragon/ssl~ END
+    END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// Main modifications
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION dragon_core BEGIN
+
+    //////////////////
+    /// red dragons
+    //////////////////
+    
+    /// Firkraag
+
+    MAKE_PATCH
+      dragon_general=>null
+      dragon_staying_power=>null
+      level_all=>23
+      immunity=>fire
+      remove_spells=>all
+      add_spells=>~MAGIC_MISSILE(3) MELF_ACID_ARROW(3) WIZARD_DISPEL_MAGIC(2) SLOW
+                   GREATER_MALISON BREACH(2) DEATH_SPELL DRAGON_STONE_SKIN
+                   DRAGON_SILENCE~
+      enforce_script_order=>~shoutdlg above dragred~
+    END
+    LAF edit_creature STR_VAR creature=firkra02 END
+
+    // Saladrex
+
+    MAKE_PATCH
+      dragon_general=>null
+      dragon_staying_power=>null
+      level_all=>26
+      immunity=>fire
+      remove_spells=>all
+      add_spells=>~MAGIC_MISSILE(5) MELF_ACID_ARROW(3) WIZARD_DISPEL_MAGIC(2) SLOW
+                   GREATER_MALISON BREACH(3) DEATH_SPELL DRAGON_STONE_SKIN(3)
+                   DRAGON_SILENCE PROTECTION_MAGIC_WEAPON_NOEFF(2) POWER_WORD_BLIND
+                   RUBY_RAY_OF_REVERSAL(2)~
+    END
+    LAF edit_creature STR_VAR creature=gorsal END
+
+    ///////////////////////////
+    // green dragons
+    ///////////////////////////
+
+    // WK dragon guardian and Fll'yesitat (sp?)
+
+    MAKE_PATCH
+        dragon_general=>null
+        dragon_staying_power=>null
+        level_all=>24
+        immunity=>poison
+        immunity=>insects
+        remove_spells=>all
+        add_spells=>~UNHOLY_BLIGHT(2) DEFENSIVE_HARMONY(2) CLERIC_TRUE_SIGHT HEAL
+                     MAGIC_MISSILE(4) MELF_ACID_ARROW(4) WIZARD_DISPEL_MAGIC(2)
+                     SPELL_THRUST(2) BREACH(2) DOMINATION DEATH_SPELL POWER_WORD_SILENCE
+                     WARDING_WHIP POWER_WORD_STUN DRAGON_STONE_SKIN(3) BLACK_DRAGON_PLANT
+                     BLACK_DRAGON_INSECT~
+    END
+    LAF edit_creature STR_VAR creature=~fsdragon bazdra03~ END
+
+    ///////////////////////////
+    // black dragons
+    ///////////////////////////
+
+    // Nizi and the Hell Dragons
+
+    MAKE_PATCH
+       dragon_general=>null
+       dragon_staying_power=>null
+       level_all=>23
+       immunity=>acid
+       immunity=>insects
+       immunity=>poison
+       remove_spells=>all
+       add_spells=>~MAGIC_MISSILE(2) MELF_ACID_ARROW(2) WIZARD_DISPEL_MAGIC WIZARD_HASTE
+                    WIZARD_DIRE_CHARM(2) DRAGON_STONE_SKIN~
+       strip_script=>hdragred
+    END
+    LAF edit_creature STR_VAR creature=~dragblac hdragred hdragsil~ END
+
+    // Nizi needs a script rearrangement
+    
+    LAF edit_creature STR_VAR creature=dragblac 
+                              editstring=~strip_script=>"dragblac shoutdlg" insert_script_high=>dragblac insert_script_high=>shoutdlg~ 
+    END
+
+    //////////////////////////////
+    // silver dragons
+    //////////////////////////////
+    
+    // Adalon
+
+    MAKE_PATCH
+       dragon_general=>null
+       dragon_staying_power=>null
+       level_all=>23
+       immunity=>cold
+       remove_spells=>all
+       add_spells=>~CLERIC_HOLD_PERSON(2) CURE_SERIOUS_WOUNDS(2) WIZARD_CHROMATIC_ORB(3)
+                    RAY_OF_ENFEEBLEMENT(3) FLAME_ARROW(3) HASTE ICE_STORM BREACH(2)
+                    DEATH_SPELL WIZARD_CHAIN_LIGHTNING WIZARD_FINGER_OF_DEATH DRAGON_STONE_SKIN
+                    DRAGON_SILENCE~
+    END
+    LAF edit_creature STR_VAR creature=udsilver END
+
+    ////////////////////////////
+    // Special
+    ////////////////////////////
+    
+    // Thax - shadow dragon
+    
+    MAKE_PATCH
+       dragon_general=>null
+       dragon_staying_power=>null
+       level_all=>23
+       immunity=>cold
+       remove_spells=>all
+       add_spells=>~WIZARD_CHROMATIC_ORB WIZARD_DISPEL_MAGIC HASTE GREATER_MALISON
+                    WIZARD_CHAOS BREACH(2) DEATH_SPELL PROTECTION_MAGIC_WEAPON_NOEFF DRAGON_STONE_SKIN~
+    END
+    LAF edit_creature STR_VAR creature=shadra01 END
+
+    // Draconis - brown dragon
+
+    MAKE_PATCH
+       dragon_general=>null
+       dragon_staying_power=>null
+       level_all=>30
+       immunity=>acid
+       remove_spells=>all
+       add_spells=>~MAGIC_MISSILE(5) WIZARD_DISPEL_MAGIC SLOW GREATER_MALISON SECRET_WORD
+                    BREACH(2) DEATH_SPELL PIERCE_MAGIC(2)~
+    END
+    LAF edit_creature STR_VAR creature=bazdra02 END
+
+    // Abazigal - blue dragon - ONLY IF ASCENSION IS NOT INSTALLED
+
+    ACTION_IF !FILE_EXISTS_IN_GAME ~abazdg02.cre~ BEGIN
+     MAKE_PATCH
+       dragon_general=>null
+       level_all=>32
+       immunity=>electricity
+       remove_spells=>all
+       add_spells=>~MAGIC_MISSILE(5) HASTE WIZARD_LIGHTNING_BOLT SLOW(2) SECRET_WORD(2) GREATER_MALISON
+                    BREACH(3) SHADOW_DOOR WIZARD_CHAOS DEATH_SPELL WIZARD_TRUE_SIGHT
+                    PROTECTION_MAGIC_WEAPON_NOEFF WARDING_WHIP RUBY_RAY_OF_REVERSAL
+                    WIZARD_FINGER_OF_DEATH MAZE POWER_WORD_BLIND IMPRISONMENT DRAGON_STONE_SKIN(3)~
+     END
+     LAF edit_creature STR_VAR creature=dragblue END
+
+
+    END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// Dragons added by other components (corrects for kooky install order)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION dragon_other BEGIN
+
+    MAKE_PATCH
+       dragon_general=>null
+       dragon_staying_power=>null
+    END
+    LAF edit_creature STR_VAR creature=~dw#abbl1 dw#abbl2 dw#abgre dw#abred dw#abdgy dw#ysdra~ allow_missing=yes END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// Compatibility with other mods
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION dragon_compatibility BEGIN
+
+   	// BP compatibility
+
+	ACTION_IF FILE_EXISTS_IN_GAME ~bpmaevar.bcs~ THEN BEGIN
+	   LAF clone_script STR_VAR script=~shadra01=>bpshadra dragblac=>bpdragbc dragblac=>bpdraghe dragred=>bpdragre~ END
+	END
+
+
+
+
+END

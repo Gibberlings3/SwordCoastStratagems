@@ -1,0 +1,336 @@
+INCLUDE ~%scsroot%/ds/ds.tph~
+
+
+DEFINE_ACTION_FUNCTION initial BEGIN
+
+////////////////////////
+///// BG1/BG2
+////////////////////////
+
+   LAF random_useful_items END
+   
+   LAF detectable_spells_setup STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ END
+   LAF detectable_spells STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ table = ~cddetect.2da~ END
+
+
+   LAF include STR_VAR file=~detectcloud.tph~ END
+   LAF detect_cloud END
+
+   LAF general_creature_patch END
+
+   LAF include STR_VAR file=~sim_compat.tph~ END
+   LAF sim_compat END
+
+   LAF configure_tobex END
+
+   LAF detectable_items END
+
+
+
+////////////////////////
+///// BG2
+////////////////////////
+   ACTION_IF is_bg2=1 BEGIN
+   
+     LAF spell_shield END
+
+     LAF initial_bg2_misc END
+
+     LAF include STR_VAR file=stoneskin.tph END // stoneskins that are immune to breach
+     LAF initial_stoneskin END
+
+     LAF detectable_weapon_enchantment END
+   
+     LAF include STR_VAR file=detecttrap.tph END
+     LAF detect_trap END
+
+
+   END ELSE BEGIN
+   
+            LAF resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END
+
+   END
+////////////////////////
+///// BG1
+////////////////////////
+
+   ACTION_IF is_bg1=1 BEGIN
+
+      ACTION_IF enhanced_edition=0 BEGIN
+       LAF include STR_VAR file=~beregost.tph~ END
+       LAF Ascension_beregost_fix END
+      END
+      LAF run STR_VAR file=~bg1fix~ END
+   END
+
+END
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// BG1/BG2
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////
+///	Random useful items
+///////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION random_useful_items BEGIN
+
+  LAF clone_item STR_VAR item=~misc16=>dw#noptn misc16=>dw#magat misc16=>dw#attac misc16=>dw#move0 misc16=>dw#noinv~ editstring=~droppable=>0~ END
+
+  ACTION_FOR_EACH item IN dw#mgsee.spl dw#silin.spl dw#brkin.spl BEGIN
+        ACTION_IF NOT FILE_EXISTS_IN_GAME ~%item%~ THEN BEGIN 
+          LAF install STR_VAR file= EVALUATE_BUFFER ~%item%~ location=~spl~ END
+	END
+
+  END
+END
+///////////////////////////////////////////////////////////////////////////
+// general patch on all creatures
+///////////////////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION general_creature_patch BEGIN
+
+LAM read_in_saving_throws
+
+// much of this is hardcoded for speed
+
+LAF action_check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
+LAF action_check_ini STR_VAR ini=do_not_fix_thac0_errors RET ignore_thac0=value END
+
+OUTER_SPRINT skeleton ~~
+OUTER_SET counter=0
+OUTER_SET counter2=0
+COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+   PATCH_SILENT
+   SPRINT filename ~%SOURCE_RES%~
+   LPF CRE_read_effect_type RET value=value END
+   PATCH_IF value=0 BEGIN
+      LPF CRE_modernise END
+   END
+   LPF CRE_read_race RET race=value END
+   PATCH_MATCH ~%race%~ WITH
+   LYCANTHROPE DOPPLEGANGER BEGIN
+       LPF CRE_general STR_VAR arguments=MONSTER END
+   END
+   DEFAULT END
+   LPF CRE_read_class RET class=value END
+   PATCH_MATCH ~%class%~ WITH 
+   SKELETON SKELETON_WARRIOR BEGIN
+      SPRINT skeleton ~%skeleton% %filename%~
+   END
+   DEFAULT END
+   PATCH_IF !ignore_thac0 BEGIN
+      LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
+   END
+   PATCH_IF !ignore_saves BEGIN
+      LPF CRE_enforce_saves STR_VAR arguments=at_worst END
+   END
+   SET counter+=1
+   SET counter2+=1
+   PATCH_IF counter2=100 BEGIN
+      SET counter2=0
+      PATCH_PRINT ~patched %counter% / %file_count_CRE% files~
+   END
+BUT_ONLY
+VERBOSE
+
+// handle (non-mod-added) skeletons with weak resistances
+
+ACTION_CLEAR_ARRAY patch_data
+ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+   patch_cond_inline => ~match=>CRE_read_class
+                         check=>SKELETON
+                         type=>none
+                         resist_coldGT=>100
+                         resist_electricityGT=>100
+                         resist_slashingGT=>50
+                         resist_piercingGT=>50
+                         resist_missileGT=>50
+                         ~
+   patch_cond_inline' => ~match=>CRE_read_class
+                         check=>SKELETON_WARRIOR
+                         type=>none
+                         resist_coldGT=>100
+                         resist_electricityGT=>100
+                         resist_slashingGT=>50
+                         resist_piercingGT=>50
+                         resist_missileGT=>50
+                         ~
+
+END
+LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%skeleton%~ edits=patch_data glob=no END
+
+END
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// install ToB Extender and configure (Windows only)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION configure_tobex BEGIN
+
+ACTION_IF ~skip_tobex~=0 BEGIN
+    OUTER_SPRINT ~TOBEX_MOD_DIRECTORY~ ~%scsroot%~
+    LOAD_TRA ~%scsroot%/tobex_redist/tobex.tra~
+    INCLUDE ~%scsroot%/tobex_redist/tobex.tpa~
+
+    ///////////////////////
+    // Mirror Image fix
+    ///////////////////////
+
+    ACTION_IF (!(MOD_IS_INSTALLED ~setup-spell_rev~ 20) AND ENGINE_IS ~tob~ AND FILE_EXISTS ~bgmain.exe~) THEN BEGIN
+        LAF include STR_VAR file=~mirror_image_aoe.tph~ END
+        LAF ~mirror_image_AoE~ END
+    END
+
+    ///////////////////////
+    // general settings
+    ///////////////////////
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY tobex_settings BEGIN
+        ~No Spell Interruption On Zero Damage=0~ => ~No Spell Interruption On Zero Damage=1~
+        ~Use Caster Level On Mirror Image=0~ => ~Use Caster Level On Mirror Image=1~
+   END
+   ACTION_PHP_EACH tobex_settings AS old=>new BEGIN
+      ACTION_IF FILE_CONTAINS_EVALUATED (~tobex_ini/ToBExTweak.ini~ ~%old%~) BEGIN
+         COPY_EXISTING ~tobex_ini/ToBExTweak.ini~ ~tobex_ini~
+            REPLACE_TEXTUALLY ~%old%~ ~%new%~
+         BUT_ONLY
+      END
+   END
+    ///////////////////////
+    // deactivate components that clash with SR
+    ///////////////////////
+
+    // MI fix
+
+    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 20 BEGIN
+        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~
+            REPLACE_TEXTUALLY ~Configurable Damage Effect Bypasses Mirror Images=1~ ~Configurable Damage Effect Bypasses Mirror Images=0~
+        BUT_ONLY
+    END
+
+    // dispel fix
+
+    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 30 BEGIN
+        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~ 
+            REPLACE_TEXTUALLY ~Dispel Formula Fix=1~ ~Dispel Formula Fix=0~
+        BUT_ONLY
+    END
+
+    // cure sleep fix
+
+    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 40 BEGIN
+        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~
+            REPLACE_TEXTUALLY ~Awaken Fix=1~ ~Awaken Fix=0~
+        BUT_ONLY
+    END
+
+
+END ELSE
+ACTION_IF ~skip_hacks~=0 BEGIN
+   PRINT ~ToBEx disabled; applying backup EXE hacks instead~
+
+    LAF include STR_VAR file=~taimonhacks.tph~ END
+
+   // Dispel fix
+
+    LAUNCH_ACTION_MACRO ~Taimon_fix_dispel~
+
+   // MI fix
+   
+    LAUNCH_ACTION_MACRO ~Taimon_MI_AoE~
+    ACTION_IF (!FILE_EXISTS_IN_GAME ~dvimhere.mrk~ AND ENGINE_IS ~tob~ AND FILE_EXISTS ~bgmain.exe~) THEN BEGIN
+        LAF include STR_VAR file=~mirror_image_aoe.tph~ END
+        LAF mirror_image_AoE END
+    END
+
+
+END
+
+END
+
+///////////////////////////////////////////////////////////////////////////
+// detectable items
+///////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION detectable_items BEGIN
+LAF action_check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value=value END
+ACTION_IF ~value~=0 BEGIN
+  LAF action_check_ini STR_VAR ini=integrated RET integrated=value END
+  ACTION_IF integrated BEGIN // here's one we made earlier
+    COPY ~%scsroot%/ee/autolib.slb~ ~%workspace%~
+  END ELSE BEGIN
+    ACTION_IF skip_tobex=0 BEGIN
+        INCLUDE ~%scsroot%/ssl/tobex_item_labels.tph~
+        LAF tobex_item_labels END
+        INCLUDE ~%scsroot%/ssl/tobex_immunity_labels.tph~
+        LAF tobex_immunity_labels END
+    END ELSE BEGIN
+        INCLUDE ~%scsroot%/ssl/ssl.tph~
+        LAUNCH_ACTION_MACRO ~generate_SSL_autolib~
+    END
+  END
+END
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// BG2 only
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Ardanis's Spell Shield patch
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION spell_shield BEGIN
+  ACTION_IF demivrgvs_v4=0 BEGIN
+    ACTION_IF demivrgvs=1 BEGIN
+       LAF install STR_VAR file=~spwi519.spl~ location=spl END
+    END
+    LAF include STR_VAR file=~ardanis_spell_shield.tph~ END
+    LAF ardanis_spell_shield END
+    LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END // let other mods know spell is altered
+  END
+END
+
+
+DEFINE_ACTION_FUNCTION initial_bg2_misc BEGIN
+
+/////// give Celestials their own Specifics entry
+
+LAF edit_creature
+         STR_VAR creature=~devagood devaevil plangood planevil ca#dastr ca#dmond ca#dmova ca#plan~ allow_missing=yes
+                 editstring=~specifics=>182~
+         END
+
+/////// replace a couple of scripts, apparently randomly confused by SCSII, with more robust ones
+
+LAF install STR_VAR file=~werewyv.baf ds52329.baf~ location=baf END
+
+// fix the Ascension/Fixpack incompatibility (because I'm a nice guy)
+
+ACTION_IF MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0 BEGIN
+   ACTION_IF !FILE_EXISTS ~override/player1.dlg~ BEGIN
+      COPY_EXISTING ~player1.dlg~ ~override~
+   END
+   OUTER_INNER_PATCH ~~ BEGIN
+      PATCH_IF !(FILE_CONTAINS ~override/player1.dlg~ ~slayer3~) BEGIN
+          INNER_ACTION BEGIN
+                COMPILE ~%scsroot%/%component_loc%/dlg/player1.d~
+                   USING  ~%scsroot%/tra/english/player1.tra~
+                          ~%s/player1.tra~
+          END
+      END
+   END
+END
+
+
+END
+

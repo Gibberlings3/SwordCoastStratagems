@@ -1,0 +1,164 @@
+//////////////////////////////////////////////////////
+/// not my code; leave alone
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ~ardanis_spell_shield~ BEGIN
+
+// first run "beholder_pnp_antimagic" to create the new beholder rays (they're not used unless the relevant component is installed)
+
+INCLUDE ~%scsroot%/beholder/beholder_pnp_antimagic.tph~
+LAUNCH_ACTION_FUNCTION ~beholder_pnp_antimagic~ END
+
+// DW code to detect what the icon for Spell Shield is (this is Fixpack-dependent)
+
+COPY_EXISTING ~statdesc.2da~ ~override~
+     COUNT_2DA_ROWS 2 ~rowcount~
+     FOR (i=2;i<~rowcount~;i=i+1) BEGIN
+        READ_2DA_ENTRY i 1 2 ~stringnum~
+        PATCH_IF ~stringnum~=26228 BEGIN
+           READ_2DA_ENTRY i 0 2 ~spell_shield_icon_num~
+           SET i=rowcount
+        END
+     END
+BUT_ONLY
+
+
+// adding new sectype
+
+ADD_SECTYPE SpellShield  @14200
+
+COPY_EXISTING ~spwi519.spl~ ~override~
+  WRITE_BYTE 0x27 SpellShield
+  CLEAR_ARRAY ab_array GET_OFFSET_ARRAY ab_array 0x64 4 0x68 2 0 0 0x28
+  PHP_EACH ab_array AS int => ab_off BEGIN
+    CLEAR_ARRAY eff_array GET_OFFSET_ARRAY2 eff_array ab_off ITM_V10_HEAD_EFFECTS
+    PHP_EACH eff_array AS int2 => eff_off BEGIN
+      PATCH_IF SHORT_AT eff_off = 226 BEGIN
+        SET $spellshieldheader("%int%")=LONG_AT(eff_off+0xe)
+      END
+    END
+    SET res=$spellshieldheader("%int%")
+    LPF ADD_SPELL_EFFECT INT_VAR
+      header=int+1
+      opcode=215 // play 3d effect
+      target=1
+      duration=res
+      power=5
+      parameter2=1
+    STR_VAR resource = ~spturni2~ END
+    LPF ADD_SPELL_EFFECT INT_VAR
+      header=int+1
+      opcode=142 // display portrait icon
+      target=1
+      duration=res
+      power=5
+      parameter2=~%spell_shield_icon_num%~ // spell shield
+    END
+  END
+  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete = 226 END
+
+
+// patching antimagic
+
+ACTION_FOR_EACH spell IN
+  ~spwi321~ // spell thrust
+  ~spwi419~ // secret word
+  ~spwi513~ // breach
+  ~spwi608~ // pierce magic
+  ~spwi704~ // ruby ray of reversal
+  ~spwi705~ // khelben warding whip
+  ~spwi805~ // pierce shield
+  ~spwi903~ // spellstrike
+  // beholder innates
+  ~spin992~  // beholder antimagic ray
+  ~spin550~  // hive mother antimagic ray
+  // pnp beholder innates
+  ~dw#bhan~ // beholder pnp antimagic ray
+  ~dw#hvan~ // hive mother pnp antimagic ray
+BEGIN
+  
+  COPY_EXISTING ~spwi519.spl~ ~override~ // spell shield  
+  PHP_EACH spellshieldheader AS ind => res BEGIN
+    LAUNCH_PATCH_FUNCTION ADD_SPELL_EFFECT INT_VAR
+      header=ind+1
+      opcode=206
+      target=1
+      duration=res
+      power=5
+    STR_VAR resource = EVALUATE_BUFFER ~%spell%b~ END
+  END
+
+  ACTION_IF FILE_EXISTS_IN_GAME ~%spell%d.spl~ THEN BEGIN // check if I've modified the spell already to make it penetrate Inv.
+     OUTER_SPRINT ~spellcore~ ~%spell%d~
+  END ELSE BEGIN
+     OUTER_SPRINT ~spellcore~ ~%spell%~
+  END
+
+  COPY_EXISTING ~%spellcore%.spl~ ~override/%spell%b.spl~
+    WRITE_ASCII 0x8 ~~ (8) // clearing out the name
+    READ_LONG 0x64  ab_off
+    READ_SHORT 0x68 ab_num
+    FOR (i=0;i<ab_num;i+=1) BEGIN
+      WRITE_SHORT (ab_off+i*0x28+0x0c) 1 // target = creature
+      WRITE_SHORT (ab_off+i*0x28+0x26) 1 // projectile = none
+    END
+
+
+  COPY_EXISTING ~%spellcore%.spl~ ~override~              // modifying the original
+    READ_LONG 0x34  level
+    READ_LONG 0x64  ab_off
+    READ_SHORT 0x68 ab_num
+    READ_LONG 0x6a  ef_off
+    READ_SHORT 0x70 cast_num // global effects aka casting features
+    READ_BYTE (ef_off+0x3) power
+
+    total_eff=cast_num
+    FOR (i=0;i<ab_num;i+=1) BEGIN
+      READ_SHORT  (ab_off+i*0x28+0x1e) ef_num  // effect number
+      total_eff+=ef_num
+    END
+
+    DELETE_BYTES ef_off (total_eff*0x30)
+    DELETE_BYTES ab_off ((ab_num - 1)*0x28)
+    WRITE_SHORT 0x68 1
+    WRITE_LONG 0x6a  (ef_off - (ab_num - 1)*0x28)
+    WRITE_SHORT 0x70 0
+
+    WRITE_SHORT (ab_off+0x1e) 2
+    WRITE_SHORT (ab_off+0x20) 0
+    WRITE_SHORT (ab_off+0x10) 1 // level required
+
+    offset=(ef_off - (ab_num - 1)*0x28)
+    INSERT_BYTES offset 0x60
+
+    WRITE_SHORT (offset+0x00) 146     // opcode = cast spell on creature
+    WRITE_BYTE  (offset+0x02) 2       // target = pre-target
+    WRITE_BYTE  (offset+0x03) power   // power level
+    WRITE_LONG  (offset+0x04) 0       // parameter 1 = caster's level
+    WRITE_LONG  (offset+0x08) 1       // parameter 2 = instant
+    WRITE_BYTE  (offset+0x0c) 1       // timing mode = permanent
+    WRITE_BYTE  (offset+0x12) 100     // probability 1 = 100%
+    WRITE_BYTE  (offset+0x13) 0       // probability 2 = 0%
+    WRITE_ASCIIE (offset+0x14) ~%spell%b~ (8)
+
+    READ_ASCII offset ~clone~ (0x30)
+    WRITE_ASCIIE (offset+0x30) ~%clone%~ 
+    WRITE_ASCIIE (offset+0x44) ~%spell%c~
+
+
+  COPY_EXISTING ~%spellcore%.spl~ ~override/%spell%c.spl~
+    WRITE_ASCII 0x8 ~~ (8) // clearing out the name
+    READ_LONG 0x64  ab_off
+    READ_LONG 0x6a  ef_off
+    WRITE_SHORT (ab_off+0x1e) 1
+    WRITE_SHORT (ab_off+0x26) 1
+    DELETE_BYTES (ef_off+0x30) 0x30
+
+    WRITE_SHORT ef_off 230          // opcode = remove one sectype
+    WRITE_LONG (ef_off+0x4) 9       // max level = 9
+    WRITE_LONG (ef_off+0x8) SpellShield
+    WRITE_ASCII (ef_off+0x14) ~~ (8)
+
+END
+
+END

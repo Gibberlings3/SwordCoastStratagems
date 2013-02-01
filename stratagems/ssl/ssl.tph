@@ -1,0 +1,111 @@
+DEFINE_ACTION_MACRO ~generate_SSL_autolib~ BEGIN
+
+	<<<<<<<< .../stratagems-inline/blank.txt
+
+	>>>>>>>>
+
+	COPY ~.../stratagems-inline/blank.txt~ ~%workspace%\autolib.slb~
+
+	COPY_EXISTING ~%scsroot%\ssl\sillyitems.txt~ ~override~
+		COUNT_2DA_ROWS 1 ~sillynum~
+		FOR (i=0;i<~%sillynum%~;i=i+1) BEGIN
+			READ_2DA_ENTRY ~%i%~ 0 1 ~itemname~
+			SPRINT $sillyitem(~%i%~) ~%itemname%~
+		END
+	BUT_ONLY_IF_IT_CHANGES
+		
+        LAF action_check_ini STR_VAR ini=AI_detects_items_slowly RET slow_detect=value END
+
+	COPY_EXISTING ~%scsroot%\ssl\libdata.txt~ ~override~
+		SET ~outputrownum~=0
+		COUNT_2DA_ROWS 1 ~rownum~
+		FOR (i=0;i<~%rownum%~;i=i+1) BEGIN
+			READ_2DA_ENTRY ~%i%~ 0 2 ~thevar~
+			READ_2DA_ENTRY ~%i%~ 1 2 ~thetype~
+			READ_2DA_ENTRY ~%i%~ 2 2 ~thevarname~
+			INNER_ACTION BEGIN
+				COPY ~%workspace%\autolib.slb~ ~%workspace%~
+					INSERT_2DA_ROW ~%outputrownum%~ 0 ~TRIGGER=%thevarname%~
+				SET ~outputrownum~=~%outputrownum%~+1
+				COPY_EXISTING_REGEXP GLOB ~.+\.itm$~ ~override~
+	//			COPY_EXISTING ~sper06.itm~ ~override~
+					SPRINT ~itemname~ ~%SOURCE_RES%~
+  					PATCH_IF (SOURCE_SIZE > 0x71) THEN BEGIN // protects against invalid files - borrowed from TutuTweaks
+						READ_BYTE 0x18 ~droppablebyte~
+						PATCH_IF ((~%droppablebyte%~ BAND ~0b00000100~)=~0b00000100~) THEN BEGIN
+							READ_LONG 0x6a ~effoffset~
+							READ_SHORT 0x70 ~numeffects~
+							SET ~numglobalsofar~=0
+							SET ~result~=0
+							SET ~killresult~=0
+							PATCH_IF (~thetype~=101) THEN BEGIN
+								SET ~isbroken~=0
+								WHILE (~numglobalsofar~<~numeffects~ AND ~%isbroken%~=0) BEGIN
+									SET ~editloc~=~%effoffset%~+0x30*~%numglobalsofar%~
+									PATCH_IF ~%editloc%~+0x30<=~%SOURCE_SIZE%~ THEN BEGIN
+										READ_SHORT ~%editloc%~ ~type~
+										READ_SHORT ~%editloc%~+0x8 ~effect~
+										READ_BYTE ~%editloc%~+0xc ~equipcheck~
+										PATCH_IF (~%type%~=101 AND ~%effect%~=~%thevar%~ AND ~%equipcheck%~=2) THEN BEGIN
+											SET ~result~=1
+										END 
+										SET ~numglobalsofar~=~numglobalsofar~+1
+									END ELSE BEGIN
+										SET ~isbroken~=1
+									END
+								END
+							END
+							PATCH_IF (~thetype~=206) THEN BEGIN
+								SET ~isbroken~=0
+								WHILE (~numglobalsofar~<~numeffects~ AND ~%isbroken%~=0) BEGIN
+									SET ~editloc~=~%effoffset%~+0x30*~%numglobalsofar%~
+									PATCH_IF ~%editloc%~+0x30<=~%SOURCE_SIZE%~ THEN BEGIN
+										READ_SHORT ~%editloc%~ ~type~
+										READ_ASCII ~%editloc%~+0x14 ~effect~
+										READ_BYTE ~%editloc%~+0xc ~equipcheck~
+										PATCH_IF (~%type%~=206 AND NOT ~%effect%~ STRING_COMPARE_CASE ~%thevar%~ = 1 AND ~%equipcheck%~=2) THEN BEGIN
+											SET ~result~=1
+										END 
+										SET ~numglobalsofar~=~numglobalsofar~+1
+									END ELSE BEGIN
+										SET ~isbroken~=1
+																			END
+								END
+							END
+							PATCH_IF ~%result%~=1 THEN BEGIN
+								FOR (j=0;j<~%sillynum%~;j=j+1) BEGIN
+									PATCH_IF ~%itemname%~ STRING_EQUAL_CASE $sillyitem(~%j%~) THEN BEGIN
+										SET ~result~=0
+									END
+								END
+							END
+
+							PATCH_IF ~%result%~=1 AND ~%isbroken%~=0 THEN BEGIN
+								INNER_ACTION BEGIN
+									COPY ~%workspace%\autolib.slb~ ~%workspace%~
+									        PATCH_IF slow_detect BEGIN
+                                                                                     INSERT_2DA_ROW ~%outputrownum%~ 0 ~OR(2)~
+                                                                                     SET outputrownum +=1
+                                                                                     INSERT_2DA_ROW ~%outputrownum%~ 0 ~GlobalTimerExpired("seedefences","LOCALS")~
+                                                                                     SET outputrownum +=1
+									        END
+										INSERT_2DA_ROW ~%outputrownum%~ 0 ~!HasItemEquiped("%itemname%",scstarget)~
+                                                                                SET ~outputrownum~=~%outputrownum%~+1
+								END
+							END
+							PATCH_IF ~%isbroken%~=1 THEN BEGIN
+								PATCH_PRINT ~SCS warning: %SOURCE_RES% is corrupt (probably caused by another mod) so I'm skipping it~
+							END
+						END
+					END
+					
+				BUT_ONLY_IF_IT_CHANGES	
+			END
+		END	
+	BUT_ONLY_IF_IT_CHANGES
+
+
+
+
+END
+

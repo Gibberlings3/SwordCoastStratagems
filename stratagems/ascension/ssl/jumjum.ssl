@@ -1,0 +1,138 @@
+
+INCLUDE FILE (%scsroot%\genai\ssl\genai_definitions.ssl)
+
+BEGIN_ACTION_DEFINITION
+	Name(Gaze)
+	TRIGGER
+		!GlobalTimerNotExpired("basgaze","LOCALS")
+		!GlobalTimerNotExpired("DMWWTimestopRunning","GLOBAL")
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("basgaze","LOCALS",6)
+		PlaySound("SIRIN06")
+		ReallyForceSpellRES("basilisk",scstarget)
+END
+
+IF	
+	!Global("inafight","LOCALS",1)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("inafight","LOCALS",1)
+		Continue()
+END
+
+////////////////////////////////////////////////////////////
+////	This is a rest-and-recover step for when
+////	enemies leave you alone...
+////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	Global("rest","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobal("rest","LOCALS",1)
+		Continue()
+END
+
+IF
+	Global("rest","LOCALS",1)
+	GlobalTimerExpired("rtime","LOCALS")
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("rest","LOCALS",0)
+		ApplySpell(Myself,RESTORE_FULL_HEALTH)
+		Rest()
+END
+
+///////////////////////////////////////////////////
+////	If attacked by an unseen foe, mill around
+////	in confusion. You never know, you might
+////	bump into them!
+//////////////////////////////////////////////////
+
+IF
+	Allegiance(Myself,ENEMY)
+    OR(12)
+      AttackedBy([GOODCUTOFF.0.0.0.0.SUMMONED],DEFAULT)
+      AttackedBy([PC],DEFAULT)
+      AttackedBy([FAMILIAR],DEFAULT)
+      AttackedBy([ALLY],DEFAULT)
+      AttackedBy([CONTROLLED],DEFAULT)
+      AttackedBy([CHARMED],DEFAULT)
+      SpellCastOnMe([GOODCUTOFF.0.0.0.0.SUMMONED],0)
+      SpellCastOnMe([PC],0)
+      SpellCastOnMe([FAMILIAR],0)
+      SpellCastOnMe([ALLY],0)
+      SpellCastOnMe([CONTROLLED],0)
+      SpellCastOnMe([CHARMED],0) 
+!GlobalTimerNotExpired("whatthe","LOCALS")
+  !See(NearestEnemyOf(Myself))
+THEN
+  RESPONSE #100
+    SetGlobalTimer("whatthe","LOCALS",12)
+    Continue()
+END
+
+IF
+  !See(NearestEnemyOf(Myself))
+  GlobalTimerNotExpired("whatthe","LOCALS")
+THEN
+  RESPONSE #100
+    RandomWalkContinuous()
+END
+
+////////////////////////////////////////////////////////////////
+///	Heal myself
+////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	HPPercentLT(Myself,75)
+THEN DO
+	Action(Potion,"potn55",@1055)
+END
+
+
+
+////////////////////////////////////////////////////////////////
+////	She ain't that smart, so we'll just gaze at random
+////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	Range(scstarget,30)
+	TriggerBlock(Enemy)
+THEN DO
+	Action(Gaze|100|200)
+END
+
+///////////////////////////////////////////////////////////////////
+///	Pull back
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Global("inafight","LOCALS",1) // this is to make sure it doesn't trigger toooo soon
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Enemy|Helpless)
+	Range(scstarget,10)
+	!GlobalTimerNotExpired("runonce","LOCALS")
+THEN DO
+	RunAwayFrom(NearestEnemyOf(Myself),60)
+	SetGlobalTimer("runonce","LOCALS",30)
+	Action(Literal)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	Fight
+////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(MyWeaponStrength||0)
+BEGIN LOOP(MyWeaponDamageType||Piercing)
+INCLUDE FILE(%scsroot%\genai\ssl\dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%\genai\ssl\chase.ssl)
+END LOOP
+END LOOP
+

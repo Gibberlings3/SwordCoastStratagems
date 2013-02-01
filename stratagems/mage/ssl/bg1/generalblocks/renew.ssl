@@ -1,0 +1,292 @@
+
+
+//////////////////////////////////////////////////////////////////////
+///  Vocalize
+////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL2)
+	StateCheck(Myself,STATE_SILENCED)
+THEN DO
+	SetGlobalTimer("vocalize","LOCALS",1000)
+	Action(SpellMyself,WIZARD_VOCALIZE)
+END
+
+//////////////////////////////////////////////////////////////////////
+/// PMW
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(SpellsAreBG1)
+	RequireBlock(HasL6)
+	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	Action(SpellMyself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+END
+
+//////////////////////////////////////////////////////////////////////
+/// Stoneskin
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(SpellsAreBG1)
+	RequireBlock(HasL4)
+	GlobalTimerExpired("redefend","LOCALS")
+	!CheckStatGT(Myself,2,STONESKINS)
+THEN DO
+	Action(SpellMyself,WIZARD_STONE_SKIN)
+	SetGlobal("redefend","LOCALS",8) // don't get stuck in a defend-defend-defend loop and forget to do any damage
+END
+
+
+///////////////////////////////////////////////////////////////////////////////
+////	Improved Haste
+//////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL6)
+	!CheckStatGT(Myself,0,IMPROVEDHASTE)
+	See(NearestEnemyOf(Myself))
+	GlobalTimerExpired("redefend","LOCALS")
+THEN DO
+	Action(SpellMyself,WIZARD_IMPROVED_HASTE)
+END
+
+
+//////////////////////////////////////////////////////////////////////
+//// Full-on Invisibility in case I'm in big trouble and need to pull off
+//////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	HPPercentLT(Myself,75)
+	!General(Myself,UNDEAD)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	GlobalTimerExpired("redefend","LOCALS")
+THEN DO
+	Action(SpellMyself,WIZARD_SHADOW_DOOR)
+	Action(MinorSequencerMyself,1,WIZARD_INVISIBILITY,WIZARD_MIRROR_IMAGE)
+	Action(Potion,"potn10",@1010)
+	Action(SpellMyself,WIZARD_INVISIBILITY)
+END
+
+
+
+
+////////////////////////////////////////////////////////////////////////////
+//// Healing potions, but only if I'm safe
+//////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsLich|IsVampire)
+	HPPercentLT(Myself,100)
+	OR(2)
+		StateCheck(Myself,STATE_INVISIBLE)
+		!See(NearestEnemyOf(Myself))
+	OR(2)
+		HPPercentLT(Myself,75)
+		!See(NearestEnemyOf(Myself))
+THEN DO
+	Action(Potion,"dw#ptn52",@1052)
+	Action(Potion,"%tutu_var%potn08",@1008)
+	Action(Potion,"%tutu_var%potn52",@1052)
+	Action(Potion,"dw#ptn08",@1008)
+END
+
+///////////////////////////////////////////////////////////////////////////////
+////	Mirror Image is high priority
+//////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL2)
+	IgnoreBlock(IsNecromancer)
+	!StateCheck(Myself,STATE_MIRRORIMAGE)
+	See(NearestEnemyOf(Myself))
+	GlobalTimerExpired("redefend","LOCALS")
+THEN DO
+	Action(SpellMyself,WIZARD_MIRROR_IMAGE)
+	Action(MinorSequencerMyself,1,WIZARD_INVISIBILITY,WIZARD_MIRROR_IMAGE)
+END
+
+
+///////////////////////////////////////////////////////////////////////////
+////  If I'm not Improved Invisible, change that if possible
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL5)
+	IgnoreBlock(IsNecromancer)
+	!StateCheck(Myself,STATE_IMPROVEDINVISIBILITY)
+	GlobalTimerExpired("redefend","LOCALS")
+THEN DO
+	Action(SpellMyself,WIZARD_SHADOW_DOOR)
+END		
+
+
+IF TRIGGER
+THEN DO
+	ActionCondition(Potion,"%tutu_var%potn52",@1052;HPPercentLT(Myself,60))
+	ActionCondition(Potion,"%tutu_var%potn52",@1052;HPPercentLT(Myself,90)&!See(NearestEnemyOf(Myself)))
+	ActionCondition(Potion,"%tutu_var%potn08",@1008;HPPercentLT(Myself,60)&!See(NearestEnemyOf(Myself)))
+	ActionCondition(Potion,"dw#ptn52",@1052;HPPercentLT(Myself,60))
+	ActionCondition(Potion,"dw#ptn52",@1052;HPPercentLT(Myself,90)&!See(NearestEnemyOf(Myself)))
+	ActionCondition(Potion,"dw#ptn52",@1008;HPPercentLT(Myself,60)&!See(NearestEnemyOf(Myself)))
+END
+
+//////////////////////////////////////////////////////////////////////////////
+///// Putting defences back up: MGI 
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL4)
+	!CheckStat(Myself,1,MINORGLOBE)
+	See(NearestEnemyOf(Myself))
+	OR(2)
+		!Range(LastSeenBy(Myself),8)
+		CheckStat(Myself,0,MINORGLOBE)
+	GlobalTimerExpired("redefend","LOCALS")
+	!GlobalTimerNotExpired("reglobe","LOCALS")
+THEN DO
+		SetGlobalTimer("reglobe","LOCALS",12)
+		Action(SpellMyself,WIZARD_GLOBE_OF_INVULNERABILITY)
+		Action(SpellMyself,WIZARD_MINOR_GLOBE_OF_INVULNERABILITY)
+END
+
+
+////////////////////////////////////////////////////////////////////////////
+//////	If you've got defense-type battle potions, consider drinking them now. Only take
+//////  one round, though - time is short. & get a quick strike
+//////  or two first - so we tie this to the redefend timer.
+//////
+//////  A mage with a party doesn't bother with defence potions unless actually
+//////  attacked, on the assumption that he already has allies.
+//////
+//////  We used to take anti-magic potions here too. But in practice a BG1 
+//////	wizard is heavily protected anyway and can't spare the time.
+////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	NumCreature([ENEMY.HUMANOID],1)
+	!StateCheck(Myself,STATE_INVISIBLE)
+	GlobalTimerExpired("redefend","LOCALS")
+	See(NearestEnemyOf(Myself))
+	Global("magedrinks","LOCALS",0)
+THEN DO
+	ActionCondition(Potion,"%tutu_var%potn11",@1011;CheckStatGT(Myself,0,ARMORCLASS)&Class(Myself,FIGHTER_MAGE)|60|40)
+	ActionCondition(Potion,"%tutu_var%potn24",@1024;CheckStatGT(Myself,0,ARMORCLASS)|60|40)
+	ActionCondition(Potion,"dw#ptn11",@1011;CheckStatGT(Myself,0,ARMORCLASS)&Class(Myself,FIGHTER_MAGE)|60|40)
+	ActionCondition(Potion,"dw#ptn24",@1024;CheckStatGT(Myself,0,ARMORCLASS)|60|40)
+	SetGlobal("magedrinks","LOCALS",1)
+END
+
+////////////////////////////////////////////////////////////////////////
+/////	Having said that, if foes are close then definitely drink
+/////	the damn defence potion!
+////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+	Range(LastSeenBy(Myself),5)	
+	!StateCheck(Myself,STATE_INVISIBLE)
+	GlobalTimerExpired("redefend","LOCALS")
+	Global("magedrinks","LOCALS",0)
+THEN DO
+	ActionCondition(Potion,"%tutu_var%potn11",@1011;CheckStatGT(Myself,0,ARMORCLASS)&Class(Myself,FIGHTER_MAGE))
+	ActionCondition(Potion,"%tutu_var%potn24",@1024;CheckStatGT(Myself,0,ARMORCLASS))
+        ActionCondition(Potion,"dw#ptn11",@1011;CheckStatGT(Myself,0,ARMORCLASS)&Class(Myself,FIGHTER_MAGE))
+	ActionCondition(Potion,"dw#ptn24",@1024;CheckStatGT(Myself,0,ARMORCLASS))
+	SetGlobal("magedrinks","LOCALS",1)
+END
+
+////////////////////////////////////////////////////////////////////////
+///	At this point, fighter-mage types should consider using any
+///	battle potions they've got. Again, only if at close range. First:
+///	oil of speed
+////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+	!Class(Myself,MAGE)
+	!Class(Myself,BARD)
+	!Class(Myself,CLERIC_MAGE)
+	!Class(Myself,MAGE_THIEF)
+	Range(NearestEnemyOf(Myself),5)
+        !StateCheck(Myself,STATE_HASTED)
+THEN DO
+       Action(Potion,"%tutu_var%potn14",@1014)
+       Action(Potion,"dw#ptn14",@1014)
+END
+
+/////////////////////////////////////////////////////////////
+////	Now strength potions (check to see if already strong
+////	enough not to bother)
+/////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+	!Class(Myself,MAGE)
+	!Class(Myself,BARD)
+	!Class(Myself,CLERIC_MAGE)
+	!Class(Myself,MAGE_THIEF)
+	Range(NearestEnemyOf(Myself),5)
+THEN DO
+	ActionCondition(Potion,"%tutu_var%potn07",@1007;CheckStatLT(Myself,24,STR))
+	ActionCondition(Potion,"%tutu_var%potn06",@1006;CheckStatLT(Myself,23,STR))
+	ActionCondition(Potion,"%tutu_var%potn05",@1005;CheckStatLT(Myself,22,STR))
+	ActionCondition(Potion,"%tutu_var%potn04",@1004;CheckStatLT(Myself,21,STR))
+	ActionCondition(Potion,"%tutu_var%potn12",@1012;CheckStatLT(Myself,20,STR))
+	ActionCondition(Potion,"%tutu_var%potn03",@1003;CheckStatLT(Myself,19,STR))
+	ActionCondition(Potion,"dw#ptn07",@1007;CheckStatLT(Myself,24,STR))
+	ActionCondition(Potion,"dw#ptn06",@1006;CheckStatLT(Myself,23,STR))
+	ActionCondition(Potion,"dw#ptn05",@1005;CheckStatLT(Myself,22,STR))
+	ActionCondition(Potion,"dw#ptn04",@1004;CheckStatLT(Myself,21,STR))
+	ActionCondition(Potion,"dw#ptn12",@1012;CheckStatLT(Myself,20,STR))
+	ActionCondition(Potion,"dw#ptn03",@1003;CheckStatLT(Myself,19,STR))
+END
+
+///////////////////////////////////////////////////////////////
+///	Failing that, take potions of Power or Heroism. 
+///	We use a counter to see if he's taken one already
+/////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  See(NearestEnemyOf(Myself))
+  !Class(Myself,MAGE)	// actually these guys can take the potion, but
+  !Class(Myself,BARD)	// it isn't worth it.
+  !Class(Myself,CLERIC_MAGE)
+  !Class(Myself,MAGE_THIEF)
+  Global("heroptn","LOCALS",0)
+  Range(NearestEnemyOf(Myself),5)
+THEN DO
+    SetGlobal("heroptn","LOCALS",1)
+	Action(Potion,"%tutu_var%potn41",@1041)
+	Action(Potion,"%tutu_var%potn09",@1009)
+	Action(Potion,"dw#ptn41",@1041)
+	Action(Potion,"dw#ptn09",@1009)
+ END
+
+////////////////////////////////////////////////////////////////////////
+/// Use armour-type spells if not already in place
+////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	RequireBlock(HasL3)
+	See(NearestEnemyOf(Myself))
+	Range(NearestEnemyOf(Myself),8)
+	CheckStatGT(Myself,2,ARMORCLASS)
+	GlobalTimerExpired("redefend","LOCALS")
+THEN DO
+	Action(SpellMyself,WIZARD_GHOST_ARMOR|70|30)
+END
+
+IF
+	Range(NearestEnemyOf(Myself),8)
+	CheckStatGT(Myself,4,ARMORCLASS)
+	HaveSpell(WIZARD_SHIELD)
+	GlobalTimerExpired("redefend","LOCALS")
+THEN
+	RESPONSE #70
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(Myself,WIZARD_SHIELD) 
+	RESPONSE #30
+		Continue()
+END

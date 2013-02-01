@@ -1,0 +1,342 @@
+///////////////////////////////////////////////////////////////
+/////	Definitions
+///////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsspellsubstitute1|| )
+BEGIN LOOP(scsspellsubstitute2|| )
+	INCLUDE FILE(%scsroot%/mage/ssl/mage_definitions.ssl)
+
+BEGIN LOOP(castspell||usedpsionics)
+	INCLUDE FILE(%scsroot%/psionic/ssl/psionic_defs.ssl)
+END LOOP
+END LOOP
+END LOOP
+
+VARIABLE(HasL1=True)
+VARIABLE(HasL2=True)
+VARIABLE(HasL3=True)
+VARIABLE(HasL4=True)
+VARIABLE(HasL5=True)
+VARIABLE(HasL6=True)
+VARIABLE(HasL7=True)
+VARIABLE(HasL8=True)
+VARIABLE(HasL9=True)
+
+BEGIN_ACTION_DEFINITION
+	Name(RMSequencer)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		Global("SpellSequencer","LOCALS",3)
+	ACTION
+		RESPONSE #100
+			SetGlobalTimer("castspell","LOCALS",6)
+			SetGlobal("SpellSequencer","LOCALS",0)
+			DisplayStringHead(Myself,25951)
+			ForceSpellRES("dw#0w302",scstarget)  //Remove Magic
+			ForceSpellRES("dw#0w302",scstarget)
+			SmallWait(5)
+			ForceSpellRES("dw#0w412",scstarget)
+END
+
+/////////////////////////////////////////////////////////
+/////      Initial material
+////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%\mage\ssl\bg2\generalblocks\rest.ssl)
+INCLUDE FILE (%scsroot%\mage\ssl\bg2\generalblocks\findhidden.ssl)
+INCLUDE FILE (%scsroot%\mage\ssl\bg2\generalblocks\gohostile.ssl)
+
+
+
+////////////////////////////////////////////////////////////////
+///	Long-term preps
+////////////////////////////////////////////////////////////////
+
+IF
+	!Global("longprep","LOCALS",1)
+THEN
+	RESPONSE #100
+		ApplySpellRES("%WIZARD_STONE_SKIN_PREBUFF%",Myself) // Stoneskin
+		ApplySpellRES("%WIZARD_PROTECTION_FROM_MAGIC_ENERGY_PREBUFF%",Myself) // Pro/Magic Energy
+		SetGlobal("longprep","LOCALS",1)
+END
+
+
+///////////////////////////////////////////////////////////////
+///	Start invisible
+///////////////////////////////////////////////////////////////
+
+IF
+	Allegiance(Myself,ENEMY)
+	!See(NearestEnemyOf(Myself))
+BEGIN LOOP(scsplayer||1;2;3;4;5;6)  // without this loop we ceaselessly re-invisibilise when we can only see charmed people
+	!See(Playerscsplayer)
+END LOOP
+	!StateCheck(Myself,STATE_INVISIBLE)
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#illin",Myself)
+END
+
+/////////////////////////////////////////////////////////////////
+///	Short-term preps
+//////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/psionic/ssl/illithid/alhoonprep.ssl)
+
+
+///////////////////////////////////////////////////////////////////
+///  Set the redefend timer, to avoid recasting everything
+////////////////////////////////////////////////////////////////////
+
+IF
+	Global("instantprep","LOCALS",0)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("instantprep","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",3)
+		Continue()
+END
+
+////////////////////////////////////////////////////////////////////////
+// Set up spell triggers
+////////////////////////////////////////////////////////////////////////
+
+IF
+	!GlobalTimerNotExpired("setuptriggers","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("setuptriggers","LOCALS",1000)
+		SetGlobal("SpellSequencer","LOCALS",3)
+		SetGlobal("SpellTrigger","LOCALS",9)
+		SetGlobal("MinorSequencer","LOCALS",2)
+END
+
+
+
+/////////////////////////////////////////////////////////////////////////
+///	Enter fight mode if you detect trouble (mostly for undead)
+/////////////////////////////////////////////////////////////////////////
+
+IF
+    OR(12)
+      AttackedBy([GOODCUTOFF.0.0.0.0.SUMMONED],DEFAULT)
+      AttackedBy([PC],DEFAULT)
+      AttackedBy([FAMILIAR],DEFAULT)
+      AttackedBy([ALLY],DEFAULT)
+      AttackedBy([CONTROLLED],DEFAULT)
+      AttackedBy([CHARMED],DEFAULT)
+      SpellCastOnMe([GOODCUTOFF.0.0.0.0.SUMMONED],0)
+      SpellCastOnMe([PC],0)
+      SpellCastOnMe([FAMILIAR],0)
+      SpellCastOnMe([ALLY],0)
+      SpellCastOnMe([CONTROLLED],0)
+      SpellCastOnMe([CHARMED],0) 
+!Global("inafight","LOCALS",1)
+  !See(NearestEnemyOf(Myself))
+THEN
+  RESPONSE #100
+    SetGlobal("inafight","LOCALS",1)
+    Continue()
+END	
+
+////////////////////////////////////////////////////////////////////////
+// Initialise for combat
+////////////////////////////////////////////////////////////////////////
+
+IF
+	Global("inafight","LOCALS",0)
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("inafight","LOCALS",1)
+		Continue()
+END
+
+
+IF
+	!Global("ChainContingencyFired","LOCALS",1)
+	!Global("inafight","LOCALS",1)
+	CheckStatGT(Myself,17,Level) // this is for the benefit of liches, to help them detect pro/undead enemies
+	OR(7)
+		Detect(NearestEnemyOf(Myself))
+		BEGIN LOOP(scsplayer||1;2;3;4;5;6)
+			Range(Playerscsplayer,15)
+		END LOOP
+THEN 
+	RESPONSE #100
+		SetGlobal("inafight","LOCALS",1)
+		Continue()
+END
+
+
+//////////////////////////////////////////////////////////////////////
+///CPU saver
+//////////////////////////////////////////////////////////////////////
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	!HPPercentLT(Myself,100)
+	!Global("inafight","LOCALS",1)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+/////////////////////////////////////////////////////////////////////////
+// 	Chain Contingency
+/////////////////////////////////////////////////////////////////////////
+
+IF
+	!Global("ChainContingencyFired","LOCALS",1)
+	Allegiance(Myself,ENEMY)
+	OR(7)
+		Detect(NearestEnemyOf(Myself))
+		BEGIN LOOP(scsplayer||1;2;3;4;5;6)
+			Range(Playerscsplayer,15)
+		END LOOP
+THEN
+	RESPONSE #100
+		SetGlobal("ChainContingencyFired","LOCALS",1)
+		DisplayStringHead(Myself,26328)
+		ReallyForceSpell(Myself,WIZARD_SPELL_IMMUNITY_ABJURATION)
+		ReallyForceSpell(Myself,WIZARD_SPELL_IMMUNITY_DIVINATION)
+		ReallyForceSpell(Myself,WIZARD_MORDENKAINENS_SWORD)
+		SetGlobal("contingency","LOCALS",1)
+		Continue()
+END
+
+////////////////////////////////////////////////////////////////////////////
+///	Report on the Split Mind power; whine; set Tenser timer.
+/////////////////////////////////////////////////////////////////////////////
+
+IF
+	!Global("whined","LOCALS",1)
+	AreaCheck("AR0711")
+	OR(7)
+		Detect(NearestEnemyOf(Myself))
+		BEGIN LOOP(scsplayer||1;2;3;4;5;6)
+			Range(Playerscsplayer,15)
+		END LOOP
+THEN
+	RESPONSE #100
+		SetGlobal("whined","LOCALS",1)
+		DisplayStringHead(Myself,2138)
+		Continue()
+END
+
+IF
+	!GlobalTimerNotExpired("saidsplitmind","LOCALS")
+	See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobalTimer("saidsplitmind","LOCALS",1000)
+		DisplayStringHead(Myself,@302)
+		SetGlobal("tenser","LOCALS",30)
+		Continue()
+END
+
+////////////////////////////////////////////////////////////////////////////
+///	Contingencies renew defences
+////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/contingency.ssl)
+
+///////////////////////////////////////////////////////////////////////////
+//	Melee
+///////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(GlobalTimerNotExpired("castspell","LOCAlS") GlobalTimerNotExpired("usedpsionics","LOCALS"))
+
+INCLUDE FILE(%scsroot%/psionic/ssl/illithid/mfcombat.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+////	MAGIC
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
+
+//////////////////////////////////////////////////////////////////////////
+// Renew and retreat
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+THEN DO
+	Action(SpellMyself,WIZARD_ABSOLUTE_IMMUNITY)
+END
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/renew.ssl)
+
+/////////////////////////////////////////////////////////////////////////////
+// 	Tenser
+//////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Range(NearestEnemyOf(Myself),5)
+	Target(Myself)
+	!GlobalTimerNotExpired("tenser","LOCALS")
+THEN DO
+	Action(Trigger,9,WIZARD_TENSERS_TRANSFORMATION,WIZARD_IMPROVED_HASTE,WIZARD_SPELL_IMMUNITY_ABJURATION|100|100)
+END
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// 	Combat
+//////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(slowspell|| )
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/undead_paranoia.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/kill_summons_if_no_PC.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/renew_antimagic.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/first_dispel.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/attacks_on_PC_defences.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/truesight.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/highpowered_area_attacks.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/areadenial.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/power_word_blind.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/highpowered_summons.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/attack_antimagic.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/kill_summons.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/low_level_area.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/flame_arrows.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/low_level_disabling.ssl)
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/combatblocks/arrows.ssl)
+END LOOP
+
+/////////////////////////////////////////////////////////////////////
+/// PSIONICS
+/////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("usedpsionics","LOCALS"))
+
+INCLUDE FILE(%scsroot%\psionic\ssl\illithid\illithidcore.ssl)
+
+//////////////////////////////////////////////////////
+////	If we get this far, we can't find anything to do, so
+////	set the timer (this means we attack in the gap) 
+//////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+IF
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("usedpsionics","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("castspell","LOCALS",6)
+END
+	
+
+////////////////////////////////////////////////////////
+///	Closedown: avoid interaction with other scripts
+////////////////////////////////////////////////////////////
+
+IF
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		NoAction()
+END
+

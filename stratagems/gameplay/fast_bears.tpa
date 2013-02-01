@@ -1,0 +1,89 @@
+DEFINE_ACTION_FUNCTION fast_bears BEGIN
+
+/////////////////////////////////////////////////////////////////////////
+/// speed spell
+/////////////////////////////////////////////////////////////////////////
+
+LAF install STR_VAR file=dw#bfst.spl END
+
+/////////////////////////////////////////////////////////////////////////
+/// script
+/////////////////////////////////////////////////////////////////////////
+
+<<<<<<<<.../scs-inline/bearadd.baf
+IF
+  !GlobalTimerNotExpired("fastbear","LOCALS")
+  Allegiance(Myself,ENEMY)
+  See(NearestEnemyOf(Myself))
+  DifficultyGT(EASY)
+THEN
+    RESPONSE #100
+             ApplySpellRES("dw#bfst",Myself)
+             SetGlobalTimer("fastbear","LOCALS",500)
+             Continue()
+END
+>>>>>>>>
+
+    ACTION_FOR_EACH script IN ~%tutu_var%cbear~ ~%tutu_var%bear~ BEGIN
+      EXTEND_TOP ~%script%.bcs~ ~.../scs-inline/bearadd.baf~
+    END
+
+/////////////////////////////////////////////////////////////////////////
+// find bears (we do this in code to speed things up)
+/////////////////////////////////////////////////////////////////////////
+
+OUTER_SPRINT bearlist ~~
+COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+     SPRINT bearname ~%SOURCE_RES%~
+     LPF CRE_is_bear RET value=value END
+     PATCH_IF value=1 BEGIN
+        LPF CRE_has_bear_script RET value=value END
+        PATCH_IF value=0 BEGIN
+           PUSH bearlist ~%bearname%~
+        END
+     END
+BUT_ONLY
+
+
+/////////////////////////////////////////////////////////////////////////
+// patched velocity for always-hostile bears
+/////////////////////////////////////////////////////////////////////////
+
+    MAKE_PATCH
+       add_effect_inline=>~opcode=>176 target=>1 parameter1=>8 parameter2=>1 timing=>1~
+    END
+
+    LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%bearlist%~ edits=~patch_data~ END
+
+/////////////////////////////////////////////////////////////////////////
+// shapeshift spells
+/////////////////////////////////////////////////////////////////////////
+
+    LAF edit_spell STR_VAR spell=~spcl611 spcl613 spwi497 spwi498~
+                        editstring=~add_effect_inline=>"opcode=>126 target=>1 parameter1=>8 parameter2=>1 duration=>3600000"~
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////
+// auxiliary functions
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_is_bear
+     RET value
+BEGIN
+     LPF CRE_read_animation_code RET anim=value END
+     PATCH_IF (anim=0x7200 || anim=0x7201 || anim=0x7202 || anim=0x7203) BEGIN
+        SET value=1
+     END ELSE BEGIN
+        SET value=0
+     END
+END
+DEFINE_PATCH_FUNCTION CRE_has_bear_script
+     RET value
+BEGIN
+     LPF CRE_match_script STR_VAR arguments=EVALUATE_BUFFER ~%tutu_var%bear~ RET value1=value END
+     LPF CRE_match_script STR_VAR arguments=EVALUATE_BUFFER ~%tutu_var%cbear~ RET value2=value END
+     SET value=value1 OR value2
+END
+
+

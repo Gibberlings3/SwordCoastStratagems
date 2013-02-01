@@ -1,0 +1,54 @@
+DEFINE_PATCH_FUNCTION check_if_weapon
+            INT_VAR offset_base=0
+            RET value
+            BEGIN
+               LPF ITM_read_ability_type INT_VAR offset_base=EVALUATE_BUFFER ~%offset_base%~ RET wpn=value END
+               PATCH_IF (wpn=1||wpn=2) BEGIN
+                  SET value=1
+               END ELSE BEGIN
+                  SET value=0
+               END
+            END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION label_weapons
+            INT_VAR weapon_enchantment_type=233    // The assumption is that slot 109 ("CLERIC_HALLOW") is used to
+                    weapon_enchantment_stat=109    //   indicate weapon enchantment. It's a proficiency,
+                                                   /// not a scripting state - that's what  the ~type~ codes
+     BEGIN
+     COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
+          PATCH_IF SOURCE_SIZE > 0x1 BEGIN
+              SET weapon=0
+              LPF walk_entries STR_VAR file_prefix=ITM entry_type=ability function=check_if_weapon RET weapon=value END
+              PATCH_IF (weapon=1) BEGIN
+                  LPF ITM_read_enchantment RET enchantment=value END
+                  PATCH_IF enchantment>0 BEGIN
+                      LPF ADD_ITEM_EQEFFECT
+                         INT_VAR opcode=~weapon_enchantment_type~
+                                 timing=2
+                                 target=1
+                                 parameter1=~enchantment~
+                                 parameter2=~weapon_enchantment_stat~
+                      END
+                  END
+              END
+          END
+     BUT_ONLY
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION relabel_weapons
+      BEGIN
+           LPF ITM_read_enchantment RET enchantment=value END
+           PATCH_CLEAR_ARRAY patch_data
+           PATCH_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+                 match => combine_checks
+                 check => 1
+                 match_parameter => ~ITM_read_opcode => 233 ITM_read_parameter2 => 109~
+                 parameter1=> EVALUATE_BUFFER ~%enchantment%~
+                 type => effect_global
+           END
+           LPF patch_conditionally STR_VAR file_prefix=ITM arguments=patch_data END
+END

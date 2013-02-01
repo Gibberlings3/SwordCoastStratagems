@@ -1,0 +1,78 @@
+// old code, basically left alone
+
+<<<<<<<< .../stratagems-inline/immunity.2da
+Spell	Scroll		STRREF
+SPWI590	dw#si590	31671
+SPWI591	dw#si591	31673
+SPWI592	dw#si592	31677
+SPWI593	dw#si593	31678
+SPWI594	dw#si594	31675
+SPWI595	dw#si595	31676
+SPWI596	dw#si596	31672
+SPWI597	dw#si597	31674
+>>>>>>>>
+
+
+DEFINE_ACTION_FUNCTION spell_immunity_scrolls BEGIN
+
+	COPY ~.../stratagems-inline/immunity.2da~ ~override~
+		COUNT_2DA_ROWS 0 ~rowcount~
+		FOR (j=1;j<~%rowcount%~;j=j+1) BEGIN
+			READ_2DA_ENTRY ~%j%~ 0 0 ~spell_name~
+			READ_2DA_ENTRY ~%j%~ 1 0 ~scroll_name~
+			READ_2DA_ENTRY ~%j%~ 2 0 ~school_name~
+			GET_STRREF 5019 ~old_title~
+			GET_STRREF 25913 ~old_desc~
+			GET_STRREF ~%school_name%~ ~new_title~
+			SPRINT ~addon_1~ @207
+			SPRINT ~addon_2~ @208
+			SPRINT ~addon~ ~%addon_1%~^~%new_title%~^~%addon_2%~
+			INNER_PATCH_SAVE ~new_desc~ ~%old_desc%~ BEGIN
+				REPLACE_TEXTUALLY CASE_INSENSITIVE ~%old_title%~ ~%new_title%~
+			END
+			SPRINT ~new_desc~ ~%new_desc%~^~%addon%~
+			INNER_ACTION BEGIN
+				COPY_EXISTING ~%spell_name%.spl~ ~override~
+					SAY_EVALUATED 0x50 ~%new_desc%~
+
+				COPY_EXISTING ~scrl6s.itm~ ~override/%scroll_name%.itm~
+					REPLACE_TEXTUALLY CASE_INSENSITIVE ~spwi510~ ~%spell_name%~
+					SAY_EVALUATED 0x54 ~%new_desc%~
+					SAY_EVALUATED 0xc ~%new_title%~
+			SPRINT ~olditem~ ~scrl6s~
+			SPRINT ~newitem~ ~%scroll_name%~
+			LAUNCH_ACTION_FUNCTION ~legacy_add_related_item~ END
+
+			END
+		END
+	BUT_ONLY_IF_IT_CHANGES
+
+END
+
+DEFINE_ACTION_FUNCTION ~legacy_add_related_item~ BEGIN
+	COPY_EXISTING_REGEXP GLOB ~.+\.sto$~ ~override~
+		PATCH_IF (SOURCE_SIZE > 0x71) THEN BEGIN // protects against invalid files - borrowed from TutuTweaks
+			READ_LONG 0x34 ~itemoffset~
+			READ_LONG 0x38 ~numitems~
+			SET ~hasspellinstore~=0
+			SET ~numsofar~=0
+			WHILE ~%numsofar%~<~%numitems%~ BEGIN
+				READ_ASCII ~%itemoffset%~+~%numsofar%~*0x1c ~storeitemname~
+				PATCH_IF ~%storeitemname%~ STRING_EQUAL_CASE ~%olditem%~ THEN BEGIN
+					SET ~hasspellinstore~=1
+					READ_LONG ~%itemoffset%~+~%numsofar%~*0x1c+0x14 ~numscrolls~
+					READ_LONG ~%itemoffset%~+~%numsofar%~*0x1c+0x18 ~infiniteflag~
+					SET ~%newscrollnum%~=~numsofar~+1
+					SET ~numsofar~=~%numitems%~
+				END ELSE BEGIN
+					SET ~numsofar~=~%numsofar%~+1
+				END
+			END
+			PATCH_IF ~%hasspellinstore%~=1 THEN BEGIN
+				ADD_STORE_ITEM ~%newitem%~ AFTER ~%olditem%~ #1 #0 #0 ~IDENTIFIED~ #1
+				WRITE_LONG ~%itemoffset%~+~%newscrollnum%~*0x1c+0x14 ~%numscrolls%~
+				WRITE_LONG ~%itemoffset%~+~%newscrollnum%~*0x1c+0x18 ~%infiniteflag%~
+			END
+		END
+	BUT_ONLY_IF_IT_CHANGES
+END

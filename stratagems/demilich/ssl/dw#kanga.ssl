@@ -1,0 +1,215 @@
+/////////////////////////////////////////////////////////////////
+/////	Block pro/undead scrolls
+/////////////////////////////////////////////////////////////////
+
+IF                                                               
+       !GlobalTimerNotExpired("blockproundead","LOCALS")
+       See(NearestEnemyOf(Myself))
+THEN
+       RESPONSE #100
+           ApplySpellRES("dw#nprun",Player1)
+           ApplySpellRES("dw#nprun",Player2)
+           ApplySpellRES("dw#nprun",Player3)
+           ApplySpellRES("dw#nprun",Player4)
+           ApplySpellRES("dw#nprun",Player5)
+           ApplySpellRES("dw#nprun",Player6)
+           SetGlobalTimer("blockproundead","LOCALS",300)
+           Continue()
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	I'm a lich
+///////////////////////////////////////////////////////////////////////////////////
+
+VARIABLE(IsLich=True)
+VARIABLE(HasL1=True)
+VARIABLE(HasL2=True)
+VARIABLE(HasL3=True)
+VARIABLE(HasL4=True)
+VARIABLE(HasL5=True)
+VARIABLE(HasL6=True)
+VARIABLE(HasL7=True)
+VARIABLE(HasL8=True)
+VARIABLE(HasL9=True)
+VARIABLE(slowspell= )
+VARIABLE(IsInvoker=True)
+
+//////////////////////////////////////////////////////////////////////////////////
+///
+///   Define actions
+///
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsspellsubstitute1|| )
+BEGIN LOOP(scsspellsubstitute2|| )
+	INCLUDE FILE(%scsroot%/mage/ssl/mage_definitions.ssl)
+END LOOP
+END LOOP
+
+///////////////////////////////////////////////////////////////////////////////////////
+////	Setup
+///////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/mage/ssl/bg2/generalblocks/rest.ssl)
+
+IF	
+	!Global("DMWWKangaxxWalks","GLOBAL",1)
+THEN
+	RESPONSE #100
+		SetGlobal("DMWWKangaxxWalks","GLOBAL",1)
+		MakeGlobal()
+END
+
+IF
+	!Global("chaincontingencyfired","LOCALS",1)
+	OR(7)
+		Detect(NearestEnemyOf(Myself))
+		BEGIN LOOP(scsplayer||1;2;3;4;5;6)
+			Range(Playerscsplayer,15)
+		END LOOP
+THEN
+	RESPONSE #100
+		SetGlobal("chaincontingencyfired","LOCALS",1)
+		SetGlobalTimer("redefend","LOCALS",0)
+		DisplayStringHead(Myself,26328)
+		ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_FIRE)
+		ReallyForceSpell(Myself,WIZARD_SHADOW_DOOR)
+		ReallyForceSpell(Myself,WIZARD_SPELL_IMMUNITY_DIVINATION)
+		DisplayString(Myself,25942)
+		ReallyForceSpell(Myself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		SetGlobal("spelltrigger","LOCALS",40)
+		SetGlobal("spellsequencer","LOCALS",2)
+		ReallyForceSpell(Myself,DEMILICH_DEATH)
+		SetGlobal("melfnum","LOCALS",10)
+		SetGlobal("seeabjuration","LOCALS",45) // this may seem long, but the demilich is likely to get several timestops off
+END
+
+/////////////////////////////////////////////////////////////////////////////////////
+////	Kangaxx risks Timestops before renewing defences
+/////////////////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/combatblocks/timestop.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Custom spell trigger
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER	
+	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+	Target(Myself)
+	!GlobalTimerNotExpired("timestop","LOCALS")
+	!GlobalTimerNotExpired("DMWWTimestopRunning","GLOBAL")
+	GlobalTimerExpired("redefend","LOCALS")
+	Detect(NearestEnemyOf(Myself))
+THEN DO
+	Action(Trigger,40,WIZARD_SPELL_DEFLECTION,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS,WIZARD_SPELL_IMMUNITY_ABJURATION)  // Spell Deflection, Pro/MW, SI:Abj
+	SetGlobal("redefend","LOCALS",8) // don't get stuck in a defend-defend-defend loop and forget to do any damage
+END
+
+
+///////////////////////////////////////////////////////////////////////////
+//	Melee
+///////////////////////////////////////////////////////////////////////////
+
+IF
+	GlobalGT("melfnum","LOCALS",0)
+	!HasItem("dw#melf",Myself)
+THEN
+	RESPONSE #100
+		IncrementGlobal("melfnum","LOCALS",-1)
+		ApplySpellRes("dw#melf",Myself)
+		Continue()
+END
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/meleeblocks/demilich.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Renew and retreat
+//////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/renew.ssl)
+
+
+//////////////////////////////////////////////////////////////////////////
+// Look for PCs
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/mill.ssl)
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
+
+
+////////////////////////////////////////////////////////////////////////////
+// Core magic block
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/magetypes/demilich.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+////	Kill innocent people
+////////////////////////////////////////////////////////////////////////////
+
+IF
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	See([NEUTRAL])
+THEN
+	RESPONSE #100
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpell(LastSeenBy(Myself),DEMILICH_TRAP_SOUL)
+	RESPONSE #100
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(LastSeenBy(Myself),WIZARD_FLAME_ARROW)
+	RESPONSE #100
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(LastSeenBy(Myself),WIZARD_SKULL_TRAP)
+END
+
+IF
+	AreaType(OUTDOOR)
+	!See([PC])
+THEN
+	RESPONSE #100
+		RandomWalkContinuous()
+END
+
+
+////////////////////////////////////////////////////////////////////////////
+///// 	Chase PCs
+////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/chase.ssl)
+
+
+//////////////////////////////////////////////////////
+///	If everyone is helpless, kill'em.
+//////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	OR(2)
+		Class(Myself,MAGE)
+		Class(Myself,MAGE_THIEF)
+
+	BEGIN LOOP(scsloopvar||1;2;3;4;5;6)
+		OR(3)
+			!See(Playerscsloopvar)
+			StateCheck(Playerscsloopvar,STATE_IMMOBILE)
+			CheckStatGT(Playerscsloopvar,0,HELD)
+	END LOOP
+THEN
+	RESPONSE #100
+		AttackReevaluate(NearestEnemyOf(Myself),15)
+END
+
+INCLUDE FILE(%scsroot%/mage/ssl/bg2/generalblocks/closedown.ssl)
+////////////////////////////
+
+

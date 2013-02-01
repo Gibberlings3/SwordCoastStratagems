@@ -1,0 +1,266 @@
+/// shouts:
+///
+/// 666: general shout, uttered when I see an enemy. Causes hostility (if I'm in the group) and shouting of 777 (if I'm non-innocent and non-stupid)
+/// 777: general shout, uttered when I hear 666. Causes hostility
+/// 666N: specific shout, uttered when I see player N. Causes non-innocents who hear it to shout 777N (if non-stupid) and move towards player N
+/// 777N: specific shout, uttered when I hear 666N. Causes non-innocents who hear it to move towards player N.
+
+/// handle general (666) shout; replicate previous script, and add CONTINUE to avoid delays before giving specific shouts
+
+/// shout if attacked while neutral, or if hostile and seeing enemies for the first time
+
+IF
+       Allegiance(Myself,NEUTRAL)
+       OR(7)
+          AttackedBy([GOODCUTOFF.0.0.0.0.SUMMONED],DEFAULT)
+          AttackedBy([PC],DEFAULT)
+          AttackedBy([FAMILIAR],DEFAULT)
+          AttackedBy([ALLY],DEFAULT)
+          AttackedBy([CONTROLLED],DEFAULT)
+          AttackedBy([CHARMED],DEFAULT)
+          SpellCastOnMe([GOODCUTOFF.0.0.0.0.SUMMONED],0)
+THEN
+    RESPONSE #100
+            Enemy()
+            Shout(666)
+            Continue()
+END
+
+IF
+        HitBy([GOODCUTOFF],CRUSHING)
+THEN
+    RESPONSE #100
+             Shout(666)
+             Continue()
+END
+
+IF
+         Allegiance(Myself,ENEMY)
+         See(NearestEnemyOf(Myself))
+         !GlobalTimerNotExpired("help_initial","LOCALS")
+THEN 
+         RESPONSE #100
+             SetGlobalTimer("help_initial","LOCALS",60)
+             Shout(666)
+             Continue()
+END
+
+/// on hearing 666, go hostile if not hostile already and shout 777
+
+IF
+         Heard([ANYONE],666)
+         groupcheck
+         Allegiance(Myself,NEUTRAL)
+THEN
+         RESPONSE #100
+             Enemy()
+             Continue()
+END
+
+IF       
+         Heard([ANYONE],666)
+         groupcheck
+         Allegiance(Myself,NEUTRAL)
+         !Class(Myself,INNOCENT)
+THEN
+         RESPONSE #100
+                  Shout(777)
+                  Continue()
+END
+
+/// on hearing 777, go hostile if not already
+
+IF
+         Heard([ANYONE],777)
+         groupcheck
+         Allegiance(Myself,NEUTRAL)
+THEN
+        RESPONSE #100
+                 Enemy()
+                 Continue()
+END
+
+/// ordinary behaviour is now replicated; move on to the new stuff
+
+
+/// if I'm currently trying to find a PC and I've been looking for too long, give up.
+
+IF
+	GlobalGT("helptarget","LOCALS",0)
+	Global("looking","LOCALS",1)
+	GlobalTimerExpired("helpduration","LOCALS")
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("helptarget","LOCALS",0)
+		SetGlobal("looking","LOCALS",0)
+END
+
+BEGIN LOOP(scsplayer||1;2;3;4;5;6) // go through all the players
+
+/// if I'm not currently chasing someone, am hostile, and see player X, give a Type 1 shout of X's number and set myself as chasing X
+
+IF
+	!GlobalGT("helptarget","LOCALS",0)
+	Allegiance(Myself,ENEMY)
+	See(Playerscsplayer)
+//	OR(2)
+//		!Class(Myself,MAGE_ALL)
+//		GlobalTimerExpired("redefend","LOCALS")
+//	OR(2)
+//		!Class(Myself,BARD_ALL)
+//		GlobalTimerExpired("redefend","LOCALS")
+//	OR(2)
+//		!Class(Myself,CLERIC_ALL)
+//		GlobalTimerExpired("redefend","LOCALS")
+//	OR(2)
+//		!Class(Myself,DRUID_ALL)
+//		GlobalTimerExpired("redefend","LOCALS")
+// experiment if we really need this
+THEN
+	RESPONSE #100
+		Shout(666scsplayer)
+		SetGlobal("helptarget","LOCALS",scsplayer)
+		SetGlobalTimer("helpduration","LOCALS",12)
+		Continue()
+END
+
+/// if I'm not currently chasing someone and I hear a type 1 shout about player X, give a type 2 shout of
+/// X's number, go hostile, set myself as chasing X, and set a duration for how long I do it.
+///
+
+IF
+	!GlobalGT("helptarget","LOCALS",0)
+	!See(NearestEnemyOf(Myself))
+	Heard([ANYONE],666scsplayer)
+	groupcheck
+	!GlobalTimerNotExpired("helpduration","LOCALS")
+	OR(2)
+	    Allegiance(Myself,NEUTRAL)
+	    Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		Shout(777scsplayer)
+		Enemy()
+		SetGlobal("helptarget","LOCALS",scsplayer)
+		SetGlobalTimer("helpduration","LOCALS",12)
+END
+
+/// if I'm not currently chasing someone and I hear a type 2 shout about player X, give a type 2 shout of
+/// X's number, go hostile, set myself as chasing X, and set a duration for how long I do it
+
+IF TRIGGER
+	IgnoreBlock(IsStupid)
+	TriggerBlock(CorePlus)
+	!GlobalGT("helptarget","LOCALS",0)
+	!See(NearestEnemyOf(Myself))
+	Heard([ANYONE],777scsplayer)
+	groupcheck
+	Range(LastHeardBy(Myself),15)
+	!Global("help_hostile","LOCALS",1)
+	GlobalTimerExpired("helpduration","LOCALS")
+	OR(2)
+	     Allegiance(Myself,NEUTRAL)
+	     Allegiance(Myself,ENEMY)
+THEN DO
+                Action(Literal)
+		Shout(777scsplayer)
+		Enemy()
+		SetGlobal("help_hostile","LOCALS",1)
+		SetGlobal("helptarget","LOCALS",scsplayer)
+		SetGlobalTimer("helpduration","LOCALS",12)
+END
+
+/// if I can't see an enemy, am chasing player X, and am not innocent, then move towards player X
+
+IF
+	!See(NearestEnemyOf(Myself))
+	Global("helptarget","LOCALS",scsplayer)
+	OR(2)
+            Class(Myself,THIEF_ALL)
+            Kit(Myself,STALKER)
+	!Kit(Myself,SWASHBUCKLER)
+	!Class(Myself,INNOCENT)
+	!Detect(Playerscsplayer)
+	!HasItem("dw#nohlp",Myself)
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#silin",Myself)
+		MoveToObject(Playerscsplayer)
+END
+
+IF
+	!See(NearestEnemyOf(Myself))
+	Global("helptarget","LOCALS",scsplayer)
+	!Class(Myself,INNOCENT)
+	!Detect(Playerscsplayer)
+	!HasItem("dw#nohlp",Myself)
+THEN
+	RESPONSE #100
+		MoveToObject(Playerscsplayer)
+END
+
+END LOOP
+
+
+/// if I hear a general shout, and am non-innocent,  head for the source.
+
+IF
+        OR(2)
+            Allegiance(Myself,ENEMY)
+            Allegiance(Myself,NEUTRAL)
+	!See(NearestEnemyOf(Myself))
+	Heard([ANYONE],666)
+	groupcheck
+	!Class(Myself,INNOCENT)
+THEN
+	RESPONSE #100
+		MoveToObject(LastHeardBy(Myself))
+END
+
+//// whine for help
+
+IF
+	RequireBlock(IsWhiner)
+        General(Myself,HUMANOID)
+	HPPercentLT(Myself,30)
+	HPGT(Myself,1)
+	!StateCheck(Myself,STATE_REALLY_DEAD)
+	!StateCheck(Myself,STATE_DISABLED)
+	Global("whined","LOCALS",0)
+	See(NearestMyGroupOfType)
+	Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #50
+		SetGlobal("whined","LOCALS",1)
+		DisplayStringHead(Myself,46151) // help!
+		Shout(ASSIST)
+	RESPONSE #50
+		SetGlobal("whined","LOCALS",1)
+		DisplayStringHead(Myself,49763) // I require assistance
+		Shout(ASSIST)
+	RESPONSE #50
+		SetGlobal("whined","LOCALS",1)
+		DisplayStringHead(Myself,49764) // Defend me!
+		Shout(ASSIST)
+	RESPONSE #50
+		SetGlobal("whined","LOCALS",1)
+		DisplayStringHead(Myself,49765) // Slay my attacker!
+		Shout(ASSIST)
+END
+
+IF
+        RequireBlock(IsWhiner)
+        General(Myself,HUMANOID)
+	BreakingPoint()
+THEN
+	RESPONSE #100
+		DisplayStringHead(Myself,49766) // I can't take this
+		Shout(ASSIST)
+	RESPONSE #100
+		DisplayStringHead(Myself,49767) // No more
+		Shout(ASSIST)
+	RESPONSE #100
+		DisplayStringHead(Myself,49768) // Mercy!
+		Shout(ASSIST)
+END

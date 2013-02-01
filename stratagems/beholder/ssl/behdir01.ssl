@@ -1,0 +1,371 @@
+///////////////////////////////////////////////////////////////////////////
+////    Data points:
+////
+////	1) Directors in PnP get six eyestalk powers: Burning Hands, MM, Enervation,
+////	Wall of Ice, Phantasmal Force and Slow. 
+////
+////    2) There are unused AGANNAZAR_SCORCHER and MAGIC_MISSILE beholder eyestalks
+////
+////    3) The actual-in-game Director is scripted to cast ICE_STORM, MAGIC_MISSILE, BURNING_HANDS
+////     (and has terrible, appalling AI) 
+////
+////     We keep MM and Slow, and introduce Enervation (3 levels).  Wall of Ice 
+////     goes to Cone of Cold, Burning Hands goes to Agannazar's scorcher (which we
+////     rename "Scorching Ray". Phantasmal Force becomes Paralyzation
+///////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////
+//	Define beholder eyestalk powers
+/////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%\beholder\ssl\beholder_definitions.ssl)
+
+//////////////////////////////////////////////////////////////////////
+//	Initialise
+//////////////////////////////////////////////////////////////////////
+
+
+IF
+	See(NearestEnemyOf(Myself))
+	!Global("initialise","LOCALS",1)
+THEN
+	RESPONSE #500
+		SetGlobalTimer("SeeBounce","LOCALS",2)
+		SetGlobalTimer("SeeImmune","LOCALS",8)
+		SetGlobal("initialise","LOCALS",1)
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobalTimer("RoundEnded","LOCALS",6)
+		Continue()
+	RESPONSE #500
+		SetGlobalTimer("SeeBounce","LOCALS",3)
+		SetGlobalTimer("SeeImmune","LOCALS",9)
+		SetGlobal("initialise","LOCALS",1)
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobalTimer("RoundEnded","LOCALS",6)
+		Continue()
+	RESPONSE #500
+		SetGlobalTimer("SeeBounce","LOCALS",5)
+		SetGlobalTimer("SeeImmune","LOCALS",11)
+		SetGlobal("initialise","LOCALS",1)
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobalTimer("RoundEnded","LOCALS",6)
+		Continue()
+	RESPONSE #500
+		SetGlobalTimer("SeeBounce","LOCALS",6)
+		SetGlobalTimer("SeeImmune","LOCALS",12)
+		SetGlobal("initialise","LOCALS",1)
+		SetGlobalTimer("rtime","LOCALS",2000)
+		SetGlobalTimer("RoundEnded","LOCALS",6)
+		Continue()
+END
+
+//////////////////////////////////////////////////////////////////////
+//	Rest and recover
+//////////////////////////////////////////////////////////////////////
+
+IF
+	Global("initialise","LOCALS",1)
+	GlobalTimerExpired("rtime","LOCALS")
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		SetGlobal("initialise","LOCALS",0)
+		ApplySpell(Myself,RESTORE_FULL_HEALTH) 
+        	SetGlobal("SlowEyeLost","LOCALS",0)
+		SetGlobalTimer("sloweye","LOCALS",0)
+        	SetGlobal("ParalyseEyeLost","LOCALS",0)
+		SetGlobalTimer("paralyse","LOCALS",0)
+        	SetGlobal("BurningEyeLost","LOCALS",0)
+		SetGlobalTimer("burning","LOCALS",0)
+		SetGlobal("MMEyeLost","LOCALS",0)
+		SetGlobalTimer("MM","LOCALS",0)
+		SetGlobal("ColdEyeLost","LOCALS",0)
+		SetGlobalTimer("Cold","LOCALS",0)
+		SetGlobal("EnervationEyeLost","LOCALS",0)
+		SetGlobalTimer("Enervation","LOCALS",0)
+		Rest()
+END
+
+/////////////////////////////////////////////////////////////////////////////
+///	Conserve CPU cycles
+//////////////////////////////////////////////////////////////////////////////
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	!Global("inafight","LOCALS",1)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+
+///////////////////////////////////////////////////////////////////////
+///	Damaged eyestalks (borrowed from SimDing0)
+///////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/beholder/ssl/damage_director.ssl)
+
+///////////////////////////////////////////////////////////////////////////////
+//	Attack section
+/////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  SLOW EYE
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsloopvar||!GlobalTimerExpired("SeeImmune","LOCALS");TriggerBlock(Slow)&GlobalTimerExpired("SeeImmune","LOCALS"))
+
+IF TRIGGER
+	Global("BeholderBehavior","LOCALS",0)
+	scsloopvar
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Enemy|Disabled)
+THEN DO
+	Combine()
+	Action(Eyestalk,BEHOLDER_SLOW,sloweye|100|100)
+	Continue()
+END
+
+END LOOP
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	ENERVATION EYE
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsloopvar||!GlobalTimerExpired("SeeImmune","LOCALS");TriggerBlock(LevelDrain)&GlobalTimerExpired("SeeImmune","LOCALS"))
+
+IF TRIGGER
+	  Global("BeholderBehavior","LOCALS",0)
+          TargetBlock(EnemiesInOrder)
+          TriggerBlock(Enemy|Disabled)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+          Combine()
+          Action(EyestalkRES,dw#bhenv,Enervation|100|100)
+          Continue()
+END
+
+END LOOP
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	CONE OF COLD EYE
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	  Global("BeholderBehavior","LOCALS",0)
+          TargetBlock(EnemiesInOrder)
+          TriggerBlock(Enemy|Disabled)
+          Range(scstarget,15)
+THEN DO
+          Combine()
+          Action(EyestalkRES,dw#bhcco,Cold|100|50)
+          Continue()
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+///	Block, to prevent us firing everything at once
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	Global("BeholderBehavior","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("BeholderBehavior","LOCALS",1)
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	SCORCHING RAY EYE
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Global("BeholderBehavior","LOCALS",1)
+          TargetBlock(PCsPreferringWeak)
+          TriggerBlock(Enemy|Disabled|MinorGlobe|ResistFire)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+          Combine()
+          Action(Eyestalk,BEHOLDER_AGANNAZAR_SCORCHER,burning|100|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	MAGIC MISSILE EYE
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Global("BeholderBehavior","LOCALS",1)
+          TargetBlock(PCsPreferringWeak)
+          TriggerBlock(Enemy|Disabled|MinorGlobe)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+          Combine()
+          Action(Eyestalk,BEHOLDER_MAGIC_MISSILE,MM|100|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// PARALYSATION EYE
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsloopvar||!GlobalTimerExpired("SeeImmune","LOCALS");TriggerBlock(Hold)&GlobalTimerExpired("SeeImmune","LOCALS"))
+
+IF TRIGGER
+	Global("BeholderBehavior","LOCALS",1)
+	scsloopvar
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy|Disabled|MR100)
+THEN DO
+	Combine()
+	Action(Eyestalk,BEHOLDER_PARALYZATION,paralyse|100|100)
+	Continue()
+END
+
+END LOOP
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+///	Block, to prevent us firing everything at once
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	Global("BeholderBehavior","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("BeholderBehavior","LOCALS",2)
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///	Now re-use lethal eyestalks on helpless foes
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	GlobalGT("BeholderBehavior","LOCALS",1)
+	TriggerBlock(MR100|LevelDrain|Enemy)
+	TargetBlock(PlayersInRandomOrder)
+	TargetBlock(EnemiesInOrder)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(EyestalkRES,dw#bhenv,Enervation)
+	Continue()
+END
+
+IF TRIGGER
+	GlobalGT("BeholderBehavior","LOCALS",1)
+	TriggerBlock(MR100|Enemy)
+	TargetBlock(PlayersInRandomOrder)
+	TargetBlock(EnemiesInOrder)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Eyestalk,BEHOLDER_AGANNAZAR_SCORCHER,burning)
+	Continue()
+END
+
+IF TRIGGER
+	GlobalGT("BeholderBehavior","LOCALS",1)
+	TriggerBlock(MR100|Enemy)
+	TargetBlock(PlayersInRandomOrder)
+	TargetBlock(EnemiesInOrder)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Eyestalk,BEHOLDER_MAGIC_MISSILE,MM)
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+////	If we get to here with unused eyestalks, it's reasonable to infer that we're avoiding targetting people
+////	who are magic-resistant. Stop being fastidious for a round or two and see 
+////	if it helps
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+IF
+	See(NearestEnemyOf(Myself))
+	!GlobalTimerNotExpired("IgnoreResistance","LOCALS")
+	OR(3)
+		!GlobalTimerNotExpired("Enervation","LOCALS")
+		!GlobalTimerNotExpired("burning","LOCALS")
+		!GlobalTimerNotExpired("MM","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("IgnoreResistance","LOCALS",12)
+END
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	Reset behaviour
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	GlobalGT("BeholderBehavior","LOCALS",1)
+	!GlobalTimerNotExpired("RoundEnded","LOCALS")
+		OR(4)
+		!GlobalTimerNotExpired("burning","LOCALS")
+		!GlobalTimerNotExpired("Enervation","LOCALS")
+		!GlobalTimerNotExpired("paralyse","LOCALS")
+		!GlobalTimerNotExpired("MM","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobal("BeholderBehavior","LOCALS",0)
+		SetGlobalTimer("RoundEnded","LOCALS",6)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///	Check if we have any lethal eyestalks unused. If not, and no enemies are in strike range, and if we aren't
+///	currently avoiding fastidiousness, stop, instead
+///	of going into melee - it means that there are lethal things we can still do from a distance.
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	False()
+	See(NearestEnemyOf(Myself)) // if not we want various bits of WTASIGHT to kick in
+	OR(3)
+		!GlobalTimerNotExpired("burning","LOCALS")
+		!GlobalTimerNotExpired("Enervation","LOCALS")
+		!GlobalTimerNotExpired("MM","LOCALS")
+	!GlobalTimerNotExpired("IgnoreResistance","LOCALS")
+	!Range(NearestEnemyOf(Myself),5)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+/////////////////////////////////////////////////////////////////////
+// Combat block kicks in here
+/////////////////////////////////////////////////////////////////////
+
+
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(CloseEnemies)
+	TriggerBlock(Enemy|Plus3Safe)
+	Range(scstarget,10)
+THEN DO
+	Action(Attack)
+END
+
+
+IF
+	!Range(NearestEnemyOf(Myself),30)
+	See(NearestEnemyOf(Myself))
+	NumCreatureGT([0.0.BEHOLDER],1)
+THEN
+	RESPONSE #100
+		MoveToObject(LastSeenBy(Myself))
+END
+
+
+INCLUDE FILE(%scsroot%\genai\ssl\chase.ssl)
+

@@ -1,0 +1,314 @@
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Function to enforce kits on the creature
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION enforce_kit
+   STR_VAR arguments=""
+           filename=""
+BEGIN
+   PATCH_IF ~%arguments%~ STRING_EQUAL_CASE mine BEGIN
+      LPF CRE_read_kit RET kit=value END
+   END ELSE BEGIN
+      SPRINT kit arguments
+   END
+   TO_LOWER kit
+   PATCH_MATCH ~%kit%~ WITH
+   kensai barbarian berserker wizardslayer assassin assasin stalker archer feralan swashbuckler blade BEGIN
+      PATCH_IF debug_variable=2 BEGIN
+         LPF patch_display_warning STR_VAR warning=EVALUATE_BUFFER "Enforcing kit %kit%" END
+      END
+      LPF ~CRE_enforce_%kit%~ STR_VAR filename END
+   END
+   DEFAULT
+   END
+END
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Kensai
+////////
+//////// +1 THAC0 (54) per 3 levels
+//////// +1 damage (73) per 3 levels
+//////// +1 speed bonus (190) per 4 levels
+//////// Kai (KENSAI_KAI) once per 4 levels
+//////// +2 AC
+//////// no armor, gauntlets, bracers (we remove them and log any removal)
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_kensai
+  STR_VAR filename=""
+  BEGIN
+   LPF CRE_kit STR_VAR arguments=KENSAI END
+   LPF CRE_read_class STR_VAR class=value END
+   LPF CRE_class STR_VAR arguments=FIGHTER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev3 = level / 3
+   SET lev4 = level / 4
+   // apply effects
+   PATCH_MAKE_PATCH
+      delete_opcodes=>~0 54 73 190~
+      quick_effect=>~opcode=>54 parameter1=>%lev3%~
+      quick_effect'=>~opcode=>73 parameter1=>%lev3%~
+      quick_effect''=>~opcode=>190 parameter1=>%lev4%~
+      quick_effect'''=>~opcode=>0 parameter1=>2 parameter2=>16~
+      remove_spells=>KENSAI_KIA
+      add_spells=>~KENSAI_KIA(%lev4%)~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+   PATCH_FOR_EACH arguments IN gloves armor BEGIN
+      LPF CRE_read_item_in_slot STR_VAR arguments RET item=value END
+      PATCH_IF ~%item%~ STRING_COMPARE_CASE ~~ BEGIN
+         LPF CRE_remove_items STR_VAR arguments=EVALUATE_BUFFER ~%item%~ END
+         LPF patch_log_this STR_VAR file=illegal_kensai_gear.txt input=EVALUATE_BUFFER ~%filename% %item%~ END
+      END
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Berserker
+////////
+//////// enrage 1/4 levels (and proficiency restrictions enforced elsewhere)
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_berserker
+BEGIN
+   LPF CRE_kit STR_VAR arguments=BERSERKER END
+   LPF CRE_class STR_VAR arguments=FIGHTER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev4=level / 4
+   PATCH_MAKE_PATCH 
+       remove_spells=>BERSERKER_RAGE
+       add_spells=>~BERSERKER_RAGE(%lev4%)~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Wizard slayer
+////////
+//////// MR 2/level until L20, 3/level thereafter
+//////// attacks cause 10% cumulative spell failure
+//////// 
+//////// note that this will be confused if MR is non-zero, i.e. it gives the wrong answer
+//////// for, e.g., a drow wizard-slayer
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_wizardslayer
+BEGIN
+   LPF CRE_kit STR_VAR arguments=WIZARDSLAYER END
+   LPF CRE_class STR_VAR arguments=FIGHTER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET mr= level>20? (level * 3) - 20 : level * 2
+   PATCH_MAKE_PATCH
+        resist_magicGT=>~%mr%~
+        delete_opcodes=>~248~
+        quick_effect=>~opcode=>248 resource=>spcl132~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Barbarian
+////////
+//////// Movemement rate +2
+//////// immunity to backstab    (I think hardcoded)
+//////// rage 1/day per 4 levels
+//////// 
+//////// + 10% physical damage resistance at L11 (15 at L15, 20 at L19)
+////////
+//////// no platemail (we don't remove it, but we do log it as illegal)
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_barbarian
+BEGIN
+   LPF CRE_kit STR_VAR arguments=BARBARIAN END
+   LPF CRE_class STR_VAR arguments=FIGHTER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev4= level / 4
+   PATCH_IF level>=19 BEGIN
+      SET resist=20
+   END ELSE
+   PATCH_IF level>=15 BEGIN
+      SET resist=15
+   END ELSE
+   PATCH_IF level>=11 BEGIN
+      SET resist=10
+   END ELSE BEGIN
+      SET resist=0
+   END
+   PATCH_MAKE_PATCH
+      resist_slashingGT=>~%resist%~
+      resist_crushingGT=>~%resist%~
+      resist_piercingGT=>~%resist%~
+      resist_missileGT=>~%resist%~
+      remove_spells=>BARBARIAN_RAGE
+      add_spells=>~BARBARIAN_RAGE(%lev4%)~
+      quick_effect=>~opcode=>126 parameter1=>2~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+
+   LPF CRE_read_item_in_slot STR_VAR arguments=armor RET armor=value END
+   INNER_PATCH ~%armor%~ BEGIN
+      READ_ASCII 0x0 platecheck ELSE ~~(4)
+   END
+   PATCH_IF ~%platecheck%~ STRING_EQUAL_CASE PLAT BEGIN
+         LPF patch_log_this STR_VAR file=illegal_barbarian_gear.txt input=EVALUATE_BUFFER ~%filename% %armor%~ END
+   END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Assassin
+////////
+//////// better backstab (hard-coded)
+//////// +1 to hit/damage
+//////// poison
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_assasin // I can spell, but Bioware can't, and I do lookup on this
+BEGIN
+   LPF CRE_enforce_assassin END
+END
+
+DEFINE_PATCH_FUNCTION CRE_enforce_assassin
+BEGIN
+   // set kit
+   LPF CRE_class STR_VAR arguments=THIEF END
+   LPF CRE_kit STR_VAR arguments=ASSASIN END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev4= level / 4
+   PATCH_MAKE_PATCH
+      quick_effect=>~opcode=>54 parameter1=>1~
+      quick_effect'=>~opcode=>73 parameter1=>1~
+      remove_spells=>ASSASSIN_POISON
+      add_spells=>~ASSASSIN_POISON(%lev4%)~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Swashbuckler
+////////
+//////// no backstab (hard-coded)
+//////// + (1+ lev/5) to AC
+//////// + lev/5 to hit and damage
+//////// proficiency advantages
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_swashbuckler
+BEGIN
+   // set kit
+   LPF CRE_class STR_VAR arguments=THIEF END
+   LPF CRE_kit STR_VAR arguments=SWASHBUCKLER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev5= level / 5
+   SET lev5plus1 = lev5 + 1
+   PATCH_MAKE_PATCH
+      delete_opcodes=>~0 54 73~
+      quick_effect=>~opcode=>54 parameter1=>%lev5%~
+      quick_effect'=>~opcode=>73 parameter1=>%lev5%~
+      quick_effect''=>~opcode=>0 parameter1=>%lev5plus1% parameter2=>16~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Stalker
+////////
+//////// weak backstab (hard-coded)
+//////// spells at L12: Haste, PNM, Minor Sp Def
+//////// no armor better than studded leather (logged but not enforced)
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_stalker
+BEGIN
+   LPF CRE_class STR_VAR arguments=RANGER END
+   LPF CRE_kit STR_VAR arguments=STALKER END
+   LPF CRE_read_level RET level=value END
+   LPF CRE_delete_opcodes STR_VAR arguments=263 END
+   LPF CRE_quick_effect STR_VAR arguments=~opcode=>263 parameter1=>1~ END
+   PATCH_IF level>=12 BEGIN
+      LPF CRE_remove_spells STR_VAR arguments=~SPRA301 SPRA302 SPRA303~ END
+      ADD_MEMORIZED_SPELL spra301 (0) innate // stalker spells aren't in spell.ids
+      ADD_MEMORIZED_SPELL spra302 (0) innate
+      ADD_MEMORIZED_SPELL spra303 (0) innate
+   END
+   LPF CRE_read_item_in_slot STR_VAR arguments=armor RET armor=value END
+   INNER_PATCH ~%armor%~ BEGIN
+      READ_ASCII 0x0 check ELSE ~~ (4)
+   END
+   PATCH_IF (~%check%~ STRING_EQUAL_CASE CHAN || ~%check%~ STRING_EQUAL_CASE PLAT) BEGIN
+         LPF patch_log_this STR_VAR file=illegal_stalker_gear.txt input=EVALUATE_BUFFER ~%filename% %armor%~ END
+   END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Archer
+//////// +1 to hit/damage per 3 levels with missile
+//////// called shot once/4 levels
+////////
+//////// no chain or plate (logged but not enforced)
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_feralan BEGIN
+   LPF CRE_enforce_archer END
+END
+
+DEFINE_PATCH_FUNCTION CRE_enforce_archer
+BEGIN
+   LPF CRE_kit STR_VAR arguments=FERALAN END
+   LPF CRE_class STR_VAR arguments=RANGER END
+   // find level
+   LPF CRE_read_level RET level=value END
+   SET lev3 = level / 3
+   SET lev4 = level / 4
+   PATCH_MAKE_PATCH 
+     delete_opcodes=>~167 286~
+     quick_effect=>~opcode=>167 parameter1=>%lev3%~
+     quick_effect'=>~opcode=>286 parameter1=>%lev3%~
+     remove_spells=>ARCHER_CALL_SHOT
+     add_spells=>~ARCHER_CALL_SHOT(%lev4%)~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE END
+
+   LPF CRE_read_item_in_slot STR_VAR arguments=armor RET armor=value END
+   INNER_PATCH ~%armor%~ BEGIN
+      READ_ASCII 0x0 check ELSE ~~ (4)
+   END
+   PATCH_IF (~%check%~ STRING_EQUAL_CASE CHAN || ~%check%~ STRING_EQUAL_CASE PLAT) BEGIN
+         LPF patch_log_this STR_VAR file=illegal_archer_gear.txt input=EVALUATE_BUFFER ~%filename% %armor%~ END
+   END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+//////// Blade
+////////
+//////// Offensive spin (spcl521) and defensive spin (spcl522) 1/4 levels
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_enforce_blade
+BEGIN
+   LPF CRE_class STR_VAR arguments=BARD END
+   LPF CRE_kit STR_VAR arguments=BLADE END
+   LPF CRE_read_level RET level=value END
+   SET lev4 = level / 4
+   PATCH_MAKE_PATCH
+      remove_spells=>~SPCL521 SPCL522~
+      add_spells=>~SPCL521(%lev4%) SPCL522(%lev4%)~
+   END
+   LPF apply_patches STR_VAR file_prefix=CRE edits=patch_data END
+END
+
+

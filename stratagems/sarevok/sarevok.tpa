@@ -1,0 +1,195 @@
+INCLUDE ~%scsroot%/lib_stratagems/ai_wrap.tph~
+DEFINE_ACTION_FUNCTION sarevok BEGIN
+
+        ACTION_FOR_EACH func IN items scripts skeleton cre traps BEGIN
+           LAF ~sarevok_%func%~ END
+        END
+        
+        LAF install STR_VAR file=~sarevok.d~ location=resource END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION sarevok_items BEGIN
+
+      // general install
+      
+      LAF install STR_VAR file=~dw#sarr1.itm dw#angar.itm dw#diarm.itm dw#diaar.itm~ location=resource END
+
+      // Angelo's arrows
+
+      COPY_EXISTING ~dw#angar.itm~ override WRITE_EVALUATED_ASCII 0x17e ~%tutu_var%eff_m10~ #8 // legacy code, so sue me
+
+      // Angelo/Diarmid arrows are undroppable
+
+      LAF edit_item STR_VAR item=~dw#angar dw#diaar~ editstring=~droppable=>0~ END
+
+      //Sarevok's protective items
+
+      COPY_EXISTING ~dw#sarr1.itm~ ~override/dw#sarr2.itm~
+	WRITE_SHORT 0x1c 4 //boots
+      COPY_EXISTING ~dw#sarr1.itm~ ~override/dw#sarr3.itm~
+	WRITE_SHORT 0x1c 6 //gloves
+      COPY_EXISTING ~dw#sarr1.itm~ ~override/dw#sarr4.itm~
+	WRITE_SHORT 0x1c 3 //belt
+
+
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION sarevok_scripts BEGIN
+
+// Tazok's DV
+
+     LAF extend_area_script STR_VAR area=EVALUATE_BUFFER ~%Undercity%~ top=undercityadd location=resource END
+
+//end-of-game script - not needed for BGT
+
+     ACTION_IF !(GAME_IS bgt) BEGIN
+           LAF extend_area_script STR_VAR area=EVALUATE_BUFFER ~%Undercity_TempleofBhaal%~ top=dw#end location=resource END
+     END
+
+// Sarevok's script
+     ACTION_IF GAME_IS bgt BEGIN
+        OUTER_SPRINT sarevok_script bgsarvok
+     END ELSE BEGIN
+        OUTER_SPRINT sarevok_script ~%tutu_var%sarevok~
+     END
+     LAF ssl_to_bcs STR_VAR script=sarevok location=EVALUATE_BUFFER ~%component_loc%/ssl~ rename_to=EVALUATE_BUFFER ~%sarevok_script%~ END
+
+// Other scriipts
+     LAF ssl_to_bcs STR_VAR script=~dw#tazok dw#semaj dw#angel dw#diarm~ location=EVALUATE_BUFFER ~%component_loc%/ssl~ END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sarevok_skeleton BEGIN
+
+      // CRE files
+
+      MAKE_PATCH
+         add_items=>~dw#angar(x20) %tutu_var%bow01~
+         enforce_charclass=>is_bg1
+      END
+      LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scriptbg%skelwa=>dw#angsk~ END
+      MAKE_PATCH
+         add_items=>~%tutu_var%arow04(x20) %tutu_var%bow01~
+         enforce_charclass=>is_bg1
+      END
+      LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scriptbg%skelwa=>dw#diask~ END
+      MAKE_PATCH
+         replace_items=>~%tutu_var%staf01~
+         enforce_charclass=>is_bg1
+      END
+      LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~%tutu_scriptbg%skelwa=>dw#semsk~ END
+
+      //Skeleton-warrior-creating spells [slightly clunky code]
+
+      LAF install STR_VAR file=~dw#tazsk.spl~ location=resource END
+      COPY_EXISTING ~dw#tazsk.spl~ override WRITE_EVALUATED_ASCII 0xae ~%tutu_scriptbg%skelwa~ #8
+      ACTION_FOR_EACH skeleton IN dw#angsk dw#semsk dw#diask BEGIN
+         COPY_EXISTING ~dw#tazsk.spl~ ~override/%skeleton%.spl~ WRITE_EVALUATED_ASCII 0xae ~%skeleton%~ #8
+      END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sarevok_cre BEGIN
+
+   /// Sarevok himself
+   
+   MAKE_PATCH
+      hitpoints=>250
+      resist_fire=>40
+      resist_cold=>40
+      resist_acid=>40
+      resist_electricity=>40
+      resist_missile=>0
+      add_items=>~dw#sarr1 dw#sarr2 dw#sarr3 dw#sarr4~
+   END
+   LAF edit_creature STR_VAR creature=sarevo tv=yes END
+
+   // here we cover the legacy possibility of TUTU v4
+   
+   ACTION_IF FILE_EXISTS_IN_GAME ~fw0100.are~ AND !FILE_EXISTS_IN_GAME ~macshout.bcs~ THEN BEGIN
+	COPY_EXISTING ~_sarevo.cre~ ~override~
+		ADD_CRE_ITEM ~minhp1~ #0 #0 #0 ~NONE~ ~LRING~
+   END
+
+   // Tazok
+
+   MAKE_PATCH
+      script_override=>dw#tazok
+      add_items=>~%tutu_var%potn18 %tutu_var%potn02~
+      resist_fire=>0
+   END
+   LAF edit_creature STR_VAR creature=tazok2 tv=yes END
+
+   // Semaj
+
+   MAKE_PATCH
+      resist_fire=>0
+      add_items=>~ring41 dw#area~
+      insert_script_high=>dw#semaj
+   END
+   LAF edit_creature STR_VAR creature=semaj tv=yes END
+
+   // Angelo
+   
+   MAKE_PATCH
+      allegiance=>enemy
+      resist_fire=>0
+      replace_items=>~dw#angar(quiver1,x20) dw#angar(quiver2,x20)~
+      add_items=>dw#area
+      insert_script_high=>dw#angel
+   END
+   LAF edit_creature STR_VAR creature=galdor tv=yes END
+
+   // Diarmid - respecced version of Zhalimar Cloudwulfe
+   
+   MAKE_PATCH
+      steal_sounds_from=>~%tutu_var%drasus~
+      say_both_names=>22010
+      remove_items=>all
+      add_items=>~dw#diaar(x20) %tutu_var%plat04 %tutu_var%helm10 %tutu_var%mage05 %tutu_var%bow01 %tutu_var%halb02 %tutu_var%arow04(quiver2,x30) potn52(x3) %tutu_var%potn14 %tutu_var%scrl07 dw#diarm~
+      enforce_charclass=>is_bg1
+   END
+   LAF install STR_VAR file=~dw#diarm.cre~ location=resource END
+   LAF edit_creature STR_VAR creature=dw#diarm END
+
+   // ensure the original Diarmid doesn't die
+   
+   LAF edit_creature STR_VAR creature=diarmid tv=yes editstring=~add_items=>minhp1~ END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sarevok_traps BEGIN
+
+    MAKE_PATCH
+       delete_entries_inline=>~type=>trigger
+                               match=>trigger_type
+                               check=>0~
+    END
+    LAF edit_area STR_VAR area=EVALUATE_BUFFER ~%Undercity_TempleofBhaal%~ END
+
+END
+

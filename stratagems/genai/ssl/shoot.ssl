@@ -1,0 +1,198 @@
+////////////////////////////////////////////////////////////////////////////////////////////////
+//// The basic principle is that only really stupid creatures will shoot at anything except the
+//// PCs - ignore their hired lackeys.
+//// 
+//// We assume it sometimes takes a round for archers to notice a PNM spell - generous really,
+//// players recognise them immediately. 
+/////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	IgnoreBlock(IsBG1)
+	OR(13)
+	BEGIN LOOP(scsvar||1;2;3;4;5;6)
+		CheckStat(Playerscsvar,1,WIZARD_PROTECTION_FROM_NORMAL_MISSILES)
+		CheckStat(Playerscsvar,1,CLERIC_PHYSICAL_MIRROR)
+	END LOOP
+	PartyHasItem("shld24")
+	!Global("DMWWinitialiseseePNM","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("DMWWinitialiseseePNM","LOCALS",1)
+		SetGlobalTimer("DMWWseePNM","LOCALS",6)
+	RESPONSE #100
+		SetGlobal("DMWWinitialiseseePNM","LOCALS",1)
+		SetGlobalTimer("DMWWseePNM","LOCALS",3)
+END
+
+IF
+	See(NearestEnemyOf(Myself))
+	RequireBlock(IsBG1)
+	OR(6)
+	BEGIN LOOP(scsvar||1;2;3;4;5;6)
+		CheckStat(Playerscsvar,1,WIZARD_PROTECTION_FROM_NORMAL_MISSILES)
+	END LOOP
+	!Global("DMWWinitialiseseePNM","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("DMWWinitialiseseePNM","LOCALS",1)
+		SetGlobalTimer("DMWWseePNM","LOCALS",6)
+	RESPONSE #100
+		SetGlobal("DMWWinitialiseseePNM","LOCALS",1)
+		SetGlobalTimer("DMWWseePNM","LOCALS",3)
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+///	Non-intelligent
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(NearestEnemyOf(Myself))
+	RequireBlock(IsMoron)
+	Allegiance(Myself,ENEMY)
+THEN DO
+	Action(AttackRanged)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+////	Turn to backstab plan 1 if you're trying 2
+/////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	RequireBlock(IsThief|IsAssassin)
+        Global("backstabplan","LOCALS",2)
+THEN
+	RESPONSE #100
+		SetGlobal("backstabplan","LOCALS",1)
+END
+
+////////////////////////////////////////////////////////////////////////////////////
+///	Wizard slayers kill casters first
+////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+        RequireBlock(IsWizardSlayer)
+	IgnoreBlock(IsMoron)
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|PlusMyWeaponStrengthSafe|MissileSafe)
+THEN DO
+	Action(AttackRangedIfEmpty|100|50)
+END
+
+////////////////////////////////////////////////////////////////////////////////////
+//// We start by targetting wounded opponents in an attempt to finish them off.
+/////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsMoron)
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|PlusMyWeaponStrengthSafe|MissileSafe)
+	HPPercentLT(scstarget,40)
+THEN DO
+	Action(AttackRangedIfEmpty|100|50)
+END
+
+////////////////////////////////////////////////////////////////////////////////////
+///	Next, try shooting up wizards (& failing that, priests, who have long casting times)
+////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+        IgnoreBlock(IsWizardSlayer)
+	IgnoreBlock(IsMoron)
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|PlusMyWeaponStrengthSafe|MissileSafe)
+THEN DO
+	Action(AttackRangedIfEmpty|100|50)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	Just kill off any PC you can see now, and then any nonhelpless target
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsMoron)
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!HasItem("morsword",scstarget)
+	TriggerBlock(Enemy|Disabled|ArrowSafe|PlusMyWeaponStrengthSafe|MissileSafe)
+THEN DO
+	Action(AttackRangedIfEmpty)
+END
+
+
+/////////////////////////////////////////////////////////
+///	Now just shoot anything you can see, even if it is helpless
+/////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsMoron)
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!HasItem("morsword",scstarget)
+	TriggerBlock(Enemy|ArrowSafe|PlusMyWeaponStrengthSafe|MissileSafe)
+THEN DO
+	Action(AttackRangedIfEmpty)
+END
+
+////////////////////////////////////////////////////////////////////////
+///	If you've got to here, there is (almost certainly) no-one you can affect with a missile weapon.
+///	So go to melee.
+/////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Allegiance(Myself,ENEMY)
+	Target(NearestEnemyOf(Myself))
+THEN DO
+	Action(AttackIfEmpty)
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+///    If you've got to HERE, maybe the only people around are charmed or something. Kill them.
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(LastSeenBy(Myself))
+	Allegiance(Myself,ENEMY)
+	OR(6)
+		See(Player1)
+		See(Player2)
+		See(Player3)
+		See(Player4)
+		See(Player5)
+		See(Player6)
+THEN DO
+	Action(AttackRangedIfEmpty)
+END
+
+////////////////////////////////////////////////////////////////////
+/// So far all this assumes that you're a bad guy. If perchance you're
+/// not, use the old script.
+////////////////////////////////////////////////////////////////////
+
+IF
+	!Allegiance(Myself,[ENEMY])
+	See(NearestEnemyOf(Myself))
+	!Range(NearestEnemyOf(Myself),5)
+THEN
+	RESPONSE #100
+		EquipRanged()
+		AttackReevaluate(NearestEnemyOf(Myself),30)
+END
+
+IF
+	!Allegiance(Myself,[ENEMY])
+	See(NearestEnemyOf(Myself))
+	Range(NearestEnemyOf(Myself),5)
+THEN
+	RESPONSE #100
+		EquipMostDamagingMelee()
+		AttackReevaluate(NearestEnemyOf(Myself),30)
+END
+
+IF
+	!Allegiance(Myself,[ENEMY])
+	AttackedBy([ANYONE],DEFAULT)
+THEN
+	RESPONSE #100
+		AttackReevaluate(LastAttackerOf(Myself),30)
+END

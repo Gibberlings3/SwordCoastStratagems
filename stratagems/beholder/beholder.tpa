@@ -1,0 +1,293 @@
+LAF include STR_VAR file=beholder_shared.tph END
+LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
+
+DEFINE_ACTION_FUNCTION beholder STR_VAR version="" BEGIN
+
+      ACTION_MATCH ~%version%~ WITH
+      1 2 BEGIN
+            OUTER_SPRINT new_antimagic True
+      END
+      3 4 BEGIN
+            OUTER_SPRINT new_antimagic False
+      END
+      DEFAULT
+         PRINT ~warning: weird version error in Beholder component~
+      END
+
+      ACTION_MATCH ~%version%~ WITH
+      1 3 BEGIN
+            OUTER_SET burnthru=1
+      END
+      2 4 BEGIN
+            OUTER_SET burnthru=0
+      END
+      DEFAULT
+         PRINT ~warning: weird version error in Beholder component~
+      END
+
+
+      LAF smart_clones END
+      LAF beholder_eyestalks INT_VAR burnthru END
+      LAF beholder_coloration END
+      LAF beholder_scripts STR_VAR new_antimagic END
+      LAF beholder_resources END
+      LAF beholder_creature END
+      LAF beholder_compatibility END
+
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Modify eyestalks
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION beholder_eyestalks INT_VAR burnthru=0 BEGIN
+
+    //////////////////////
+    // all eyestalks
+    //////////////////////
+
+    MAKE_PATCH
+        patch_cond_inline=>~type=>ability casting_time=>0~  // Eyestalks have faster casting times
+    END
+
+    ACTION_IF burnthru=1 BEGIN
+       OUTER_SPRINT $patch_data(~add_effect_inline~) ~opcode=>221 target=>2 power=>0 parameter1=>9 parameter2=>1 timing=>1 probability1=>30~
+    END
+
+    ACTION_FOR_EACH ray IN
+    CHARM_PERSON FEAR DISINTEGRATE SLOW FLESH_TO_STONE
+    DOMINATION CAUSE_SERIOUS_WOUNDS HOLD_PERSON LIGHTNING_BOLT
+    PARALYZATION DEATH_RAY ANTIMAGIC_RAY FINGER_OF_DEATH
+    AGANNAZAR_SCORCHER MAGIC_MISSILE
+    BEGIN
+      OUTER_SPRINT spell EVALUATE_BUFFER ~%BEHOLDER_%ray%%~
+      LAF edit_spell STR_VAR spell END
+    END
+
+    ACTION_FOR_EACH ray IN
+    DISINTEGRATE CAUSE_SERIOUS_WOUNDS ANTIMAGIC_RAY
+    BEGIN
+      OUTER_SPRINT spell EVALUATE_BUFFER ~%HIVE_MOTHER_%ray%%~
+      LAF edit_spell STR_VAR spell END
+    END
+
+    ////////////////////
+    // special cases
+    ////////////////////
+
+    // Petrification eyestalk should give temporary immunity to magic, so that follow-up eyestalks don't cause disintegration
+
+    MAKE_PATCH
+       add_effect_inline=>~opcode=>166 parameter1=>100 parameter2=>1 duration=>3~
+    END
+
+    LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%BEHOLDER_FLESH_TO_STONE%~ END
+
+
+    // the Hive Mother CSW shouldn't penetrate MR
+
+    LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%HIVE_MOTHER_CAUSE_SERIOUS_WOUNDS%~ editstring=~patch_cond_inline=>"type=>effect resist_dispel=>1"~END
+
+    // the scorcher eye should be renamed and should lose the pause-caster effect.
+
+    LAF edit_spell STR_VAR spell=EVALUATE_BUFFER ~%BEHOLDER_AGANNAZAR_SCORCHER%~ editstring=~say_name=>16039 delete_opcodes=>165~ END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Change beholder colours to make them more distinctive (the colour choices come from Xyx, via SimDing0
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION beholder_coloration BEGIN
+
+     LAF color STR_VAR red=3 green=3 blue=3 RET behold_color=color END
+     LAF color STR_VAR blue=5 RET behhiv_color=color END
+     LAF color STR_VAR green=4 blue=3 RET behund_color=color END
+     LAF color STR_VAR red=2 RET behdir_color=color END
+
+     LAF edit_creature STR_VAR creature=~beheld01 hlorb obsdem03 udelder bheye unsee~
+                               editstring=EVALUATE_BUFFER ~quick_effect=>"opcode=>52 parameter1=>%behold_color% parameter2=>2"~
+     END
+     LAF edit_creature STR_VAR creature=~behhiv01 gorwom05 hlhive~
+                               editstring=EVALUATE_BUFFER ~quick_effect=>"opcode=>52 parameter1=>%behhiv_color% parameter2=>2"~
+     END
+     LAF edit_creature STR_VAR creature=~behund01 melsum03 rngbeh01~
+                               editstring=EVALUATE_BUFFER ~quick_effect=>"opcode=>52 parameter1=>%behund_color% parameter2=>2"~
+     END
+     LAF edit_creature STR_VAR creature=~behdir01 firmon03~
+                               editstring=EVALUATE_BUFFER ~quick_effect=>"opcode=>52 parameter1=>%behdir_color% parameter2=>2"~
+     END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Compile the scripts
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION beholder_scripts STR_VAR new_antimagic=True BEGIN
+
+  LAF ssl_to_bcs STR_VAR script=~elderorb dw#elder dw#udeld beheld01 behdir01 behold01 behund01 gauth01 dw#vaxal~
+                         variables=EVALUATE_BUFFER ~beholderinvischeck=!StateCheck(scstarget,STATE_INVISIBLE)&NewBeholderAntimagic=%new_antimagic%~
+                         location=~beholder/ssl~
+  END
+
+  LAF ssl_to_bcs STR_VAR script=~behhiv01 dw#tygol~
+                         location=~beholder/ssl~ 
+                         variables=EVALUATE_BUFFER ~beholderinvischeck=&NewBeholderAntimagic=%new_antimagic%~ END
+
+  LAF ssl_to_baf STR_VAR script=global_steal location=~beholder/ssl~ END
+  LAF extend STR_VAR files=~baldur baldur25~ top=global_steal locbase=EVALUATE_BUFFER ~..\%workspace%/ssl_out~ END
+
+  LAF clone_script STR_VAR script=~behold01=>hellbeh1~ END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make/collect needed resources
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION beholder_resources BEGIN
+   
+   //////////////////////
+   // betel=telekinesis bestl=steal stuff besud=kill summons befod=hive mother FoD
+   ///////////////////////
+   LAF install STR_VAR file=~dw#betel.spl dw#bestl.spl dw#besud.spl dw#befod.spl~ location=resource END
+
+   LAF edit_spell STR_VAR spell=dw#betel editstring=~say_name=>100~ END
+
+   COPY_EXISTING ~spbehbla.pro~ ~override/dw#bestl.pro~
+   ADD_PROJECTILE ~override/dw#bestl.pro~
+   COPY_EXISTING ~dw#bestl.spl~ ~override~     // might as well do it this way - it's our resource
+	SAY 0x8 @100
+	SAY 0xc @100
+	WRITE_SHORT 0x98 ~%dw#bestl%~
+
+   //////////////////////
+   // copies of antimagic
+   ///////////////////////
+
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%BEHOLDER_ANTIMAGIC_RAY%=>dw#behan %HIVE_MOTHER_ANTIMAGIC_RAY%=>dw#hivan~ END
+
+   //////////////////////////////
+   // protection spell that duplicates beholder immunities
+   ///////////////////////////////
+
+   OUTER_SPRINT editstring ~add_basic_ability=>null~
+   ACTION_FOR_EACH opcode IN 40 45 109 175 126 154 157 158 BEGIN
+      OUTER_PUSH editstring ~add_effect_inline=>"opcode=>101 timing=>1 parameter2=>%opcode% target=>1"~
+   END
+   OUTER_PUSH editstring ~add_effect_inline=>"opcode=>163 timing=>1 target=>1"~
+   OUTER_PUSH editstring ~add_effect_inline=>"opcode=>188 timing=>1 target=>1 parameter2=>1"~
+   OUTER_PUSH editstring ~add_effect_inline=>"opcode=>292 timing=>1 target=>1 parameter2=>1"~
+   ACTION_FOR_EACH spell IN BEHOLDER_CHARM_PERSON BEHOLDER_FEAR BEHOLDER_SLOW BEHOLDER_FLESH_TO_STONE BEHOLDER_DOMINATION
+                            BEHOLDER_PARALYZATION BEHOLDER_DEATH_RAY BEHOLDER_FINGER_OF_DEATH
+   BEGIN
+      OUTER_SPRINT spellcode EVALUATE_BUFFER ~%%spell%%~
+      OUTER_PUSH editstring ~add_effect_inline=>"opcode=>206 timing=>1 target=>1 resource=>%spellcode%"~
+   END
+//   PRINT ~%editstring%~
+   LAF make_spell STR_VAR spell=dw#behim editstring END
+
+   /////////////////////////////////
+   /// Director eyestalks
+   /////////////////////////////////
+   
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%BEHOLDER_DEATH_RAY%=>dw#bhenv~
+                           editstring=~patch_cond_inline=>"say_name=>16038 type=>ability casting_time=>0" patch_cond_inline=>"match=>opcode check=>13 type=>effect opcode=>216 parameter1=>3 timing=>0 duration=>60 resist_dispel=>1"~
+   END
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%WIZARD_CONE_OF_COLD%=>dw#bhcco~
+                           editstring=~patch_cond_inline=>"type=>ability casting_time=>0"~
+   END
+
+
+
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make needed changes to beholder CRE files
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION beholder_creature BEGIN
+
+   // general edits
+   
+   MAKE_PATCH
+      undead_beholder=>~behund01 melsum03 rngbeh01~
+      hive_mother=>~hlhive behhiv01 gorwom05~
+      elder_orb=>~beheld01 obsdem03 udelder~
+      gauth=>~bazgau01 behgau01 cultbh1 cultbh2~
+      director=>~behdir01 firmon03~
+      beholder=>~hellbeh1 hellbeh2 behold01 cultbh3 udbeho01 udbeho02~
+   END
+
+   ACTION_PHP_EACH patch_data AS type=>creature BEGIN
+      LAF edit_creature STR_VAR creature editstring=EVALUATE_BUFFER ~make_%type%=>null~ END
+   END
+   
+   // Vaxall - there is *some* ingame and lore evidence he should be an elder orb, so we'll do this
+
+   LAF edit_creature STR_VAR creature=hlvaxal editstring=~make_elder_orb=>null script_general=>dw#vaxal~ END
+
+   // Rename the two "fake" Elder Orbs in Hell as plain Beholders
+
+   COPY_EXISTING
+	~hellbeh1.cre~ ~override~
+	~hellbeh2.cre~ ~override~
+		WRITE_LONG 0x8 2662
+		WRITE_LONG 0xc 2662
+
+   // these need their correct scripts
+
+   LAF edit_creature STR_VAR creature=cultbh3 editstring=~swap_script=>"gauth01=>behold01"~ END
+   LAF edit_creature STR_VAR creature=hlhive editstring=~swap_script=>"behold01=>behhiv01"~ END
+   LAF edit_creature STR_VAR creature=udelder editstring=~swap_script=>"beheld01=>dw#udeld"~ END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   Make needed compatibility fixes
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION beholder_compatibility BEGIN
+
+ // SR version of Disintegrate
+ ACTION_IF ~demivrgvs~=1 BEGIN
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY beh_disint_array BEGIN
+       ~%BEHOLDER_DISINTEGRATE%~ => 15
+       ~%HIVE_MOTHER_DISINTEGRATE%~ => 35
+   END
+   ACTION_PHP_EACH beh_disint_array AS spell=>level BEGIN
+
+    MAKE_PATCH
+       add_effect_inline=>~opcode=>12 target=>2 power=>6 parameter2=>0x400000 timing=>1 resist_dispel=>1 dicenumber=>5 dicesize=>6~
+       add_effect_inline'=>~opcode=>12 target=>2 power=>6 parameter2=>0x400000 timing=>1 resist_dispel=>1 dicenumber=>%level% dicesize=>6 savingthrow=>1 savebonus=>"-5"~
+       add_effect_inline''=>~opcode=>215 target=>2 power=>6 timing=>1 resist_dispel=>1 savingthrow=>1 savebonus=>"-5" resource=>spdusty2~
+    END
+    LAF edit_spell STR_VAR spell END
+   
+   END
+ END
+ 
+ 
+ // BP compatibility
+
+  ACTION_IF FILE_EXISTS_IN_GAME ~bpmaevar.bcs~ THEN BEGIN
+     LAF clone_script STR_VAR script=~behold01=>bpbehold beheld01=>bpbeheld behhiv01=>bpbehhiv gauth01=>bpgauth1~ END
+  END
+
+//WoP compatibility
+
+  ACTION_IF FILE_EXISTS_IN_GAME ~dw#melis.cre~ THEN BEGIN
+        LAF edit_creature STR_VAR creature=dw#vibeh editstring=~make_beholder=>null~ END
+  END
+
+
+
+
+END

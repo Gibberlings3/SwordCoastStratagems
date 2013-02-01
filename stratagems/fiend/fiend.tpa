@@ -1,0 +1,574 @@
+LAF include STR_VAR file=fiend_shared.tph END
+
+DEFINE_ACTION_FUNCTION fiend STR_VAR version="" BEGIN
+
+   ACTION_IF version=1 BEGIN
+         LAF make_label STR_VAR label=dw#fiend_hp END
+   END
+   LAF action_check_ini STR_VAR ini=fiends_cast_slowly RET value=value END
+   ACTION_IF value=0 BEGIN
+         LAF make_label STR_VAR label=dw#fiend_innate END
+   END
+   
+        LAF fiend_resources END
+        LAF fiend_corrections END
+        LAF fiend_scripts END
+        LAF fiend_core END
+        LAF fiend_pc_summons END
+        LAF fiend_npc_summons END
+        LAF fiend_compatibility END
+
+
+
+END
+
+////////////////////////////////////////////////////////////////
+/////   Needed resources
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_resources BEGIN
+
+    ////////////////
+    /// general
+    ////////////////
+
+    LAF install STR_VAR file=~dw#sumfi.itm dw#fitel.spl~ location=resource END
+
+    ///////////////
+    /// balors
+    ///////////////
+
+    // Baalor telekinesis
+
+    COPY ~%scsroot%/caster_shared/resource/telekinesis.spl~ ~override/dw#batel.spl~
+    MAKE_PATCH
+       say_name=>100
+       patch_cond_inline=>~type=>effect savebonus=>"-10"~
+
+    END
+
+    // relabel Marilith weapon as a scimitar (helps atweaks compatibility)
+    
+    LAF edit_item STR_VAR item=marili editstring=~proficiency=>PROFICIENCYSCIMITARWAKISASHININJATO~ END
+
+    // Baalor explosion, borrowed from Ascension
+    // Baalor weapon (provides fire shield and non-chunking vorpal effect)
+    // Baalor whip, 1d4 crushing+3d6 fire, FLAIL proficiency, rather crude/minimal version of atweaks
+
+    LAF install STR_VAR file=~baldead.spl balor.itm balaura.spl~ location=resource END
+ 
+    MAKE_PATCH
+        patch_cond_inline=>~type=>ability ability_range=>3~
+        proficiency=>PROFICIENCYLONGSWORD
+    END
+    LAF edit_item STR_VAR item=balor END
+     MAKE_PATCH
+        patch_cond_inline=>~type=>ability ability_range=>3 ability_dicesize=>4 to_hit=>0 damage_bonus=>0~
+        enchantment=>5
+        add_effect_inline=>~type=>1 opcode=>12 parameter2=>524288 dicenum=>3 dicesize=>6~
+    END
+    LAF clone_item STR_VAR item=~blun32=>dw#balwp~ END
+
+
+
+    // allow for insect plague component
+    ACTION_IF FILE_EXISTS_IN_GAME ~dw#insectplague.mrk~ THEN BEGIN
+             LAF include STR_VAR file=insect_plague.tpa locbase=spell END
+             LAUNCH_ACTION_MACRO read_insect_plague_patch
+             LAF edit_item STR_VAR item=balor edits=insect_plague_patch END
+    END
+
+    ///////////////
+    /// Nabassu
+    ///////////////
+    
+    // cumulative vampiric touch
+    LAF install STR_VAR file=~dw#demvt.spl dw#dmvta.spl dw#dmvtb.spl~ location=resource END
+
+    ///////////////
+    /// Marilith
+    ///////////////
+
+    // Version of Animate Dead from vanilla game (insulates from "BG1 summons" in D0Tweak)
+
+    LAF install STR_VAR file=dw#marun.spl location=resource END
+
+    ///////////////
+    /// Bone fiend
+    ///////////////
+
+    // upgraded poison
+
+    MAKE_PATCH
+       magical=>1
+       patch_cond_inline=>~type=>effect check=>44 match=>opcode parameter1=>"-4"~
+       patch_cond_inline'=>~type=>effect check=>15 match=>opcode parameter1=>"-4"~
+    END
+    LAF edit_item STR_VAR item=bonefd END
+
+    ///////////////
+    /// Chromatic demon
+    ///////////////
+
+    LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%DRAGON_WING_BUFFET%=>dw#airbu~ editstring=~say_name=>3202~ END
+    LAF install STR_VAR file=dw#chrco.spl location=resource END
+
+END
+
+////////////////////////////////////////////////////////////////
+/////   Pre-install corrections
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_corrections BEGIN
+
+
+   ///// Bridge District warriors no longer need pro/evil
+ 
+          LAF edit_creature STR_VAR creature="demfig01 demfig02" editstring=~strip_script=>demfig~ END
+
+   /// liches shouldn't be immune to summoned demons any more
+
+          LAF edit_item STR_VAR item=lich editstring=~delete_opcodes=>100~ END
+
+   /// The abishai in Sendai's enclave doesn't make sense, it's supposed to be a CE grouping.
+   /// We'll replace it with a nabassu (thanks to Avenger_RR for the method)
+
+          LAF swap_text STR_VAR files=ar6105.are swaps=~demabi01=>dw#nabsu~ END
+
+END
+
+////////////////////////////////////////////////////////////////
+/////   Compile scripts
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_scripts BEGIN
+
+   LAF ssl_to_bcs STR_VAR script=~dembal01 demglab2 demglasu tanari
+                                  marilith demsuc   demmau01 uddeath
+                                  demalu01 dw#bonef dw#pitfi dw#pitsu         
+                                  dempitsu cornugon erinyes  gorchr 
+                                  demogor2 demnabsu~
+                          location=EVALUATE_BUFFER ~%component_loc%/ssl~
+   END
+
+END
+
+////////////////////////////////////////////////////////////////
+/////   Core
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_core BEGIN
+
+     //////////////
+     // Baalors
+     //////////////
+     
+     // general
+
+     LAF clone_script STR_VAR script=~dembal01=>demosum2 dembal01=>melbalor dembal01=>telbal01~ END
+     LAF edit_creature STR_VAR creature=~udbalor demosum2 sudemon2 melsum04 telbal1 jondem02 jondem04 gortan1 dw#grbal~ allow_missing=yes editstring=~balor=>null~ END
+
+     // specific
+
+     LAF clone_extend STR_VAR arguments=~dembal01=>dw#subal~ location=script END
+     LAF clone_extend STR_VAR arguments=~dembal01=>tahazz~ location=script END
+     LAF edit_creature STR_VAR creature=sudemon2 editstring=~script_override=>dw#subal~ END  /// Suldanesselar Baalor (eats elves)
+     LAF edit_creature STR_VAR creature=~jondem02 jondem04~ editstring=~strip_script=>demptj script_override=>dembal01~ END
+
+     //////////////
+     // Glabrezu
+     //////////////
+
+     // general
+     
+     LAF clone_script STR_VAR script=~demglab2=>glabrez demglab2=>melglab~ END
+     LAF edit_creature STR_VAR creature=~demglab2 demglasu demosum3 dglab01 gortan4 jondem01 jondem03 jondem05 melsum01 dw#grgla teltan1 teltan2~ allow_missing=yes editstring=~glabrezu=>null~ END
+
+     //specific
+
+     LAF clone_extend STR_VAR arguments=~demglab2=>teltan1~ location=script END
+     LAF clone_script STR_VAR script=~teltan1=>teltan2~ END
+     LAF swap_text STR_VAR files=~teltan1.bcs teltan2.bcs~ swaps=~ForceSpell(Myself,WIZARD_FIRE_SHIELD=>ApplySpell(Myself,WIZARD_FIRE_SHIELD MANTLE=>PROTECTION_FROM_MAGIC_WEAPONS Range(NearestEnemyOf(Myself),10)=>False()~ END
+     LAF swap_text STR_VAR files=~teltan2.bcs~ swaps=~FIRE_SHIELD_RED=>FIRE_SHIELD_BLUE FIRE_ELEMENTAL=>ICE_SALAMANDER~ END
+     LAF edit_creature STR_VAR creature=~jondem01 jondem03 jondem05~ editstring=~script_override=>demglab2~ END
+     LAF edit_creature STR_VAR creature=~teltan1 teltan2~ editstring=~insert_script_high=>gensht01~ END
+     LAF edit_creature STR_VAR creature=demgla01 editstring=~script_override=>demglab~ END // reverse BP overwrite
+
+     //////////////
+     // Nabassu
+     //////////////
+
+     LAF clone_script STR_VAR script=~tanari=>tanari2 tanari=>sumtan01~ END
+     LAF edit_creature STR_VAR creature=~abydem01 demnab02 demnabsu obsdem01 rumar02 pmaster udnaba~ editstring=~nabassu=>null~ END
+     
+     //////////////
+     //  Mariliths
+     /////////////
+
+     // general
+
+
+     LAF clone_script STR_VAR script=~marilith=>melmari~ END
+     LAF edit_creature STR_VAR creature=~demosum1 melsum05 gorwom03 dw#grmar~ allow_missing=yes editstring=~marilith=>null~ END
+
+     // specific
+     
+     LAF clone_extend STR_VAR arguments=~marilith=>ytossi~ location=script END
+
+     ////////////
+     //	Succubus
+     ///////////
+
+     // general
+     
+     LAF edit_creature STR_VAR creature=~demsuc01 gortan2 gorsuc01 gorwom01~ editstring=~succubus=>null~ END
+
+     // specific
+     
+     LAF clone_extend STR_VAR script=~demsuc=>nalmiss~ location=script END
+
+     ////////////
+     // Maurezhi
+     ////////////
+
+     LAF clone_script STR_VAR script=~demmau01=>obsdem04~ END
+     LAF edit_creature STR_VAR creature=~obsdem04 demmau01 gortan6~ editstring=~maurezhi=>null~ END
+
+     ///////////
+     //	Quasits
+     ///////////
+
+     LAF edit_creature STR_VAR creature=~gortan5 telqua1 telqua2~ editstring=~quasit=>null~ END
+
+
+     ///////////
+     //	Cambions
+     ///////////
+
+     LAF edit_creature STR_VAR creature=~pwarden demosum4~ editstring=~fiend_general=>tanarri~ END
+
+     ////////////////
+     //   Bone fiends
+     ////////////////
+
+     // install script at the same time
+     LAF edit_creature STR_VAR creature=~dbonef01 gorbat5 dw#vibon~ allow_missing=yes editstring=~bone_fiend=>null script_override=>dw#bonef~ END
+
+     ////////////////
+     //	Demon Knights
+     ////////////////
+
+     LAF edit_creature STR_VAR creature=~uddeath uddeath2 deathkni deck615~ editstring=~demon_knight=>null~ END
+     LAF clone_creature STR_VAR creature=~uddeath=>melsum02~ END
+
+     //////////////
+     //	Alu-fiends
+     /////////////
+
+     LAF edit_creature STR_VAR creature=~telalu1 goralu01 alufie01 alufie02~ editstring=~alu_fiend=>null~ END
+
+
+     /////////////
+     //	Pit fiends
+     /////////////
+
+     // general
+
+     LAF edit_creature STR_VAR creature=~telpit1 dempitsu gorbat1~ editstring=~pit_fiend=>null~ END
+
+
+     // specific
+     
+     LAF clone_extend STR_VAR arguments=~dw#pitfi=>telpit1 dw#pitfi=>karash~ location=script END
+
+     /////////////
+     //	Cornugon
+     /////////////
+     
+      LAF edit_creature STR_VAR creature=~demcor01 gorbat3~ editstring=~cornugon=>null~ END
+
+      ////////////
+      /// Erinyes
+      ////////////
+
+      LAF edit_creature STR_VAR creature=~deriny01 gorbat2~ editstring=~erinyes=>null~ END
+
+      ////////
+      // Imps
+      ////////
+
+      LAF edit_creature STR_VAR creature=~dimp01 gorbat4 gordem2~ editstring=~imp=>null~ END
+
+
+     /////////////////////
+     //	Lesser Demon Lord
+     ////////////////////
+
+     MAKE_PATCH
+        fiend_general=>tanarri
+        level_all=>25
+        fiend_hp=>100
+     END
+     LAF edit_creature STR_VAR creature=uddemon END
+
+     ///////////////////
+     // Chromatic Demon
+     ///////////////////
+     
+     MAKE_PATCH
+        fiend_general=>tanarri
+        level_all=>28
+        fiend_hp=>90
+        resist_slashing=>100
+        resist_piercing=>100
+        resist_crushing=>100
+        resist_missile=>100
+        quick_effect=>~opcode=>31 parameter1=>100~
+     END
+     LAF edit_creature STR_VAR creature=gorchr END
+
+     /////////////
+     //	Demogorgon
+     /////////////
+     
+     MAKE_PATCH
+        fiend_general=>tanarri
+        level_all=>30
+        fiend_hp=>110
+     END
+     LAF edit_creature STR_VAR creature=demogor2 END
+
+
+
+END
+
+////////////////////////////////////////////////////////////////
+/////   Summoning
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_pc_summons BEGIN
+
+    LAF edit_creature STR_VAR creature=~dempitsu demglasu demnabsu~ editstring=~gender=>SUMMONED_DEMON add_items=>dw#sumfi(boots)~ END
+
+
+END
+
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_npc_summons BEGIN
+
+   /////////////
+   /// General
+   /////////////
+
+   <<<<<<<< .../stratagems-inline/fiends.2da
+   spell_old                           spell_new    effect_lawful  effect_chaotic    effect_neutral   effect_original    oldcre_lawful    oldcre_chaotic   newcre_lawful  newcre_chaotic
+   %WIZARD_GATE%                       dw#gatem     dw#gatem        dw#basum         dw#sumyu         spgate             dempitsu         telbal1          dw#pitsu       dw#basum
+   %CLERIC_GATE%                       dw#gatep     dw#gatep        dw#basum         dw#sumyu         spgate             dempitsu         telbal1          dw#pitsu       dw#basum
+   %WIZARD_SUMMON_FIEND%               dw#sumgl     dw#sumco        dw#sumgl         dw#sumyn         spfiend            demcor01         demglasu         dw#sumco       dw#sumgl
+   %WIZARD_CACOFIEND%                  dw#cacof     dw#sumbf        dw#cacof         dw#sumya         spcaco             gorbat5          demnabsu         dw#sumbf       dw#nabsu
+   >>>>>>>>
+
+
+
+   COPY ~.../stratagems-inline/fiends.2da~ ~override~
+        READ_2DA_ENTRIES_NOW fiend_array 10
+        FOR (i=1;i<fiend_array;i+=1) BEGIN
+           FOR (j=0;j<10;j+=1) BEGIN
+              READ_2DA_ENTRY_FORMER fiend_array i j data
+              READ_2DA_ENTRY_FORMER fiend_array 0 j var
+              SPRINT EVALUATE_BUFFER ~%var%~ EVALUATE_BUFFER ~%data%~
+           END
+           INNER_ACTION BEGIN
+              LAF npc_summoning_spell STR_VAR spell_old spell_new effect_lawful effect_chaotic effect_neutral effect_original oldcre_lawful oldcre_chaotic newcre_lawful newcre_chaotic END
+           END
+        END
+   BUT_ONLY
+
+
+   //////////////
+   /// Balors
+   //////////////
+   LAF clone_item STR_VAR item=~misc16=>dw#basum~ editstring=~droppable=>0~ END
+   LAF edit_creature STR_VAR creature=dw#basum editstring=~strip_script=>rockroom add_items=>dw#basum~ END
+
+   ///////////
+   // Glabrezu
+   ///////////
+
+   // correct the Guarded-Compound summonings
+
+   LAF swap_text STR_VAR files=kettaatk.bcs swaps=~ForceSpell(LastTrigger(Myself),WIZARD_SUMMON_FIEND)=>ForceSpellRES("dw#sumgl",LastTrigger(Myself))~ END
+
+   //////////
+   // Pit fiends
+   //////////
+   
+   LAF edit_creature STR_VAR creature=dw#pitsu editstring=~script_override=>dw#pitsu dv=>dw#pitsu~ END
+
+END
+
+
+
+
+
+////////////////////////////////////////////////////////////////
+///  make the summoning spells and associated resources
+///////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION npc_summoning_spell 
+   STR_VAR spell_old=""
+           spell_new=""
+           effect_lawful=""
+           effect_chaotic=""
+           effect_neutral=""
+           effect_original=""
+           oldcre_lawful=""
+           oldcre_chaotic=""
+           newcre_lawful=""
+           newcre_chaotic=""
+BEGIN
+   LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%spell_old% => %spell_new%~ editstring="patch_cond_inline=>~type=>effect power=>0~" END
+   LAF make_fiend_spell STR_VAR spell=EVALUATE_BUFFER ~%spell_old%~ effect_lawful effect_chaotic effect_neutral END
+   LAF clone_effect STR_VAR effect=EVALUATE_BUFFER ~%effect_original%=>%effect_lawful%~ editstring=EVALUATE_BUFFER ~resource=>%newcre_lawful% parameter2=>0~ END
+   LAF clone_effect STR_VAR effect=EVALUATE_BUFFER ~%effect_original%=>%effect_chaotic%~ editstring=EVALUATE_BUFFER ~resource=>%newcre_chaotic% parameter2=>0~ END
+
+   MAKE_PATCH
+     xp_value=>0
+     allegiance=>ENEMY
+     gender=>MALE
+     remove_items=>dw#sumfi
+     add_items=>~dw#sumfi(boots)~
+   END
+
+   ACTION_FOR_EACH align IN lawful chaotic BEGIN
+    OUTER_SPRINT oldcre $oldcre(~%align%~)
+    OUTER_SPRINT newcre $newcre(~%align%~)
+    ACTION_IF !FILE_EXISTS_IN_GAME ~%newcre%.cre~ BEGIN
+     LAF clone_creature STR_VAR creature=EVALUATE_BUFFER ~%oldcre%=>%newcre%~ edits=patch_data END
+    END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   make an alignment-sensitive fiend-summoning spell (NB: the actual summoning EFF files live elsewhere)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION make_fiend_spell 
+    STR_VAR spell=""
+            effect_lawful=""
+            effect_chaotic=""
+            effect_neutral=""
+BEGIN
+    
+    MAKE_PATCH
+          patch_cond_inline=>~type=>effect
+                                match=>opcode
+                                check=>177
+                                probability1=>50
+                                probability2=>0
+                                resource=>%effect_lawful%~
+          clone_entry_inline=>~type=>effect
+                               match=>opcode
+                               check=>177
+                                probability1=>100
+                                probability2=>51
+                                resource=>%effect_chaotic%~
+          clone_entry_inline'=>~type=>effect
+                               match=>resource
+                               check=>%effect_lawful%
+                               opcode=>57
+                               timing=>9
+                               duration=>0
+                               parameter1=>0
+                               parameter2=>19
+                               resource=>""~
+          clone_entry_inline''=>~type=>effect
+                               match=>resource
+                               check=>%effect_chaotic%
+                               opcode=>57
+                               timing=>9
+                               duration=>0
+                               parameter1=>0
+                               parameter2=>51
+                               resource=>""~
+    END
+    LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%spell%=>%effect_neutral%~ edits=patch_data END
+
+
+
+    MAKE_PATCH
+       patch_cond_inline=>~ type=>effect
+                            match=>opcode
+                            check=>177
+                            resource=>%effect_lawful%
+                            parameter1=>16
+                            parameter2=>8~
+       clone_entry_inline=>~type=>effect
+                            match=>resource
+                            check=>%effect_lawful%
+                            resource=>%effect_chaotic%
+                            parameter1=> 48
+                            parameter2=>8~
+       clone_entry_inline'=>~type=>effect
+                            match=>resource
+                            check=>%effect_lawful%
+                            resource=>%effect_neutral%
+                            parameter1=> 32
+                            parameter2=>8~
+    END
+    LAF edit_spell STR_VAR spell END
+
+
+    LAF make_casting_effect INT_VAR target=1 STR_VAR effect=EVALUATE_BUFFER ~%effect_neutral%~ spell=EVALUATE_BUFFER ~%effect_neutral%~ END
+    
+
+
+END
+
+
+
+////////////////////////////////////////////////////////////////
+/////   Compatibility
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_compatibility BEGIN
+
+        ////////////////////////////////////////
+	/////	Spell Revisions compatibility
+	////////////////////////////////////////
+
+      ACTION_IF FILE_EXISTS_IN_GAME ~dvdeathk.cre~ BEGIN
+
+        // In Spell Revisions, both Cacofiend and the cleric Gate summon Death Knights
+        // (We check for SR this way just in case the file is missing in some future 
+        // iteration)
+        // This code ensures that NPCs will use the summon-death-knight spell
+         MAKE_PATCH
+            swap_script=>~dvdeathk=>dw#demiv~
+            gender=>MALE
+            allegiance=>ENEMY
+            add_items=>dw#sumfi
+         END
+         LAF clone_effect STR_VAR effect=~spcaco=>dw#dvkni~ editstring=~resource=>dw#demiv~ END
+         LAF edit_spell STR_VAR spell=~dw#gatep dw#cacof~ editstring=~patch_cond_inline=>"type=>effect resource=>dw#dvkni"~ END
+         LAF ssl_to_bcs STR_VAR script=dw#demiv location=ssl END
+      END
+      
+        ////////////////////////////////////////
+	/////	Big Picture compatibility
+	////////////////////////////////////////
+
+      ACTION_IF FILE_EXISTS_IN_GAME ~bpmaevar.bcs~ THEN BEGIN
+          MAKE_PATCH
+             demglab2=>bpglabrz
+             dw#pitfi=>bpdempit
+             marilith=>bpmarili
+             tanari=>bptanari
+          END
+          ACTION_PHP_EACH patch_data AS old=>new BEGIN
+             LAF clone_script STR_VAR script=EVALUATE_BUFFER ~%old%=>%new%~ END
+          END
+      END
+
+END

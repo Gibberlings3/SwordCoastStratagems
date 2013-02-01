@@ -1,0 +1,156 @@
+DEFINE_ACTION_FUNCTION no_chimp BEGIN     // largely legacy
+
+     // remove items from ARE files
+     
+     COPY ~.../stratagems-inline/nochimp.2da~ ~%workspace%~
+        READ_2DA_ENTRIES_NOW nochimp 4
+        FOR (i=1;i<nochimp;i+=1) BEGIN
+           READ_2DA_ENTRY_FORMER nochimp i 0 item
+           READ_2DA_ENTRY_FORMER nochimp i 1 area
+           READ_2DA_ENTRY_FORMER nochimp i 2 xloc
+           READ_2DA_ENTRY_FORMER nochimp i 3 yloc
+           LPF LEGACY_remove_item_from_ARE
+                         INT_VAR xloc=EVALUATE_BUFFER ~%xloc%~
+                              yloc=EVALUATE_BUFFER ~%yloc%~
+                         STR_VAR item=EVALUATE_BUFFER ~%item%~
+                                 area=EVALUATE_BUFFER ~%area%~
+           END
+        END
+     BUT_ONLY
+
+     // remove items from CRE files
+     
+     LAF edit_creature STR_VAR creature=ysg2 editstring=~remove_items=>"sw1h04 sw1h43 sw1h20 blun01 sw2h01 sper01 halb01"~ END
+     LAF edit_creature STR_VAR creature=hgwar01 editstring=~remove_items=>"bolt01 sw1h01 dagg01 staf01"~ END
+
+     // remove items from STO files
+
+     LAF edit_store STR_VAR store=~sarbar01 amsmug01 amsmug02 hgkar01~ 
+                            editstring=~remove_items=>"arow15 sw1h55 ax1h17 blun31 blun32 blun33 blun34 bolt09 bow24 bow25 
+                                                       bow26 blull05 bull06 dagg24 halb12 hamm12 leat12 slng10 sper06
+                                                       staf19 staf24 sw1h72 sw1h73 sw1h74 sw1h75 sw1h76 sw2h20 xbow17 xbow18"~ 
+     END
+
+
+END
+
+DEFINE_PATCH_FUNCTION ~LEGACY_remove_item_from_ARE~
+         INT_VAR xloc=0 yloc=0
+         STR_VAR item="" area=""
+         BEGIN
+		INNER_ACTION BEGIN  // 
+			COPY_EXISTING ~%area%.are~ ~override~
+				READ_LONG 0x70 ~cont_offset~
+				READ_SHORT 0x74 ~cont_num~
+				READ_SHORT 0x76 ~item_num~
+				READ_LONG 0x78 ~item_offset~
+				SET ~number_subtracted~=0
+				FOR (~cont_so_far~=0;~cont_so_far~<~cont_num~;~cont_so_far~=~cont_so_far~+1) BEGIN
+					READ_LONG ~%cont_offset%~+0xc0*~%cont_so_far%~+0x40 ~item_index~
+					SET ~item_index~=~%item_index%~-~%number_subtracted%~
+					WRITE_LONG ~%cont_offset%~+0xc0*~%cont_so_far%~+0x40 ~%item_index%~
+					READ_SHORT ~%cont_offset%~+0xc0*~%cont_so_far%~+0x20 ~xloc_read~
+					READ_SHORT ~%cont_offset%~+0xc0*~%cont_so_far%~+0x22 ~yloc_read~
+					PATCH_IF (~%xloc_read%~=~%xloc%~ AND ~%yloc_read%~=~%yloc%~) THEN BEGIN //
+						READ_LONG ~%cont_offset%~+0xc0*~%cont_so_far%~+0x44 ~items_in_box~
+						SET ~number_subtracted_here~=0
+						SET ~item_so_far~=0
+						WHILE ~item_so_far~<~items_in_box~ BEGIN
+							READ_ASCII ~%item_offset%~+~%item_index%~*0x14+~%item_so_far%~*0x14 ~itemname_read~
+							PATCH_IF ~%itemname_read%~ STRING_EQUAL_CASE ~%item%~ THEN BEGIN
+								DELETE_BYTES ~%item_offset%~+~%item_index%~*0x14+~%item_so_far%~*0x14 0x14
+								SET ~number_subtracted_here~=~number_subtracted_here~+1
+								SET ~items_in_box~=~items_in_box~-1
+								SET ~item_num~=~item_num~-1
+							END ELSE BEGIN
+								SET ~item_so_far~=~item_so_far~+1
+							END
+						END
+						SET ~number_subtracted~=~number_subtracted~+~number_subtracted_here~
+						WRITE_LONG ~%cont_offset%~+0xc0*~%cont_so_far%~+0x44 ~%items_in_box%~
+						WRITE_SHORT 0x76 ~item_num~
+					END
+				END
+				// update offset numbers
+				SET ~offsetmod~=~number_subtracted~*0x14
+				SET $offset("0")=0x54
+				SET $offset("1")=0x5c
+				SET $offset("2")=0x60
+				SET $offset("3")=0x68
+				SET $offset("4")=0x70
+				SET $offset("5")=0x7c
+				SET $offset("6")=0x84
+				SET $offset("7")=0x88
+				SET $offset("8")=0xa0
+				SET $offset("9")=0xa8
+				SET $offset("10")=0xb0
+				SET $offset("11")=0xb8
+				SET $offset("12")=0xbc
+				SET $offset("13")=0xc0
+				SET $offset("14")=0xc4
+				FOR (i=0;i<15;i=i+1) BEGIN
+					SET ~offset_address~=$offset(~%i%~)
+					READ_LONG ~offset_address~ ~offset~
+					PATCH_IF ~%offset%~>~%item_offset%~ THEN BEGIN
+						SET ~offset~=~%offset%~-~%offsetmod%~
+						WRITE_LONG ~offset_address~ ~%offset%~
+					END
+				END
+			BUT_ONLY_IF_IT_CHANGES
+		END
+END
+
+
+<<<<<<<< .../stratagems-inline/nochimp.2da
+Item	AREfile	Xloc	Yloc
+AROW08	AR1301	1010	489  Arrows of fire and acid in d'Arnise keep
+AROW04	AR1301	1010	489
+AROW08	AR1301	884	318
+AROW08	AR1302	477	1016
+AROW04	AR1302	664	1148
+AROW08	AR1302	664	1148
+AROW04	AR1303	1236	1379
+MISC6W	AR0801	808	1842 Wooden stakes in vampires' lairs
+MISC6W	AR0801	1118	3035
+MISC6W	AR0801	662	1764
+MISC6W	AR0808	805	1839
+MISC6W	AR0808	1118	3040
+MISC6W	AR0808	903	3591
+MISC6W	AR0808	2766	681
+AROW01	AR3017	3323	1624 Nonmagical weapons near magic golems
+AX1H01	AR3017	3323	1624
+BLUN01	AR3017	3323	1624
+BLUN02	AR3017	3323	1624
+BLUN04	AR3017	3323	1624
+BLUN06	AR3017	3323	1624
+BOLT01	AR3017	3323	1624
+DAGG01	AR3017	3323	1624
+DART01	AR3017	3323	1624
+HALBERD	AR3017	3323	1624
+HAMM01	AR3017	3323	1624
+SLNG01	AR3017	3323	1624
+SPER01	AR3017	3323	1624
+STAF01	AR3017	3323	1624
+SW1H04	AR3017	3323	1624
+SW1H07	AR3017	3323	1624
+SW1H20	AR3017	3323	1624
+SW1H43	AR3017	3323	1624
+SW1H46	AR3017	3323	1624
+SW1H48	AR3017	3323	1624
+SW2H01	AR3017	3323	1624
+BOOKEE	AR3001	1593	1873 Elminster's Ecologies
+BOOKEE	AR3016	1158	912
+BOOKEE	AR3016	1232	2048
+BOOKEE	AR3016	2586	2136
+BOOKEE	AR3016	3175	1039
+BOOKEE	AR3017	3379	1672
+BOOKEE	AR3017	3186	1518
+BOOKEE	AR3017	4218	1615
+BOOKEE	AR5201	1248	759
+BOOKEE	AR5201	2608	1438
+WAND18	AR3014	560	490   Excess Wands of Spell Striking
+WAND18	AR3016	1299	1980
+WAND18 AR3017	2160	2166
+AROW04 AR0405  	895 	769	Troll-killing arrows in slaver ship
+AROW08 AR0405 	1501 	1366
+>>>>>>>>

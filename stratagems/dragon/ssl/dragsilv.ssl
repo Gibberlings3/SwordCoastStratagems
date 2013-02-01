@@ -1,0 +1,437 @@
+VARIABLE(IsSilverDragon=True)
+
+
+///////////////////////////////////////////////////////////////////////
+///	Non-combat part
+///////////////////////////////////////////////////////////////////////
+
+
+IF
+	Die()
+	!AreaCheck("AR2402")
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		SetGlobal("DrowCityHostile","GLOBAL",1)
+		EraseJournalEntry(15797) // Recover the Silver Dragon's Eggs.  I have finally encountered Adalon, a female silver dragon who is desperate to have her eggs returned.  She normally guards the path to the surface from drow incursion, but Irenicus and Bodhi have stolen her eggs and given them to the drow... and she can do nothing for fear of her eggs being destroyed.   She has turned me into the likeness of a drow, with the name 'Veldrin', and bade me to enter the nearby city of Ust Natha in search of her eggs.  Once her eggs are returned safely, she will show me to the surface and reward me with an item from her hoard.
+		AddJournalEntry(62079,QUEST_DONE)
+		ActionOverride(Player1,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player2,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player3,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player4,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player5,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player6,ApplySpell(Myself,UNDER_NORM))
+		DisplayStringHead(Myself,62029) // With your attack on the dragon, the drow illusion fades away.
+		SetGlobal("PlayerLooksLikeDrow","GLOBAL",0)
+		SetInterrupt(TRUE)
+END
+
+IF
+	AttackedBy([PC],DEFAULT)
+	Global("DrowCityHostile","GLOBAL",0)
+THEN
+	RESPONSE #100
+		SetGlobal("DrowCityHostile","GLOBAL",1)
+		Continue()
+END
+
+IF
+	AttackedBy([PC],DEFAULT)
+	!Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		EraseJournalEntry(15797) // Recover the Silver Dragon's Eggs.  I have finally encountered Adalon, a female silver dragon who is desperate to have her eggs returned.  She normally guards the path to the surface from drow incursion, but Irenicus and Bodhi have stolen her eggs and given them to the drow... and she can do nothing for fear of her eggs being destroyed.   She has turned me into the likeness of a drow, with the name 'Veldrin', and bade me to enter the nearby city of Ust Natha in search of her eggs.  Once her eggs are returned safely, she will show me to the surface and reward me with an item from her hoard.
+		AddJournalEntry(62079,QUEST_DONE)
+		Enemy()
+END
+
+IF
+	AttackedBy([PC],DEFAULT)
+	Global("PlayerLooksLikeDrow","GLOBAL",1)
+THEN
+	RESPONSE #100
+		ActionOverride(Player1,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player2,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player3,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player4,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player5,ApplySpell(Myself,UNDER_NORM))
+		ActionOverride(Player6,ApplySpell(Myself,UNDER_NORM))
+		DisplayStringHead(Myself,62029) // With your attack on the dragon, the drow illusion fades away.
+		SetGlobal("PlayerLooksLikeDrow","GLOBAL",0)
+		Continue()
+END
+
+IF
+	AreaCheck("AR2402")
+	!Detect([0.0.0.0.129])
+	Detect([PC])
+	!Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		SetGlobal("udDrowPlot","GLOBAL",99)
+		DialogInterrupt(TRUE)
+		StartDialogueNoSet(LastSeenBy(Myself))
+END
+
+IF
+	Allegiance(Myself,ENEMY)
+	AreaCheck("AR2402")
+THEN
+	RESPONSE #100
+		ForceSpell(Myself,WIZARD_STONE_SKIN)
+		ForceSpell(Myself,DRYAD_TELEPORT)
+END
+
+IF
+	See([0.0.0.0.129])
+	!Allegiance(Myself,ENEMY)
+	Global("rain","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("rain","LOCALS",1)
+END
+
+IF
+	!Allegiance(Myself,ENEMY)
+	Detect("uddoor05")
+	!Dead("uddoor05") // Drow Wizard
+THEN
+	RESPONSE #100
+		ForceSpell(LastSeenBy(Myself),WIZARD_LOWER_RESISTANCE)
+		ForceSpell(LastSeenBy(Myself),WIZARD_MAGIC_MISSILE)
+		Kill("uddoor05")
+END
+
+IF
+	Detect("uddoor06")
+	!Allegiance(Myself,ENEMY)
+	!Dead("uddoor06") // Drow Priestess
+THEN
+	RESPONSE #100
+		ForceSpell(LastSeenBy(Myself),WIZARD_LOWER_RESISTANCE)
+		ForceSpell(LastSeenBy(Myself),WIZARD_HOLD_PERSON)
+		ForceSpell(LastSeenBy(Myself),WIZARD_MAGIC_MISSILE)
+		Kill("uddoor06")
+END
+
+IF
+	Detect([0.0.0.0.129])
+	!Allegiance(Myself,ENEMY)
+	HPGT(LastSeenBy(Myself),0)
+THEN
+	RESPONSE #60
+		ForceSpell(LastSeenBy(Myself),WIZARD_LOWER_RESISTANCE)
+		ForceSpell(LastSeenBy(Myself),WIZARD_FLAME_ARROW)
+		ForceSpell(LastSeenBy(Myself),WIZARD_FLAME_ARROW)
+		ForceSpell(LastSeenBy(Myself),WIZARD_FLAME_ARROW)
+	RESPONSE #60
+		ForceSpell(LastSeenBy(Myself),WIZARD_FINGER_OF_DEATH)
+	RESPONSE #60
+		AttackReevaluate(LastSeenBy(Myself),15)
+END
+
+
+///////////////////////////////////////////////////////////////////////
+///	Usual pre-battle stuff
+///////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/dragondef.ssl)
+
+IF	
+	!GlobalTimerNotExpired("initialstoneskin","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("initialstoneskin","LOCALS",1000)
+		ApplySpell(Myself,DRAGON_STONE_SKIN)
+END
+
+
+INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
+
+///////////////////////////////////////////////////////////////////////
+///Initial defensive sequencer - Remove Magic, Death Ward, Minor Spell Deflection -
+/// plus dragonfear and haste
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER // note we don't get here unless in a fight
+	Target(Myself)
+THEN DO
+	Action(Sequencer,WIZARD_DISPEL_MAGIC,CLERIC_DEATH_WARD,SPELL_DEFLECTION_NO_VISUAL)
+	ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
+	SetGlobalTimer("dragonbreath","LOCALS",1)
+	SetGlobalTimer("dragonbreath2","LOCALS",13)
+	SetGlobalTimer("redefend","LOCALS",3)
+	Continue()
+END
+
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+THEN DO
+	Action(SpellMyself,WIZARD_HASTE)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Use breath weapons as often as possible
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!Range(scstarget,10)
+THEN DO
+	Action(DragonBreath,SILVER_DRAGON_BREATH_PARALIZATION,"dragonbreath",silv04)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!Range(scstarget,10)
+	!CheckStatGT(scstarget,65,RESISTCOLD)
+THEN DO
+	Action(DragonBreath,SILVER_DRAGON_BREATH_COLD,"dragonbreath2",silv04)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Use even if it won't work
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TargetBlock(EnemiesInOrder)
+	!Range(scstarget,10)
+THEN DO
+	Action(DragonBreath,SILVER_DRAGON_BREATH_COLD,"dragonbreath2",silv04)
+END
+
+IF
+	!GlobalTimerNotExpired("dragonbreath","LOCALS")
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("trytorun","LOCALS")
+	OR(5)		
+		!CheckStatGT(NearestEnemyOf(Myself),65,RESISTCOLD)
+		!CheckStatGT(SecondNearestEnemyOf(Myself),65,RESISTCOLD)
+		!CheckStatGT(ThirdNearestEnemyOf(Myself),65,RESISTCOLD)
+		!CheckStatGT(FourthNearestEnemyOf(Myself),65,RESISTCOLD)
+		!CheckStatGT(FifthNearestEnemyOf(Myself),65,RESISTCOLD)
+THEN
+	RESPONSE #100
+	         SetGlobalTimer("trytorun","LOCALS",6)
+		RunAwayFrom(NearestEnemyOf(Myself),30)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///  Pursue!
+///////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+///	Use wing buffet to drive away anything at all dangerous
+//////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE (%scsroot%/dragon/ssl/wingbuffet.ssl)
+
+/////////////////////////////////////////////////////////////////////////
+/// throw a malison
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	See(NearestEnemyOf(Myself))
+	Target([PC])
+THEN DO
+	Action(Spell,WIZARD_GREATER_MALISON|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////////
+/// Ice Storm
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+THEN DO
+	Action(Spell,WIZARD_ICE_STORM|100|100)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+///	Renew stoneskin
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	CheckStat(Myself,0,STONESKINS)
+	GlobalTimerExpired("redefend","LOCALS")
+	Target(Myself)
+THEN DO
+	Action(SpellInnate,DRAGON_STONE_SKIN|100|100)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+///	Heal
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	HPPercentLT(Myself,50)
+	Target(Myself)
+THEN DO
+	Action(Spell,CLERIC_CURE_SERIOUS_WOUNDS|100|100)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+///	Breach enemy defences
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellTurn|Enemy|Helpless)
+	OR(3)
+		CheckStatGT(scstarget,50,RESISTCOLD) // we're assuming that anything this high probably comes from a spell
+		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+		CheckStatGT(scstarget,2,STONESKINS)
+THEN DO
+	Action(Spell,WIZARD_BREACH|200|100)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/////  Finger of Death
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SpellTurn|Slay|SINecromancy|Enemy)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Action(Spell,WIZARD_FINGER_OF_DEATH|150|50)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+///	Chain Lightning
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|MR|ResistElectric|SIEvocation)
+	!HasItemEquiped("clck26",scstarget)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_CHAIN_LIGHTNING|150|50)
+END
+
+////////////////////////////////////////////////////////////////////////////
+////	Silence
+////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(MR100)
+	!StateCheck(scstarget,STATE_SILENCED)
+THEN DO
+	Action(SpellInnate,DRAGON_SILENCE|150|50)
+END
+
+/////////////////////////////////////////////////////////////////////////////
+///	Kill summons
+/////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(Summons)
+	Gender(scstarget,SUMMONED)
+	TriggerBlock(Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_DEATH_SPELL|150|50)
+END
+
+
+
+
+///////////////////////////////////////////////////////////////////////////
+////	Slow
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR100|Slow|SIAlteration|Enemy|MinorGlobe|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_SLOW|150|50)
+END
+
+/////////////////////////////////////////////////////////////////////////
+////   Flame Arrows
+/////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;HPPercentLT(scstarget,40))
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(MR|ResistFire|Enemy|ArrowSafe|SpellTurn|Stoneskin|MinorGlobe|MirrorImage|Helpless|SIConjuration)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_FLAME_ARROW|150|100)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Hold Person
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Disabled|Paralyse|MinorGlobe|MR|Enemy)
+THEN DO
+	Combine()
+	Action(Spell,CLERIC_HOLD_PERSON|100|100)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+///	Ray of Enfeeblement
+//////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(PCFighters)
+	TriggerBlock(Enemy|Helpless|MR|MinorGlobe)
+	CheckStatGT(scstarget,9,STR)
+	CheckStatGT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_RAY_OF_ENFEEBLEMENT|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////
+///	Now hit basically anyone with chromatic orbs
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
+	!HasItem("clck26",Myself)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_CHROMATIC_ORB)
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/////	Melee phase
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/dragon/ssl/melee.ssl)
+
+////////////////////////////////////////////////////////
+///	Closedown: avoid interaction with other scripts
+////////////////////////////////////////////////////////////
+
+IF
+	!See(NearestEnemyOf(Myself))
+THEN
+	RESPONSE #100
+		NoAction()
+END
