@@ -26,6 +26,8 @@ EXTEND_BOTTOM ~%MINSC_POSTJOIN%~ %minsc_loc%
 IF ~!IsValidForPartyDialog("dynaheir")InMyArea("dynaheir")~ THEN REPLY @20706 GOTO dmww_dynaheirnotwanted
 END
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 CHAIN
 IF ~~ THEN %MINSC_POSTJOIN% dmww_dynaheirnotwanted
 @20707 == %DYNAHEIR_POSTJOIN%
@@ -49,6 +51,8 @@ EXTEND_BOTTOM ~%MONTARON_POSTJOIN%~ %montaron_loc%
 IF ~!IsValidForPartyDialog("xzar")InMyArea("xzar")~ THEN REPLY @20712 EXTERN ~%XZAR_POSTJOIN%~ dmww_xzarnotwanted
 END
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 CHAIN
 IF ~~ THEN %XZAR_POSTJOIN% dmww_xzarnotwanted
 @20713 == %MONTARON_POSTJOIN%
@@ -71,6 +75,8 @@ EXTEND_BOTTOM ~%ELDOTH_POSTJOIN%~ %eldoth_loc%
 
 IF ~!IsValidForPartyDialog("skie") InMyArea("skie")~ THEN REPLY @20726 GOTO dmww_skienotwanted
 END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 CHAIN
 IF ~~ THEN %ELDOTH_POSTJOIN% dmww_skienotwanted

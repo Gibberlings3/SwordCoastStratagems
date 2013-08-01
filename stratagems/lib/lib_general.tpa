@@ -13,14 +13,6 @@ OUTER_SPRINT ~atsymbol~ ~@~
 OUTER_SPRINT ~tilde~ "~"
 OUTER_SPRINT ~minus_one~ "-1"
 OUTER_SPRINT ~arrow~ ~=>~
-OUTER_SPRINT ~newline_fodder~
-~
-~
-OUTER_INNER_PATCH ~%newline_fodder%~ BEGIN
- //  INSERT_BYTES 0 1
- //  WRITE_BYTE 0 0xa
-   READ_ASCII 0 ~newline~ (1)
-END
 
 <<<<<<<< .../stratagems-inline/blank
 >>>>>>>>
@@ -77,14 +69,24 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
              COPY ~.../stratagems-inline/%script%.ssl~ ~%workspace%~
              OUTER_SPRINT full_loc ~%workspace%~
           END ELSE BEGIN
-           ACTION_IF ~%location%~ STRING_COMPARE_CASE ~~ BEGIN
+
              ACTION_IF ~%sslvariables%~ STRING_COMPARE_CASE ~~ BEGIN
                OUTER_SPRINT ~sslvariables~ ~%sslvariables%&ssl_loc=%scsroot%\%location%~
              END ELSE BEGIN
                OUTER_SPRINT sslvariables ~%percentage%ssl_loc%percentage%=%scsroot%\%location%~
              END
-             OUTER_SPRINT full_loc ~%scsroot%\%location%~
-           END
+             
+             // sanity check
+             ACTION_IF FILE_EXISTS ~%scsroot%\%location%\%script%.ssl~ BEGIN
+                OUTER_SPRINT full_loc ~%scsroot%\%location%~
+             END ELSE BEGIN
+                ACTION_IF FILE_EXISTS ~%scsroot%\%component_loc%\%location%\%script%.ssl~ BEGIN
+                   OUTER_SPRINT full_loc ~%scsroot%\%component_loc%\%location%~
+                END ELSE BEGIN
+                   FAIL ~SCS install error: the SSL file %script%.ssl cannot be found at %scsroot%\%location% or %scsroot%\%component_loc%\%location%~
+                END
+             END
+
           END
           ACTION_IF debug_variable=2 BEGIN
              LAF action_display_warning STR_VAR warning=EVALUATE_BUFFER ~SSL call with variables %sslvariables%~ END
@@ -94,6 +96,9 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
           END ELSE BEGIN
              OUTER_SPRINT libwpn libwpn_notobex
           END
+
+
+
           ACTION_IF ~%WEIDU_OS%~ STRING_COMPARE_CASE ~WIN32~ THEN BEGIN
 		AT_NOW ~chmod 755 %scsroot%/ssl/ssl.pl~
 		AT_NOW ~/usr/bin/perl %scsroot%/ssl/ssl.pl "%full_loc%\%script% %sslvariables% -o %workspace%/ssl_out -l %scsroot%/ssl/library %scsroot%/ssl/%libwpn% %workspace%/autolib"~ EXACT
@@ -119,6 +124,9 @@ BEGIN
          ACTION_IF ~%location%~ STRING_EQUAL_CASE ~~ BEGIN
             LAF action_get_directory RET location=directory END
          END
+         ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
+               LAF action_display_warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
+         END
          OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
                LAF action_return_first_entry STR_VAR list=EVALUATE_BUFFER ~%script%~ RET script=list script_to_call=entry END
                LAF compile_ssl_to_bcs_core STR_VAR script=EVALUATE_BUFFER ~%script_to_call%~ location variables rename_to inline END
@@ -131,6 +139,9 @@ DEFINE_ACTION_FUNCTION ~ssl_to_baf~
 BEGIN
          ACTION_IF ~%location%~ STRING_EQUAL_CASE ~~ BEGIN
             LAF action_get_directory RET location=directory END
+         END
+         ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
+               LAF action_display_warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
          END
          OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
                LAF action_return_first_entry STR_VAR list=EVALUATE_BUFFER ~%script%~ RET script=list script_to_call=entry END
@@ -161,8 +172,8 @@ BEGIN
        ACTION_IF debug_variable=1 BEGIN
           PRINT ~%input%~
        END
-       COPY temp_file temp_file2 EVALUATE_BUFFER
-       REINCLUDE temp_file2
+       COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+       REINCLUDE ~%workspace%/temp_file2~
 END
 
 
@@ -175,12 +186,12 @@ BEGIN
        <<<<<<<< temp_file
        %input%
        >>>>>>>>
-          COPY temp_file temp_file2 EVALUATE_BUFFER
+          COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
        END
        PATCH_IF debug_variable>0 BEGIN
           PATCH_PRINT ~%input%~
        END
-       PATCH_REINCLUDE temp_file2
+       PATCH_REINCLUDE ~%workspace%/temp_file2~
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -212,8 +223,8 @@ BEGIN
        <<<<<<<< temp_file
        %output_csv%
        >>>>>>>>
-       COPY temp_file temp_file2 EVALUATE_BUFFER
-       REINCLUDE temp_file2
+       COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+       REINCLUDE ~%workspace%/temp_file2~
      OUTER_FOR (i=0;i<10;i=i+1) BEGIN
         ACTION_IF (VARIABLE_IS_SET $temp_array(EVALUATE_BUFFER ~%i%~)) AND $temp_array(EVALUATE_BUFFER ~%i%~) STRING_COMPARE_CASE ~~ AND $temp_array(EVALUATE_BUFFER ~%i%~) STRING_COMPARE_CASE ~ ~ BEGIN
                OUTER_SPRINT EVALUATE_BUFFER ~argument_%i%~ $temp_array(~%i%~)
@@ -241,8 +252,8 @@ BEGIN
           <<<<<<<< temp_file
           %output%
           >>>>>>>>
-             COPY temp_file temp_file2 EVALUATE_BUFFER
-             REINCLUDE ~temp_file2~
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
           END
           PHP_EACH temp_assoc AS key => value BEGIN
           END
@@ -267,8 +278,8 @@ BEGIN
           <<<<<<<< temp_file
           %output%
           >>>>>>>>
-             COPY temp_file temp_file2 EVALUATE_BUFFER
-             REINCLUDE ~temp_file2~
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
           END
           SPRINT ~key~ $temp_array(0)
           SPRINT ~value~ $temp_array(1)
@@ -294,8 +305,8 @@ BEGIN
           <<<<<<<< temp_file
           %output%
           >>>>>>>>
-             COPY temp_file temp_file2 EVALUATE_BUFFER
-             REINCLUDE ~temp_file2~
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
           END
           PHP_EACH temp_assoc AS key => value BEGIN
                    INNER_PATCH_SAVE instruction2 ~%instruction%~ BEGIN
@@ -346,9 +357,9 @@ BEGIN
          <<<<<<<< temp_file
           %list%
           >>>>>>>>
-             COPY temp_file temp_file2 EVALUATE_BUFFER
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
      END
-     PATCH_REINCLUDE ~temp_file2~
+     PATCH_REINCLUDE ~%workspace%/temp_file2~
 
 
 END
@@ -417,7 +428,10 @@ DEFINE_PATCH_FUNCTION return_first_entry
 BEGIN
      // clean out any "\n"; process separator
      INNER_PATCH_SAVE list ~%list%~ BEGIN 
-             REPLACE_TEXTUALLY ~%newline%~ ~~ 
+             REPLACE_TEXTUALLY ~%WNL%~ ~~
+             REPLACE_TEXTUALLY ~%LNL%~ ~~
+             REPLACE_TEXTUALLY ~%MNL%~ ~~
+             REPLACE_TEXTUALLY ~%TAB%~ ~ ~
              PATCH_IF ~%separator%~ STRING_COMPARE ~ ~ BEGIN
                 REPLACE_TEXTUALLY ~%separator%~ ~ ~
              END
@@ -841,7 +855,7 @@ BEGIN
       ACTION_IF (~%edits%~ STRING_EQUAL_CASE ~~ && ~%editstring%~ STRING_EQUAL_CASE ~~) BEGIN
          OUTER_SPRINT edits patch_data
       END
-      PRINT ~SFO: Applying patch(es) to %file_prefix% file(s) %file_list%...~
+      PRINT ~SFO: Applying patch(es) to %file_prefix% file(s) %file_list%... ~
       SILENT
       OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
           LAF action_return_first_entry
@@ -1266,8 +1280,8 @@ BEGIN
         <<<<<<<< temp_file
         %temp%
         >>>>>>>>
-          COPY temp_file temp_file2 EVALUATE_BUFFER
-            REINCLUDE ~temp_file2~
+          COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+            REINCLUDE ~%workspace%/temp_file2~
         END
         LAUNCH_PATCH_FUNCTION patch_conditionally
              STR_VAR arguments=temp_assoc filename=EVALUATE_BUFFER ~%filename%~ file_prefix=EVALUATE_BUFFER ~%file_prefix%~
@@ -1408,7 +1422,7 @@ BEGIN
         <<<<<<<< temp_file
         %temp%
         >>>>>>>>
-          COPY temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+          COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
             REINCLUDE ~%workspace%/temp_file2~
         END
         LAUNCH_PATCH_FUNCTION add_entry
@@ -1473,6 +1487,9 @@ BEGIN
     PATCH_IF !VARIABLE_IS_SET ~%entry_type%~ BEGIN
        LPF patch_display_warning STR_VAR warning="Warning: no entry type found for clone_entry" END
     END
+    PATCH_IF !VARIABLE_IS_SET ~%parameter%~ BEGIN
+       SPRINT parameter NOT_SET
+    END
     PATCH_IF (~%entry_type%~ STRING_EQUAL_CASE ~effect~ && (~%file_prefix%~ STRING_EQUAL_CASE SPL || ~%file_prefix%~ STRING_EQUAL_CASE ITM)) BEGIN 
          READ_LONG 0x6a effect_offset
          SPRINT entry_type ability
@@ -1490,7 +1507,6 @@ BEGIN
                  PATCH_IF ~%value%~ STRING_EQUAL_CASE ~%check%~ BEGIN
                     SET number_effects_added_here +=1
                     READ_ASCII offset_base template (0x30)
-                  //  SET offset_base=offset_base+0x30
                     INSERT_BYTES offset_base 0x30
                     WRITE_ASCIIE offset_base ~%template%~
                     LPF apply_patches INT_VAR offset_secondary=offset_base STR_VAR file_prefix is_conditional=yes filename arguments offset_base END
@@ -1575,7 +1591,7 @@ BEGIN
         <<<<<<<< temp_file
         %temp%
         >>>>>>>>
-          COPY temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+          COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
             REINCLUDE ~%workspace%/temp_file2~
         END
         LAUNCH_PATCH_FUNCTION clone_entry
@@ -1602,7 +1618,11 @@ BEGIN
           END ELSE BEGIN
              SPRINT match returns_true
           END
-          SPRINT match_parameter $EVALUATE_BUFFER ~%arguments%~(match_parameter)
+          PATCH_IF VARIABLE_IS_SET $EVALUATE_BUFFER ~%arguments%~(match_parameter) BEGIN
+             SPRINT match_parameter $EVALUATE_BUFFER ~%arguments%~(match_parameter)
+          END ELSE BEGIN
+             SPRINT match_parameter NOT_SET
+          END
           SPRINT type $EVALUATE_BUFFER ~%arguments%~(type)
           SET checktype=0
           PATCH_IF VARIABLE_IS_SET $EVALUATE_BUFFER ~%arguments%~(check) BEGIN
@@ -1643,8 +1663,8 @@ BEGIN
         <<<<<<<< temp_file
         %temp%
         >>>>>>>>
-          COPY temp_file temp_file2 EVALUATE_BUFFER
-          REINCLUDE ~temp_file2~
+          COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+          REINCLUDE ~%workspace%/temp_file2~
         END
         LAUNCH_PATCH_FUNCTION delete_entries
               STR_VAR arguments=temp_assoc file_prefix=EVALUATE_BUFFER ~%file_prefix%~
@@ -2038,6 +2058,7 @@ DEFINE_ACTION_FUNCTION extend
                  tv="no"
                  inline="no"
                  ssl="no"
+                 variables=""
 BEGIN
        ACTION_IF ~%file%%files%%script%~ STRING_EQUAL_CASE ~~ BEGIN
               PRINT ~Warning: you've called an extend with no main file~
@@ -2062,7 +2083,7 @@ BEGIN
          OUTER_SPRINT location ~..\%location%~
          ACTION_FOR_EACH script IN ~%top%~ ~%bottom%~ BEGIN
          ACTION_IF ~%script%~ STRING_COMPARE_CASE ~~ BEGIN
-            LAF ssl_to_baf STR_VAR script location END
+            LAF ssl_to_baf STR_VAR script location variables END
          END
         END
         OUTER_SPRINT location ~%workspace%\ssl_out~
@@ -2498,6 +2519,7 @@ DEFINE_ACTION_FUNCTION make_label
 BEGIN
    LAF get_label_loc RET location=location END
    COPY_EXISTING ~misc01.itm~ ~%location%/%label%.mrk~
+   LPF patch_log_this STR_VAR file=SSL_warnings.txt input=EVALUATE_BUFFER ~Component with label:%label%~ END
 END
 
 DEFINE_ACTION_FUNCTION get_label_loc

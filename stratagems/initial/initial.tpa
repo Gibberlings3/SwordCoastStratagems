@@ -11,21 +11,18 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    
    LAF detectable_spells_setup STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ END
    LAF detectable_spells STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ table = ~cddetect.2da~ END
+   
+   ACTION_IF !skip_tobex BEGIN
+       LAF detectable_spells STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ table = dw_enchantment.2da END
+   END
 
-
-   LAF include STR_VAR file=~detectcloud.tph~ END
-   LAF detect_cloud END
-
+   LAF run STR_VAR file=detectcloud END
    LAF general_creature_patch END
-
-   LAF include STR_VAR file=~sim_compat.tph~ END
-   LAF sim_compat END
-
+   LAF run STR_VAR file=sim_compat END
    LAF configure_tobex END
-
    LAF detectable_items END
 
-
+   LAF misc_ids END
 
 ////////////////////////
 ///// BG2
@@ -80,10 +77,10 @@ END
 
 DEFINE_ACTION_FUNCTION random_useful_items BEGIN
 
-  LAF clone_item STR_VAR item=~misc16=>dw#noptn misc16=>dw#magat misc16=>dw#attac misc16=>dw#move0 misc16=>dw#noinv~ editstring=~droppable=>0~ END
+  LAF clone_item STR_VAR item=~misc16=>dw#noptn misc16=>dw#magat misc16=>dw#attac misc16=>dw#move0 misc16=>dw#noinv misc16=>dw#deseq misc16=>dw#area misc16=>dw#nopre~ editstring=~droppable=>0~ END
 
   ACTION_FOR_EACH item IN dw#mgsee.spl dw#silin.spl dw#brkin.spl BEGIN
-        ACTION_IF NOT FILE_EXISTS_IN_GAME ~%item%~ THEN BEGIN 
+        ACTION_IF NOT FILE_EXISTS_IN_GAME ~%item%~ THEN BEGIN
           LAF install STR_VAR file= EVALUATE_BUFFER ~%item%~ location=~spl~ END
 	END
 
@@ -95,7 +92,7 @@ END
 DEFINE_ACTION_FUNCTION general_creature_patch BEGIN
 
 LAM read_in_saving_throws
-
+LAM read_in_thac0
 // much of this is hardcoded for speed
 
 LAF action_check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
@@ -281,9 +278,89 @@ ACTION_IF ~value~=0 BEGIN
         LAUNCH_ACTION_MACRO ~generate_SSL_autolib~
     END
   END
-END
+END ELSE BEGIN // need a blank autolib.slb
+  COPY ~.../stratagems-inline/blank~ ~%workspace%/autolib.slb~
+  END
 END
 
+///////////////////////////////////////////////////////////////////////////
+// misc. IDS files
+///////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION misc_ids BEGIN
+
+   // gtimes.ids - so much variation, we'll just build one from scratch
+   // in BG, a day is 7200 seconds, i.e. 24x300 seconds. BGT defines an hour
+   // as 300 seconds and no-one seems to disagree. A round is 6 seconds and 
+   // a turn is 10 rounds.
+   // to avoide redundancy, we do rounds only from 1-10, turns 2-15, hours, 4-12
+   
+   COPY ~.../stratagems-inline/blank~ ~override/gtimes.ids~
+   
+   // numbers to ASCII
+   
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY ascii_num BEGIN
+        1=>ONE
+        2=>TWO
+        3=>THREE
+        4=>FOUR
+        5=>FIVE
+        6=>SIX
+        7=>SEVEN
+        8=>EIGHT
+        9=>NINE
+        10=>TEN
+        11=>ELEVEN
+        12=>TWELVE
+        13=>THIRTEEN
+        14=>FOURTEEN
+        15=>FIFTEEN
+        16=>SIXTEEN
+        17=>SEVENTEEN
+        18=>EIGHTEEN
+        19=>NINETEEN
+        20=>TWENTY
+   END
+
+   // days
+   APPEND gtimes.ids ~7200 ONE_DAY~
+   OUTER_FOR (i=2;i<21;i+=1) BEGIN
+      OUTER_SPRINT name $ascii_num(~%i%~)
+      OUTER_SET length=7200*i
+      APPEND gtimes.ids ~%length% %name%_DAYS~
+   END
+      // special cases
+      APPEND gtimes.ids ~216000 THIRTY_DAYS~
+      APPEND gtimes.ids ~360000 FIFTY_DAYS~
+      APPEND gtimes.ids ~158400 TWENTYTWO_DAYS~
+      APPEND gtimes.ids ~180000 TWENTYFIVE_DAYS~
+      APPEND gtimes.ids ~288000 FORTY_DAYS~
+
+   // rounds
+   
+   APPEND gtimes.ids ~6 ONE_ROUND~
+   OUTER_FOR (i=2;i<11;i+=1) BEGIN
+      OUTER_SPRINT name $ascii_num(~%i%~)
+      OUTER_SET length=6*i
+      APPEND gtimes.ids ~%length% %name%_ROUNDS~
+   END
+
+   // turns
+
+   OUTER_FOR (i=2;i<16;i+=1) BEGIN
+      OUTER_SPRINT name $ascii_num(~%i%~)
+      OUTER_SET length=60*i
+      APPEND gtimes.ids ~%length% %name%_TURNS~
+   END
+
+   //hours
+
+   OUTER_FOR (i=4;i<13;i+=1) BEGIN
+      OUTER_SPRINT name $ascii_num(~%i%~)
+      OUTER_SET length=300*i
+      APPEND gtimes.ids ~%length% %name%_HOURS~
+   END
+END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -315,7 +392,7 @@ LAF edit_creature
                  editstring=~specifics=>182~
          END
 
-/////// replace a couple of scripts, apparently randomly confused by SCSII, with more robust ones
+/////// replace a couple of scripts, apparently randomly confused by SCS, with more robust ones
 
 LAF install STR_VAR file=~werewyv.baf ds52329.baf~ location=baf END
 
