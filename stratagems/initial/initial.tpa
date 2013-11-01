@@ -26,8 +26,9 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    LAF general_creature_patch END
    LAF run STR_VAR file=sim_compat END
    LAF configure_tobex END
+   LAF level_one_innates END
 
-   LAF misc_ids END
+   LAF misc_ids END                              
 
 ////////////////////////
 ///// BG2
@@ -45,6 +46,8 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    
      LAF include STR_VAR file=detecttrap.tph END
      LAF detect_trap END
+     
+
 
 
    END ELSE BEGIN
@@ -75,6 +78,19 @@ END
 ///// BG1/BG2
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////
+///	Make innate abilities L1 to avoid crashes (we do this
+///     selectively for now - I think the Fixpack does it, but
+///     at least on BGEE not all are caught)
+///////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION level_one_innates BEGIN
+
+   LAF edit_spell STR_VAR spell="PALADIN_SUMMON_DEVA BLACKGUARD_SUMMON_FALLEN_DEVA" editstring="level=>1" allow_missing=1 END
+
+
+END
 
 ///////////////////////////////////////////////////////////////
 ///	Random useful items
@@ -303,16 +319,29 @@ END
 
 DEFINE_ACTION_FUNCTION misc_ids BEGIN
 
-   // gtimes.ids - so much variation, we'll just build one from scratch
+   // gtimes.ids - need to prevent repeated entries, which are messing with
+   // automatic replacement.
    // in BG, a day is 7200 seconds, i.e. 24x300 seconds. BGT defines an hour
    // as 300 seconds and no-one seems to disagree. A round is 6 seconds and 
    // a turn is 10 rounds.
-   // to avoide redundancy, we do rounds only from 1-10, turns 2-15, hours, 4-12
-   
-   COPY ~.../stratagems-inline/blank~ ~override/gtimes.ids~
+   // to avoid redundancy, we do rounds only from 1-10, turns 2-15, hours, 4-12
+
+
+   // read gtimes.ids into an array
+
+   COPY_EXISTING gtimes.ids override
+       COUNT_2DA_ROWS 2 rowcount
+       FOR (i=0;i<rowcount;i+=1) BEGIN
+           READ_2DA_ENTRY i 1 2 idsname
+           READ_2DA_ENTRY i 0 2 idsnum
+           SPRINT $gtimes_entries("%idsname%") "%idsnum%"
+       END
+   BUT_ONLY
+
+   // overlay the day/turn/round data we want
    
    // numbers to ASCII
-   
+
    ACTION_DEFINE_ASSOCIATIVE_ARRAY ascii_num BEGIN
         1=>ONE
         2=>TWO
@@ -337,26 +366,27 @@ DEFINE_ACTION_FUNCTION misc_ids BEGIN
    END
 
    // days
-   APPEND gtimes.ids ~7200 ONE_DAY~
+   
+   OUTER_SPRINT $gtimes_entries(ONE_DAY) 7200
    OUTER_FOR (i=2;i<21;i+=1) BEGIN
       OUTER_SPRINT name $ascii_num(~%i%~)
       OUTER_SET length=7200*i
-      APPEND gtimes.ids ~%length% %name%_DAYS~
+      OUTER_SPRINT $gtimes_entries(~%name%_DAYS~) ~%length%~
    END
-      // special cases
-      APPEND gtimes.ids ~216000 THIRTY_DAYS~
-      APPEND gtimes.ids ~360000 FIFTY_DAYS~
-      APPEND gtimes.ids ~158400 TWENTYTWO_DAYS~
-      APPEND gtimes.ids ~180000 TWENTYFIVE_DAYS~
-      APPEND gtimes.ids ~288000 FORTY_DAYS~
+
+   // special cases
+   OUTER_SPRINT $gtimes_entries(THIRTY_DAYS) 216000
+   OUTER_SPRINT $gtimes_entries(FIFTY_DAYS) 360000
+   OUTER_SPRINT $gtimes_entries(TWENTYFIVE_DAYS) 180000
+   OUTER_SPRINT $gtimes_entries(FORTY_DAYS) 288000
 
    // rounds
    
-   APPEND gtimes.ids ~6 ONE_ROUND~
+   OUTER_SPRINT $gtimes_entries(ONE_ROUND) 6
    OUTER_FOR (i=2;i<11;i+=1) BEGIN
       OUTER_SPRINT name $ascii_num(~%i%~)
       OUTER_SET length=6*i
-      APPEND gtimes.ids ~%length% %name%_ROUNDS~
+      OUTER_SPRINT $gtimes_entries(~%name%_ROUNDS~) ~%length%~
    END
 
    // turns
@@ -364,7 +394,7 @@ DEFINE_ACTION_FUNCTION misc_ids BEGIN
    OUTER_FOR (i=2;i<16;i+=1) BEGIN
       OUTER_SPRINT name $ascii_num(~%i%~)
       OUTER_SET length=60*i
-      APPEND gtimes.ids ~%length% %name%_TURNS~
+      OUTER_SPRINT $gtimes_entries(~%name%_TURNS~) ~%length%~
    END
 
    //hours
@@ -372,7 +402,22 @@ DEFINE_ACTION_FUNCTION misc_ids BEGIN
    OUTER_FOR (i=4;i<13;i+=1) BEGIN
       OUTER_SPRINT name $ascii_num(~%i%~)
       OUTER_SET length=300*i
-      APPEND gtimes.ids ~%length% %name%_HOURS~
+      OUTER_SPRINT $gtimes_entries(~%name%_HOURS~) ~%length%~
+   END
+
+   // new blank gtimes.ids
+   
+   COPY ".../stratagems-inline/blank" "override/gtimes.ids"
+
+   // go through the array and output it, tweaking duplicate numbers to be non-duplicates
+
+   ACTION_PHP_EACH gtimes_entries AS name=>num BEGIN
+      OUTER_SET num_here=num
+      OUTER_WHILE VARIABLE_IS_SET $gtimes_number_used("%num_here%") BEGIN
+         OUTER_SET num_here +=1
+      END
+      APPEND gtimes.ids "%num_here% %name%"
+      OUTER_SET $gtimes_number_used("%num_here%")=1
    END
 END
 

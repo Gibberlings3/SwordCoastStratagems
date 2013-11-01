@@ -60,6 +60,16 @@ BEGIN
                            ~DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string% WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (0x2) SET value=1 END
                             DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value (0x2) NULL   END~
           END
+          SSHORT SLONG SBYTE BEGIN
+             OUTER_PATCH_SAVE type_write "%type%" BEGIN
+                DELETE_BYTES 0x0 1
+             END
+                    OUTER_SPRINT ~definition~ ~
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string_int%  PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type_write% %offset_formula% arguments END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%GT %arg_string% BEGIN %parse_string_int% PATCH_IF %type%_AT %offset_formula% < arguments BEGIN PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type_write% %offset_formula% arguments END END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%LT %arg_string% BEGIN %parse_string_int%  PATCH_IF %type%_AT %offset_formula% > arguments BEGIN PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type_write% %offset_formula% arguments END END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_%type% %offset_formula% value END~
+          END
           DEFAULT
                     OUTER_SPRINT ~definition~ ~
                           DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string_int%  PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type% %offset_formula% arguments END SET value=1 END
@@ -341,12 +351,17 @@ BEGIN
           END
           ACTION_IF "%location%" STRING_EQUAL_CASE "" BEGIN
            ACTION_IF FILE_EXISTS_IN_GAME ~%filename%.%file_ext%~ BEGIN
-            COPY_EXISTING ~%filename%.%file_ext%~ ~override/%filename%.%file_ext%~
-              PATCH_IF (SOURCE_SIZE>0x1) BEGIN
+            ACTION_TRY
+              COPY_EXISTING ~%filename%.%file_ext%~ ~override/%filename%.%file_ext%~
+                PATCH_IF (SOURCE_SIZE>0x1) BEGIN
                     LPF apply_patches STR_VAR edits filename file_ext END
                     LPF apply_patches_inline STR_VAR editstring filename file_ext END
-              END
-            BUT_ONLY
+                END
+              BUT_ONLY
+            WITH DEFAULT
+               WARN "Failed to patch %filename%.%file_ext%; error message was %ERROR_MESSAGE%"
+               LAF warning STR_VAR warning="Failed to patch %filename%.%file_ext%; error message was %ERROR_MESSAGE%" END
+            END
            END ELSE BEGIN
              ACTION_IF !allow_missing BEGIN
                 FAIL "You are trying to edit %filename%.%file_ext%, which does not exist in the game"
@@ -354,6 +369,7 @@ BEGIN
            END
           END ELSE BEGIN
             ACTION_IF FILE_EXISTS "%location%/%filename%.%file_ext%" BEGIN
+             ACTION_TRY
                COPY "%location%/%filename%.%file_ext%" "%location%"
               PATCH_IF (SOURCE_SIZE>0x1) BEGIN
                     PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
@@ -364,6 +380,10 @@ BEGIN
               END
                
                BUT_ONLY
+              WITH DEFAULT
+               WARN "Failed to patch %filename%.%file_ext%; error message was %ERROR_MESSAGE%"
+               LAF warning STR_VAR warning="Failed to patch %filename%.%file_ext%; error message was %ERROR_MESSAGE%" END
+              END
             END ELSE BEGIN
              ACTION_IF !allow_missing BEGIN
                 FAIL "You are trying to edit %location%/%filename%.%file_ext%, which does not exist"
