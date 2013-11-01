@@ -6,13 +6,13 @@ DEFINE_ACTION_FUNCTION resilient_trolls BEGIN
              FOR (j=0;j<8;j+=1) BEGIN
                 READ_2DA_ENTRY_FORMER trolldata_read 0 j var
                 READ_2DA_ENTRY_FORMER trolldata_read i j val
-                SPRINT EVALUATE_BUFFER ~%var%~ ~%val%~
+                SPRINT  ~%var%~ ~%val%~
              END
              INNER_ACTION BEGIN
                  LAF troll_hp_spell INT_VAR hp_max hp_now STR_VAR hp_set_spell END
                  LAF dead_troll_hp INT_VAR hp_max hp_now STR_VAR dead_cre END
                  LAF troll_script STR_VAR hp_set_spell scriptname END
-                 LAF injured_troll STR_VAR old_cre new_cre END
+                 LAF injured_troll STR_VAR recover_spell old_cre new_cre END
              END
          END
 
@@ -32,10 +32,10 @@ DEFINE_ACTION_FUNCTION troll_hp_spell
 BEGIN
 
        MAKE_PATCH
-          patch_cond_inline=>~type=>effect match=>opcode check=>18 parameter1=>%hp_max%~
-          patch_cond_inline'=>~type=>effect match=>opcode check=>17 parameter1=>%hp_now%~
+          patch_effect_inline=>~match=>opcode=18 parameter1=>%hp_max%~
+          patch_effect_inline'=>~match=>opcode=17 parameter1=>%hp_now%~
        END
-       LAF clone_spell STR_VAR spell=EVALUATE_BUFFER ~%TROLL_SETHP1%=>%hp_set_spell%~ edits=patch_data END
+       LAF clone_spell STR_VAR spell=~%TROLL_SETHP1%=>%hp_set_spell%~ edits=patch_data END
 
 END
 
@@ -47,7 +47,7 @@ DEFINE_ACTION_FUNCTION dead_troll_hp
              hp_now=0
      STR_VAR dead_cre=""
 BEGIN
-   LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%dead_cre%~ editstring=EVALUATE_BUFFER ~hp_current=>%hp_now% hp_max=>%hp_max%~ END
+   LAF edit_creature STR_VAR creature=~%dead_cre%~ editstring=~hp_current=>%hp_now% hp_max=>%hp_max%~ END
 END
 
 /////////////////////////////////////////////////////////////////////////
@@ -58,8 +58,8 @@ DEFINE_ACTION_FUNCTION troll_script
            scriptname=""
 
 BEGIN
-     LAF swap_text STR_VAR files=EVALUATE_BUFFER ~%scriptname%.bcs~
-                           swaps=EVALUATE_BUFFER ~ApplySpell(Myself,TROLL_SETHP1)=>ApplySpellRES("%hp_set_spell%",Myself) PlayDead(300)=>PlayDead(240)~
+     LAF swap_text STR_VAR files=~%scriptname%.bcs~
+                           swaps=~ApplySpell(Myself,TROLL_SETHP1)=>ApplySpellRES("%hp_set_spell%",Myself) PlayDead(300)=>PlayDead(240)~
      END
 END
 
@@ -69,17 +69,13 @@ END
 DEFINE_ACTION_FUNCTION injured_troll
    STR_VAR old_cre=""
            new_cre=""
+           recover_spell=""
 BEGIN
-     COPY_EXISTING ~%old_cre%.cre~ ~override/%new_cre%.cre~
-		READ_SHORT 0x26 ~hp~
-		SET ~hp~=~%hp%~*6
-		SET ~hp~=~%hp%~/10
-		WRITE_SHORT 0x24 ~%hp%~
-     BUT_ONLY
+     LAF clone_creature STR_VAR creature="%old_cre%=>%new_cre%" editstring="hitpoints=>~(hp_max * 6) / 10~" END
 
      // patch injured version into recovery spell
 
-     LAF swap_text STR_VAR files=EVALUATE_BUFFER ~%recover_spell%.spl~ swaps=EVALUATE_BUFFER ~%old_cre%=>%new_cre%~ END
+     LAF swap_text STR_VAR files=~%recover_spell%.spl~ swaps=~%old_cre%=>%new_cre%~ END
 
 END
 

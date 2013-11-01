@@ -1,0 +1,83 @@
+LAF include STR_VAR file=mage_shared.tph locbase=mage END
+LAF include STR_VAR file=priest_shared.tph locbase=priest END
+LAF include STR_VAR file=genai_shared.tph locbase=genai END
+
+
+DEFINE_PATCH_FUNCTION enforce_charclass 
+   STR_VAR filename=""
+           arguments=""
+BEGIN
+       PATCH_IF (INDEX (CASE_INSENSITIVE ~strict~ ~%arguments%~)>=0) BEGIN
+          SPRINT enf_arg exact
+       END ELSE BEGIN
+          SPRINT enf_arg at_worst
+       END
+       PATCH_IF (INDEX (CASE_INSENSITIVE ~is_bg1~ ~%arguments%~)>=0) BEGIN
+          SET bg1char=1
+       END
+       PATCH_MAKE_PATCH
+          enforce_saves=>~%enf_arg%~
+          enforce_thac0=>~%enf_arg%~
+          enforce_hp=>~%enf_arg%~
+          strip_scs_scripts=>null
+          insert_script_low=>wtasight
+          genai=>all
+       END
+       LPF CRE_read_class RET class=value END
+       PATCH_IF !VARIABLE_IS_SET bg1char BEGIN
+          LPF is_bg1_char STR_VAR filename RET bg1char=value END
+       END
+       PATCH_IF bg1char BEGIN
+          SPRINT args ~game_is_bg1~
+       END ELSE BEGIN
+          SPRINT args ~~
+       END
+       PATCH_MATCH ~%class%~ WITH
+         MAGE MAGE_THIEF FIGHTER_MAGE FIGHTER_MAGE_THIEF BARD BEGIN
+            LPF check_label STR_VAR label=dw#mage RET value=value END
+            PATCH_IF value BEGIN
+              SPRINT $patch_data(strip_mage_scripts) null
+              SPRINT $patch_data(enforce_mage) ~accept_level %args%~
+            END
+         END
+         CLERIC FIGHTER_CLERIC DRUID FIGHTER_DRUID BEGIN
+            LPF check_label STR_VAR label=dw#priest RET value=value END
+            PATCH_IF value BEGIN
+              SPRINT $patch_data(strip_priest_scripts) null
+              SPRINT $patch_data(enforce_priest) ~accept_level %args%~
+            END
+
+         END
+         DEFAULT 
+         
+         END
+      LPF apply_patches STR_VAR edits=patch_data file_ext=CRE filename END
+END
+
+DEFINE_PATCH_FUNCTION strip_mage_scripts BEGIN
+
+   FOR (i=0x248;i<0x268;i+=8) BEGIN
+      READ_ASCII i script (4)
+      TO_UPPER script
+      PATCH_MATCH ~%script%~ WITH
+         MAGE _MAG BEGIN
+            WRITE_ASCII i ~~ (8)
+         END
+         DEFAULT
+         END
+   END
+END
+
+DEFINE_PATCH_FUNCTION strip_priest_scripts BEGIN
+
+   FOR (i=0x248;i<0x268;i+=8) BEGIN
+      READ_ASCII i script (5)
+      TO_UPPER script
+      PATCH_MATCH ~%script%~ WITH
+         PRIES _PRIE BEGIN
+            WRITE_ASCII i ~~ (8)
+         END
+         DEFAULT
+         END
+   END
+END

@@ -9,25 +9,30 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 
    LAF random_useful_items END
    
-   LAF detectable_spells_setup STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ END
-   LAF detectable_spells STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ table = ~cddetect.2da~ END
+   LAF detectable_spells_setup STR_VAR path= ~%scsroot%/ds~ END
+   LAF detectable_spells STR_VAR path= ~%scsroot%/ds~ table = ~cddetect.2da~ END
    
    ACTION_IF !skip_tobex BEGIN
-       LAF detectable_spells STR_VAR path=EVALUATE_BUFFER ~%scsroot%/ds~ table = dw_enchantment.2da END
+       LAF detectable_spells STR_VAR path=~%scsroot%/ds~ table = dw_enchantment.2da END
    END
+   ACTION_IF enhanced_edition BEGIN
+      LAF ee_specific_content END
+   END
+
+
+   LAF detectable_items END
 
    LAF run STR_VAR file=detectcloud END
    LAF general_creature_patch END
    LAF run STR_VAR file=sim_compat END
    LAF configure_tobex END
-   LAF detectable_items END
 
    LAF misc_ids END
 
 ////////////////////////
 ///// BG2
 ////////////////////////
-   ACTION_IF is_bg2=1 BEGIN
+   ACTION_IF is_bg2 BEGIN
    
      LAF spell_shield END
 
@@ -51,9 +56,9 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 ///// BG1
 ////////////////////////
 
-   ACTION_IF is_bg1=1 BEGIN
+   ACTION_IF is_bg1 BEGIN
 
-      ACTION_IF enhanced_edition=0 BEGIN
+      ACTION_IF !enhanced_edition BEGIN
        LAF include STR_VAR file=~beregost.tph~ END
        LAF Ascension_beregost_fix END
       END
@@ -77,11 +82,11 @@ END
 
 DEFINE_ACTION_FUNCTION random_useful_items BEGIN
 
-  LAF clone_item STR_VAR item=~misc16=>dw#noptn misc16=>dw#magat misc16=>dw#attac misc16=>dw#move0 misc16=>dw#noinv misc16=>dw#deseq misc16=>dw#area misc16=>dw#nopre~ editstring=~droppable=>0~ END
+  LAF clone_item STR_VAR item=~misc02=>dw#noptn misc02=>dw#magat misc02=>dw#attac misc02=>dw#move0 misc02=>dw#noinv misc02=>dw#deseq misc02=>dw#area misc02=>dw#nopre misc02=>dw#dispe~ editstring=~droppable=>0~ END
 
   ACTION_FOR_EACH item IN dw#mgsee.spl dw#silin.spl dw#brkin.spl BEGIN
         ACTION_IF NOT FILE_EXISTS_IN_GAME ~%item%~ THEN BEGIN
-          LAF install STR_VAR file= EVALUATE_BUFFER ~%item%~ location=~spl~ END
+          LAF install STR_VAR file=  ~%item%~ location=~spl~ END
 	END
 
   END
@@ -106,7 +111,7 @@ COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    SPRINT filename ~%SOURCE_RES%~
    LPF CRE_read_effect_type RET value=value END
    PATCH_IF value=0 BEGIN
-      LPF CRE_modernise END
+      LPF FJ_CRE_EFF_V2 END
    END
    LPF CRE_read_race RET race=value END
    PATCH_MATCH ~%race%~ WITH
@@ -115,7 +120,7 @@ COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    END
    DEFAULT END
    LPF CRE_read_class RET class=value END
-   PATCH_MATCH ~%class%~ WITH 
+   PATCH_MATCH ~%class%~ WITH
    SKELETON SKELETON_WARRIOR BEGIN
       SPRINT skeleton ~%skeleton% %filename%~
    END
@@ -135,38 +140,35 @@ COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    SET counter2+=1
    PATCH_IF counter2=100 BEGIN
       SET counter2=0
-      PATCH_PRINT ~patched %counter% / %file_count_CRE% files~
+      PATCH_PRINT ~patched %counter% files~
    END
 BUT_ONLY
 VERBOSE
 
-// handle (non-mod-added) skeletons with weak resistances
+// handle skeletons with weak resistances
 
 ACTION_CLEAR_ARRAY patch_data
 ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
-   patch_cond_inline => ~match=>CRE_read_class
-                         check=>SKELETON
-                         type=>none
-                         resist_coldGT=>100
-                         resist_electricityGT=>100
-                         resist_slashingGT=>50
-                         resist_piercingGT=>50
-                         resist_missileGT=>50
-                         ~
-   patch_cond_inline' => ~match=>CRE_read_class
-                         check=>SKELETON_WARRIOR
-                         type=>none
-                         resist_coldGT=>100
-                         resist_electricityGT=>100
-                         resist_slashingGT=>50
-                         resist_piercingGT=>50
-                         resist_missileGT=>50
-                         ~
+   match=>"class=SKELETON or class=SKELETON_WARRIOR"
+   resist_coldGT=>100
+   resist_electricityGT=>100
+   resist_slashingGT=>50
+   resist_piercingGT=>50
+   resist_missileGT=>50
+END
+ACTION_CLEAR_ARRAY patch_data_sw
+ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data_sw BEGIN
+   match=>"class=SKELETON_WARRIOR"
+   general=>UNDEAD
+   race=>SKELETON
+   delete_effect=>"opcode=297"
+   add_effect_inline=>"opcode=>297 parameter2=>1"
+END
+LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data END
+LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data_sw END
 
 END
-LAF edit_creature STR_VAR creature=EVALUATE_BUFFER ~%skeleton%~ edits=patch_data glob=no END
 
-END
 
 
 
@@ -176,7 +178,7 @@ END
 
 DEFINE_ACTION_FUNCTION configure_tobex BEGIN
 
-ACTION_IF ~skip_tobex~=0 BEGIN
+  ACTION_IF ~skip_tobex~=0 BEGIN
     OUTER_SPRINT ~TOBEX_MOD_DIRECTORY~ ~%scsroot%~
     LOAD_TRA ~%scsroot%/tobex_redist/tobex.tra~
     INCLUDE ~%scsroot%/tobex_redist/tobex.tpa~
@@ -234,8 +236,8 @@ ACTION_IF ~skip_tobex~=0 BEGIN
     END
 
 
-END ELSE
-ACTION_IF ~skip_hacks~=0 BEGIN
+  END ELSE
+  ACTION_IF ~skip_hacks~=0 BEGIN
    PRINT ~ToBEx disabled; applying backup EXE hacks instead~
 
     LAF include STR_VAR file=~taimonhacks.tph~ END
@@ -253,18 +255,30 @@ ACTION_IF ~skip_hacks~=0 BEGIN
     END
 
 
-END
+  END
 
 END
+
+///////////////////////////////////////////////////////////////////////////
+// EE-specific content
+///////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ee_specific_content BEGIN
+
+
+
+
+END
+
 
 ///////////////////////////////////////////////////////////////////////////
 // detectable items
 ///////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION detectable_items BEGIN
-LAF action_check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value=value END
-ACTION_IF ~value~=0 BEGIN
-  LAF action_check_ini STR_VAR ini=integrated RET integrated=value END
+LAF check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value END
+ACTION_IF !value BEGIN
+  LAF check_ini STR_VAR ini=integrated RET integrated=value END
   ACTION_IF integrated BEGIN // here's one we made earlier
     COPY ~%scsroot%/ee/autolib.slb~ ~%workspace%~
   END ELSE BEGIN
@@ -372,8 +386,8 @@ END
 // Ardanis's Spell Shield patch
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 DEFINE_ACTION_FUNCTION spell_shield BEGIN
-  ACTION_IF demivrgvs_v4=0 BEGIN
-    ACTION_IF demivrgvs=1 BEGIN
+  ACTION_IF !demivrgvs_v4 BEGIN
+    ACTION_IF demivrgvs BEGIN
        LAF install STR_VAR file=~spwi519.spl~ location=spl END
     END
     LAF include STR_VAR file=~ardanis_spell_shield.tph~ END
@@ -388,7 +402,7 @@ DEFINE_ACTION_FUNCTION initial_bg2_misc BEGIN
 /////// give Celestials their own Specifics entry
 
 LAF edit_creature
-         STR_VAR creature=~devagood devaevil plangood planevil ca#dastr ca#dmond ca#dmova ca#plan~ allow_missing=yes
+         STR_VAR creature=~devagood devaevil plangood planevil ca#dastr ca#dmond ca#dmova ca#plan~ allow_missing=1
                  editstring=~specifics=>182~
          END
 
@@ -411,8 +425,40 @@ ACTION_IF MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0 BEGIN
           END
       END
    END
+   
+   ADD_JOURNAL EXISTING @314 @315 @316
 END
 
+// rudimentary scripting shift to make enemy-summoned Planetars and Devas avoid healing the party
+
+DEFINE_PATCH_FUNCTION BCS_rep1
+STR_VAR trig_in=""  act_in=""
+RET trig_out act_out
+BEGIN
+   INNER_PATCH_SAVE trig_out "%trig_in%" BEGIN
+      REPLACE_TEXTUALLY "Allegiance(Myself,GOODCUTOFF)" "" // allow for EE
+      REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,GOODCUTOFF)See([PC])"
+   END
+   SPRINT act_out "%act_in%"
+END
+
+DEFINE_PATCH_FUNCTION BCS_rep2
+STR_VAR trig_in="" act_in=""
+RET trig_out act_out
+BEGIN
+   PATCH_IF INDEX ("See(\[PC\])" "%trig_in%") >=0 BEGIN
+      INNER_PATCH_SAVE trig_out "%trig_in%" BEGIN
+      REPLACE_TEXTUALLY "Allegiance(Myself,GOODCUTOFF)" "" // allow for EE
+      REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,EVILCUTOFF)See([EVILCUTOFF.HUMANOID])"
+   END
+   SPRINT act_out "%act_in%"
+   END ELSE BEGIN
+      SPRINT trig_out ""
+      SPRINT act_out ""
+   END
+END
+
+LAF edit_script STR_VAR script="plangood devagood" editstring="patch=>rep1 patch=>rep2" END
 
 END
 

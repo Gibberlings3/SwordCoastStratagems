@@ -1,0 +1,923 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               compile SSL
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR script="" variables="" location="" locbase="" locabs="" rename_to="" inline="" BEGIN
+ ACTION_IF !FILE_EXISTS "%workspace%/autolib.slb" BEGIN
+     COPY ~.../stratagems-inline/blank~ ~%workspace%\autolib.slb~
+ END
+
+
+     LAF action_check_ini STR_VAR ini=disable_ssl RET disable_ssl=value END
+     ACTION_IF ~%script%~ STRING_EQUAL_CASE ~~ BEGIN
+        LAF warning STR_VAR warning="Warning: SSL compilation called with no script" END
+     END
+     ACTION_TO_LOWER script
+     ACTION_TO_LOWER rename_to
+     ACTION_IF disable_ssl=0 BEGIN
+          ACTION_IF !VARIABLE_IS_SET ~sslvariables~ BEGIN
+             OUTER_SPRINT ~sslvariables~ ~~
+          END
+          ACTION_IF ~%variables%~ STRING_COMPARE_CASE ~~ BEGIN
+             ACTION_IF ~%sslvariables%~ STRING_COMPARE_CASE ~~ BEGIN
+               OUTER_SPRINT ~sslvariables~ ~%sslvariables%&%variables%~
+             END ELSE BEGIN
+               OUTER_SPRINT sslvariables ~%variables%~
+             END
+          END
+          ACTION_IF ~%inline%~ STRING_EQUAL yes BEGIN
+             COPY ~.../stratagems-inline/%script%.ssl~ ~%workspace%~
+             OUTER_SPRINT full_loc ~%workspace%~
+          END ELSE BEGIN
+
+             ACTION_IF ~%sslvariables%~ STRING_COMPARE_CASE ~~ BEGIN
+               OUTER_SPRINT ~sslvariables~ ~%sslvariables%&ssl_loc=%scsroot%\%location%~
+             END ELSE BEGIN
+               OUTER_SPRINT sslvariables ~%percentage%ssl_loc%percentage%=%scsroot%\%location%~
+             END
+             
+             // sanity check
+             ACTION_IF FILE_EXISTS ~%scsroot%\%location%\%script%.ssl~ BEGIN
+                OUTER_SPRINT full_loc ~%scsroot%\%location%~
+             END ELSE BEGIN
+                LAF get_directory STR_VAR location locabs locbase RET full_loc=directory END
+                ACTION_IF !FILE_EXISTS ~%full_loc%\%script%.ssl~ BEGIN
+                   FAIL ~SCS install error: the SSL file %script%.ssl cannot be found at %scsroot%\%location% or %scsroot%\%component_loc%\%location%~
+                END
+             END
+
+          END
+          ACTION_IF debug_variable=2 BEGIN
+             LAF warning STR_VAR warning= ~SSL call with variables %sslvariables%~ END
+          END
+          ACTION_IF skip_tobex=0 BEGIN
+             OUTER_SPRINT libwpn libwpn_tobex
+          END ELSE BEGIN
+             OUTER_SPRINT libwpn libwpn_notobex
+          END
+
+
+
+          ACTION_IF ~%WEIDU_OS%~ STRING_COMPARE_CASE ~WIN32~ THEN BEGIN
+		AT_NOW ~chmod 755 %scsroot%/ssl/ssl.pl~
+		AT_NOW ~/usr/bin/perl %scsroot%/ssl/ssl.pl "%full_loc%\%script% %sslvariables% -o %workspace%/ssl_out -l %scsroot%/ssl/library %scsroot%/ssl/%libwpn% %workspace%/autolib"~ EXACT
+	  END ELSE BEGIN
+		AT_NOW ~%scsroot%\ssl\ssl.exe "%full_loc%\%script% %sslvariables% -o %workspace%/ssl_out -l %scsroot%\ssl\library %scsroot%\ssl\%libwpn% %workspace%\autolib"~
+	  END
+	  ACTION_IF skip_bcs=0 BEGIN
+	   ACTION_IF ~%rename_to%~ STRING_COMPARE_CASE ~~ BEGIN
+	     COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out\%rename_to%.baf~
+             COMPILE EVALUATE_BUFFER ~%workspace%\ssl_out\%rename_to%.baf~
+           END ELSE BEGIN
+             COMPILE EVALUATE_BUFFER ~%workspace%\ssl_out\%script%.baf~
+           END
+          END
+     END ELSE BEGIN
+        LAF warning STR_VAR warning="Warning: SSL compilation disabled" END
+     END
+END
+
+DEFINE_ACTION_FUNCTION ~ssl_to_bcs~
+         STR_VAR script="" location="" locbase="" locabs="" variables="" rename_to="" inline=""
+BEGIN
+         // "location" should in normal circumstances be relativised to local_loc, but SSL permits
+         // it to be relative to scsroot (for legacy reasons)
+
+         ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
+               LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
+         END
+         OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
+               LAF action_return_first_entry STR_VAR list=~%script%~ RET script=list script_to_call=entry END
+               LAF compile_ssl_to_bcs_core STR_VAR script=~%script_to_call%~ location locbase locabs variables rename_to inline END
+         END
+
+END
+
+DEFINE_ACTION_FUNCTION ~ssl_to_baf~
+         STR_VAR script="" location="" locbase="" locabs="" variables="" inline=""
+BEGIN
+         ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
+               LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
+         END
+         OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
+               LAF action_return_first_entry STR_VAR list= ~%script%~ RET script=list script_to_call=entry END
+               LAF compile_ssl_to_bcs_core INT_VAR skip_bcs=1 STR_VAR script=  ~%script_to_call%~ location locbase locabs variables inline  END
+         END
+
+END
+
+
+DEFINE_ACTION_FUNCTION ~COMPILE_SSL_TO_BCS~         STR_VAR script="" location="" variables="" rename_to="" inline="" BEGIN   // legacy name
+        LAF ssl_to_bcs STR_VAR script location variables rename_to inline END
+END
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               install all the listed files
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION install
+       STR_VAR file=""
+               files=""
+               location=""
+               locbase=""
+               inline="no"
+               postfix=""
+BEGIN
+       ACTION_IF ~%file%~ STRING_EQUAL_CASE ~~ BEGIN
+          ACTION_IF ~%files%~ STRING_EQUAL_CASE ~~ BEGIN
+              PRINT ~Warning: you've called an install with no argument~
+          END ELSE BEGIN
+              OUTER_SPRINT file ~%files%~
+          END
+       END
+       PRINT ~Installing file(s) %file%~
+       ACTION_IF ~%inline%~ STRING_EQUAL_CASE yes BEGIN
+        OUTER_SPRINT file_loc ~.../stratagems-inline~
+       END ELSE BEGIN
+          LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+       END
+       OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
+           LAF return_first_entry STR_VAR list= ~%file%~ RET entry file=list END
+            ACTION_IF "%postfix%" STRING_EQUAL "" BEGIN
+             OUTER_PATCH_SAVE entry ~%entry%~ BEGIN
+              SET postfix_start = INDEX_BUFFER (~\.~) +1
+              SET postfix_length = BUFFER_LENGTH - postfix_start
+              READ_ASCII postfix_start postfix_here (~postfix_length~)
+              DELETE_BYTES (postfix_start - 1) (postfix_length + 1)
+             END
+             OUTER_SPRINT entry_full "%entry%.%postfix_here%"
+            END ELSE BEGIN
+               OUTER_SPRINT entry_full "%entry%.%postfix%"
+               OUTER_SPRINT postfix_here "%postfix%"
+            END
+            
+            ACTION_MATCH "%postfix_here%" WITH
+            baf d BEGIN
+              COMPILE ~%file_loc%/%entry_full%~ EVALUATE_BUFFER
+            END
+            ssl BEGIN
+              LAF ssl_to_bcs STR_VAR script="%entry%" location END
+            END
+            cre BEGIN
+              COPY ~%file_loc%/%entry_full%~ ~override~
+                  LPF FJ_CRE_EFF_V2 END
+            END
+            DEFAULT
+              COPY ~%file_loc%/%entry_full%~ ~override~
+            END
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Extend a script
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION extend
+         INT_VAR tv=0
+         STR_VAR file=""
+                 files=""
+                 script=""
+                 top=""
+                 bottom=""
+                 location=""
+                 locbase=""
+                 locabs=""
+                 inline="no"
+                 ssl="no"
+                 variables=""
+BEGIN
+       ACTION_IF ~%file%%files%%script%~ STRING_EQUAL_CASE ~~ BEGIN
+              PRINT ~Warning: you've called an extend with no main file~
+          END ELSE BEGIN
+              OUTER_SPRINT file ~%file%%files%%script%~
+       END
+       ACTION_IF ~%ssl%~ STRING_EQUAL_CASE yes BEGIN
+         ACTION_FOR_EACH script IN ~%top%~ ~%bottom%~ BEGIN
+         ACTION_IF ~%script%~ STRING_COMPARE_CASE ~~ BEGIN
+            LAF ssl_to_baf STR_VAR script location variables inline END
+         END
+        END
+        OUTER_SPRINT file_loc ~%workspace%\ssl_out~
+       END ELSE BEGIN
+           ACTION_IF ~%inline%~ STRING_EQUAL_CASE yes BEGIN
+               OUTER_SPRINT file_loc ~.../stratagems-inline~
+           END ELSE BEGIN
+               LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+           END
+       END
+       OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
+           LAF return_first_entry STR_VAR list= ~%file%~ RET entry file=list END
+           ACTION_IF tv BEGIN
+              OUTER_SPRINT entry ~%tutu_var%entry~
+           END
+           ACTION_IF ~%top%~ STRING_COMPARE_CASE ~~ BEGIN
+              EXTEND_TOP ~%entry%.bcs~ ~%file_loc%/%top%.baf~ EVALUATE_BUFFER
+           END
+           ACTION_IF ~%bottom%~ STRING_COMPARE_CASE ~~ BEGIN
+              EXTEND_BOTTOM ~%entry%.bcs~ ~%file_loc%/%bottom%.baf~ EVALUATE_BUFFER
+           END
+       END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Compile a script under a different name (syntax is oldname=>newname)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION compile_rename
+STR_VAR file=""
+        files=""
+        location=""
+        locbase=""
+BEGIN
+       ACTION_IF ~%file%~ STRING_EQUAL_CASE ~~ BEGIN
+          ACTION_IF ~%files%~ STRING_EQUAL_CASE ~~ BEGIN
+              PRINT ~Warning: you've called a compile_rename with no main file~
+          END ELSE BEGIN
+              OUTER_SPRINT file ~%files%~
+          END
+       END
+       LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+       OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
+          LAF action_return_first_pair STR_VAR list= ~%file%~ RET oldscript=key newscript=value file=list END
+          COPY ~%file_loc%\%oldscript%.baf~ ~%workspace%\%newscript%.baf~
+          COMPILE EVALUATE_BUFFER ~%workspace%\%newscript%.baf~
+       END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Clone a script A=>B and then extend it with another script also called B
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION clone_extend
+       STR_VAR arguments=""
+               top="yes"
+               location=""
+               locbase=""
+               inline="no"
+BEGIN
+       ACTION_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+          LAF action_return_first_pair STR_VAR list= ~%arguments%~ RET source=key script=value arguments=list END
+          COPY_EXISTING ~%source%.bcs~ ~override/%script%.bcs~
+          ACTION_IF ~%top%~ STRING_EQUAL_CASE ~no~ BEGIN
+               LAF extend STR_VAR files= ~%script%~ location locbase inline bottom= ~%script%~ END
+          END ELSE BEGIN
+               LAF extend STR_VAR files= ~%script%~ location locbase inline top= ~%script%~ END
+          END
+          LAF clone_extend STR_VAR arguments top location inline END
+       END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               make a textual substitution
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_PATCH_FUNCTION swap_text_core
+     STR_VAR arguments=""
+BEGIN
+     PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+        LPF return_first_pair STR_VAR list= ~%arguments%~ RET arguments=list old=key new=value END
+        PATCH_IF ~%new%~ STRING_EQUAL_CASE ~NULL~ BEGIN
+           SPRINT ~new~ ~~
+        END
+        REPLACE_TEXTUALLY CASE_INSENSITIVE ~%old%~ ~%new%~
+        LPF swap_text_core STR_VAR arguments= ~%arguments%~ END
+     END
+END
+
+DEFINE_PATCH_FUNCTION swap_text_core2
+     STR_VAR arguments=""
+BEGIN
+     PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+        LPF return_first_pair STR_VAR list= ~%arguments%~ RET arguments=list old=key new=value END
+        PATCH_IF ~%new%~ STRING_EQUAL_CASE ~NULL~ BEGIN
+           SPRINT ~new~ ~~
+        END
+        SET len1=STRING_LENGTH ~%old%~
+        SET len2=STRING_LENGTH ~%new%~
+        SET len = len1>len2?len1:len2
+        REPLACE_TEXTUALLY CASE_INSENSITIVE ~%old%~ ~%new%~ (len)
+        LPF swap_text_core2 STR_VAR arguments= ~%arguments%~ END
+     END
+END
+
+DEFINE_ACTION_FUNCTION swap_text
+    INT_VAR tv=0
+            allow_missing=0
+    STR_VAR files=""
+            swaps=""
+            postfix=""
+BEGIN
+    OUTER_SPRINT files "%files%%file%"
+    OUTER_WHILE ~%files%~ STRING_COMPARE_CASE ~~ BEGIN
+      LAF action_return_first_entry STR_VAR list= ~%files%~ RET files=list entry=entry END
+
+      ACTION_IF tv BEGIN
+            OUTER_SPRINT ~entry~ ~%tutu_var%%entry%~
+      END
+      ACTION_IF (~%postfix%~ STRING_COMPARE_CASE ~~) BEGIN
+            OUTER_SPRINT ~entry~ ~%entry%.%postfix%~
+      END
+      ACTION_IF (!allow_missing || FILE_EXISTS_IN_GAME ~%entry%~) BEGIN
+         OUTER_PATCH ~%entry%~ BEGIN
+              SET postfix_start = INDEX_BUFFER (~\.~) +1
+              SET postfix_length = BUFFER_LENGTH - postfix_start
+              READ_ASCII postfix_start pf (~postfix_length~)
+         END
+         ACTION_TO_LOWER pf
+         ACTION_MATCH "%pf%" WITH
+         bcs dlg BEGIN
+              COPY_EXISTING ~%entry%~ ~override~
+                   DECOMPILE_AND_PATCH BEGIN
+                      LPF swap_text_core STR_VAR arguments =  ~%swaps%~ END
+                   END
+              BUT_ONLY
+         END
+         2da ids BEGIN
+              COPY_EXISTING ~%entry%~ ~override~
+                      LPF swap_text_core STR_VAR arguments =  ~%swaps%~ END
+              BUT_ONLY
+         END
+         DEFAULT
+              COPY_EXISTING ~%entry%~ ~override~
+                      LPF swap_text_core2 STR_VAR arguments =  ~%swaps%~ END
+              BUT_ONLY
+         END
+      END
+    END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               output  the name of the file
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION log_resource_name STR_VAR arguments="SFOlog" filename="" file_ext="" BEGIN
+
+
+   TO_LOWER file_ext
+   PATCH_MATCH ~%file_ext%~ WITH itm BEGIN
+      READ_STRREF 0xc name
+      SPRINT output ~%filename% %name%~
+   END
+   cre spl BEGIN
+      READ_STRREF 0x8 name
+      SPRINT output ~%filename% %name%~
+   END
+   DEFAULT
+      SPRINT output ~%filename%~
+   END
+
+   INNER_ACTION BEGIN
+   <<<<<<<< log.txt
+   >>>>>>>>
+
+
+      ACTION_IF !FILE_EXISTS ~%workspace%/%arguments%.txt~ BEGIN
+         COPY log.txt ~%workspace%/%arguments%.txt~
+      END
+      APPEND_OUTER ~%workspace%/%arguments%.txt~ ~%output%~
+   END
+
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("log_resource_name") ""
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Say something at an offset
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION say_this_here
+      INT_VAR offset=0
+              say=0
+BEGIN
+   SPRINT input ~SAY %offset% %atsymbol%%say%~ // why? for more specific error messages
+   PATCH_TRY
+      LPF patch_reinclude_this STR_VAR input END
+   WITH DEFAULT
+      PATCH_PRINT "Failed to SAY %atsymbol%%say% at offset %offset%, most likely because the string does not exist in the TRA file"
+      PATCH_RERAISE
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Get a strref for a tra entry by number
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION strref_of_tra
+      INT_VAR  arguments=0
+      RET value
+BEGIN
+   SPRINT input ~SET value=RESOLVE_STR_REF (%atsymbol%%arguments%)~ // why? for more specific error messages
+   PATCH_TRY
+      LPF patch_reinclude_this STR_VAR input END
+   WITH DEFAULT
+      PATCH_PRINT "Failed to RESOLVE_STR_REF for %atsymbol%%arguments%, most likely because the string does not exist in the TRA file"
+      PATCH_RERAISE
+   END
+END
+
+DEFINE_ACTION_FUNCTION strref_of_tra
+      INT_VAR  arguments=0
+      RET value
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF strref_of_tra STR_VAR arguments RET value END
+   END
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Return the offset of a given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_offset
+        INT_VAR offset_num=0
+        STR_VAR file_ext=""
+                entry_type=""
+        RET value offset_loc
+BEGIN
+   PATCH_IF "%file_ext%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the file extension for return_offset"
+   END
+   PATCH_IF "%entry_type%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the entry type for return_offset"
+   END
+   SET offset_loc=$ ~%file_ext%offset_loc~(~%entry_type%~)
+   SET offset_length=$ ~%file_ext%offset_length~(~%entry_type%~) 
+   PATCH_MATCH offset_length WITH
+   2 BEGIN
+      READ_SHORT offset_loc offset_base
+   END
+   4 BEGIN
+      READ_LONG offset_loc offset_base
+   END
+   DEFAULT
+      LPF warning STR_VAR warning="warning: unknown length of offset" END
+   END
+   SET entry_length=$ ~%file_ext%entry_length~(~%entry_type%~)
+   SET value=offset_base + offset_num * entry_length
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Increment the offset of a given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION increment_offset
+        INT_VAR arguments=0
+        STR_VAR file_ext=""
+                entry_type=""
+
+BEGIN
+   PATCH_IF "%file_ext%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the file extension for increment_offset"
+   END
+   PATCH_IF "%entry_type%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the entry type for increment_offset"
+   END
+   SET offset_loc=$ ~%file_ext%offset_loc~(~%entry_type%~)
+   SET offset_length=$ ~%file_ext%offset_length~(~%entry_type%~) 
+   PATCH_MATCH offset_length WITH
+   2 BEGIN
+      WRITE_SHORT offset_loc ((SHORT_AT offset_loc) + arguments)
+   END
+   4 BEGIN
+      WRITE_LONG offset_loc ((LONG_AT offset_loc) + arguments)
+   END
+   DEFAULT
+      LPF warning STR_VAR warning="warning: unknown length of offset" END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Return the number of a given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_number_entries
+        STR_VAR file_ext=""
+                entry_type=""
+        RET value
+BEGIN
+   PATCH_IF "%file_ext%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the file extension for return_number_entries"
+   END
+   PATCH_IF "%entry_type%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the entry type for return_number_entries"
+   END
+ SET loc=$ ~%file_ext%entrynum_loc~(~%entry_type%~)
+ SET length=$ ~%file_ext%entrynum_length~(~%entry_type%~)
+ PATCH_IF loc="-1" BEGIN
+          SET value="-1"
+ END ELSE BEGIN
+   PATCH_MATCH length WITH
+   2 BEGIN
+      READ_SHORT loc value
+   END
+   4 BEGIN
+      READ_LONG loc value
+   END
+   0 BEGIN
+      SET value="-1"
+   END
+   DEFAULT
+      LPF warning STR_VAR warning="warning: unknown length of offset" END
+   END
+ END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Increment the number of a given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION increment_number_entries
+        INT_VAR arguments=0
+        STR_VAR file_ext=""
+                entry_type=""
+
+BEGIN
+   PATCH_IF "%file_ext%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the file extension for increment_number_entries"
+   END
+   PATCH_IF "%entry_type%" STRING_EQUAL_CASE "" BEGIN
+      PATCH_FAIL "You need to specify the entry type for increment_number_entries"
+   END
+ SET loc=$ ~%file_ext%entrynum_loc~(~%entry_type%~)
+ SET length=$ ~%file_ext%entrynum_length~(~%entry_type%~)
+ PATCH_IF loc="-1" BEGIN
+
+ END ELSE BEGIN
+   PATCH_MATCH length WITH
+   2 BEGIN
+      WRITE_SHORT loc ((SHORT_AT loc) + arguments)
+   END
+   4 BEGIN
+      WRITE_LONG loc ((LONG_AT loc) + arguments)
+   END
+   0 BEGIN
+   END
+   DEFAULT
+      LPF warning STR_VAR warning="warning: unknown length of offset" END
+   END
+ END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              count the files of a given type
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION count_files
+      STR_VAR file_ext=""
+              tv="no"
+      RET value
+BEGIN
+      ACTION_IF ~%tv%~ STRING_EQUAL_CASE yes BEGIN
+         OUTER_SPRINT base ~%tutu_var%~
+      END ELSE BEGIN
+         OUTER_SPRINT base ~~
+      END
+      OUTER_SET value=0
+      COPY_EXISTING_REGEXP GLOB ~%base%.*\.%file_ext%~ ~override~
+            SET value+=1
+      BUT_ONLY
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              clone a list of scripts
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION clone_script
+    STR_VAR script=""
+BEGIN
+   ACTION_IF ~%script%~ STRING_COMPARE_CASE ~~ BEGIN
+      LAF action_return_first_pair STR_VAR list= ~%script%~ RET script=list old=key new=value END
+      COPY_EXISTING ~%old%.bcs~ ~override/%new%.bcs~
+      LAF clone_script STR_VAR script END
+   END
+END
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      Apply the function "arguments", which in turn takes arguments offset, (NOT offset_base) 
+////////////      filename, file_ext, to the offset of every strref in the file.
+////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION apply_to_strrefs
+          STR_VAR arguments=""
+                  filename=""
+                  file_ext=""
+BEGIN
+        TO_LOWER file_ext
+        PATCH_MATCH "%file_ext%" WITH
+        are BEGIN 
+            SPRINT fixed_loc ""
+            SPRINT ext_loc "trigger=>0x64 trigger=>0xb8 container=>0x84 door=>0x98 door=>0xb4 mapnote=>0x4"
+            // special case: the interruption explanation text
+            READ_LONG 0xc0 offset_base
+          FOR (i=0;i<10;i+=1) BEGIN
+               SET offset=offset_base + i * 0x4 + 0x20
+               SPRINT fixed_loc "%fixed_loc% %offset%"
+            END
+        END
+        cre BEGIN
+            SPRINT fixed_loc "0x8 0xc"
+            SPRINT ext_loc  ""
+            // special case: soundset
+            FOR (i=0;i<100;i+=1) BEGIN
+               SET offset=0xa4 + 0x4 * i
+               SPRINT fixed_loc "%fixed_loc% %offset%"
+            END
+        END
+        dlg BEGIN
+            SPRINT fixed_loc ""
+            SPRINT ext_loc "state=>0x0 transition=>0x4 transition=>0x8"
+        END
+        itm spl BEGIN
+            SPRINT fixed_loc "0x8 0xc 0x50 0x54"
+            SPRINT ext_loc ""
+            LPF apply_to_strrefs_opcode_helper STR_VAR file_ext RET opcode_loc=opcode_loc END
+            SPRINT fixed_loc "%fixed_loc% %opcode_loc%"
+        END
+        sto BEGIN
+            SPRINT fixed_loc "0xc"
+            SPRINT ext_loc "drink=>0x8"
+        END
+        wmp BEGIN
+           SPRINT fixed_loc "0x24"
+           SPRINT ext_loc "area=>0x40 area=>0x44"
+        END
+        DEFAULT
+           SPRINT fixed_loc ""
+           SPRINT ext_loc ""
+           LPF warning STR_VAR warning="%apply_to_strings can't patch file %filename%.%file_ext%: filetype not recognised%" END
+        END
+        WHILE "%fixed_loc%" STRING_COMPARE "" BEGIN
+           LPF return_first_entry STR_VAR list="%fixed_loc%" RET offset=entry fixed_loc=list END
+           LPF "%arguments%" INT_VAR offset  STR_VAR filename file_ext  END
+        END
+        WHILE "%ext_loc%" STRING_COMPARE "" BEGIN
+           LPF return_first_pair STR_VAR list="%ext_loc%" RET entry_type=key offset_ext=value ext_loc=list END
+           LPM get_offset_array
+           PHP_EACH offset_array AS int=>offset_base BEGIN
+                LPF "%arguments%" INT_VAR offset=offset_base+offset_ext STR_VAR filename file_ext  END
+           END
+        END
+END
+
+DEFINE_PATCH_FUNCTION apply_to_strrefs_opcode_helper
+        STR_VAR file_ext=""
+        RET opcode_loc
+BEGIN
+        SPRINT opcode_loc ""
+        // common
+        PATCH_FOR_EACH opcode IN 103 139 180 181 BEGIN
+           SPRINT $opcode_has_strref("%opcode%") ""
+        END
+        // game-specific
+        PATCH_IF GAME_IS "iwd how totlm iwd2" BEGIN
+            SPRINT $opcode_has_strref("183") ""
+        END ELSE
+        PATCH_IF GAME_IS "pst" BEGIN
+        END ELSE BEGIN // assume it's BG2
+           PATCH_FOR_EACH opcode IN 206 253 254 267 290 BEGIN
+               SPRINT $opcode_has_strref("%opcode%") ""
+           END
+        END
+        PATCH_IF "%file_ext%" STRING_EQUAL_CASE itm BEGIN
+           SET length=0x38
+        END ELSE BEGIN
+           SET length=0x28
+        END
+        GET_OFFSET_ARRAY eq_eff ITM_V10_GEN_EFFECTS
+        PHP_EACH eq_eff AS int=>offset BEGIN
+           READ_SHORT offset opcode
+           PATCH_IF VARIABLE_IS_SET $opcode_has_strref("%opcode%") BEGIN
+              SET loc_here=offset + 0x4
+              SPRINT opcode_loc "%opcode_loc% %loc_here%"
+           END
+        END
+        GET_OFFSET_ARRAY ab_arr 0x64 4 0x68 2 0 0 length
+        PHP_EACH ab_arr AS int=>ab_off BEGIN
+            GET_OFFSET_ARRAY2 eff_arr ab_off ITM_V10_HEAD_EFFECTS
+            PHP_EACH eff_arr AS int=>offset BEGIN
+             READ_SHORT offset opcode
+             PATCH_IF VARIABLE_IS_SET $opcode_has_strref("%opcode%") BEGIN
+              SET loc_here=offset + 0x4
+              SPRINT opcode_loc "%opcode_loc% %loc_here%"
+             END
+            END
+        END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      Apply the function "arguments" to each strref in the file, treated as a plain text
+////////////      file containing BAF script. The function takes argument "strref" and must return "strref_new", which is treated as
+////////////      the new value of the strref (return the old value if you just want to log it or something)
+////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION apply_to_strrefs_script 
+   STR_VAR arguments=""
+           filename=""
+BEGIN
+   REPLACE_EVALUATE "DisplayString\([A-Za-z]*\)(\([^,]+\),\([0-9]+\))" BEGIN
+        LPF "%arguments%" STR_VAR strref="%MATCH3%" filename  RET strref_new=strref_new  END
+   END
+   "DisplayString%MATCH1%(%MATCH2%,%strref_new%)"
+   REPLACE_EVALUATE "AddJournalEntry(\([0-9]+\)" BEGIN
+        LPF "%arguments%" STR_VAR strref="%MATCH1%" filename RET strref_new=strref_new END
+   END
+   "AddJournalEntry(%strref_new%"
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      Apply the function "arguments" to each strref in the file, treated as a 2da
+////////////      file. The function takes argument "strref" and must return "strref_new", which is treated as
+////////////      the new value of the strref (return the old value if you just want to log it or something)
+////////////
+////////////      Note that detection of which numbers in a 2da file are strrefs is of necessity a bit
+////////////      heuristic. We assume that 
+////////////      - no integer lower than 160 is a strref (the actual values from 1-100 in BG2 are
+////////////      dialog strings not referenced in 2das)
+////////////      - no integer larger than 299999 is a strref (this is way bigger than any actual dlg)
+////////////      - no integer in the following 2das is a strref:
+////////////         banttimg clearair extanim extspeed happy pplane raisdead randcolr repmodst splashs2 splashsc startare startbp startpos strmod strmodex xpbonus xpcap xplevel xplist
+////////////
+////////////      - no integer <10000 in the following is a strref:
+////////////      end15fps endmve1 endmve2 endmve3 intro intro15f melissan xnewarea
+///////////       - no integer in columns 0-2 of clastext is a strref
+////////////      - nothing in hex notation is a strref
+////////////      - all other integers are strrefs
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION apply_to_strrefs_2da
+   STR_VAR arguments=""
+BEGIN
+   SPRINT filename "%SOURCE_RES%"
+   TO_LOWER filename
+   PATCH_MATCH "%filename%" WITH 
+        banttimg clascolr clearair extanim extspeed happy pplane raisdead randcolr repmodst splashs2 splashsc startare startbp startpos strmod strmodex xpbonus xpcap xplevel xplist
+   BEGIN
+      SET min=0
+      SET max=0
+      SET col=0
+   END
+       end15fps endmve1 endmve2 endmve3 intro intro15f melissan xnewarea
+   BEGIN
+      SET min=10000
+      SET max=299999
+      SET col=0
+   END
+      clastext
+   BEGIN
+      SET min=160
+      SET max=299999
+      SET col=3
+   END
+      statdesc
+   BEGIN
+      SET min=256
+      SET max=299999
+      SET col=0
+   END
+   DEFAULT
+      SET min=160
+      SET max=299999
+      SET col=0
+   END
+   PATCH_IF max>0 BEGIN
+    COUNT_2DA_ROWS 0 rowcount
+    FOR (row=0;row<rowcount;row+=1) BEGIN
+     SET done=0
+     WHILE !done BEGIN
+      PATCH_TRY
+          PATCH_SILENT
+          READ_2DA_ENTRY row col 0 strref
+          PATCH_VERBOSE
+          PATCH_IF !"%strref%" STRING_MATCHES_REGEXP "[0-9]+$" & STRING_LENGTH "%strref%" <7  BEGIN // we check length here to avoid overflow
+            PATCH_IF (min<= strref & strref<= max) BEGIN
+             LPF "%arguments%" INT_VAR strref RET strref_new=strref_new  END
+             SET_2DA_ENTRY row col 0 "%strref_new%"
+            END
+          END
+          SET col+=1
+      WITH
+          ~Invalid_argument("index out of bounds")~
+      BEGIN
+          SET done=1
+      END
+      DEFAULT
+          PATCH_PRINT "%ERROR_MESSAGE%"
+          PATCH_RERAISE
+      END // end of PATCH_TRY
+    END // end of WHILE
+   END // wind of FOR
+  END // end_of PATCH_IF
+END // end of function
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Hook for any of the various editors
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION edit_whatever
+    INT_VAR tv=0
+            allow_missing=0
+    STR_VAR files=""
+            file=""
+            edits=""
+            editstring=""
+            location=""
+            locbase=""
+
+BEGIN
+   OUTER_SPRINT "files" "%files%%file%"
+   ACTION_IF "%files%" STRING_COMPARE "" BEGIN
+        LAF return_first_entry STR_VAR list="%files%" RET entry=entry files=list END
+        ACTION_MATCH "%entry%" WITH
+        ".*\.spl" BEGIN
+            OUTER_SPRINT type spell
+        END
+        ".*\.itm" BEGIN
+            OUTER_SPRINT type item
+        END
+        ".*\.cre" BEGIN
+            OUTER_SPRINT type creature
+        END
+        ".*\.sto" BEGIN
+            OUTER_SPRINT type store
+        END
+        ".*\.are" BEGIN
+            OUTER_SPRINT type area
+        END
+        ".*\.eff" BEGIN
+            OUTER_SPRINT type effect
+        END
+        DEFAULT
+           FAIL "File '%entry%' is a type unrecognised by 'edit_whatever'. (Take it up with the advertising standards agency.)"
+        END
+        OUTER_PATCH_SAVE filename "%entry%" BEGIN
+           REPLACE_TEXTUALLY "\..*" ""
+        END
+        LAF "edit_%type%" INT_VAR tv allow_missing STR_VAR "%type%"="%filename%" edits editstring location locbase  END
+        LAF edit_whatever INT_VAR tv allow_missing STR_VAR files edits editstring location locbase  END
+   END
+END
+

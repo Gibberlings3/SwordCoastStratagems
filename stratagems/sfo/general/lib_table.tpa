@@ -1,0 +1,418 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  2da read/write tools based on the 2da file being in a standard table configuration
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION get_table_column_coordinate
+    STR_VAR column=""
+    RET colnum
+BEGIN
+     COUNT_2DA_COLS colcount
+     SET firstrow = colcount=2? 2: (colcount=3? 1: 0)
+     // find the right column
+     SET colnum= "-1"
+     FOR (j=1;j<colcount;j+=1) BEGIN
+      READ_2DA_ENTRY firstrow j - 1 colcount - 1 this_col
+      PATCH_IF "%this_col%" STRING_EQUAL_CASE "%column%" BEGIN
+         SET colnum=j
+         SET j=colcount
+      END
+     END
+
+END
+
+DEFINE_PATCH_FUNCTION get_table_row_coordinate
+    INT_VAR lookup_column=0
+    STR_VAR row=""
+    RET rownum
+BEGIN
+   COUNT_2DA_COLS colcount
+   COUNT_2DA_ROWS colcount rowcount
+   // find the right row
+   SET rownum= "-1"
+   FOR (i=0;i<rowcount;i+=1) BEGIN
+         READ_2DA_ENTRY i lookup_column colcount this_row
+         PATCH_IF "%this_row%" STRING_EQUAL_CASE "%row%" BEGIN
+            SET rownum=i
+            SET i=rowcount
+         END
+   END
+END  
+
+DEFINE_PATCH_FUNCTION delete_table_row
+    INT_VAR lookup_column=0
+    STR_VAR row=""
+BEGIN
+    COUNT_2DA_COLS colcount
+    COUNT_2DA_ROWS colcount rowcount
+    FOR (i=0;i<rowcount;i+=1) BEGIN
+       READ_2DA_ENTRY i lookup_column colcount this_row
+       PATCH_IF "%this_row%" STRING_EQUAL_CASE "%row%" BEGIN
+           REMOVE_2DA_ROW i colcount
+           SET i = i - 1
+           SET rowcount =rowcount - 1
+       END
+    END
+    PRETTY_PRINT_2DA
+END
+
+DEFINE_ACTION_FUNCTION delete_table_row
+    INT_VAR lookup_column=0
+    STR_VAR row=""
+            file=""
+BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
+      ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+         FAIL "Tried to delete a row from %file%, but %file% does not exist and nor does %file%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT file "%file%.2da"
+      END
+   END
+   COPY_EXISTING "%file%" "override"
+        LPF delete_table_row INT_VAR lookup_column  STR_VAR row  END
+   BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION delete_table_column
+    INT_VAR colnum="-1"
+    STR_VAR column=""
+BEGIN
+    PATCH_IF "%column%" STRING_COMPARE "" BEGIN
+       LPF get_table_column_coordinate STR_VAR column RET colnum END
+       PATCH_IF colnum<0 BEGIN
+          PATCH_FAIL "%column% does not specify a column in %SOURCE_FILE%"
+       END
+    END ELSE BEGIN
+       PATCH_IF colnum<0 BEGIN
+          PATCH_FAIL "No column specified in delete_table_column"
+       END
+    END
+    COUNT_2DA_COLS colcount
+    COUNT_2DA_ROWS colcount rowcount
+    FOR (i=0;i<rowcount;i+=1) BEGIN
+       SET_2DA_ENTRY i colnum colcount "SFO_to_be_deleted"
+    END
+    SET firstrow = colcount=2? 2: (colcount=3? 1: 0)
+    SET_2DA_ENTRY firstrow colnum - 1 colcount - 1 "SFO_to_be_deleted"
+    REPLACE_TEXTUALLY "SFO_to_be_deleted" ""
+    PRETTY_PRINT_2DA
+END
+
+DEFINE_ACTION_FUNCTION delete_table_column
+    INT_VAR colnum="-1"
+    STR_VAR column=""
+            file=""
+BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
+      ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+         FAIL "Tried to delete a column from %file%, but %file% does not exist and nor does %file%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT file "%file%.2da"
+      END
+   END
+   COPY_EXISTING "%file%" "override"
+        LPF delete_table_column  INT_VAR colnum STR_VAR column  END
+   BUT_ONLY
+END
+
+
+DEFINE_PATCH_FUNCTION read_table_entry
+    INT_VAR lookup_column=0
+            dont_complain=0
+            rownum="-1"
+            colnum="-1"
+    STR_VAR row=""
+            column=""
+    RET value
+BEGIN
+   PATCH_IF "%column%" STRING_COMPARE "" BEGIN
+       LPF get_table_column_coordinate STR_VAR column RET colnum END
+   END ELSE BEGIN
+       PATCH_IF colnum<0 BEGIN
+           PATCH_FAIL "No column specified in read_table_entry"
+       END
+   END
+   PATCH_IF "%row%" STRING_COMPARE "" BEGIN
+       LPF get_table_row_coordinate STR_VAR row lookup_column RET rownum END
+   END ELSE BEGIN
+       PATCH_IF rownum<0 BEGIN
+           PATCH_FAIL "No row specified in read_table_entry"
+       END
+   END
+   COUNT_2DA_COLS colcount
+   PATCH_IF (rownum>=0 && colnum>=0) BEGIN
+      READ_2DA_ENTRY rownum colnum colcount value
+   END ELSE BEGIN
+      SET value= "-1"
+      PATCH_IF !dont_complain BEGIN
+          LPF warning STR_VAR warning="Tried to read entry (%row%,%column%) from table (probably %SOURCE_FILE%) but it doesn't exist; returning -1" END
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION read_table_entry
+     INT_VAR lookup_column=0
+             dont_complain=0
+             rownum="-1"
+             colnum="-1"
+     STR_VAR file=""
+             row=""
+             column=""
+
+     RET value
+BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
+      ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+         FAIL "Tried to read an entry from %file%, but %file% does not exist and nor does %file%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT file "%file%.2da"
+      END
+   END
+   COPY_EXISTING "%file%" "%workspace%"
+        LPF read_table_entry INT_VAR lookup_column dont_complain rownum colnum STR_VAR row column RET value END
+   BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION read_table_entry_external
+     INT_VAR lookup_column=0
+             dont_complain=0
+             rownum="-1"
+             colnum="-1"
+     STR_VAR file=""
+             row=""
+             column=""
+             location=""
+             locbase=""
+             locabs=""
+     RET value
+BEGIN
+   LAF get_directory STR_VAR location locbase locabs RET directory END
+   ACTION_IF !FILE_EXISTS "%directory%/%file%" BEGIN
+      FAIL "Tried to read a 2da entry from %directory%/%file% but it doesn't exist"
+   END
+   COPY "%directory%/%file%" "%workspace%"
+        LPF read_table_entry INT_VAR lookup_column dont_complain rownum colnum STR_VAR row column RET value END
+   BUT_ONLY
+END
+
+
+DEFINE_PATCH_FUNCTION write_table_entry
+      INT_VAR lookup_column=0
+              do_not_insert=0
+             rownum="-1"
+             colnum="-1"
+      STR_VAR arguments=""
+              row=""
+              column=""
+              default_fill="0"
+BEGIN
+   COUNT_2DA_COLS colcount
+   COUNT_2DA_ROWS colcount rowcount
+   PATCH_IF "%column%" STRING_COMPARE "" BEGIN
+       LPF get_table_column_coordinate STR_VAR column RET colnum END
+       PATCH_IF colnum<0 BEGIN
+          PATCH_FAIL "Tried to add an entry (%row%,%column%) to table (probably %SOURCE_FILE%) but there is no %column% column"
+       END
+   END ELSE BEGIN
+       PATCH_IF colnum<0 BEGIN
+          PATCH_FAIL "No column specified in write_table_entry"
+       END
+   END
+   PATCH_IF "%row%" STRING_COMPARE "" BEGIN
+       LPF get_table_row_coordinate STR_VAR row RET rownum END
+       PATCH_IF rownum<0 BEGIN
+        PATCH_IF do_not_insert BEGIN
+           PATCH_FAIL "Tried to add an entry (%row%,%column%) to table (probably %SOURCE_FILE%) but there is no %row% row (and this isn't a safe context to add a new one)"
+        END
+        PATCH_IF lookup_column=0 BEGIN
+           SPRINT new_row "%row%"
+           FOR (i=1;i<colcount;i+=1) BEGIN
+              SPRINT new_row "%new_row% %default_fill%"
+           END
+           INSERT_2DA_ROW rowcount colcount "%new_row%"
+           SET rownum=rowcount
+        END ELSE BEGIN
+           PATCH_FAIL "Tried to add an entry (%row%,%column%) to table (probably %SOURCE_FILE%) but there is no %row% row (and I can't add a new row as you're not looking up in column zero)"
+        END
+       END
+   END ELSE BEGIN
+       PATCH_IF rownum<0 BEGIN
+          PATCH_FAIL "No row specified in write_table_entry"
+       END
+   END
+   SET_2DA_ENTRY rownum colnum colcount "%arguments%"
+END
+
+
+
+DEFINE_ACTION_FUNCTION write_table_entry
+      INT_VAR lookup_column=0
+              do_not_insert=0
+              rownum="-1"
+              colnum="-1"
+      STR_VAR arguments=""
+              row=""
+              column=""
+              file=""
+              default_fill="0"
+BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
+      ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+         FAIL "Tried to write an entry to %file%, but %file% does not exist and nor does %file%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT file "%file%.2da"
+      END
+   END
+   COPY_EXISTING "%file%" "override"
+      LPF write_table_entry INT_VAR lookup_column do_not_insert rownum colnum STR_VAR row column arguments default_fill END
+      PRETTY_PRINT_2DA
+   BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION write_table_entry_external
+      INT_VAR lookup_column=0
+              do_not_insert=0
+              rownum="-1"
+              colnum="-1"
+      STR_VAR arguments=""
+              row=""
+              column=""
+              file=""
+              default_fill="0"
+              location=""
+              locbase=""
+              locabs=""
+BEGIN
+   LAF get_directory STR_VAR location locbase locabs RET directory END
+   ACTION_IF !FILE_EXISTS "%directory%/%file%" BEGIN
+      FAIL "Tried to write a 2da entry to %directory%/%file% but it doesn't exist"
+   END
+   COPY "%directory%/%file%" "%directory%"
+      LPF write_table_entry INT_VAR lookup_column do_not_insert rownum colnum STR_VAR row column arguments default_fill END
+      PRETTY_PRINT_2DA
+   BUT_ONLY
+END
+
+
+DEFINE_PATCH_FUNCTION append_numbered_row
+      STR_VAR arguments=""
+      RET value
+BEGIN
+      COUNT_2DA_COLS colcount
+      COUNT_2DA_ROWS colcount rowcount
+      SET highest_num=0
+      FOR (i=0;i<rowcount;i+=1) BEGIN
+         READ_2DA_ENTRY i 0 colcount this_num
+         PATCH_IF !IS_AN_INT this_num BEGIN
+            PATCH_FAIL "You are trying to use the append_numbered_row function with a 2da (probably %SOURCE_FILE%) that is not of the right form"
+         END
+         SET highest_num = this_num > highest_num ? this_num : highest_num
+      END
+      SET value=highest_num + 1
+      SPRINT new_row "%value% %arguments%"
+      INSERT_2DA_ROW rowcount colcount "%new_row%"
+END
+
+
+DEFINE_PATCH_FUNCTION renumber_rows
+      INT_VAR start_at=1
+BEGIN
+      COUNT_2DA_COLS colcount
+      COUNT_2DA_ROWS colcount rowcount
+      PATCH_IF colcount=2 BEGIN
+         SET firstrow=1
+      END ELSE BEGIN
+         SET firstrow=0
+      END
+      SET highest_num=0
+      FOR (i=firstrow;i<rowcount;i+=1) BEGIN
+         SET val=i+start_at - firstrow
+         SET_2DA_ENTRY i 0 colcount "%val%"
+      END
+      PRETTY_PRINT_2DA
+END
+
+
+DEFINE_ACTION_FUNCTION clone_row // borrowed from Cam
+    INT_VAR dont_complain=0
+    STR_VAR clone_from=""
+            clone_to=""
+            file=""
+BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
+      ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+         FAIL "Tried to write an entry to %file%, but %file% does not exist and nor does %file%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT file "%file%.2da"
+      END
+   END
+   ACTION_IF ((FILE_CONTAINS_EVALUATED(~%file%~ ~^%clone_from%\([ %TAB%].+\)$~)) AND NOT
+                 (FILE_CONTAINS_EVALUATED(~%file%~ ~^%clone_to%\([ %TAB%].+\)$~))) THEN BEGIN
+
+        COPY_EXISTING ~%file%~ ~override~
+          TO_UPPER clone_from
+          TO_UPPER clone_to
+          REPLACE_EVALUATE ~^%clone_from%\([ %TAB%].+\)$~
+            BEGIN SPRINT "RESULT" "%MATCH1%"
+            END
+            ~%clone_from%%RESULT%~
+        
+        APPEND ~%file%~ ~%clone_to%%RESULT%~
+  
+        COPY_EXISTING ~%file%~ ~override~
+          PRETTY_PRINT_2DA
+
+      END ELSE BEGIN
+        ACTION_IF !dont_complain BEGIN
+         LAF warning STR_VAR warning="Tried to clone %clone_from% row of %file% to %clone_to%, but there is no such row, or else %clone_to% is already present" END
+        END
+      END
+END
+
+DEFINE_ACTION_FUNCTION clone_column
+    INT_VAR dont_complain=0
+    STR_VAR clone_from=""
+            clone_to=""
+            file=""
+            add_before=""
+            add_after=""
+BEGIN
+      ACTION_TO_UPPER clone_from
+      ACTION_TO_UPPER clone_to
+      ACTION_TO_UPPER add_before
+      ACTION_TO_UPPER add_after
+      ACTION_IF ((FILE_CONTAINS_EVALUATED(~%file%.2da~ ~[ %TAB%]%clone_from%[ %TAB%]~)) AND NOT
+                 (FILE_CONTAINS_EVALUATED(~%file%.2da~ ~[ %TAB%]%clone_to%[ %TAB%]~))) THEN BEGIN
+         COPY_EXISTING "%file%.2da" override
+          COUNT_2DA_COLS colcount
+          COUNT_2DA_ROWS colcount rowcount
+          // if there is no add_before or add_after, get one
+          PATCH_IF "%add_before%%add_after%" STRING_EQUAL "" BEGIN
+             READ_2DA_ENTRY 0 colcount - 2 colcount - 1 add_after
+          END
+          LPF get_table_column_coordinate STR_VAR column="%clone_from%" RET from_col=colnum END
+          LPF get_table_column_coordinate STR_VAR column="%add_before%%add_after%" RET to_col=colnum END
+          FOR (i=0;i<rowcount;i+=1) BEGIN
+             // get entry to clone
+             LPF get_table_column_coordinate STR_VAR column="%clone_from%" RET colnum END
+             READ_2DA_ENTRY i from_col colcount to_edit
+             /// set entry in target column
+             READ_2DA_ENTRY i to_col colcount to_copy
+             PATCH_IF "%add_before%" STRING_COMPARE "" BEGIN
+                SET_2DA_ENTRY i to_col colcount "%to_edit% %to_copy%"
+             END ELSE BEGIN
+                SET_2DA_ENTRY i to_col colcount "%to_copy% %to_edit%"
+             END
+          END
+          // sort out header
+          PATCH_IF "%add_before%" STRING_COMPARE "" BEGIN
+             REPLACE_TEXTUALLY "%add_before%" "%clone_to% %add_before%"
+          END ELSE BEGIN
+             REPLACE_TEXTUALLY "%add_after%" "%add_after% %clone_to%"
+          END
+          PRETTY_PRINT_2DA
+      END ELSE BEGIN
+        ACTION_IF !dont_complain BEGIN
+         LAF warning STR_VAR warning="Tried to clone %clone_from% column of %file% to %clone_to%, but there is no such column, or else %clone_to% is already present" END
+        END
+      END
+END

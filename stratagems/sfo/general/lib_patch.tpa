@@ -1,0 +1,1407 @@
+//////////////////////////////////////////////////////////////////////////////////
+///     Functions used for the SFO patch formalism
+//////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             find the first index (for a particular secondary entry) in a given entry type
+/////////////             Do so recursively: look up what the entry type's secondaries follow (given by [file_ext]_[secondary]_secondaries_follow_[entry]).
+/////////////             If you get "null", return zero.
+/////////////             If there are any such entries, check the last of them and return the result.
+/////////////             If not, call the function again for the predecessor entry type
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_first_secondary_index
+      STR_VAR entry_type=""
+              secondary_type=""
+      RET     value
+BEGIN
+   PATCH_IF !VARIABLE_IS_SET "%file_ext%_%secondary_type%_secondaries_follow_%entry_type%" BEGIN
+      SET value=0
+   END ELSE BEGIN
+    SPRINT predecessor EVALUATE_BUFFER "%%file_ext%_%secondary_type%_secondaries_follow_%entry_type%%"
+    PATCH_IF "%predecessor%" STRING_EQUAL effect_global BEGIN
+         SET value=SHORT_AT 0x70
+    END ELSE BEGIN
+      LPF return_number_entries STR_VAR file_ext entry_type="%predecessor%" RET num_entries=value END
+      PATCH_IF num_entries>0 BEGIN
+         SET offset_loc=$ "%file_ext%offset_loc"("%predecessor%")
+         SET offset_len=$ "%file_ext%offset_length"("%predecessor%")
+         LPF get_field_value INT_VAR loc=offset_loc length=offset_len RET offset=value END
+         SET entry_length=$ "%file_ext%entry_length"("%predecessor%")
+         LPF return_lowest_secondary_index INT_VAR offset_base=offset+(num_entries - 1)*entry_length STR_VAR entry_type="%predecessor%" secondary_type RET ind=value END
+         LPF return_secondary_entry_count INT_VAR offset_base=offset+(num_entries - 1)*entry_length STR_VAR entry_type="%predecessor%" secondary_type RET num=value END
+         SET value=ind+num
+      END ELSE BEGIN
+         LPF return_first_secondary_index STR_VAR entry_type="%predecessor%" secondary_type RET value END
+      END
+    END
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             return secondary type index and number of entries
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_secondary_data
+    INT_VAR offset_base=0
+            ind_to_return=0
+    STR_VAR entry_type=""
+            secondary_type=""
+    RET index
+        number
+BEGIN
+   PATCH_IF !VARIABLE_IS_SET "lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc_%ind_to_return%" BEGIN
+      SET index="-1"
+      SET number=0
+   END ELSE BEGIN
+      SET ind_loc="lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc_%ind_to_return%"
+      SET ind_len="lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%ind_to_return%"
+      SET num_loc="lookup_%file_ext%_%entry_type%_%secondary_type%_num_loc_%ind_to_return%"
+      SET num_len="lookup_%file_ext%_%entry_type%_%secondary_type%_num_length_%ind_to_return%"
+      LPF get_field_value INT_VAR loc=ind_loc+offset_base length=ind_len RET index=value END
+      LPF get_field_value INT_VAR loc=num_loc+offset_base length=num_len RET number=value END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            update secondary type index and number of entries
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION increment_secondary_data
+    INT_VAR offset_base=0
+            ind_to_write=0
+            index=99999
+            number=99999
+    STR_VAR entry_type=""
+            secondary_type=""
+BEGIN
+   PATCH_IF VARIABLE_IS_SET "lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc_%ind_to_write%" BEGIN
+      SET ind_loc="lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc_%ind_to_write%"
+      SET ind_len="lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%ind_to_write%"
+      SET num_loc="lookup_%file_ext%_%entry_type%_%secondary_type%_num_loc_%ind_to_write%"
+      SET num_len="lookup_%file_ext%_%entry_type%_%secondary_type%_num_length_%ind_to_write%"
+      LPF get_field_value INT_VAR loc=ind_loc+offset_base length=ind_len RET index_old=value END
+      LPF get_field_value INT_VAR loc=num_loc+offset_base length=num_len RET number_old=value END
+      PATCH_IF !(index=99999) BEGIN
+         LPF set_field_value INT_VAR loc=ind_loc+offset_base length=ind_len arguments=index_old+index END
+      END
+      PATCH_IF !(number=99999) BEGIN
+         LPF set_field_value INT_VAR loc=num_loc+offset_base length=num_len arguments=number_old+number END
+      END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              update offsets
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION update_offsets
+    INT_VAR bytes_added=0
+    STR_VAR entry_type=""
+BEGIN
+    CLEAR_ARRAY already_updated
+    LPF return_offset STR_VAR entry_type file_ext RET entry_offset=value END
+    PHP_EACH ~%file_ext%offset_loc~ AS this_type =>discard BEGIN
+      PATCH_IF !VARIABLE_IS_SET "do_not_update_offset_%file_ext%_%this_type%" BEGIN
+        PATCH_IF ~%this_type%~ STRING_COMPARE_CASE ~%entry_type%~ BEGIN
+             LPF return_offset STR_VAR entry_type="%this_type%" file_ext RET this_offset=value offset_loc END
+            PATCH_MATCH 1 WITH
+            this_offset<entry_offset BEGIN
+            END // no need to do anything here
+            this_offset>entry_offset BEGIN
+               LPF increment_offset INT_VAR arguments=bytes_added STR_VAR entry_type="%this_type%" file_ext END
+            END
+            this_offset=entry_offset BEGIN // the awkward case. 
+                                           // 
+                                           // If there are any entries already in the being-updated offset, then previously there were none in the modified one (else the two couldn't
+                                           // have had the same index). So we can and should update. These are caught by return_number_entries > 0.
+                                           //
+                                           // If there is no actual count (as in the "item slots" section of CRE) because the section is of fixed size, it should always be incremented,
+                                           // since it comes under the above category. These are caught by return_number_entries = -1.
+                                           // (This also catches the effect field in ITM/SPL, but that's okay because it should always be last anyway.)
+                                           //
+                                           // When initially there were no fields, we check if there are any already-present fields of the type being added. If there are, we definitely should *not*
+                                           // update.
+                                           //
+                                           // If there aren't (i.e. if both were originally empty) we fall back on the default precedence, i.e. the order the fields were listed in lib_whatever
+                                           //
+                                           // (for efficiency, we only check for fields if default precedence would otherwise apply)
+                                           //
+               LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET number_here=value END
+               PATCH_IF (!number_here=0 || VARIABLE_IS_SET "lookup_%file_ext%_%entry_type%_%this_type%_ind_loc_0") BEGIN
+                   LPF increment_offset INT_VAR arguments=bytes_added STR_VAR entry_type="%this_type%" file_ext END
+               END ELSE BEGIN
+                   PATCH_IF $ ~%file_ext%precedence~(~%entry_type%~) < $ ~%file_ext%precedence~(~%this_type%~) BEGIN
+                       LPF return_number_entries STR_VAR entry_type file_ext RET number_orig=value END
+                       PATCH_IF number_orig=0 BEGIN
+                            LPF increment_offset INT_VAR arguments=bytes_added STR_VAR entry_type="%this_type%" file_ext END
+                       END
+                   END
+               END
+            END
+            DEFAULT
+               PATCH_FAIL "Shouldn't happen"
+            END
+        END
+      END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              update lookup indices for a particular entry of type entry_type beginning at offset_base
+/////////////
+/////////////              We assume access, in background, to a variable number_added_[entry_type] for each entry type, and lowest_added_[entry_type] likewise,
+/////////////              that records the lowest point at which one was added. Any index greater than that point gets incremented; any index equal to that point
+/////////////              gets incremented if a nonzero number of entries are associated with it
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION update_lookup_indices
+    INT_VAR offset_base=0
+    STR_VAR entry_type=""
+BEGIN
+    PHP_EACH ~%file_ext%offset_loc~ AS secondary_type=>discard BEGIN
+       LPF update_lookup_indices_of_type INT_VAR offset_base STR_VAR entry_type secondary_type END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              update lookup indices for a particular entry of type entry_type beginning at offset_base, with respect to a particular secondary.
+/////////////
+/////////////              We assume access, in background, to a variable number_added_[entry_type] for each entry type, and lowest_added_[entry_type] likewise,
+/////////////              that records the lowest point at which one was added. Any index greater than that point gets incremented; any index equal to that point
+/////////////              gets incremented if a nonzero number of entries are associated with it
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION update_lookup_indices_of_type
+    INT_VAR offset_base=0
+    STR_VAR entry_type=""
+            secondary_type=""
+BEGIN
+       PHP_EACH ~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc~ AS int=>index BEGIN
+          SET len=~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%int%~
+          LPF get_field_value INT_VAR loc=index+offset_base length=len RET value END
+          PATCH_IF VARIABLE_IS_SET "number_added_%secondary_type%" BEGIN
+             PATCH_IF value>="lowest_added_%secondary_type%" BEGIN
+                 SET value +="number_added_%secondary_type%"
+                 LPF set_field_value INT_VAR loc=index+offset_base length=len arguments=value END
+             END ELSE BEGIN
+                PATCH_IF value="lowest_added_%secondary_type%" BEGIN
+                    SET numloc=~lookup_%file_ext%_%entry_type%_%secondary_type%_num_loc_%int%~
+                    SET numlen=~lookup_%file_ext%_%entry_type%_%secondary_type%_num_length_%int%~
+                    SET temp=$ ~%file_ext%entrynum_loc~(~%entry_type%~)
+                    LPF get_field_value INT_VAR loc=numloc+offset_base length=numlen RET number END
+                    PATCH_IF number>0 BEGIN
+                          SET value +="number_added_%secondary_type%"
+                          LPF set_field_value INT_VAR loc=index+offset_base length=len arguments=value END
+                    END
+                END
+             END
+          END
+       END
+END
+
+DEFINE_PATCH_FUNCTION set_lookup_indices_of_type
+    INT_VAR offset_base=0
+            index=0
+    STR_VAR entry_type=""
+            secondary_type=""
+BEGIN
+       PHP_EACH ~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc~ AS int=>entry_ind BEGIN
+          SET len=~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%int%~
+          LPF set_field_value INT_VAR loc=entry_ind+offset_base length=len arguments=index END
+       END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              increment lookup indices for a particular entry of type entry_type beginning at offset_base, with respect to a particular secondary.
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION increment_lookup_indices
+    INT_VAR offset_base=0
+            increment=0
+    STR_VAR entry_type=""
+            secondary_type=""
+BEGIN
+       PHP_EACH ~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc~ AS int=>index BEGIN
+          SET len=~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%int%~
+          LPF get_field_value INT_VAR loc=index+offset_base length=len RET value END
+          SET value += increment
+          LPF set_field_value INT_VAR loc=index+offset_base length=len arguments=value END
+       END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Return the total number of secondary-type entries associated with the given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_secondary_entry_count
+        INT_VAR offset_base=0
+        STR_VAR entry_type=""
+                secondary_type=""
+        RET value
+BEGIN
+   SET value=0
+   PHP_EACH ~lookup_%file_ext%_%entry_type%_%secondary_type%_num_loc~ AS int=>index BEGIN
+          SET len=~lookup_%file_ext%_%entry_type%_%secondary_type%_num_length_%int%~
+          LPF get_field_value INT_VAR loc=index+offset_base length=len RET num_here=value END
+          SET value +=num_here
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Return the lowest secondary-type index associated with the given entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_lowest_secondary_index
+        INT_VAR offset_base=0
+        STR_VAR entry_type=""
+                secondary_type=""
+        RET value
+BEGIN
+   SET value=9999999
+   PHP_EACH ~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_loc~ AS int=>index BEGIN
+          SET len=~lookup_%file_ext%_%entry_type%_%secondary_type%_ind_length_%int%~
+          LPF get_field_value INT_VAR loc=index+offset_base length=len RET ind_here=value END
+          SET value = value < ind_here ? value : ind_here
+   END
+   PATCH_IF value=9999999 BEGIN
+      SET value="-1"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Copy "num_to_copy" copies of the entry type starting at index "index", and insert "num_of_copies" of them at that index
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION insert_copies_at_index
+     INT_VAR index=0
+             blank=0
+             num_to_copy=0
+             num_of_copies=0
+     STR_VAR entry_type=""
+     RET value
+BEGIN
+     LPF return_offset INT_VAR offset_num=index STR_VAR entry_type file_ext RET offset=value END
+     SET entry_length=$ ~%file_ext%entry_length~(~%entry_type%~)
+     PATCH_IF !blank BEGIN
+        READ_ASCII offset template (entry_length*num_to_copy)
+     END
+     SET value=0
+     FOR (i=0;i<num_of_copies;i+=1) BEGIN
+        INSERT_BYTES offset (entry_length*num_to_copy)
+        PATCH_IF !blank BEGIN
+             WRITE_ASCIIE offset "%template%"
+        END
+        SET value+=entry_length*num_to_copy
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Delete number_to_delete copies of the entry type starting at index "index"
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION delete_at_index
+     INT_VAR index=0
+             number_to_delete=1
+     STR_VAR entry_type=""
+     RET value
+BEGIN
+     LPF return_offset INT_VAR offset_num=index STR_VAR entry_type file_ext RET offset=value END
+     SET entry_length=$ ~%file_ext%entry_length~(~%entry_type%~)
+     DELETE_BYTES offset entry_length*number_to_delete
+     SET value = 0 - entry_length* number_to_delete
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Check if a condition is satisfied
+/////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION evaluate_condition 
+     INT_VAR offset_secondary=0
+             offset_base=0
+     STR_VAR match="1"
+             match_parameter=""
+             check=""
+             checkGT=""
+             checkLT=""
+             filename=""
+             file_ext=""
+     RET     value
+BEGIN
+     // match should be set; if not, set it to 1
+     PATCH_IF "%match%" STRING_EQUAL "" BEGIN
+        SPRINT match 1
+     END
+     // at most one of check, checkLT, checkGT should be set; get it
+     PATCH_IF "%checkGT%" STRING_COMPARE "" BEGIN
+        SPRINT match "%match%>%checkGT%"
+     END ELSE
+     PATCH_IF "%checkLT%" STRING_COMPARE "" BEGIN
+        SPRINT match "%match%<%checkLT%"
+     END ELSE
+     PATCH_IF "%check%" STRING_COMPARE "" BEGIN
+        PATCH_IF IS_AN_INT check BEGIN
+            SPRINT match "%match%=%check%"
+        END
+        ELSE BEGIN
+           SPRINT match "%match% is %check%"
+        END
+     END
+     LPF evaluate_expression INT_VAR offset_secondary offset_base boolean=1 STR_VAR filename file_ext expression="%match%" arguments="%match_parameter%" RET value=value END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               general templates to apply patches from a list
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION apply_patches
+     INT_VAR
+             offset_secondary=0
+             really_no_default=0
+             entry_index=0
+             parent_index=0
+     STR_VAR
+             edits=""
+             arguments=""
+             file_ext=""
+             filename=""
+             offset_base="0"
+             is_conditional="no" // a bit of a misnomer. We really mean: is it being called by one of patch_entry etc. (If so, we ignore match etc commands)
+BEGIN
+
+          LPF edit_sanity_check STR_VAR edits task="applying patch to %filename%.%file_ext%" END
+          PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+             SPRINT ~edits~ ~%arguments%~
+          END
+          PATCH_FOR_EACH var IN check checkLT checkGT match BEGIN
+             SPRINT "%var%" ""
+          END
+          // go through first to get any match (etc) instructions
+          PATCH_IF "%is_conditional%" STRING_COMPARE_CASE yes BEGIN
+             PHP_EACH "%edits%" AS function=>args BEGIN
+                PATCH_MATCH "%function%" WITH
+                "checkGT" "checkLT" "check" "match" BEGIN
+                     SPRINT "%function%" "%args%"
+                END
+                DEFAULT END
+             END
+          END
+          // evaluate condition
+          PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+          "" BEGIN
+             SET found_match=1
+          END
+          DEFAULT
+             LPF evaluate_condition STR_VAR filename file_ext match check checkLT checkGT RET found_match=value END
+          END
+          PATCH_IF found_match BEGIN
+          // ensure that none of the expressions we're trying to match has inherited a numerical value from elsewhere!
+          PATCH_FOR_EACH string IN
+          checkGT checkLT check match litvar_ var_ type number_to_add at_end insert_point clone_above BEGIN
+             SPRINT "%string%" ""
+          END
+
+          PHP_EACH  ~%edits%~ AS function => args BEGIN
+              PATCH_IF debug_variable=2 BEGIN
+                 PATCH_PRINT ~input to apply_patches: %function% %args%~
+              END
+              INNER_PATCH_SAVE ~function2~ ~%function%~ BEGIN
+                 REPLACE_TEXTUALLY ~'[0-9]+~ ~~ // handle duplicates
+                 REPLACE_TEXTUALLY ~'~ ~~ // handle duplicates
+              END
+              PATCH_IF debug_variable=2 BEGIN PATCH_PRINT ~Running function %function2%~ END
+              SET default=0
+              PATCH_MATCH ~%function2%~ WITH
+              "number_to_add" "at_end" "insert_point" "type" "clone_above" // these aren't function calls
+              BEGIN
+              PATCH_IF ~%is_conditional%~ STRING_EQUAL_CASE ~no~ BEGIN
+                      PATCH_FAIL "The patch to %filename%.%file_ext% is applied unconditionally but contains conditions or type specification"
+                   END
+              END
+              checkGT checkLT check match BEGIN
+              END
+              literal
+              BEGIN
+                   LPF patch_reinclude_this STR_VAR input= ~%args%~ END
+              END
+              "litvar_.*"
+              BEGIN
+                 INNER_PATCH_SAVE function2 "%function2%" BEGIN
+                    DELETE_BYTES 0x0 3
+                 END
+                 SPRINT "SFO_RESERVED_%function2%" "%args%"  // so I'm violating the encapsulation of the functions. So sue me. (At least until WEIDU can handle lists as arguments.)
+              END
+              "var_.*"
+              BEGIN
+                 LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR expression="%args%" filename file_ext RET value=value END
+                 SPRINT "SFO_RESERVED_%function2%" "%value%"
+              END
+              // these ones don't get evaluated
+              patch_entry add_entry delete_entry clone_entry patch_entry_inline add_entry_inline delete_entry_inline clone_entry_inline  level_based_blocks BEGIN // the arguments of these functions should not be evaluated
+                   LPF "%function2%" INT_VAR offset_secondary entry_index STR_VAR arguments=~%args%~ filename offset_base file_ext END
+              END
+
+              "\(patch\|clone\|add\)_.*_inline" BEGIN
+                    INNER_PATCH "%function2%" BEGIN
+                       REPLACE_EVALUATE "\([^_]*\)_\(.*\)_inline" BEGIN
+                            SPRINT type "%MATCH2%"
+                            SPRINT instr "%MATCH1%"
+                       END
+                       discard
+                    END
+                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global BEGIN
+                               PATCH_FAIL "%type% is not a legal entry type for files of type %file_ext%"
+                    END ELSE BEGIN
+                               LPF "%instr%_entry_inline" STR_VAR arguments="%args%" type filename file_ext END
+                    END
+              END
+
+              "\(patch\|clone\|delete\|add\)_.*" BEGIN
+                    INNER_PATCH "%function2%" BEGIN
+                       REPLACE_EVALUATE "\([^_]*\)_\(.*\)" BEGIN
+                            SPRINT type "%MATCH2%"
+                            SPRINT instr "%MATCH1%"
+                       END
+                       discard
+                    END
+                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global BEGIN
+                               SET default=1
+                    END ELSE BEGIN
+                               LPF "%instr%_entry" STR_VAR arguments="%args%" type filename file_ext END
+                    END
+              END
+               
+              // main implementation
+              DEFAULT
+                 SET default=1
+              END
+              PATCH_IF default BEGIN
+                     PATCH_IF debug_variable=2 BEGIN
+                        PATCH_PRINT ~Calling %function2%, arguments %offset_secondary% %args% %filename% %offset_base% %file_ext%~
+                      END
+                      PATCH_IF !VARIABLE_IS_SET $SFO_do_not_parse_arguments("%function2%") && !VARIABLE_IS_SET $SFO_do_not_parse_arguments("%file_ext%_%function2%") BEGIN
+                         LPF evaluate_expression INT_VAR offset_secondary offset_base entry_index STR_VAR filename file_ext expression="%args%" RET value=value END
+                      END ELSE BEGIN
+                         SPRINT value "%args%"
+                      END
+                      LPF apply_standard_function INT_VAR offset_secondary entry_index STR_VAR func=~%function2%~ arguments=~%value%~ filename offset_base file_ext END
+              END
+          END
+          END
+END
+
+
+DEFINE_PATCH_FUNCTION apply_patches_inline
+        INT_VAR 
+                offset_secondary=0
+                offset_base=0
+                entry_index=0
+        STR_VAR
+               editstring=""
+               arguments=""
+               file_ext=""
+               filename=""
+BEGIN
+    PATCH_IF "%arguments%" STRING_EQUAL "" BEGIN
+       SPRINT arguments "%editstring%"
+    END
+    CLEAR_ARRAY temp_assoc
+    WHILE "%arguments%" STRING_COMPARE "" BEGIN
+       LPF return_first_pair STR_VAR list="%arguments%" RET key=key value=value arguments=list END
+       WHILE VARIABLE_IS_SET $temp_assoc("%key%") BEGIN
+          SPRINT key "%key%'"
+       END
+       SPRINT $temp_assoc("%key%") "%value%"
+    END
+    LPF apply_patches
+             INT_VAR offset_base offset_secondary entry_index
+             STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~
+    END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("apply_patches_inline") ""
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Apply patch on condition
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION patch_entry
+          STR_VAR arguments=""  // this is a patch
+                  filename=""
+                  file_ext=""
+                  type=""
+BEGIN
+     LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
+     // read in parameters
+     SPRINT check ""
+     SPRINT checkGT ""
+     SPRINT checkLT ""
+     SPRINT match ""
+     PHP_EACH  "%arguments%" AS func=>arg BEGIN
+            PATCH_MATCH "%func%" WITH
+            match check checkLT checkGT type BEGIN
+                SPRINT  "%func%" "%arg%"
+            END
+            patch_entry_inline patch_entry add_entry_inline add_entry delete_entry_inline delete_entry clone_entry_inline clone_entry
+            BEGIN
+                    PATCH_FAIL "You can't chain conditional patches: %func% can't be used inside another conditional patch"
+            END
+            "var_.*" BEGIN
+               SPRINT  "SFO_RESERVED_%func%" "%arg%"
+            END
+            DEFAULT
+            END
+     END
+     PATCH_IF "%type%" STRING_EQUAL "" BEGIN
+        PATCH_FAIL "patch_entry patch on %filename%.%file_ext% does not specify a type of entry to add"
+     END
+     SPRINT entry_type "%type%"
+     PATCH_IF VARIABLE_IS_SET $ "%file_ext%_virtual_type_parent"("%type%") BEGIN
+            SPRINT parent_type EVALUATE_BUFFER "%%file_ext%_virtual_type_parent_%type%%"
+            SPRINT entry_type EVALUATE_BUFFER "%%file_ext%_virtual_type_child_%type%%"
+            SET sec_index="%file_ext%_virtual_type_index_%type%"
+            LPF patch_entry_child INT_VAR sec_index  STR_VAR entry_type clone_above parent_type at_end insert_point  arguments check checkGT checkLT match match_parameter filename file_ext number_to_add END
+     END ELSE BEGIN
+            LPF patch_entry_notchild  STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
+     END
+END
+
+DEFINE_PATCH_FUNCTION patch_entry_child
+     INT_VAR sec_index=0
+     STR_VAR arguments=""
+             check=""
+             checkGT=""
+             checkLT=""
+             match=""
+             entry_type=""
+             parent_type=""
+             filename=""
+             file_ext=""
+BEGIN
+      // initialise
+         LPF return_number_entries STR_VAR entry_type="%parent_type%" file_ext RET num_entries_parent=value END
+         // cycle through parent
+         FOR (parent_index=0;parent_index<num_entries_parent;parent_index+=1) BEGIN
+            // find the offset
+            LPF return_offset INT_VAR offset_num=parent_index STR_VAR entry_type="%parent_type%" file_ext RET offset_base=value END
+            // cycle through child types
+            LPF return_secondary_data INT_VAR offset_base ind_to_return=sec_index STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  RET index number END
+            FOR (entry_index=0;entry_index<number;entry_index+=1) BEGIN
+               SET index_here=index+entry_index
+               LPF return_offset INT_VAR offset_num=index_here STR_VAR entry_type file_ext RET offset_secondary=value END
+               // check condition
+               PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+               "" BEGIN
+                   SET found_match=1
+               END
+               DEFAULT
+                   LPF evaluate_condition INT_VAR parent_index entry_index offset_secondary STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
+               END
+               PATCH_IF found_match BEGIN
+                  // patch
+                     LPF apply_patches INT_VAR parent_index entry_index offset_secondary STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
+               END
+            END
+         END
+END
+
+
+DEFINE_PATCH_FUNCTION patch_entry_notchild
+     STR_VAR arguments=""
+             check=""
+             checkGT=""
+             checkLT=""
+             match=""
+             filename=""
+             file_ext=""
+             entry_type=""
+BEGIN
+        // handle effect_global as a special case
+        PATCH_IF "%entry_type%" STRING_EQUAL_CASE effect_global BEGIN
+            SET effect_global=1
+            SPRINT entry_type effect
+            READ_SHORT 0x70 num_entries
+        END ELSE BEGIN
+            SET effect_global=0
+            LPF return_number_entries STR_VAR entry_type file_ext RET num_entries=value END
+        END
+
+         // cycle through
+         FOR (entry_index=0;entry_index<num_entries;entry_index+=1) BEGIN
+            // find the offset
+            LPF return_offset INT_VAR offset_num=entry_index STR_VAR entry_type file_ext RET offset_base=value END
+            // check condition
+            PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+            "" BEGIN
+                   SET found_match=1
+            END
+            DEFAULT
+                   LPF evaluate_condition INT_VAR entry_index offset_secondary=offset_base STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
+            END
+            PATCH_IF found_match BEGIN  // apply patches
+                  LPF apply_patches INT_VAR entry_index offset_secondary=offset_base STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
+            END
+         END
+
+END
+
+
+
+DEFINE_PATCH_FUNCTION patch_entry_inline
+        STR_VAR
+               arguments=""
+               file_ext=""
+               filename=""
+               type=""
+BEGIN
+    CLEAR_ARRAY temp_assoc
+    WHILE "%arguments%" STRING_COMPARE "" BEGIN
+       LPF return_first_pair STR_VAR list="%arguments%" RET key=key value=value arguments=list END
+       SPRINT $temp_assoc("%key%") "%value%"
+    END
+    LPF patch_entry
+             STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~  type
+    END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               add an entry type
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION add_entry
+          INT_VAR at_end=0
+          STR_VAR arguments=""  // this is a patch
+                  filename=""
+                  file_ext=""
+                  type=""
+BEGIN
+     LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
+     // read in parameters
+     SPRINT check ""
+     SPRINT checkGT ""
+     SPRINT checkLT ""
+     SPRINT match ""
+     SPRINT match_parameter ""
+     SET number_to_add=1
+     SET insert_point=0
+     SET at_end=0
+     PHP_EACH  "%arguments%" AS func=>arg BEGIN
+            PATCH_MATCH "%func%" WITH
+            number_to_add match match_parameter check checkLT checkGT type insert_point at_end BEGIN
+                SPRINT  "%func%" "%arg%"
+            END
+            add_entry_inline add_entry delete_entry_inline delete_entry clone_entry_inline clone_entry
+            BEGIN
+                    PATCH_FAIL "You can't chain conditional patches: %func% can't be used inside another conditional patch"
+            END
+            "var_.*" BEGIN
+               SPRINT  "SFO_RESERVED_%func%" "%arg%"
+            END
+            DEFAULT
+            END
+     END
+     PATCH_IF "%type%" STRING_EQUAL "" BEGIN
+        PATCH_FAIL "add_entry patch on %filename%.%file_ext% does not specify a type of entry to add"
+     END
+     SPRINT entry_type "%type%"
+     PATCH_IF VARIABLE_IS_SET $ "%file_ext%_virtual_type_parent"("%type%") BEGIN
+            SPRINT parent_type EVALUATE_BUFFER "%%file_ext%_virtual_type_parent_%type%%"
+            SPRINT entry_type EVALUATE_BUFFER "%%file_ext%_virtual_type_child_%type%%"
+            SET sec_index="%file_ext%_virtual_type_index_%type%"
+            LPF add_entry_child INT_VAR sec_index insert_point STR_VAR entry_type clone_above parent_type at_end insert_point  arguments check checkGT checkLT match match_parameter filename file_ext number_to_add END
+     END ELSE BEGIN
+            LPF add_entry_notchild INT_VAR insert_point STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
+     END
+END
+
+DEFINE_PATCH_FUNCTION add_entry_child
+     INT_VAR sec_index=0
+     STR_VAR arguments=""
+             check=""
+             checkGT=""
+             checkLT=""
+             match=""
+             entry_type=""
+             parent_type=""
+             match_parameter=""
+             filename=""
+             file_ext=""
+             at_end="0"
+             insert_point="0"
+             number_to_add="1" // it's still a STR_VAR, as it might be functional
+BEGIN
+        // initialise
+         SET "number_added_%entry_type%"=0
+         SET "lowest_added_%entry_type%"=999999
+         LPF return_number_entries STR_VAR entry_type="%parent_type%" file_ext RET num_entries_parent=value END
+         // cycle through parent
+         FOR (parent_index=0;parent_index<num_entries_parent;parent_index+=1) BEGIN
+            // find the offset
+            LPF return_offset INT_VAR offset_num=parent_index STR_VAR entry_type="%parent_type%" file_ext RET offset_base=value END
+            //  update child indices
+            SET temp="number_added_%entry_type%"
+            LPF increment_lookup_indices INT_VAR offset_base increment="number_added_%entry_type%" STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%" END
+            // check the condition
+            PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+            "" BEGIN
+                   SET found_match=1
+            END
+            DEFAULT
+                   LPF evaluate_condition INT_VAR offset_secondary=offset_base STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
+            END
+            PATCH_IF found_match BEGIN
+                // get child data
+                LPF return_secondary_data INT_VAR offset_base ind_to_return=sec_index STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  RET index num_entries=number END
+                PATCH_IF index<"lowest_added_%entry_type%" BEGIN
+                   SET "lowest_added_%entry_type%" = index 
+                END
+                // work out how many to add
+                LPF evaluate_expression INT_VAR parent_index offset_secondary=offset_base STR_VAR offset_base filename file_ext expression="%number_to_add%" RET number_to_add_val=value END
+                // get the insertion point
+                LPF evaluate_expression INT_VAR parent_index offset_secondary=offset_base offset_base STR_VAR filename file_ext expression="%insert_point%" RET insert_point_val=value END
+                LPF evaluate_expression INT_VAR parent_index offset_secondary=offset_base offset_base STR_VAR filename file_ext expression="%at_end%" RET at_end_val=value END
+                PATCH_IF insert_point_val="-1" BEGIN
+                      SET at_end_val=1 // support legacy ADD_SPL_EFFECT syntax
+                END
+                SET insert_point_val= at_end_val? num_entries : (insert_point_val > num_entries ? num_entries : insert_point_val)
+                // do the insertion
+                LPF insert_copies_at_index INT_VAR blank=1 index=index+insert_point_val num_to_copy=1 num_of_copies=number_to_add_val STR_VAR entry_type RET bytes_added=value END
+                LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+
+                // patch
+                FOR (entry_index=0;entry_index<number_to_add_val;entry_index+=1) BEGIN
+                     LPF return_offset INT_VAR offset_num=index + entry_index + insert_point_val STR_VAR entry_type file_ext RET offset_here=value END
+                     // defaults
+                     PATCH_MATCH "%file_ext%_%entry_type%" WITH
+                     SPL_effect ITM_effect BEGIN
+                         WRITE_BYTE 0x12+offset_here 100
+                     END
+                     DEFAULT
+                     END
+                     LPF apply_patches INT_VAR offset_secondary=offset_here entry_index parent_index STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
+                END
+                // update number of entries
+                LPF increment_secondary_data INT_VAR offset_base ind_to_write=sec_index  number=number_to_add_val  STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+                // loop through any remaining secondary entries here
+                SET next_ind=sec_index+1
+                WHILE VARIABLE_IS_SET "lookup_%file_ext%_%parent_type%_%entry_type%_ind_loc_%next_ind%" BEGIN
+                     LPF increment_secondary_data INT_VAR offset_base ind_to_write=next_ind   index=number_to_add_val STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+                     SET next_ind +=1
+                END
+                SET "number_added_%entry_type%" +=number_to_add_val
+            END 
+         END
+         
+         // update the indices in all other entries
+         
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            PATCH_IF "%this_type%" STRING_COMPARE "%parent_type%" && VARIABLE_IS_SET "has_secondaries_%file_ext%_%this_type%" BEGIN
+                     LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET num_entries=value END
+                     FOR (i=0;i<num_entries;i+=1) BEGIN
+                         LPF return_offset INT_VAR offset_num=i STR_VAR entry_type="%this_type%" file_ext RET offset_base=value END
+                         LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type="%this_type%" END
+                     END
+            END
+         END
+
+         // update the secondary type number
+         SET arguments="number_added_%entry_type%"
+         LPF increment_number_entries INT_VAR arguments STR_VAR entry_type file_ext END
+END
+
+
+
+DEFINE_PATCH_FUNCTION add_entry_notchild
+     STR_VAR arguments=""
+             check=""
+             checkGT=""
+             checkLT=""
+             match=""
+             match_parameter=""
+             filename=""
+             file_ext=""
+             entry_type=""
+             at_end="0"
+             insert_point="0"
+             number_to_add="1" // it's still a STR_VAR, as it might be functional
+BEGIN
+        // handle effect_global as a special case
+        PATCH_IF "%entry_type%" STRING_EQUAL_CASE effect_global BEGIN
+            SET effect_global=1
+            SPRINT entry_type effect
+            READ_SHORT 0x70 num_entries
+        END ELSE BEGIN
+            SET effect_global=0
+            LPF return_number_entries STR_VAR entry_type file_ext RET num_entries=value END
+        END
+        // initialise
+        PHP_EACH ~%file_ext%offset_loc~ AS this_type =>discard BEGIN
+             SET "number_added_%this_type%"=0
+             SET "lowest_added_%this_type%"=999999
+        END
+        SET entry_length=$ ~%file_ext%entry_length~(~%entry_type%~)
+        // check condition
+        PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+        "" BEGIN
+             SET found_match=1
+        END
+        DEFAULT  // notice that the condition is evaluated at the parent step, so offset_base isn't needed
+             LPF evaluate_condition STR_VAR match check match_parameter checkGT checkLT filename file_ext RET found_match=value END
+        END
+        PATCH_IF found_match=1 BEGIN
+             // find the actual value for number_to_add
+             LPF evaluate_expression STR_VAR filename file_ext expression="%number_to_add%" RET number_to_add_val=value END
+             // get the insertion point
+             LPF evaluate_expression STR_VAR filename file_ext expression="%insert_point%" RET insert_point_val=value END
+             LPF evaluate_expression STR_VAR filename file_ext expression="%at_end%" RET at_end_val=value END
+             PATCH_IF insert_point_val="-1" BEGIN
+                      SET at_end_val=1 // support legacy ADD_SPL_EFFECT syntax
+             END
+             SET insert_point_val= at_end_val? num_entries : (insert_point_val > num_entries ? num_entries : insert_point_val)
+             LPF return_offset INT_VAR offset_num=insert_point_val STR_VAR entry_type file_ext RET offset_base=value END
+             // physically insert the entries
+             LPF insert_copies_at_index INT_VAR blank=1 index=insert_point_val num_to_copy=1 num_of_copies=number_to_add_val STR_VAR entry_type RET bytes_added=value END
+             LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+             SET "number_added_%entry_type%" = number_to_add_val
+             // find the values for the indices on the secondary entries
+             PHP_EACH "%file_ext%offset_loc" AS secondary_type=>discard BEGIN
+                PATCH_IF insert_point_val>0 BEGIN // if this isn't the first entry, just get it from the previous entry
+                   LPF return_secondary_entry_count INT_VAR offset_base=offset_base - entry_length STR_VAR entry_type secondary_type RET sec_num_prev=value END
+                   LPF return_lowest_secondary_index INT_VAR offset_base=offset_base - entry_length STR_VAR entry_type secondary_type RET sec_ind_prev=value END
+                   SET sec_ind_here=sec_num_prev+sec_ind_prev
+                END ELSE BEGIN
+                   LPF return_first_secondary_index STR_VAR entry_type secondary_type RET sec_ind_here=value END
+                END
+                FOR (i=0;i<number_to_add_val;i+=1) BEGIN
+                   LPF set_lookup_indices_of_type INT_VAR offset_base=offset_base+entry_length*i index=sec_ind_here STR_VAR entry_type secondary_type END
+                END
+             END
+             // patch
+             FOR (entry_index=0;entry_index<number_to_add_val;entry_index+=1) BEGIN
+                SET offset_here=offset_base+entry_length*entry_index
+                // defaults
+                PATCH_IF effect_global && "%file_ext%" STRING_EQUAL_CASE itm BEGIN
+                   WRITE_BYTE 0x2+offset_here 1 // target:self
+                   WRITE_BYTE 0xc+offset_here 2 // timing: instant/while equipped
+                   WRITE_BYTE 0x12+offset_here 100 // probability
+                END
+                PATCH_MATCH "%file_ext%_%entry_type%" WITH
+                CRE_effect BEGIN
+                   WRITE_LONG 0xc+offset_here 1 // target: self
+                   WRITE_LONG 0x1c+offset_here 9 // timing: permanent
+                   WRITE_SHORT 0x24+offset_here 100 // probability
+                END
+                DEFAULT
+                END
+                LPF apply_patches INT_VAR offset_base=offset_here offset_secondary=offset_here entry_index STR_VAR filename file_ext edits="%arguments%" is_conditional=yes END
+             END
+
+        END
+
+        // update number of entries
+        LPF increment_number_entries INT_VAR arguments="number_added_%entry_type%" STR_VAR entry_type file_ext END
+        PATCH_IF effect_global BEGIN
+            WRITE_SHORT 0x70 (SHORT_AT 0x70)+number_added_effect
+            SPRINT entry_type ability
+            LPM get_offset_array
+            PHP_EACH offset_array AS int=>off BEGIN
+                WRITE_SHORT (0x20+off) (SHORT_AT (0x20+off))+number_added_effect
+            END
+        END
+
+
+END
+
+
+
+DEFINE_PATCH_FUNCTION add_entry_inline
+    STR_VAR arguments="" // this is a hash
+            file_ext=""
+            filename=""
+            type=""
+BEGIN
+     LPF key_value_sanity_check INT_VAR is_key=1 STR_VAR arguments END
+     CLEAR_ARRAY temp_assoc
+    SPRINT ~temp~ ~ACTION_DEFINE_ASSOCIATIVE_ARRAY temp_assoc BEGIN %arguments% END~
+    WHILE "%arguments%" STRING_COMPARE "" BEGIN
+       LPF return_first_pair STR_VAR list="%arguments%" RET key=key value=value arguments=list END
+       SPRINT $temp_assoc("%key%") "%value%"
+    END
+     LPF add_entry
+             STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~ type
+     END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             clone an entry based on matched conditions
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION clone_entry
+    STR_VAR arguments="" // this is a hash
+            file_ext=""
+            filename=""
+            type=""
+BEGIN
+     LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
+     // read in parameters
+     SPRINT check ""
+     SPRINT checkGT ""
+     SPRINT checkLT ""
+     SPRINT match ""
+     SPRINT match_parameter ""
+     SET clone_above=0
+     SET number_to_add=1
+     PHP_EACH  "%arguments%" AS func=>arg BEGIN
+            PATCH_MATCH "%func%" WITH
+            number_to_add match match_parameter check checkLT checkGT type clone_above BEGIN
+                SPRINT  "%func%" "%arg%"
+            END
+            add_entry_inline add_entry delete_entry_inline delete_entry clone_entry_inline clone_entry
+            BEGIN
+                    PATCH_FAIL "You can't chain conditional patches: %func% can't be used inside another conditional patch"
+            END
+            "var_.*" BEGIN
+               SPRINT  "SFO_RESERVED_%func%" "%arg%"
+            END
+            DEFAULT
+            END
+     END
+    PATCH_IF ~%type%~ STRING_EQUAL "" BEGIN
+       PATCH_FAIL "You are trying to clone an entry on %filename%.%file_ext% but you have not specified the entry type"
+    END
+    SPRINT entry_type "%type%"
+     PATCH_IF VARIABLE_IS_SET $ "%file_ext%_virtual_type_parent"("%type%") BEGIN
+            SPRINT parent_type EVALUATE_BUFFER "%%file_ext%_virtual_type_parent_%type%%"
+            SPRINT entry_type EVALUATE_BUFFER "%%file_ext%_virtual_type_child_%type%%"
+            SET sec_index="%file_ext%_virtual_type_index_%type%"
+            LPF clone_entry_child INT_VAR sec_index STR_VAR entry_type clone_above parent_type at_end insert_point  arguments check checkGT checkLT match match_parameter filename file_ext number_to_add END
+     END ELSE BEGIN
+            LPF clone_entry_notchild STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
+     END
+END
+
+DEFINE_PATCH_FUNCTION clone_entry_child
+     INT_VAR sec_index=0
+     STR_VAR arguments=""
+             check=""
+             clone_above=0
+             checkGT=""
+             checkLT=""
+             match=""
+             entry_type=""
+             parent_type=""
+             filename=""
+             file_ext=""
+             number_to_add="1" // it's still a STR_VAR, as it might be functional
+BEGIN
+      // initialise
+         SET "number_added_%entry_type%"=0
+         SET "lowest_added_%entry_type%"=999999
+         LPF return_number_entries STR_VAR entry_type="%parent_type%" file_ext RET num_entries_parent=value END
+         // cycle through parent
+         FOR (parent_index=0;parent_index<num_entries_parent;parent_index+=1) BEGIN
+            // find the offset
+            LPF return_offset INT_VAR offset_num=parent_index STR_VAR entry_type="%parent_type%" file_ext RET offset_base=value END
+            //  update child indices
+            SET temp="number_added_%entry_type%"
+            LPF increment_lookup_indices INT_VAR offset_base increment="number_added_%entry_type%" STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%" END
+            // cycle through child types
+            LPF return_secondary_data INT_VAR offset_base ind_to_return=sec_index STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  RET index number END
+            SET num_added_here=0
+            FOR (j=0;j<number;j+=1) BEGIN
+               SET index_here=index+j+num_added_here
+               LPF return_offset INT_VAR offset_num=index_here STR_VAR entry_type file_ext RET offset_secondary=value END
+               // check condition
+               PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+               "" BEGIN
+                   SET found_match=1
+               END
+               DEFAULT
+                   LPF evaluate_condition INT_VAR parent_index offset_secondary STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
+               END
+               PATCH_IF found_match BEGIN
+                  PATCH_IF index<"lowest_added_%entry_type%" BEGIN SET "lowest_added_%entry_type%" = index END
+                  // work out how many to add
+                  LPF evaluate_expression INT_VAR parent_index offset_secondary STR_VAR offset_base filename file_ext expression="%number_to_add%" RET number_to_add_val=value END
+                  // do the clone
+                  LPF insert_copies_at_index INT_VAR index=index_here num_to_copy=1 num_of_copies=number_to_add_val STR_VAR entry_type RET bytes_added=value END
+                  LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+                  // patch
+                  FOR (entry_index=0;entry_index<number_to_add_val;entry_index+=1) BEGIN
+                     LPF return_offset INT_VAR offset_num=index_here + entry_index + !clone_above STR_VAR entry_type file_ext RET offset_here=value END
+                     LPF apply_patches INT_VAR parent_index entry_index offset_secondary=offset_here STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
+                  END
+                  
+                  // update number
+                  SET num_added_here += number_to_add_val
+               END
+            END
+            // update number of entries
+            LPF increment_secondary_data INT_VAR offset_base ind_to_write=sec_index  number=num_added_here  STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+            // loop through any remaining secondary entries here
+            SET next_ind=sec_index+1
+            WHILE VARIABLE_IS_SET "lookup_%file_ext%_%parent_type%_%entry_type%_ind_loc_%next_ind%" BEGIN
+               LPF increment_secondary_data INT_VAR offset_base ind_to_write=next_ind   index=num_added_here STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+               SET next_ind +=1
+            END
+            SET "number_added_%entry_type%" += num_added_here
+         END
+         // update the indices in all other entries
+         
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            PATCH_IF "%this_type%" STRING_COMPARE "%parent_type%" && VARIABLE_IS_SET "has_secondaries_%file_ext%_%this_type%" BEGIN
+                     LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET num_entries=value END
+                     FOR (i=0;i<num_entries;i+=1) BEGIN
+                         LPF return_offset INT_VAR offset_num=i STR_VAR entry_type="%this_type%" file_ext RET offset_base=value END
+                         LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type="%this_type%" END
+                     END
+            END
+         END
+
+         // update the secondary type number
+         SET arguments="number_added_%entry_type%"
+         LPF increment_number_entries INT_VAR arguments STR_VAR entry_type file_ext END
+
+
+END
+ 
+DEFINE_PATCH_FUNCTION clone_entry_notchild
+     INT_VAR clone_above=0
+     STR_VAR arguments=""
+             check=""
+             checkGT=""
+             checkLT=""
+             match=""
+             match_parameter=""
+             filename=""
+             file_ext=""
+             entry_type=""
+             number_to_add="1" // it's still a STR_VAR, as it might be functional
+BEGIN
+        // handle effect_global as a special case
+        PATCH_IF "%entry_type%" STRING_EQUAL_CASE effect_global BEGIN
+            SET effect_global=1
+            SPRINT entry_type effect
+            READ_SHORT 0x70 num_entries
+        END ELSE BEGIN
+            SET effect_global=0
+            LPF return_number_entries STR_VAR entry_type file_ext RET num_entries=value END
+        END
+
+
+         // initialise
+         PHP_EACH ~%file_ext%offset_loc~ AS this_type =>discard BEGIN
+             SET "number_added_%this_type%"=0
+             SET "lowest_added_%this_type%"=999999
+         END
+         // cycle through
+         FOR (i=0;i<num_entries;i+=1) BEGIN
+            // find the offset
+            SET index=i + "number_added_%entry_type%"
+            LPF return_offset INT_VAR offset_num=index STR_VAR entry_type file_ext RET offset_base=value END
+            // update child indices
+            LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type END
+            // check condition
+            PATCH_MATCH "%match%%check%%checkGT%%checkLT%" WITH
+            "" BEGIN
+                   SET found_match=1
+            END
+            DEFAULT
+                   LPF evaluate_condition INT_VAR offset_secondary=offset_base STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
+            END
+            PATCH_IF found_match BEGIN
+                // work out how many to add
+                LPF evaluate_expression STR_VAR offset_base filename file_ext expression="%number_to_add%" RET number_to_add_val=value END
+                // do the clone
+                LPF insert_copies_at_index INT_VAR index num_to_copy=1 num_of_copies=number_to_add_val STR_VAR entry_type RET bytes_added=value END
+                LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+                // record the added main entries
+                SET "number_added_%entry_type%" += number_to_add_val
+                // find how many child entries are added; update the count; insert them
+                PHP_EACH "%file_ext%offset_loc" AS secondary_type=>discard BEGIN
+                    LPF return_secondary_entry_count INT_VAR offset_base STR_VAR entry_type secondary_type RET secondary_added_per_step=value END
+                    LPF return_lowest_secondary_index INT_VAR offset_base STR_VAR entry_type secondary_type RET lowest_index=value END
+                    PATCH_IF "lowest_added_%secondary_type%">lowest_index BEGIN
+                       SET "lowest_added_%secondary_type%"=lowest_index
+                    END
+                    PATCH_IF lowest_index>=0 BEGIN // i.e., if we actually find any entries
+                       LPF insert_copies_at_index INT_VAR index=lowest_index num_to_copy=secondary_added_per_step num_of_copies=number_to_add_val STR_VAR entry_type="%secondary_type%" RET bytes_added=value END
+                       LPF update_offsets INT_VAR bytes_added STR_VAR entry_type="%secondary_type%" END
+
+                       FOR (j=1;j<=number_to_add_val;j+=1) BEGIN
+                          SET "number_added_%secondary_type%" += secondary_added_per_step
+                          LPF return_offset INT_VAR offset_num=index + j STR_VAR entry_type file_ext RET offset_here=value END
+                          LPF increment_lookup_indices INT_VAR increment=secondary_added_per_step*j offset_base=offset_here STR_VAR entry_type secondary_type END
+                       END
+                    END
+                END
+                // apply patches
+            FOR (entry_index=0;entry_index<number_to_add_val;entry_index+=1) BEGIN
+                LPF return_offset INT_VAR offset_num=index + entry_index + !clone_above STR_VAR entry_type file_ext RET offset_here=value END
+                LPF apply_patches INT_VAR entry_index offset_secondary=offset_here STR_VAR edits="%arguments%" file_ext offset_base="%offset_here%" filename is_conditional=yes END
+            END
+
+            END
+         END
+
+         // update the indices in all other entries
+         
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+
+            PATCH_IF "%this_type%" STRING_COMPARE "%entry_type%" && VARIABLE_IS_SET "has_secondaries_%file_ext%_%this_type%" BEGIN
+                     LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET num_entries=value END
+                     FOR (i=0;i<num_entries;i+=1) BEGIN
+                         LPF return_offset INT_VAR offset_num=i STR_VAR entry_type="%this_type%" file_ext RET offset_base=value END
+                         LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type="%this_type%" END
+                     END
+            END
+         END
+
+         // update the number of each type
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            SET arguments="number_added_%this_type%"
+            LPF increment_number_entries INT_VAR arguments STR_VAR entry_type="%this_type%" file_ext END
+         END
+         
+         PATCH_IF effect_global BEGIN
+            WRITE_SHORT 0x70 (SHORT_AT 0x70)+number_added_effect
+         END
+END
+
+
+
+DEFINE_PATCH_FUNCTION clone_entry_inline
+    STR_VAR arguments="" // this is a hash
+            file_ext=""
+            filename=""
+            type=""
+BEGIN
+        LPF key_value_sanity_check INT_VAR is_key=1 STR_VAR arguments END
+     CLEAR_ARRAY temp_assoc
+    SPRINT ~temp~ ~ACTION_DEFINE_ASSOCIATIVE_ARRAY temp_assoc BEGIN %arguments% END~
+    WHILE "%arguments%" STRING_COMPARE "" BEGIN
+       LPF return_first_pair STR_VAR list="%arguments%" RET key=key value=value arguments=list END
+       SPRINT $temp_assoc("%key%") "%value%"
+    END
+        LPF clone_entry
+             STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~ type
+        END
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               general template to delete an entry type
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION delete_entry   // this uses indirection: the entries are in an assoc_array
+          STR_VAR arguments=""
+                  filename=""
+                  file_ext=""
+                  type=""
+BEGIN
+     LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
+    PATCH_IF ~%type%~ STRING_EQUAL "" BEGIN
+       PATCH_FAIL "You are trying to delete an entry on %filename%.%file_ext% but you have not specified the entry type"
+    END
+    SPRINT entry_type "%type%"
+    PATCH_IF VARIABLE_IS_SET $ "%file_ext%_virtual_type_parent"("%type%") BEGIN
+            SPRINT parent_type EVALUATE_BUFFER "%%file_ext%_virtual_type_parent_%type%%"
+            SPRINT entry_type EVALUATE_BUFFER "%%file_ext%_virtual_type_child_%type%%"
+            SET sec_index="%file_ext%_virtual_type_index_%type%"
+            LPF delete_entry_child INT_VAR sec_index STR_VAR entry_type parent_type arguments filename file_ext  END
+    END ELSE BEGIN
+            LPF delete_entry_notchild STR_VAR arguments filename file_ext  entry_type END
+    END
+
+END
+
+  DEFINE_PATCH_FUNCTION delete_entry_child
+     INT_VAR sec_index=0
+     STR_VAR arguments=""
+             entry_type=""
+             parent_type=""
+             filename=""
+             file_ext=""
+BEGIN
+      // initialise
+         SET "number_added_%entry_type%"=0
+         SET "lowest_added_%entry_type%"=999999
+         LPF return_number_entries STR_VAR entry_type="%parent_type%" file_ext RET num_entries_parent=value END
+         // cycle through parent
+         FOR (parent_index=0;parent_index<num_entries_parent;parent_index+=1) BEGIN
+            // find the offset
+            LPF return_offset INT_VAR offset_num=parent_index STR_VAR entry_type="%parent_type%" file_ext RET offset_base=value END
+            //  update child indices
+            SET temp="number_added_%entry_type%"
+            LPF increment_lookup_indices INT_VAR offset_base increment="number_added_%entry_type%" STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%" END
+            // cycle through child types
+            LPF return_secondary_data INT_VAR offset_base ind_to_return=sec_index STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  RET index number END
+            SET num_added_here=0
+            FOR (j=0;j<number;j+=1) BEGIN
+               SET index_here=index+j+num_added_here
+               LPF return_offset INT_VAR offset_num=index_here STR_VAR entry_type file_ext RET offset_secondary=value END
+               // check condition
+               PATCH_MATCH "%arguments%" WITH
+               "" null BEGIN
+                   SET found_match=1
+               END
+               DEFAULT
+                   LPF evaluate_condition INT_VAR parent_index offset_secondary STR_VAR offset_base match="%arguments%" filename file_ext RET found_match=value END
+               END
+               PATCH_IF found_match BEGIN
+                  PATCH_IF index<"lowest_added_%entry_type%" BEGIN SET "lowest_added_%entry_type%" = index END
+                  // do the deletion
+                  LPF delete_at_index INT_VAR index=index_here STR_VAR entry_type RET bytes_added=value END
+                  LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+                  // update number
+                  SET num_added_here = num_added_here - 1
+               END
+            END
+            // update number of entries
+            LPF increment_secondary_data INT_VAR offset_base ind_to_write=sec_index  number=num_added_here  STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+            // loop through any remaining secondary entries here
+            SET next_ind=sec_index+1
+            WHILE VARIABLE_IS_SET "lookup_%file_ext%_%parent_type%_%entry_type%_ind_loc_%next_ind%" BEGIN
+               LPF increment_secondary_data INT_VAR offset_base ind_to_write=next_ind   index=num_added_here STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  END
+               SET next_ind +=1
+            END
+            SET "number_added_%entry_type%" += num_added_here
+         END
+         // update the indices in all other entries
+         
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            PATCH_IF "%this_type%" STRING_COMPARE "%parent_type%" && VARIABLE_IS_SET "has_secondaries_%file_ext%_%this_type%" BEGIN
+                     LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET num_entries=value END
+                     FOR (i=0;i<num_entries;i+=1) BEGIN
+                         LPF return_offset INT_VAR offset_num=i STR_VAR entry_type="%this_type%" file_ext RET offset_base=value END
+                         LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type="%this_type%" END
+                     END
+            END
+         END
+
+         // update the secondary type number
+         SET arguments="number_added_%entry_type%"
+         LPF increment_number_entries INT_VAR arguments STR_VAR entry_type file_ext END
+END
+
+DEFINE_PATCH_FUNCTION delete_entry_notchild
+     STR_VAR arguments=""
+             filename=""
+             file_ext=""
+             entry_type=""
+BEGIN
+        // handle effect_global as a special case
+        PATCH_IF "%entry_type%" STRING_EQUAL_CASE effect_global BEGIN
+            SET effect_global=1
+            SPRINT entry_type effect
+            READ_SHORT 0x70 num_entries
+        END ELSE BEGIN
+            SET effect_global=0
+            LPF return_number_entries STR_VAR entry_type file_ext RET num_entries=value END
+        END
+         // initialise
+         PHP_EACH ~%file_ext%offset_loc~ AS this_type =>discard BEGIN
+             SET "number_added_%this_type%"=0
+             SET "lowest_added_%this_type%"=999999
+         END
+         // cycle through
+         FOR (i=0;i<num_entries;i+=1) BEGIN
+            // find the offset
+            SET index=i + "number_added_%entry_type%"
+            LPF return_offset INT_VAR offset_num=index STR_VAR entry_type file_ext RET offset_base=value END
+            // update child indices
+            LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type END
+            // check condition
+            PATCH_MATCH "%arguments%" WITH
+            "" null BEGIN
+                   SET found_match=1
+            END
+            DEFAULT
+                   LPF evaluate_condition INT_VAR offset_secondary=offset_base STR_VAR offset_base match="%arguments%" filename file_ext RET found_match=value END
+            END
+            PATCH_IF found_match BEGIN
+                // find how many child entries are present; update the count; delete them
+                PHP_EACH "%file_ext%offset_loc" AS secondary_type=>discard BEGIN
+                    LPF return_secondary_entry_count INT_VAR offset_base STR_VAR entry_type secondary_type RET number_to_delete=value END
+                    LPF return_lowest_secondary_index INT_VAR offset_base STR_VAR entry_type secondary_type RET lowest_index=value END
+                    PATCH_IF "lowest_added_%secondary_type%">lowest_index BEGIN
+                       SET "lowest_added_%secondary_type%"=lowest_index
+                    END
+                    PATCH_IF lowest_index>=0 BEGIN // i.e., if we actually find any entries
+                       LPF delete_at_index INT_VAR index=lowest_index number_to_delete STR_VAR entry_type="%secondary_type%" RET bytes_added=value END
+                       LPF update_offsets INT_VAR bytes_added STR_VAR entry_type="%secondary_type%" END
+                       SET "number_added_%secondary_type%" = "number_added_%secondary_type%" - number_to_delete
+                    END
+                END
+                // do the deletion
+                LPF delete_at_index INT_VAR index STR_VAR entry_type RET bytes_added=value END
+                LPF update_offsets INT_VAR bytes_added STR_VAR entry_type END
+                // record the subtacted main entries
+                SET "number_added_%entry_type%" = "number_added_%entry_type%" - 1
+            END
+         END
+
+         SET temp="lowest_added_%entry_type%"
+         // update the indices in all other entries
+         
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            PATCH_IF "%this_type%" STRING_COMPARE "%entry_type%" && VARIABLE_IS_SET "has_secondaries_%file_ext%_%this_type%" BEGIN
+                     LPF return_number_entries STR_VAR entry_type="%this_type%" file_ext RET num_entries=value END
+                     FOR (i=0;i<num_entries;i+=1) BEGIN
+                         LPF return_offset INT_VAR offset_num=i STR_VAR entry_type="%this_type%" file_ext RET offset_base=value END
+                         LPF update_lookup_indices INT_VAR offset_base STR_VAR entry_type="%this_type%" END
+                     END
+            END
+         END
+
+         // update the number of each type
+         PHP_EACH "%file_ext%offset_loc" AS this_type=>discard BEGIN
+            SET arguments="number_added_%this_type%"
+            LPF increment_number_entries INT_VAR arguments STR_VAR entry_type="%this_type%" file_ext END
+         END
+         
+         PATCH_IF effect_global BEGIN
+            WRITE_SHORT 0x70 (SHORT_AT 0x70)+number_added_effect
+         END
+END
+
+

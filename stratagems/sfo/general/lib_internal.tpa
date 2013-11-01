@@ -1,0 +1,775 @@
+//////////////////////////////////////////////////////////////////////////
+/////
+/////   Functions should go here only if they are (intended to be) called
+/////   exclusively within SFO itself
+/////
+//////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               define a set of simple data-field-editing functions from a table
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION build_simple_data_field_editors
+          STR_VAR lookup_table=""
+                  function_prefix=""
+                  offset_base=""
+                  secondary="no"
+
+BEGIN
+       ACTION_PHP_EACH  ~%lookup_table%~ AS function => arglist BEGIN
+          LAUNCH_ACTION_FUNCTION decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 type=argument_1 END
+          ACTION_MATCH ~%offset_base%~
+          WITH 
+          ~~
+          BEGIN
+              OUTER_SPRINT ~offset_formula~ ~%offset%~
+          END
+          DEFAULT
+              ACTION_IF "%secondary%" STRING_EQUAL_CASE yes BEGIN
+                    OUTER_SPRINT ~offset_formula~ ~(%offset% + offset_secondary)~
+              END ELSE BEGIN
+                    OUTER_SPRINT ~offset_formula~ ~(%offset% + offset_base)~
+              END
+          END
+
+          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT parse_string ""
+          OUTER_SPRINT parse_string_int ~LPF fail_unless_int STR_VAR value="%arguments%" expression="" END~
+
+
+          ACTION_MATCH ~%type%~
+          WITH ~ASCII~
+          BEGIN
+                    OUTER_SPRINT ~definition~
+                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string% PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (8) END SET value=1 END
+                            DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value END~
+          END
+          ~ASCII20~
+          BEGIN
+                    OUTER_SPRINT ~definition~
+                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function%  %arg_string% BEGIN %parse_string% PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (0x20) END SET value=1 END
+                            DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value (0x20) NULL   END~
+          END
+          ~ASCII2~
+          BEGIN
+                    OUTER_SPRINT ~definition~
+                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string% WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (0x2) SET value=1 END
+                            DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value (0x2) NULL   END~
+          END
+          DEFAULT
+                    OUTER_SPRINT ~definition~ ~
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string_int%  PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type% %offset_formula% arguments END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%GT %arg_string% BEGIN %parse_string_int% PATCH_IF %type%_AT %offset_formula% < arguments BEGIN PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type% %offset_formula% arguments END END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%LT %arg_string% BEGIN %parse_string_int%  PATCH_IF %type%_AT %offset_formula% > arguments BEGIN PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_%type% %offset_formula% arguments END END SET value=1 END
+                          DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_%type% %offset_formula% value END~
+          END
+
+          LAUNCH_ACTION_FUNCTION action_reinclude_this STR_VAR input= ~%definition%~ END
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               define a set of simple data-field-editing functions using IDS lookup from a table
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION build_IDS_data_field_editors
+          STR_VAR lookup_table=""
+                  function_prefix=""
+                  offset_base=""
+                  secondary="no"
+
+BEGIN
+
+
+          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT parse_string ""
+
+
+
+       ACTION_PHP_EACH  ~%lookup_table%~ AS function => arglist BEGIN
+          LAF decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 type=argument_1 idsfile=argument_2 END
+          ACTION_MATCH ~%offset_base%~
+          WITH
+          ~~
+          BEGIN
+              OUTER_SPRINT ~offset~ ~%offset%~
+          END
+          DEFAULT
+              OUTER_SPRINT ~offset~ ~(%offset% + %offset_base%)~
+          END
+          ACTION_IF ~%type%~ STRING_EQUAL_CASE ~LONG_REVERSED~ THEN BEGIN
+             OUTER_SPRINT definition ~
+                        DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN
+                         %parse_string%
+                         PATCH_IF "%arguments%" STRING_COMPARE_CASE "no_change" BEGIN
+                          SET ids_value = IDS_OF_SYMBOL (%idsfile% "%arguments%")
+                          PATCH_IF ids_value>0 BEGIN
+                               LPF reverse_long INT_VAR input=ids_value RET ids_value=output END
+                               WRITE_LONG %offset% ids_value
+                          END ELSE BEGIN
+                               PATCH_FAIL "Tried to set nonexistent %idsfile% entry %arguments%"
+                          END
+                          SET value=1
+                         END
+                        END
+
+
+                        DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN
+                          READ_LONG %offset% value_ids
+                          LPF reverse_long INT_VAR input=value_ids RET value_ids=output END
+                          LOOKUP_IDS_SYMBOL_OF_INT value %idsfile% value_ids
+                        END
+              ~
+          END ELSE BEGIN
+             OUTER_SPRINT ~definition~ ~
+                        DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN
+                         %parse_string%
+                         PATCH_IF "%arguments%" STRING_COMPARE_CASE "no_change" BEGIN
+                          SET ids_value = IDS_OF_SYMBOL (%idsfile% "%arguments%")
+                          PATCH_IF ids_value>0 BEGIN
+                               WRITE_%type% %offset% ids_value
+                          END ELSE BEGIN
+                               PATCH_FAIL "Tried to set nonexistent %idsfile% entry %arguments%"
+                          END
+                          SET value=1
+                         END 
+                        END
+
+                        DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN
+                          READ_%type% %offset% value_ids
+                          LOOKUP_IDS_SYMBOL_OF_INT value %idsfile% value_ids
+                        END
+                       ~
+          END
+          ACTION_IF ~%secondary%~ STRING_EQUAL_CASE ~yes~ BEGIN
+              OUTER_PATCH_SAVE ~definition~ ~%definition%~ BEGIN
+                 REPLACE_TEXTUALLY ~offset_base~ ~offset_secondary~
+              END
+          END
+          LAF action_reinclude_this STR_VAR input= ~%definition%~ END
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               define a set of simple data-field-editing functions using flags
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION build_flag_data_field_editors
+          STR_VAR lookup_table=""
+                  function_prefix=""
+                  offset_base=""
+                  secondary=""
+
+BEGIN
+
+          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT parse_string_boolean ~LPF fail_unless_boolean STR_VAR value="%arguments%" expression="" END~
+
+
+
+      ACTION_PHP_EACH  ~%lookup_table%~ AS function => arglist BEGIN
+          LAF decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 bit=argument_1 END
+          ACTION_MATCH ~%offset_base%~
+          WITH
+          ~~
+          BEGIN
+              OUTER_SPRINT ~offset~ ~%offset%~
+          END
+          DEFAULT
+              OUTER_SPRINT ~offset~ ~(%offset% + %offset_base%)~
+          END
+          // input is in NI conventions counting 0-7, so bit N is 2^N
+          OUTER_SET one_code=2**bit
+          OUTER_SET zero_code=0xff - one_code
+          OUTER_SPRINT ~definition~ ~
+                       DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN
+                                     %parse_string_boolean%
+                                     PATCH_IF arguments=0 BEGIN
+                                        WRITE_BYTE %offset% (BYTE_AT %offset% BAND %zero_code%)
+                                     END ELSE BEGIN
+                                        WRITE_BYTE %offset% (BYTE_AT %offset% BOR %one_code%)
+                                     END
+                                     SET value=1
+
+                       END
+                       DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN
+                                     PATCH_IF (BYTE_AT %offset% BAND %one_code%)  = 0 BEGIN
+                                        SET value=0
+                                     END ELSE BEGIN
+                                        SET value=1
+                                     END
+                       END
+                       ~
+          ACTION_IF ~%secondary%~ STRING_EQUAL_CASE ~yes~ BEGIN
+              OUTER_PATCH_SAVE ~definition~ ~%definition%~ BEGIN
+                 REPLACE_TEXTUALLY ~offset_base~ ~offset_secondary~
+              END
+          END
+          LAF action_reinclude_this STR_VAR input= ~%definition%~ END
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               template for general clone
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION clone_template
+    INT_VAR
+           allow_missing=0
+    STR_VAR
+           file_list=""
+           file_ext=""
+           edits=""
+           editstring=""
+BEGIN
+      LAF edit_sanity_check STR_VAR edits editstring task="cloning %file_list%" END
+      ACTION_IF !"%file_list%" STRING_MATCHES_REGEXP " *$" BEGIN
+            FAIL "Clone_%file_ext% cannot have an empty argument"
+      END
+      PRINT ~SFO: Cloning %file_ext% file(s) %file_list% and applying patch(es)...~
+      SILENT
+      OUTER_SET SFO_RESERVED_object_index = 0
+      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
+           LAF action_return_first_pair
+                 STR_VAR list= ~%file_list%~
+                 RET filename_old=key
+                     filename_new=value
+                     file_list=list
+           END
+           
+           ACTION_IF allow_missing BEGIN
+              ACTION_IF FILE_EXISTS_IN_GAME ~%filename_old%.%file_ext%~ BEGIN 
+                      OUTER_SET proceed=1
+              END ELSE BEGIN
+                      OUTER_SET proceed=0
+              END
+           END ELSE BEGIN
+              OUTER_SET proceed=1
+           END
+           ACTION_IF proceed=1 BEGIN
+           COPY_EXISTING ~%filename_old%.%file_ext%~ ~override/%filename_new%.%file_ext%~
+                 PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
+                       LPF FJ_CRE_EFF_V2 END
+                 END
+                 PATCH_IF debug_variable=2 BEGIN 
+                    LPF warning STR_VAR warning= ~Patching %SOURCE_RES%~ END
+                    PATCH_SILENT
+                 END
+                    LPF apply_patches
+                           INT_VAR really_no_default=1
+                           STR_VAR edits
+                                   filename= ~%filename_old%~
+                                   file_ext
+                    END
+                    LPF apply_patches_inline
+                           INT_VAR really_no_default=1
+                           STR_VAR editstring
+                                   filename= ~%filename_old%~
+                                   file_ext
+                    END
+           // BUT_ONLY // no BUT_ONLY here - we want a clone regardless
+           END
+           OUTER_SET SFO_RESERVED_object_index +=1
+      END
+      VERBOSE
+      PRINT ~...done~
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               template for general edit
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+DEFINE_ACTION_FUNCTION edit_template
+    INT_VAR
+           silent=0
+           SFO_RESERVED_object_index=0
+           allow_missing=0
+           tv=0
+    STR_VAR
+           file_list=""
+           file_ext=""
+           edits=""
+           editstring=""
+           external_file=""
+           location=""
+BEGIN
+      LAF edit_sanity_check STR_VAR edits editstring task="editing %file_list%" END
+      ACTION_IF !"%file_list%%external_file%" STRING_MATCHES_REGEXP " *$" BEGIN
+            FAIL "Edit_%file_ext% cannot have an empty argument"
+      END
+      ACTION_IF !"%edits%%editstring%" STRING_COMPARE "" BEGIN
+         LAF warning STR_VAR warning="edit_template of type %file_ext% called for %file_list% with no arguments" END
+      END
+      ACTION_IF ~%external_file%~ STRING_COMPARE_CASE ~~ BEGIN
+         LAF read_in_list STR_VAR file=~%external_file%~ RET extra=list END
+         OUTER_SPRINT ~file_list~ ~%file_list% %extra%~
+      END
+      ACTION_IF (~%edits%~ STRING_EQUAL_CASE ~~ && ~%editstring%~ STRING_EQUAL_CASE ~~) BEGIN
+         OUTER_SPRINT edits patch_data
+      END
+      ACTION_IF !silent BEGIN
+         PRINT ~SFO: Applying patch(es) to %file_ext% file(s) %file_list%... ~
+      END
+      SILENT
+      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
+          LAF action_return_first_entry
+                 STR_VAR list= ~%file_list%~
+                 RET file_list=list filename=entry
+          END
+          ACTION_IF tv BEGIN
+             OUTER_SPRINT ~filename~ ~%tutu_var%%filename%~
+          END
+          ACTION_IF "%location%" STRING_EQUAL_CASE "" BEGIN
+           ACTION_IF FILE_EXISTS_IN_GAME ~%filename%.%file_ext%~ BEGIN
+            COPY_EXISTING ~%filename%.%file_ext%~ ~override/%filename%.%file_ext%~
+              PATCH_IF (SOURCE_SIZE>0x1) BEGIN
+                    LPF apply_patches STR_VAR edits filename file_ext END
+                    LPF apply_patches_inline STR_VAR editstring filename file_ext END
+              END
+            BUT_ONLY
+           END ELSE BEGIN
+             ACTION_IF !allow_missing BEGIN
+                FAIL "You are trying to edit %filename%.%file_ext%, which does not exist in the game"
+             END
+           END
+          END ELSE BEGIN
+            ACTION_IF FILE_EXISTS "%location%/%filename%.%file_ext%" BEGIN
+               COPY "%location%/%filename%.%file_ext%" "%location%"
+              PATCH_IF (SOURCE_SIZE>0x1) BEGIN
+                    PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
+                       LPF FJ_CRE_EFF_V2 END
+                    END
+                    LPF apply_patches STR_VAR edits filename file_ext END
+                    LPF apply_patches_inline STR_VAR editstring filename file_ext END
+              END
+               
+               BUT_ONLY
+            END ELSE BEGIN
+             ACTION_IF !allow_missing BEGIN
+                FAIL "You are trying to edit %location%/%filename%.%file_ext%, which does not exist"
+             END
+            END
+          END
+          OUTER_SET SFO_RESERVED_object_index +=1
+      END
+      VERBOSE
+      ACTION_IF !silent BEGIN
+         PRINT ~...done~
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               template for general install
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION install_template
+    INT_VAR allow_missing=0
+            tv=0
+    STR_VAR
+           file_list=""
+           file_ext=""
+           edits=""
+           editstring=""
+           external_file=""
+           location=""
+           locbase=""
+           destination="override"
+BEGIN      
+      LAF edit_sanity_check STR_VAR edits editstring task="installing %file_list%" END
+      ACTION_IF !"%file_list%" STRING_MATCHES_REGEXP " *$" BEGIN
+            FAIL "Install_%file_ext% cannot have an empty argument"
+      END
+      LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+      ACTION_IF ~%external_file%~ STRING_COMPARE_CASE ~~ BEGIN
+         LAF read_in_list STR_VAR file=~%external_file%~ RET extra=list END
+         OUTER_SPRINT ~file_list~ ~%file_list% %extra%~
+      END
+      ACTION_IF (~%edits%~ STRING_EQUAL_CASE ~~ && ~%editstring%~ STRING_EQUAL_CASE ~~) BEGIN
+         OUTER_SPRINT edits patch_data
+      END
+      PRINT ~SFO: Installing and patching %file_ext% file(s) %file_list%... ~
+      SILENT
+      OUTER_INNER_PATCH_SAVE file_list "%file_list%" BEGIN
+         REPLACE_TEXTUALLY " +=> +" "=>"
+      END
+      OUTER_SET SFO_RESERVED_object_index = 0
+      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
+          LAF return_first_entry STR_VAR list=~%file_list%~ RET file_list=list filedata=entry END
+          ACTION_IF !("%filedata%" STRING_CONTAINS_REGEXP "=>") BEGIN
+             LAF return_first_pair STR_VAR list="%filedata%" RET filename=key filename_out=value END
+          END ELSE BEGIN
+             OUTER_SPRINT filename "%filedata%"
+             OUTER_SPRINT filename_out "%filedata%"
+          END
+          ACTION_IF tv BEGIN
+             OUTER_SPRINT ~filename_out~ ~%tutu_var%%filename_out%~
+          END ELSE BEGIN
+             OUTER_SPRINT filename_out "%filename_out%"
+          END
+          ACTION_IF FILE_EXISTS ~%file_loc%/%filename%.%file_ext%~ BEGIN
+            COPY ~%file_loc%/%filename%.%file_ext%~ ~%destination%/%filename_out%.%file_ext%~
+              PATCH_IF (SOURCE_SIZE>0x1) BEGIN
+                    PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
+                       LPF FJ_CRE_EFF_V2 END
+                    END
+                    LPF apply_patches STR_VAR edits filename file_ext END
+                    LPF apply_patches_inline STR_VAR editstring filename file_ext END
+              END
+          //  BUT_ONLY   // should be installed regardless!
+          END ELSE BEGIN
+             ACTION_IF !allow_missing BEGIN
+                FAIL "You are trying to install %file_loc%/%filename%.%file_ext%, which does not exist"
+             END
+          END
+          OUTER_SET SFO_RESERVED_object_index +=1
+      END
+      VERBOSE
+      PRINT ~...done~
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               template for general regexp
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION regexp_template
+    INT_VAR tv=0
+    STR_VAR
+           file_ext=""
+           edits=""
+           editstring=""
+           glob="yes"
+
+BEGIN
+      LAF edit_sanity_check STR_VAR edits editstring task="patching all %file_ext% files" END
+     ACTION_IF tv BEGIN
+          OUTER_SPRINT ~initial~ ~%tutu_var%~
+          ACTION_IF VARIABLE_IS_SET  ~file_count_%file_ext%_tv~ BEGIN
+              OUTER_SET count=  ~file_count_%file_ext%_tv~
+          END ELSE BEGIN
+              OUTER_SET count=0
+          END
+      END ELSE BEGIN
+          OUTER_SPRINT ~initial~ ~~
+          ACTION_IF VARIABLE_IS_SET  ~file_count_%file_ext%~ BEGIN
+              OUTER_SET count=  ~file_count_%file_ext%~
+          END ELSE BEGIN
+              OUTER_SET count=0
+          END
+      END
+      PRINT ~SFO: Applying patch(es) to all %file_ext% files...~
+      SILENT
+      ACTION_IF ~%glob%~ STRING_EQUAL_CASE ~yes~ BEGIN
+        OUTER_SET counter=0
+        OUTER_SET report=0
+        COPY_EXISTING_REGEXP GLOB ~%initial%.*\.%file_ext%~ ~override~
+           PATCH_IF (SOURCE_SIZE>0x1) THEN BEGIN
+                    PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
+                       LPF FJ_CRE_EFF_V2 END
+                    END
+                    SPRINT filename ~%SOURCE_RES%~
+                    PATCH_IF debug_variable=2 BEGIN
+                       LPF warning STR_VAR warning= ~Trying to patch %filename%...~ END
+                       PATCH_SILENT
+                    END
+                    LPF apply_patches  STR_VAR edits  filename  file_ext END
+                    LPF apply_patches_inline STR_VAR editstring filename  file_ext END
+           END
+           SET counter=counter+1
+           PATCH_IF counter=100 BEGIN
+              SET counter=0
+              SET report=report+100
+              PATCH_IF count>0 BEGIN
+                 PATCH_PRINT ~Patched %report% / %count% files~
+              END ELSE BEGIN
+                 PATCH_PRINT ~Patched %report% files~
+              END
+              PATCH_SILENT
+           END
+        BUT_ONLY
+
+      END ELSE BEGIN
+
+COPY_EXISTING_REGEXP ~%initial%.*\.%file_ext%~ ~override~
+           PATCH_IF (SOURCE_SIZE>0x1) THEN BEGIN
+                    SPRINT filename ~%SOURCE_RES%~
+                    PATCH_IF debug_variable=2 BEGIN
+                       LPF warning STR_VAR warning= ~Trying to patch %filename%...~ END
+                       PATCH_SILENT
+                    END
+                    LPF apply_patches  STR_VAR edits  filename  file_ext END
+                    LPF apply_patches_inline STR_VAR editstring filename  file_ext END
+           END
+        BUT_ONLY
+
+
+      END
+      VERBOSE
+      PRINT ~...done~
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               template for general new thing
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_template
+    STR_VAR
+           file_list=""
+           file_ext=""
+           edits=""
+           editstring=""
+           build_before=""
+           build_after=""
+BEGIN
+      LAF edit_sanity_check STR_VAR edits editstring task="making %file_list%" END
+      PRINT ~SFO: Creating %file_ext% file(s) %file_list%...~
+      SILENT
+      OUTER_SET SFO_RESERVED_object_index = 0
+      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
+          LAF action_return_first_entry 
+                 STR_VAR list= ~%file_list%~
+                 RET file_list=list filename=entry
+          END
+          <<<<<<<< blank
+          >>>>>>>>
+          COPY ~blank~ ~override/%filename%.%file_ext%~
+                    DELETE_BYTES 0x0 BUFFER_LENGTH
+                    LPF ~%build_before%~ END
+                    LPF apply_patches
+                           INT_VAR really_no_default=1
+                           STR_VAR edits filename file_ext
+                    END
+                    LPF apply_patches_inline
+                           INT_VAR really_no_default=1
+                           STR_VAR editstring filename file_ext
+                    END
+                    PATCH_IF ~%build_after%~ STRING_COMPARE_CASE ~~ BEGIN
+                       LPF ~%build_after%~  END
+                    END
+          BUT_ONLY //
+          OUTER_SET SFO_RESERVED_object_index +=1
+      END
+      VERBOSE
+      PRINT ~...done~
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////     define the PATCH_MAKE_PATCH and MAKE_PATCH pseudocommands
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION define_make_patch BEGIN
+   REPLACE_TEXTUALLY PATCH_MAKE_PATCH ~PATCH_CLEAR_ARRAY patch_data PATCH_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN~
+   REPLACE_TEXTUALLY MAKE_PATCH ~ACTION_CLEAR_ARRAY patch_data ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN~
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////     define the PUSH pseudocommand
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION define_push BEGIN
+   REPLACE_TEXTUALLY "PUSH ~\([^ ~]+\)~ " ~SPRINT "\1" "%\1% "^~
+   REPLACE_TEXTUALLY "PUSH \([^ ~]+\)" ~SPRINT "\1" "%\1% "^~
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               break a comma-separated value string into its components
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION decompose_CSV 
+         STR_VAR
+                input=""
+         RET
+                argument_0
+                argument_1
+                argument_2
+                argument_3
+                argument_4
+                argument_5
+                argument_6
+                argument_7
+                argument_8
+                argument_9
+BEGIN
+     OUTER_SPRINT ~input~  ~%input%~
+     OUTER_INNER_PATCH_SAVE ~output_csv~ ~ACTION_DEFINE_ARRAY temp_array BEGIN %input% END~ BEGIN
+         REPLACE_TEXTUALLY ~,~ ~ ~
+     END
+       <<<<<<<< temp_file
+       %output_csv%
+       >>>>>>>>
+       COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+       REINCLUDE ~%workspace%/temp_file2~
+     OUTER_FOR (i=0;i<10;i=i+1) BEGIN
+        ACTION_IF (VARIABLE_IS_SET $temp_array( ~%i%~)) AND $temp_array( ~%i%~) STRING_COMPARE_CASE ~~ AND $temp_array( ~%i%~) STRING_COMPARE_CASE ~ ~ BEGIN
+               OUTER_SPRINT  ~argument_%i%~ $temp_array(~%i%~)
+               OUTER_SPRINT ~temp~ $argument(~%i%~)
+        END ELSE BEGIN
+               OUTER_SPRINT  ~argument_%i%~ ~null~
+        END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               as a patch, take ~key=>value~ and return key and value
+/////////////               (Obsolete: use return_first_pair)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_arrow
+           STR_VAR input=""
+           RET     key
+                   value
+BEGIN
+      PATCH_IF ~%input%~ STRING_COMPARE "" BEGIN
+             SPRINT ~output~ ~ACTION_DEFINE_ASSOCIATIVE_ARRAY temp_assoc BEGIN %input% END~
+          INNER_ACTION BEGIN  
+          <<<<<<<< temp_file
+          %output%
+          >>>>>>>>
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
+          END
+          PHP_EACH temp_assoc AS key => value BEGIN
+          END
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               as a patch, take ~key value~ and return key and value
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_pair
+           STR_VAR input=""
+           RET     key
+                   value
+BEGIN
+      PATCH_IF ~%input%~ STRING_COMPARE "" BEGIN
+             SPRINT ~output~ ~ACTION_DEFINE_ARRAY temp_array BEGIN %input% END~
+          INNER_ACTION BEGIN
+          <<<<<<<< temp_file
+          %output%
+          >>>>>>>>
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
+          END
+          SPRINT ~key~ $temp_array(0)
+          SPRINT ~value~ $temp_array(1)
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               as a patch, take a list of key=>value s separated by spaces, break it down, and for each entry INCLUDE a string (should usually be a function call) with <KEY> and <VALUE> set to their values
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_list_of_arrows
+           STR_VAR filename=""
+                   input=""
+                   instruction=""
+BEGIN
+      PATCH_IF ~%input%~ STRING_COMPARE "" BEGIN
+             SPRINT ~output~ ~ACTION_DEFINE_ASSOCIATIVE_ARRAY temp_assoc BEGIN %input% END~
+          INNER_ACTION BEGIN
+          <<<<<<<< temp_file
+          %output%
+          >>>>>>>>
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+             REINCLUDE ~%workspace%/temp_file2~
+          END
+          PHP_EACH temp_assoc AS key => value BEGIN
+                   INNER_PATCH_SAVE instruction2 ~%instruction%~ BEGIN
+                      REPLACE_TEXTUALLY ~<key>~ ~%key%~
+                      REPLACE_TEXTUALLY ~<value>~ ~%value%~
+                   END
+                   LAUNCH_PATCH_FUNCTION patch_reinclude_this STR_VAR input=~%instruction2%~ END
+
+          END
+      END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch, process a list of space-separated integers and run a function on each
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_integer_list
+     STR_VAR list=""
+             function=""
+BEGIN
+     INNER_PATCH_SAVE ~list~ ~%list%~ BEGIN
+        REPLACE_TEXTUALLY ~\(-[0-9]+\)~ ~"\1"~
+     END
+     SPRINT ~list~ ~PATCH_FOR_EACH entry IN %list% BEGIN LPF %function% INT_VAR arguments= "%entry%" END END~
+     LPF patch_reinclude_this STR_VAR input=~%list%~ END
+
+
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch, process a list of space-separated strings and run a function on each, inputing it into the field "field"
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_string_list
+     STR_VAR list=""
+             function=""
+             field="arguments"
+BEGIN
+     SPRINT ~list~ ~PATCH_FOR_EACH entry IN %list% BEGIN LPF %function% STR_VAR %field%= "%percentage%entry%percentage%" END END~
+     INNER_ACTION BEGIN
+         <<<<<<<< temp_file
+          %list%
+          >>>>>>>>
+             COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+     END
+     PATCH_REINCLUDE ~%workspace%/temp_file2~
+
+
+END
+
+
+
+

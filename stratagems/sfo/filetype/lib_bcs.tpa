@@ -1,0 +1,226 @@
+////////////////////////////////////////////////////////////////////////////////////////
+////    Overall edit wraps
+////
+////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION edit_script
+    STR_VAR script=""
+            editstring=""
+BEGIN
+    OUTER_WHILE "%script%" STRING_COMPARE "" BEGIN
+       LAF return_first_entry STR_VAR list= "%script%" RET filename=entry script=list END
+       COPY_EXISTING "%filename%.bcs" override
+             DECOMPILE_AND_PATCH BEGIN
+                LPF process_baf STR_VAR editstring filename END
+             END
+       BUT_ONLY
+    END
+END
+
+DEFINE_ACTION_FUNCTION edit_all_scripts
+    STR_VAR editstring=""
+BEGIN
+       COPY_EXISTING_REGEXP GLOB ".*\.bcs" override
+             SPRINT filename "%SOURCE_RES%"
+             DECOMPILE_AND_PATCH BEGIN
+                LPF process_baf STR_VAR editstring filename END
+             END
+       BUT_ONLY
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+////    Core BAF editor. Takes as input a list of task=>arg
+////
+////    Tasks are : leave_alone (arg ignored, block is reinserted)
+////                patch (arg is a list of functions separated by |, functions act on 
+////                       trigger and action string, result is outputted as a block in same
+////                       place as old block. Output empty trigger/action to avoid adding block)
+////                insert_top (as patch, but block placed at start of script)
+////                insert_bottom (as patch, but block placed at end of script)
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_baf
+   STR_VAR editstring=""
+           filename=""
+BEGIN
+   // initialise
+   PATCH_FOR_EACH type IN top main bottom BEGIN
+      SET $count("%type%")=0
+   END
+   SET blocknum=0
+   SPRINT trig ""
+   SPRINT act ""
+   /// work around the space in RESPONSE #
+   REPLACE_TEXTUALLY "RESPONSE #" "RESPONSE-#"
+   /// read in the BAF file
+   READ_2DA_ENTRIES_NOW baf_rows 1
+   /// parse the BAF file
+   FOR (i=0;i<baf_rows;i+=1) BEGIN
+        READ_2DA_ENTRY_FORMER baf_rows i 0 row
+        PATCH_MATCH "%row%" WITH
+           "IF"
+           BEGIN
+             SET step=1
+           END
+           "THEN"
+           BEGIN
+             SET step=2
+           END
+           "END"
+           BEGIN
+              SPRINT list "%editstring%"
+              WHILE "%list%" STRING_COMPARE "" BEGIN
+                  LPF return_first_pair STR_VAR list RET task=key arg=value list=list END
+                  PATCH_MATCH "%task%" WITH
+                         leave_alone BEGIN
+                            SPRINT $trig_main("%count_main%") "%trig%"
+                            SPRINT $act_main("%count_main%") "%act%"
+                            SET count_main +=1
+                         END
+                         patch insert_top insert_bottom BEGIN
+                            SPRINT trig_in "%trig%"
+                            SPRINT act_in "%act%"
+                            WHILE "%arg%" STRING_COMPARE "" BEGIN
+                               LPF return_first_entry STR_VAR separator ="|" list= "%arg%" RET input=entry arg=list END
+                               LPF return_function_and_argument STR_VAR input RET function=function arguments=argument END
+                               PATCH_TRY
+                                   PATCH_SILENT
+                                   LPF ~BCS_%function%~ INT_VAR blocknum STR_VAR trig_in act_in filename arguments RET trig_in=trig_out act_in=act_out END
+                                   PATCH_VERBOSE
+                               WITH
+                                   ~Failure("Unknown function: BCS_%function%")~
+                               BEGIN
+                                    LPF ~%function%~ INT_VAR blocknum STR_VAR trig_in act_in filename arguments  RET trig_in=trig_out act_in=act_out END
+                               END
+                               DEFAULT
+                                      LPF warning STR_VAR warning= ~Unknown failure %ERROR_MESSAGE% in process_baf: input was function=%function%~ END
+                                      PATCH_RERAISE
+                               END
+                            END
+                            PATCH_MATCH "%task%" WITH
+                               patch BEGIN
+                                     SPRINT $trig_main("%count_main%") "%trig_in%"
+                                     SPRINT $act_main("%count_main%") "%act_in%"
+                                     SET count_main +=1
+                               END
+                               insert_top BEGIN
+                                     SPRINT $trig_top("%count_top%") "%trig_in%"
+                                     SPRINT $act_top("%count_top%") "%act_in%"
+                                     SET count_top +=1
+                               END
+                               insert_bottom BEGIN
+                                     SPRINT $trig_main("%count_bottom%") "%trig_in%"
+                                     SPRINT $act_main("%count_bottom%") "%act_in%"
+                                     SET count_bottom +=1
+                               END
+                               DEFAULT END
+                         END
+                  DEFAULT
+                     LPF warning STR_VAR warning= "%task% is unknown task for process_baf" END
+                  END
+              END
+              SPRINT trig ""
+              SPRINT act ""
+              SET blocknum +=1
+           END
+           DEFAULT
+              PATCH_IF step=1 BEGIN
+                 SPRINT trig "%trig% %row%"
+              END ELSE BEGIN
+                 SPRINT act "%act% %row%"
+              END
+           END
+       // end of PATCH
+   END // end of FOR loop
+   // wipe the existing file
+   DELETE_BYTES 0x0 BUFFER_LENGTH
+   // insert the data
+   SET rowcount=0
+   // do count_top backwards, so insert_top means what it says
+   FOR (i=count_top - 1;i>=0;i = i - 1) BEGIN
+      SPRINT trig_in $trig_top("%i%")
+      SPRINT act_in $act_top("%i%")
+      LPF process_baf_block_inserter INT_VAR rowcount STR_VAR act_in trig_in RET rowcount=rowcount END
+   END
+   // do main and bottom in normal order
+   FOR (i=0;i<count_main;i+=1) BEGIN
+      SPRINT trig_in $trig_main("%i%")
+      SPRINT act_in $act_main("%i%")
+      LPF process_baf_block_inserter INT_VAR rowcount STR_VAR act_in trig_in RET rowcount=rowcount END
+   END
+   FOR (i=0;i<count_bottom;i+=1) BEGIN
+      SPRINT trig_in $trig_bottom("%i%")
+      SPRINT act_in $act_bottom("%i%")
+      LPF process_baf_block_inserter INT_VAR rowcount STR_VAR act_in trig_in RET rowcount=rowcount END
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////
+////   helper function for process_baf
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION process_baf_block_inserter
+     INT_VAR rowcount=0
+     STR_VAR trig_in=""
+             act_in=""
+     RET rowcount
+BEGIN
+ PATCH_IF ("%trig_in%" STRING_COMPARE "" || "%act_in%" STRING_COMPARE "") BEGIN
+   INSERT_2DA_ROW rowcount 1 "IF"
+   SET rowcount +=1
+   INSERT_2DA_ROW rowcount 1 "%trig_in%"
+   SET rowcount +=1
+   INSERT_2DA_ROW rowcount 1 "THEN"
+   SET rowcount +=1
+   INNER_PATCH_SAVE act_in "%act_in%" BEGIN
+      REPLACE_TEXTUALLY "RESPONSE-#" "RESPONSE #"
+   END
+   INSERT_2DA_ROW rowcount 1 "%act_in%"
+   SET rowcount +=1
+   INSERT_2DA_ROW rowcount 1 "END"
+   SET rowcount +=1
+ END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////   Insert a string into an action block immediately after the (first) RESPONSE block
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION insert_after_response
+     STR_VAR act_in=""
+             to_insert=""
+     RET act_out
+BEGIN
+     LPF return_first_entry STR_VAR list= "%act_in%" RET first=entry rest=list END
+     SPRINT act_out "%first% %to_insert% %rest%"
+END
+
+DEFINE_PATCH_FUNCTION delete_trigger_if
+        STR_VAR trig_in=""
+                act_in=""
+                arguments=""
+        RET trig_out act_out
+BEGIN
+        PATCH_IF !"%trig_in%" STRING_CONTAINS_REGEXP "%arguments%" BEGIN
+              SPRINT trig_out ""
+              SPRINT act_out ""
+        END ELSE BEGIN
+              SPRINT trig_out "%trig_in%"
+              SPRINT act_out "%act_in%"
+        END
+END
+
+DEFINE_PATCH_FUNCTION delete_action_if
+        STR_VAR trig_in=""
+                act_in=""
+                arguments=""
+        RET trig_out act_out
+BEGIN
+        PATCH_IF !"%act_in%" STRING_CONTAINS_REGEXP "%arguments%" BEGIN
+              SPRINT trig_out ""
+              SPRINT act_out ""
+        END ELSE BEGIN
+              SPRINT trig_out "%trig_in%"
+              SPRINT act_out "%act_in%"
+        END
+END

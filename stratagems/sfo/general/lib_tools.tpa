@@ -1,0 +1,879 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               general warning message
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION warning
+         STR_VAR
+             warning=""
+             arguments=""
+BEGIN
+         LPF warning STR_VAR warning arguments END
+END
+
+DEFINE_ACTION_FUNCTION warning
+         STR_VAR
+             warning=""
+             arguments=""
+BEGIN
+        OUTER_INNER_PATCH ~~ BEGIN
+           LPF warning STR_VAR warning arguments END
+        END
+END
+DEFINE_ACTION_FUNCTION warning
+       STR_VAR
+             warning=""
+             arguments=""
+BEGIN
+        OUTER_INNER_PATCH ~~ BEGIN
+           LPF warning STR_VAR warning arguments END
+        END
+END
+
+DEFINE_PATCH_FUNCTION warning
+         STR_VAR
+             warning=""
+             arguments=""
+BEGIN
+     PATCH_MATCH "%warning%%arguments%" WITH
+     "" null BEGIN END
+     DEFAULT
+        PATCH_PRINT ~%warning%%arguments%~
+        LPF patch_log_this STR_VAR file=sfo_warnings.txt input= ~%warning%%arguments%~ repeat=no END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               include a string as a line of code (NB: you can't define variables this way, because they're in the scope of the function)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION reinclude_this
+        STR_VAR
+             input=""
+BEGIN
+       <<<<<<<< temp_file
+       %input%
+       >>>>>>>>
+       ACTION_IF debug_variable=1 BEGIN
+          PRINT ~%input%~
+       END
+       COPY - temp_file ~temp_file2~ EVALUATE_BUFFER
+       REINCLUDE ~temp_file2~
+END
+
+
+
+DEFINE_PATCH_FUNCTION reinclude_this
+        STR_VAR
+             input=""
+BEGIN
+       INNER_ACTION BEGIN
+       <<<<<<<< temp_file
+       %input%
+       >>>>>>>>
+          COPY - temp_file ~temp_file2~ EVALUATE_BUFFER
+       END
+       PATCH_IF debug_variable=1 BEGIN
+          PATCH_PRINT ~%input%~
+       END
+       PATCH_REINCLUDE ~temp_file2~
+END
+
+DEFINE_ACTION_FUNCTION action_reinclude_this STR_VAR input="" BEGIN
+    LAF reinclude_this STR_VAR input END
+END
+
+DEFINE_PATCH_FUNCTION patch_reinclude_this STR_VAR input="" BEGIN
+    LPF reinclude_this STR_VAR input END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////           take a string, strip any initial or trailing whitespace    [recursive]
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION strip_spaces_from_string
+    STR_VAR string=""
+    RET string
+BEGIN
+    PATCH_IF !(~%string%~ STRING_EQUAL ~~) BEGIN
+       PATCH_IF INDEX ("\( \|%MNL%\|%WNL%\|%LNL%\|%TAB%\)" ~%string%~)=0 BEGIN
+          INNER_PATCH_SAVE ~string~ ~%string%~ BEGIN DELETE_BYTES 0 1 END
+          LPF strip_spaces_from_string STR_VAR string RET string=string END
+       END
+       PATCH_IF !(~%string%~ STRING_EQUAL ~~)BEGIN
+        PATCH_IF RINDEX ("\( \|%MNL%\|%WNL%\|%LNL%\|%TAB%\)" ~%string%~)=(STRING_LENGTH ~%string%~ -1) BEGIN
+          INNER_PATCH_SAVE ~string~ ~%string%~ BEGIN DELETE_BYTES (BUFFER_LENGTH - 1) 1 END
+          LPF strip_spaces_from_string STR_VAR string RET string=string END
+        END
+       END
+    END
+END
+
+DEFINE_ACTION_FUNCTION strip_spaces_from_string
+    STR_VAR string=""
+    RET string
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF strip_spaces_from_string STR_VAR string RET string=string END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////           take a string, strip initial or trailing ~ and "
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION strip_quotes_from_string
+    STR_VAR string=""
+    RET string
+BEGIN
+  SET string_length=STRING_LENGTH ~%string%~
+  PATCH_MATCH string_length WITH 0 BEGIN
+      LPF warning STR_VAR warning="Warning: you just tried to remove quotes from an empty string. Deliberate?" END
+  END
+  DEFAULT
+   INNER_PATCH_SAVE string ~%string%~ BEGIN
+      SET lastloc=string_length - 1
+      PATCH_FOR_EACH loc IN ~%lastloc%~ 0 BEGIN  // must be this way around!
+         READ_ASCII 0 symbol (1)
+         PATCH_IF (~%symbol%~ STRING_EQUAL ~"~ OR ~%symbol%~ STRING_EQUAL "~") BEGIN
+             DELETE_BYTES loc 1
+         END
+      END
+   END
+  END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch, take as input a string and return its first letter and the rest of it
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_first_letter
+       STR_VAR input=""
+       RET firstletter
+           rest
+BEGIN
+       PATCH_IF input STRING_COMPARE ~~ BEGIN
+          INNER_PATCH_SAVE rest ~%input%~ BEGIN
+             READ_ASCII 0x0 firstletter (1)
+             DELETE_BYTES 0x0 1
+          END
+       END ELSE BEGIN
+          SPRINT firstletter ~~
+          SPRINT rest ~~
+       END
+END
+
+DEFINE_ACTION_FUNCTION return_first_letter
+  STR_VAR input="" RET firstletter rest
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF return_first_letter STR_VAR input RET firstletter=firstletter rest=rest END
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch, take as input FUNCTION(VALUES) and return FUNCTION and VALUES
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_function_and_argument
+       STR_VAR input=""
+       RET function
+           argument
+BEGIN
+       INNER_PATCH_SAVE ~input~ ~%input%~ BEGIN
+          REPLACE_TEXTUALLY ~)~ ~~
+       END
+       LPF return_first_entry
+                STR_VAR list= ~%input%~ separator="("
+                RET argument=list function=entry
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               sanity check for the arguments
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION edit_sanity_check
+    STR_VAR edits=""
+            editstring=""
+            task="the current task"
+BEGIN
+   ACTION_IF !"%edits%" STRING_CONTAINS_REGEXP "=>" BEGIN
+         FAIL "The 'edits' variable for %task% is set to %edits%, which is illegal (contains =>). Probably you meant 'editstring' instead."
+   END
+   ACTION_IF "%editstring%" STRING_CONTAINS_REGEXP "=>" && "%editstring%" STRING_COMPARE "" BEGIN
+         FAIL "The 'editstring' variable for %task% is set to %editstring%, which is illegal (not a key=>value list). Probably you meant 'edits' instead."
+   END
+END
+
+DEFINE_PATCH_FUNCTION edit_sanity_check
+    STR_VAR edits=""
+            editstring=""
+            task="the current task"
+BEGIN
+   INNER_ACTION BEGIN
+      LAF edit_sanity_check STR_VAR edits editstring task END
+   END
+END
+
+DEFINE_PATCH_FUNCTION key_value_sanity_check
+    INT_VAR is_key=1
+    STR_VAR arguments=""
+BEGIN
+   PATCH_IF ("%arguments%" STRING_CONTAINS_REGEXP "=>")=is_key && "%arguments%" STRING_COMPARE "" BEGIN
+         PATCH_FAIL "The  variable for task is set to %arguments%, which is illegal. (Check if you are entering inline data into a patch command, or vice versa.)"
+   END
+END
+
+DEFINE_ACTION_FUNCTION key_value_sanity_check
+    INT_VAR is_key=1
+    STR_VAR arguments=""
+BEGIN
+     OUTER_INNER_PATCH "" BEGIN
+        LPF key_value_sanity_check INT_VAR is_key STR_VAR arguments END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read or write the value of a field
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION get_field_value
+        INT_VAR loc=0
+                length=0
+        RET value
+BEGIN
+   PATCH_MATCH length WITH
+   1
+   BEGIN
+      READ_BYTE loc value
+   END
+   2
+   BEGIN
+      READ_SHORT loc value
+   END
+   4
+   BEGIN
+      READ_LONG loc value
+   END
+   DEFAULT
+      PATCH_FAIL ~Trying to read %loc%, but %length% is unrecognised length~
+   END
+END
+
+DEFINE_PATCH_FUNCTION set_field_value
+        INT_VAR loc=0
+                length=0
+                value=0
+                arguments=0
+BEGIN
+   PATCH_IF (arguments=0 && value!=0) BEGIN
+      SET arguments=value
+   END
+   PATCH_MATCH length WITH
+   1
+   BEGIN
+      WRITE_BYTE loc arguments
+   END
+   2
+   BEGIN
+      WRITE_SHORT loc arguments
+   END
+   4
+   BEGIN
+      WRITE_LONG loc arguments
+   END
+   DEFAULT
+      PATCH_FAIL "Trying to write %loc%, but %length% is unrecognised length"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               check the ini file
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION check_ini
+        STR_VAR ini=""
+        RET value
+BEGIN
+        TO_LOWER ini
+        PATCH_IF !VARIABLE_IS_SET $scs_ini_hash(~%ini%~) BEGIN
+           SET value=0
+        END ELSE BEGIN
+           SET value=$scs_ini_hash(~%ini%~)
+        END
+END
+
+DEFINE_ACTION_FUNCTION check_ini
+        STR_VAR ini=""
+        RET value
+BEGIN
+       OUTER_PATCH "" BEGIN
+        LPF check_ini STR_VAR ini RET value END
+       END
+END
+
+DEFINE_ACTION_FUNCTION action_check_ini
+       STR_VAR ini=""
+       RET value
+BEGIN
+     OUTER_INNER_PATCH ~~ BEGIN
+          LPF check_ini STR_VAR ini RET value END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               get a local directory
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION get_directory
+        STR_VAR location=""
+                locbase=""
+                locabs=""
+        RET directory
+BEGIN
+PATCH_IF "%locabs%" STRING_COMPARE "" BEGIN
+ SPRINT directory "%locabs%"
+END ELSE BEGIN
+ SPRINT directory ~%scsroot%~
+ PATCH_IF "%locbase%" STRING_EQUAL "" BEGIN
+   PATCH_FOR_EACH loc IN component_loc local_loc location BEGIN
+     PATCH_IF  ~%%loc%%~ STRING_COMPARE ~~ BEGIN
+     SPRINT temp EVALUATE_BUFFER "%%loc%%"
+            SPRINT ~directory~ EVALUATE_BUFFER ~%directory%/%%loc%%~
+      END
+   END
+ END ELSE BEGIN
+    PATCH_IF "%location%" STRING_EQUAL "" BEGIN
+       SPRINT directory "%directory%/%locbase%"
+    END ELSE BEGIN
+       SPRINT directory "%directory%/%locbase%/%location%"
+    END
+ END
+END
+END
+
+DEFINE_ACTION_FUNCTION get_directory
+        STR_VAR location=""  locbase=""  locabs=""
+        RET directory
+BEGIN
+   OUTER_INNER_PATCH ~~ BEGIN
+      LPF get_directory STR_VAR location locbase locabs RET directory=directory END
+   END
+END
+
+DEFINE_ACTION_FUNCTION action_get_directory
+        STR_VAR location=""  locbase="" locabs=""
+        RET directory
+BEGIN
+   OUTER_INNER_PATCH ~~ BEGIN
+      LPF get_directory STR_VAR location locbase locabs RET directory=directory END
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               include all the listed files
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION include
+       STR_VAR file=""
+               files=""
+               location=""
+               locbase=""
+               locabs=""
+BEGIN
+       ACTION_IF ~%file%~ STRING_EQUAL_CASE ~~ BEGIN
+          ACTION_IF ~%files%~ STRING_EQUAL_CASE ~~ BEGIN
+              PRINT ~Warning: you've called an include with no argument~
+          END ELSE BEGIN
+              OUTER_SPRINT file ~%files%~
+          END
+       END
+       PRINT ~Including file(s) %file%~
+       LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
+       OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
+           LAF action_return_first_entry STR_VAR list= ~%file%~ RET entry=entry file=list END
+           COPY ~%file_loc%/%entry%~ ~%workspace%/%entry%~
+              LPF define_make_patch END
+              LPF define_push END
+           REINCLUDE ~%workspace%/%entry%~
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               include all the listed files with a .tpa suffix, assume each contains a function with the same name as itself, and run that function
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION run
+       STR_VAR file=""
+               files=""
+               location=""
+               locbase=""
+               locabs=""
+               version=""
+BEGIN
+       ACTION_IF ~%file%~ STRING_EQUAL_CASE ~~ BEGIN
+          ACTION_IF ~%files%~ STRING_EQUAL_CASE ~~ BEGIN
+              PRINT ~Warning: you've called an include with no argument~
+          END ELSE BEGIN
+              OUTER_SPRINT file ~%files%~
+          END
+       END
+       PRINT ~Including and running function(s) %file%~
+       LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
+       OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
+           LAF return_first_entry STR_VAR list= ~%file%~ RET entry=entry file=list END
+           COPY ~%file_loc%/%entry%.tpa~ ~%workspace%/%entry%.tpa~
+              LPF define_make_patch END
+              LPF define_push END
+           INCLUDE ~%workspace%/%entry%.tpa~
+           LAF ~%entry%~ STR_VAR version= ~%version%~ END
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  generic logger
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION log_this
+        STR_VAR file=""
+                input=""
+                repeat="yes"
+                locabs="%workspace%"
+                location=""
+                locbase=""
+BEGIN
+    ACTION_IF !~%file%~ STRING_EQUAL_CASE ~auto_function_list.txt~ BEGIN  // in case we left any in place!
+        ACTION_IF debug_variable>0 BEGIN
+           PRINT ~trying to append %input% to %file%; location defined by locabs=%locabs% location=%location% locbase=%locbase%~
+        END
+        LAF get_directory STR_VAR location locabs locbase RET directory END
+        ACTION_IF !FILE_EXISTS ~%directory%/%file%~ BEGIN
+           COPY ~.../stratagems-inline/blank~ ~%directory%/%file%~
+        END
+        ACTION_IF (~%repeat%~ STRING_COMPARE_CASE ~no~) || !FILE_CONTAINS_EVALUATED ("%directory%/%file%" "%input%\($\|%WNL%\|%MNL%\|%LNL\)")BEGIN
+           APPEND_OUTER ~%directory%/%file%~ ~%input%~
+        END ELSE BEGIN
+        
+        END
+    END
+END
+
+DEFINE_PATCH_FUNCTION patch_log_this  // legacy
+        STR_VAR file=""
+                input=""
+                repeat="yes"
+                locabs="%workspace%"
+                location=""
+                locbase=""
+BEGIN
+        INNER_ACTION BEGIN
+          LAF log_this STR_VAR file input repeat locbase locabs location END
+        END
+END
+
+DEFINE_PATCH_FUNCTION log_this
+        STR_VAR file=""
+                input=""
+                repeat="yes"
+                locabs="%workspace%"
+                location=""
+                locbase=""
+BEGIN
+        INNER_ACTION BEGIN
+          LAF log_this STR_VAR file input repeat locbase locabs location END
+        END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Make a label
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_label
+    STR_VAR label=""
+BEGIN
+   LAF get_label_loc RET location=location END
+   COPY ~.../stratagems-inline/blank~ ~%location%/%label%.mrk~
+   LPF log_this STR_VAR file=SFO_warnings.txt input= ~Component with label:%label%~ END
+END
+
+DEFINE_ACTION_FUNCTION get_label_loc
+RET location
+BEGIN
+   LAF action_check_ini STR_VAR ini=put_labels_in_workspace RET loc=value END
+   ACTION_IF loc BEGIN
+       OUTER_SPRINT location ~%workspace%~
+   END ELSE BEGIN
+       OUTER_SPRINT location ~override~
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Check a label
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION check_label
+    STR_VAR label=""
+    RET value
+BEGIN
+   LAF get_label_loc RET location=location END
+   ACTION_IF FILE_EXISTS ~%location%/%label%.mrk~ BEGIN
+      OUTER_SET value=1
+   END ELSE BEGIN
+      OUTER_SET value=0
+   END
+END
+
+DEFINE_PATCH_FUNCTION check_label
+   STR_VAR label=""
+   RET value
+BEGIN
+   INNER_ACTION BEGIN
+      LAF check_label STR_VAR label RET value=value END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Take a LONG and reverse the first and last SHORT
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION reverse_long
+      INT_VAR input=0
+      RET output
+BEGIN
+   INNER_PATCH ~~ BEGIN
+      INSERT_BYTES 0x0 0x4
+      WRITE_LONG 0x0 input
+      READ_SHORT 0x0 first 
+      READ_SHORT 0x2 second
+      WRITE_SHORT 0x0 second
+      WRITE_SHORT 0x2 first
+      READ_LONG 0x0 output
+   END
+END
+
+DEFINE_ACTION_FUNCTION reverse_long
+     INT_VAR input=0
+     RET output
+BEGIN
+   OUTER_PATCH "" BEGIN
+       LPF reverse_long INT_VAR input RET output=output END
+   END
+END
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              get an RGB LONG
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION color
+    INT_VAR red=0
+            green=0
+            blue=0
+    RET color
+BEGIN
+
+   OUTER_INNER_PATCH ~~ BEGIN
+      INSERT_BYTES 0x0 4
+      WRITE_BYTE 0x1 red
+      WRITE_BYTE 0x2 green
+      WRITE_BYTE 0x3 blue
+      READ_LONG 0x0 color
+   END
+END
+
+DEFINE_PATCH_FUNCTION color
+     INT_VAR red=0
+             green=0
+             blue=0
+     RET color
+BEGIN
+   INNER_ACTION BEGIN
+      LAF color INT_VAR red green blue RET color=color END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              convert into hex
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_PATCH_FUNCTION hex_digit   // undocumented (helper only)
+    INT_VAR digit=0
+    RET out
+BEGIN
+   PATCH_IF (digit>=16 || digit<0) BEGIN
+            INNER_ACTION BEGIN
+               FAIL "not a digit"
+            END
+   END
+   PATCH_CLEAR_ARRAY hex_digit_map
+   DEFINE_ASSOCIATIVE_ARRAY hex_digit_map BEGIN
+      15=>f
+      14=>e
+      13=>d
+      12=>c
+      11=>b
+      10=>a
+   END
+   PATCH_IF VARIABLE_IS_SET $hex_digit_map("%digit%") BEGIN
+      SPRINT out $hex_digit_map("%digit%")
+   END ELSE BEGIN
+      SPRINT out "%digit%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION hexify
+    INT_VAR in=0
+            pad_length=0
+    STR_VAR out=""
+    RET out
+BEGIN
+   SET div=in / 16
+   SET digit=in - (div * 16)
+   LPF hex_digit INT_VAR digit RET char=out END
+   SPRINT out "%char%%out%"
+   PATCH_IF div>0 BEGIN
+      LPF hexify INT_VAR in= "%div%" pad_length STR_VAR out RET out=out  END
+   END ELSE BEGIN
+      WHILE pad_length>STRING_LENGTH "%out%" BEGIN
+         SPRINT out "0%out%"
+      END
+      SPRINT out "0x%out%"
+
+
+   END
+END
+
+DEFINE_ACTION_FUNCTION hexify
+    INT_VAR in=0
+            pad_length=0
+    RET out
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF hexify INT_VAR in pad_length RET out=out END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              guarantee a string-representing number is in hex form with lowercase x, lower case digits
+/////////////
+/////////////              ie 10=> 0xa
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ensure_hex
+     INT_VAR pad_length=0
+     STR_VAR in=""
+     RET out
+BEGIN
+      SNPRINT 2 check "%in%"
+      PATCH_IF "%check%" STRING_EQUAL_CASE "0x" BEGIN
+         PATCH_IF pad_length>0 BEGIN
+            INNER_PATCH_SAVE in "%in%" BEGIN
+               DELETE_BYTES 0x0 2
+            END
+            WHILE pad_length>STRING_LENGTH "%in%" BEGIN
+               SPRINT in "0%in%"
+            END
+            SPRINT in "0x%in%"
+         END
+         TO_LOWER in
+         SPRINT out "%in%"
+      END ELSE BEGIN
+         LPF hexify INT_VAR in pad_length RET out END
+      END
+END
+
+DEFINE_ACTION_FUNCTION ensure_hex
+     INT_VAR pad_length=0
+     STR_VAR in=""
+     RET out
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF ensure_hex INT_VAR pad_length STR_VAR in RET out END
+   END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  Iterate a counter; squeak when it's a multiple of 100
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION count_hundreds
+  INT_VAR counter=0
+          hundreds=0
+  STR_VAR task="files analysed"
+
+  RET counter hundreds
+BEGIN
+   PATCH_SILENT
+   PATCH_IF counter=100 BEGIN
+       SET hundreds +=1
+       SET counter=0
+       PATCH_PRINT "%hundreds%00 %task%"
+       PATCH_SILENT
+   END ELSE BEGIN
+       SET counter +=1
+   END
+END
+
+DEFINE_ACTION_FUNCTION count_hundreds
+  INT_VAR counter=0
+          hundreds=0
+  STR_VAR task="files analysed"
+
+  RET counter hundreds
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF count_hundreds INT_VAR counter hundreds STR_VAR task RET counter hundreds END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Consolidate table
+/////
+/////  Take a table with lots of key=>value pairs
+/////  Rewrite it as "key=>value list"
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION consolidate_table STR_VAR in="" out="" locabs="%workspace%" location="" locbase="" BEGIN
+    LAF get_directory STR_VAR locabs locbase location RET directory END
+    COPY - "%directory%/%in%" "%workspace%"
+        READ_2DA_ENTRIES_NOW in_entries 2
+        FOR (i=0;i<in_entries;i+=1) BEGIN
+           READ_2DA_ENTRY_FORMER in_entries i 0 key
+           READ_2DA_ENTRY_FORMER in_entries i 1 val
+           PATCH_IF !VARIABLE_IS_SET $out_entries( "%key%") BEGIN
+              SPRINT temp ""
+           END ELSE BEGIN
+              SPRINT temp $out_entries( "%key%")
+           END
+           SPRINT $out_entries("%key%") "%temp% %val%"
+        END
+    BUT_ONLY
+    COPY ".../stratagems-inline/blank" "%directory%/%out%"
+       SET counter=0
+       PHP_EACH out_entries AS key=>val BEGIN
+           INSERT_2DA_ROW counter 0 "%key% %val%"
+           SET counter +=1
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Process table
+/////
+/////  Take a table with a first line of column names and entries below. For each line, read the entries into variables with the
+///// given names and feed them as STR_VAR entries to the ACTION_FUNCTION "function"
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION process_table STR_VAR table="" location="" locbase="" locabs="" inline="no" function="" BEGIN
+  ACTION_IF "%inline%" STRING_COMPARE_CASE yes BEGIN
+     LAF action_get_directory STR_VAR location locbase locabs RET directory END
+     ACTION_IF !FILE_EXISTS "%directory%/%table%" BEGIN
+          FAIL "Tried to process table %table% but it doesn't exist at %directory%"
+     END
+  END ELSE BEGIN
+        OUTER_SPRINT directory ".../stratagems-inline"
+  END
+    COPY - "%directory%/%table%" "%workspace%"
+      REPLACE_TEXTUALLY "//.*" ""
+      COUNT_2DA_COLS colcount
+      COUNT_2DA_ROWS colcount rowcount
+      FOR (i=1;i<rowcount;i+=1) BEGIN
+         SPRINT to_include "LAF %function% STR_VAR"
+         FOR (j=0;j<colcount;j+=1) BEGIN
+            READ_2DA_ENTRY 0 j colcount var
+            READ_2DA_ENTRY i j colcount val
+            SPRINT to_include "%to_include% %var%=~%val%~"
+         END
+         SPRINT to_include "%to_include% END"
+         INNER_ACTION BEGIN
+            LAF reinclude_this STR_VAR input="%to_include%" END
+         END
+      END
+    BUT_ONLY
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////       read in all of a 2da file from column col onwards as a string
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION read_rest_of_line
+    INT_VAR row=0
+            col=0
+            colmin=0
+    RET list
+BEGIN
+   COUNT_2DA_COLS colcount
+   SET done=0
+   SPRINT list ""
+   WHILE !done & col<colcount BEGIN
+      PATCH_TRY
+          PATCH_SILENT
+          READ_2DA_ENTRY row col colmin temp
+          SPRINT list "%list% %temp%"
+          SET col+=1
+          PATCH_VERBOSE
+      WITH
+          ~Invalid_argument("index out of bounds")~
+      BEGIN
+          SET done=1
+      END
+      DEFAULT
+          PATCH_PRINT "read_rest_of_line generated error %ERROR_MESSAGE% (shouldn't happen)"
+          PATCH_RERAISE
+      END
+   END
+END
+
+

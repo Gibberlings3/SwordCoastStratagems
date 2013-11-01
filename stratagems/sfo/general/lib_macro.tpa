@@ -1,0 +1,850 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               set some hardcoded data
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+OUTER_SET maximum_character_level = 40
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in the offsets for a file type  (this has to be a macro as it's reading in content)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_offsets
+BEGIN
+    LOCAL_SET i=0
+    LOCAL_SET entry_type=0
+    LOCAL_SET offset=0
+    LOCAL_SET offset_length=0
+    LOCAL_SET num=0
+    LOCAL_SET num_length=0
+    LOCAL_SET entry_length=0
+    COPY ~%offset_readin_lookup_2da%.2da~ ~%offset_readin_lookup_2da%.2da~
+         READ_2DA_ENTRIES_NOW offset_entry_array 5
+         FOR (i=1;i<offset_entry_array;i=i+1) BEGIN
+            READ_2DA_ENTRY_FORMER offset_entry_array i 0 entry_type
+            READ_2DA_ENTRY_FORMER offset_entry_array i 1 offset
+            READ_2DA_ENTRY_FORMER offset_entry_array i 2 offset_length
+            READ_2DA_ENTRY_FORMER offset_entry_array i 3 num
+            READ_2DA_ENTRY_FORMER offset_entry_array i 4 num_length
+            READ_2DA_ENTRY_FORMER offset_entry_array i 5 entry_length
+            SET $ ~%offset_readin_file_ext%offset_loc~(~%entry_type%~) = offset
+            SET $ ~%offset_readin_file_ext%offset_length~(~%entry_type%~) = offset_length
+            SET $ ~%offset_readin_file_ext%entrynum_loc~(~%entry_type%~) = num
+            SET $ ~%offset_readin_file_ext%entrynum_length~(~%entry_type%~) = num_length
+            SET $ ~%offset_readin_file_ext%entry_length~(~%entry_type%~) = entry_length
+            SET $ ~%offset_readin_file_ext%precedence~(~%entry_type%~) = i
+         END
+    BUT_ONLY
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in the NPC dialog file data
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_NPC_dialogs
+BEGIN
+ LOCAL_SPRINT npc ""
+ LOCAL_SPRINT post ""
+ LOCAL_SPRINT join ""
+ ACTION_IF !VARIABLE_IS_SET ~macro_read_in_dialog_data~ BEGIN
+ OUTER_SPRINT ~read_in_dialog_data~ ~~
+   COPY_EXISTING ~pdialog.2da~ ~override~
+         READ_2DA_ENTRIES_NOW pdialog_contents 4
+         FOR (i=0;i<pdialog_contents;i=i+1) BEGIN
+            READ_2DA_ENTRY_FORMER pdialog_contents i 0 npc
+            READ_2DA_ENTRY_FORMER pdialog_contents i 1 post
+            READ_2DA_ENTRY_FORMER pdialog_contents i 2 join
+            TO_UPPER npc
+            SPRINT  ~%npc%_POSTJOIN~ ~%post%~
+            SPRINT  ~%npc%_JOINED~ ~%join%~
+         END
+   BUT_ONLY
+   COPY_EXISTING ~interdia.2da~ ~override~
+         READ_2DA_ENTRIES_NOW interdia_contents 2
+         FOR (i=1;i<interdia_contents;i=i+1) BEGIN  // skip first line, it's just the "2DA" line
+            READ_2DA_ENTRY_FORMER interdia_contents i 0 npc
+            READ_2DA_ENTRY_FORMER interdia_contents i 1 banter
+            TO_UPPER npc
+            SPRINT  ~%npc%_BANTER~ ~%banter%~
+         END
+   BUT_ONLY
+ END
+
+
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in spellslots in use
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_spells_in_use BEGIN
+  LOCAL_SPRINT array_to_read spell.ids
+  LOCAL_SPRINT read_array_location "%workspace%"
+  LOCAL_SPRINT array_name spellname_array
+  COPY_EXISTING spell.ids "%workspace%"
+  LAM read_in_assoc_array
+  ACTION_PHP_EACH spellname_array AS code=>ids BEGIN
+   OUTER_SPRINT $ids_in_use("%code%") ""
+   OUTER_SPRINT $idscode("%ids%") "%code%"
+  END
+  OUTER_SET spells_in_use_read_in=1
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in the spell codes
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
+
+  LOCAL_SPRINT filename ""
+  LOCAL_SET spellcode=0
+  LOCAL_SET level=0
+  LOCAL_SPRINT spelltype ""
+  ACTION_IF !VARIABLE_IS_SET ~macro_read_in_spellcodes~ BEGIN
+   OUTER_SPRINT ~macro_read_in_spellcodes~ ~~
+
+    COPY_EXISTING ~spell.ids~ ~override~
+         READ_2DA_ENTRIES_NOW ~spell_array~ 2
+         FOR (i=0;i<~spell_array~;i=i+1) BEGIN
+           READ_2DA_ENTRY_FORMER ~spell_array~ i 0 ~spellcode~
+           INNER_PATCH_SAVE ~spellcode~ ~%spellcode%~ BEGIN
+              READ_ASCII 0x1 ~level~ (1)
+              SET ~level~=~level~-1
+              DELETE_BYTES 0 1
+              INSERT_BYTES 0 4
+              PATCH_IF (~spellcode~<2000) BEGIN
+                   WRITE_ASCII 0x0 ~SPPR~ (4)
+                   SPRINT ~spelltype~ ~priest~
+              END ELSE
+              PATCH_IF (~spellcode~<3000) BEGIN
+                   WRITE_ASCII 0x0 ~SPWI~ (4)
+                   SPRINT ~spelltype~ ~wizard~
+              END ELSE
+              PATCH_IF (~spellcode~<4000) BEGIN
+                   WRITE_ASCII 0x0 ~SPIN~ (4)
+                   SPRINT ~spelltype~ ~innate~
+                   SET level=0
+              END ELSE
+              PATCH_IF (~spellcode~<5000) BEGIN
+                   WRITE_ASCII 0x0 ~SPCL~ (4)
+                   SPRINT ~spelltype~ ~innate~
+                   SET level=0
+              END
+           END
+
+           READ_2DA_ENTRY_FORMER ~spell_array~ i 1 ~spell_ID~
+           SPRINT  ~%spell_ID%~ ~%spellcode%~
+           SET  ~%spell_ID%_LEVEL~=~level~
+           SPRINT  ~%spell_ID%_TYPE~ ~%spelltype%~
+        END
+    BUT_ONLY
+    ACTION_FOR_EACH hlspell IN CLERIC_GLOBE_OF_BLADES CLERIC_SUMMON_DEVA CLERIC_SUMMON_FALLEN_DEVA
+                               CLERIC_IMPLOSION CLERIC_MASS_RAISE_DEAD CLERIC_AURA_OF_FLAMING_DEATH
+                               CLERIC_ELEMENTAL_TRANSFORMATION_FIRE CLERIC_ELEMENTAL_TRANSFORMATION_EARTH
+                               CLERIC_ENERGY_BLADES CLERIC_STORM_OF_VENGEANCE CLERIC_ELEMENTAL_SWARM
+                               CLERIC_GREATER_ELEMENTAL_SWARM WIZARD_ENERGY_BLADES WIZARD_IMPROVED_ALUCRITY
+                               WIZARD_DRAGONS_BREATH WIZARD_COMET WIZARD_SUMMON_PLANATAR_EVIL WIZARD_SUMMON_PLANATAR_GOOD
+    BEGIN
+        OUTER_SPRINT  ~%hlspell%_TYPE~ ~hla~
+    END
+
+     <<<<<<<< .../stratagems-inline/extra_spells_core.2da
+       CLERIC_CHROMATIC_ORB           SPDR101 0 priest
+       CLERIC_WEB                     SPDR201 1 priest
+       CLERIC_LIGHTNING_BOLT          SPDR301 2 priest
+       CLERIC_IMPROVED_INVISIBILITY   SPDR401 3 priest
+       CLERIC_CHAOS                   SPDR501 4 priest
+       CLERIC_CHAIN_LIGHTNING         SPDR601 5 priest
+       PSIONIC_SUPERIOR_INVISIBILITY  SPIN544 0 innate
+       CLERIC_SYMBOL_STUN             SPWI898 7 wizard
+       CLERIC_SYMBOL_DEATH            SPWI897 7 wizard
+       CLERIC_SYMBOL_FEAR             SPWI899 7 wizard
+       DARK_MOON_BLINDNESS            SPDM101 0 innate
+       DARK_MOON_BLUR                 SPDM102 0 innate
+       DARK_MOON_CHILL_TOUCH          SPDM105 0 innate
+       DARK_MOON_MIRROR_IMAGE         SPDM106 0 innate
+       DARK_MOON_VAMPIRIC_TOUCH       SPDM108 0 innate
+     >>>>>>>>
+     <<<<<<<< .../stratagems-inline/extra_spells_demivrgvs.2da
+       CLERIC_SUNSCORCH               SPPR116 0 priest
+       CLERIC_CREATE_UNDEAD           SPPR623 5 priest
+       WIZARD_SUMMON_SHADOW           SPWI501 4 wizard
+       WIZARD_CREATE_UNDEAD           SPWI623 5 wizard
+       CLERIC_SUMMON_SHAMBLING_MOUND  SPPR702 6 priest
+       CLERIC_SPHERE_OF_CHAOS         SPPR709 6 priest
+     >>>>>>>>
+     <<<<<<<< .../stratagems-inline/extra_spells_refinements.2da
+       WIZARD_CREATE_BONEGUARD        TG#BONE 8 hla
+       WIZARD_SPELL_WORM              CA#SPWO 8 hla
+       WIZARD_MALAVONS_FURY           TG#GMAL 8 hla
+       WIZARD_FORESIGHT               TG#FORS 8 hla
+       WIZARD_AEGIS                   TG#AEGI 8 hla
+       CLERIC_DIVINE_INTERVENTION_EVIL TG#DIVE 6 hla
+       CLERIC_DIVINE_SHELL            TG#DIVN 6 hla
+       CLERIC_UNION                   TG#UNIO 6 hla
+       BARBARIAN_GREATER_WAR_CRY      TG#GCRY 0 innate
+       BARBARIAN_TIRELESS_RAGE        TG#TLES 0 innate
+       KENSAI_TRUE_KAI                TG#GKAI 0 innate
+       ARCHER_PRECISION               TG#PREC 0 innate
+       ASSASIN_NERVE_POISON           TG#NPOI 0 innate
+       MONK_DRAGON_FIST               TG#BL03 0 innate
+       MONK_CHANT                     TG#CHNT 0 innate
+       MONK_DIAMOND_SOUL              TG#DIAM 0 innate
+       MONK_SHADOWLESS_KICK           TG#BL09 0 innate
+       MONK_TIGER_STRIKE              TG#TIGS 0 innate
+     >>>>>>>>
+
+    OUTER_SPRINT macro_to_do core
+    ACTION_IF !VARIABLE_IS_SET refinements BEGIN
+       OUTER_SET refinements=0
+    END
+    ACTION_IF refinements BEGIN OUTER_SPRINT macro_to_do "%macro_to_do% refinements" END
+    ACTION_IF !VARIABLE_IS_SET demivrgvs BEGIN
+       OUTER_SET demivrgvs=0
+    END
+    ACTION_IF demivrgvs BEGIN OUTER_SPRINT macro_to_do "%macro_to_do% demivrgvs" END
+    OUTER_WHILE "%macro_to_do%" STRING_COMPARE "" BEGIN
+     LAF return_first_entry STR_VAR list="%macro_to_do%" RET macro_entry=entry macro_to_do=list END
+     COPY ~.../stratagems-inline/extra_spells_%macro_entry%.2da~ ~override~
+          READ_2DA_ENTRIES_NOW temp_array  4
+          FOR (i=0;i<temp_array;i+=1) BEGIN
+             READ_2DA_ENTRY_FORMER temp_array i 0 macro_spell_ID
+             READ_2DA_ENTRY_FORMER temp_array i 1 macro_spellcode
+             READ_2DA_ENTRY_FORMER temp_array i 2 macro_level
+             READ_2DA_ENTRY_FORMER temp_array i 3 macro_type
+             SPRINT  ~%macro_spell_ID%~ ~%macro_spellcode%~
+             SPRINT  ~%macro_spell_ID%_LEVEL~ ~%macro_level%~
+             SPRINT  ~%macro_spell_ID%_TYPE~ ~%macro_type%~
+          END
+     BUT_ONLY
+    END
+
+    // first pass, to collect scrolls
+    OUTER_SPRINT macro_scrolls ~~
+    COPY_EXISTING_REGEXP ~scrl.*\.itm~ ~override~
+        PATCH_IF FILE_EXISTS_IN_GAME ~_%SOURCE_RES%.itm~ BEGIN
+           SPRINT filename ~_%SOURCE_RES%~
+        END ELSE BEGIN
+           SPRINT filename ~%SOURCE_RES%~
+        END
+        PATCH_IF (~%filename%~ STRING_COMPARE_CASE ttscrl01 && ~%filename%~ STRING_COMPARE_CASE ttscrl02) BEGIN
+         INNER_ACTION BEGIN
+            COPY_EXISTING ~%filename%.itm~ ~override~
+              LPF ITM_read_category RET value END
+              PATCH_IF value=11 BEGIN // scroll
+                       PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPPR)>=0) BEGIN
+                                SPRINT macro_scrolls ~%macro_scrolls% %filename%~
+                       END
+              END
+            BUT_ONLY
+         END
+        END
+    BUT_ONLY
+
+    ACTION_CLEAR_ARRAY patch_data
+    ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+        match=>"opcode=147"
+        log_scroll=>null
+    END
+    LAF edit_item INT_VAR silent=1 STR_VAR item=~%macro_scrolls%~ editstring=~patch_effect=>patch_data~ END
+        COPY ~%workspace%/scroll_map.txt~ ~%workspace%~
+            READ_2DA_ENTRIES_NOW scroll_map_data 2
+            FOR (i=0;i<scroll_map_data;i+=1) BEGIN
+                 READ_2DA_ENTRY_FORMER scroll_map_data i 0 macro_spell
+                 TO_UPPER macro_spell
+                 READ_2DA_ENTRY_FORMER scroll_map_data i 1 macro_scroll
+                 TO_UPPER macro_scroll
+                 INNER_PATCH_SAVE macro_spell ~%macro_spell%~ BEGIN
+                    READ_ASCII 0x0 macro_start (4)
+                    PATCH_MATCH ~%macro_start%~ WITH
+                        SPWI SPIN SPCL SPPR BEGIN
+                           SET macro_success=1
+                           REPLACE_TEXTUALLY SPPR 1
+                           REPLACE_TEXTUALLY SPWI 2
+                           REPLACE_TEXTUALLY SPIN 3
+                           REPLACE_TEXTUALLY SPCL 4
+                        END
+                        DEFAULT
+                           SET macro_success=0
+                        END
+                 END
+                 PATCH_IF macro_success=1 BEGIN
+                    LOOKUP_IDS_SYMBOL_OF_INT macro_spellname spell macro_spell
+                    TO_UPPER macro_spellname
+                    SPRINT  ~%macro_spellname%_SCROLL~ ~%macro_scroll%~
+                 END ELSE BEGIN
+                    LPF warning STR_VAR warning= ~Could not identify the spell %macro_spell% associated with scroll %macro_scroll%~ END
+                 END
+            END
+    BUT_ONLY
+    ACTION_CLEAR_ARRAY patch_data
+   END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in the spell codes and spell details in bulk for CLAB data
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_clab_spelldata~ BEGIN
+   LOCAL_SET i=0
+   LOCAL_SET j=0
+   LOCAL_SET colcount=0
+   LOCAL_SET rowcount=0
+   LOCAL_SET parameter1=0
+   LOCAL_SET parameter2=0
+   LOCAL_SET opcode=0
+   LOCAL_SET offset_base=0
+   LOCAL_SPRINT resource_here ""
+   LOCAL_SPRINT resource ""
+   LOCAL_SPRINT tempadd ""
+   LOCAL_SPRINT tempremove ""
+      SILENT
+   COPY_EXISTING_REGEXP GLOB "clab.*\.2da" "%workspace%"
+      COUNT_2DA_COLS colcount
+      COUNT_2DA_ROWS colcount rowcount
+      FOR (i=0;i<rowcount;i+=1) BEGIN
+         FOR (j=0;j<colcount;j+=1) BEGIN
+              READ_2DA_ENTRY i j colcount resource
+              PATCH_MATCH "%resource%" WITH
+              "GA_.*" BEGIN
+                  INNER_PATCH_SAVE resource "%resource%" BEGIN
+                     DELETE_BYTES 0x0 3
+                  END
+                  TO_UPPER resource
+                  PATCH_IF !VARIABLE_IS_SET "RESREF_%resource%_LEVEL" BEGIN
+                      INNER_ACTION BEGIN
+                         COPY_EXISTING "%resource%.spl" "%workspace%"
+                               LPF SPL_read_level RET "RESREF_%resource%_LEVEL"=value END
+                               LPF SPL_read_spell_type RET "RESREF_%resource%_TYPE"=value END
+                         BUT_ONLY
+                      END
+                  END
+              END
+              "AP_.*" BEGIN
+                  INNER_PATCH_SAVE resource "%resource%" BEGIN
+                     DELETE_BYTES 0x0 3
+                  END
+                  TO_UPPER resource
+                  PATCH_IF !VARIABLE_IS_SET "RESREF_%resource%_KIT_EFFECTS_ADD" BEGIN
+                      INNER_ACTION BEGIN
+                        ACTION_IF FILE_EXISTS_IN_GAME "%resource%.spl" BEGIN
+                         COPY_EXISTING "%resource%.spl" "%workspace%"
+                            SPRINT tempadd ""
+                            SPRINT tempremove ""
+                            LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
+                                    GET_OFFSET_ARRAY2 fx_arr offset_base ITM_V10_HEAD_EFFECTS
+                                    PHP_EACH fx_arr AS int=>offset_secondary BEGIN
+                                       READ_SHORT offset_secondary opcode
+                                       READ_LONG offset_secondary+0x4 parameter1
+                                       READ_LONG offset_secondary+0x8 parameter2
+                                       READ_ASCII offset_secondary+0x14 resource_here
+                                       PATCH_IF "%resource_here%" STRING_EQUAL "" BEGIN
+                                          SPRINT resource_here null
+                                       END
+                                       PATCH_MATCH "%opcode%" WITH
+                                       172 BEGIN END
+                                       DEFAULT
+                                          SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource_here% opcode=>%opcode%~"
+                                          SPRINT tempremove "%tempremove% delete_effect=>~opcode=%opcode% and parameter2=%parameter2% and resource=%resource_here%~" // parameter1 intentionally left out
+                                       END
+                                    END
+                         BUT_ONLY
+                       END
+                       OUTER_SPRINT "RESREF_%resource%_KIT_EFFECTS_ADD" "%tempadd%"
+                       OUTER_SPRINT "RESREF_%resource%_KIT_EFFECTS_REMOVE" "%tempremove%"
+                      END
+                  END
+              END
+              DEFAULT
+              END
+         END
+      END
+   BUT_ONLY
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION log_scroll
+   INT_VAR offset_secondary=0
+   STR_VAR offset_base=""
+           filename=""
+BEGIN
+   LPF ITM_read_resource INT_VAR offset_secondary STR_VAR offset_base RET spell=value END
+   LPF log_this STR_VAR file=scroll_map.txt input= ~%spell% %filename%~ END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in the saving throws
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_saving_throws~ BEGIN
+  ACTION_IF !VARIABLE_IS_SET ~macro_read_in_saving_throws~ BEGIN
+   // start by defining a map from core class to saving throw file
+   ACTION_CLEAR_ARRAY class_file_save_map
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY class_file_save_map BEGIN
+        MAGE => WIZ
+        FIGHTER => WAR
+        CLERIC => PRS
+        THIEF => ROG
+        BARD => ROG
+        PALADIN => WAR
+        DRUID => PRS
+        RANGER => WAR
+        MONK => MONK
+        SORCERER => WIZ
+   END
+
+   // read in the base saving throws
+
+   ACTION_FOR_EACH core_type IN WIZ WAR PRS ROG MONK BEGIN
+      COPY_EXISTING ~SAVE%core_type%.2da~ ~override~
+           READ_2DA_ENTRIES_NOW save_array_temp 20
+           SET index=1
+           PATCH_FOR_EACH type IN death wand polymorph breath spell BEGIN
+               FOR (level=1;level<=maximum_character_level;level=level+1) BEGIN
+                  READ_2DA_ENTRY_FORMER save_array_temp index level savenum
+                  SET $saving_throw_value_base(~%core_type%~ ~%level%~ ~%type%~)=savenum
+               END
+               SET index = index + 1
+           END
+      BUT_ONLY
+   END
+   OUTER_SPRINT ~macro_read_in_saving_throws~ ~~
+  END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in thac0
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_thac0~ BEGIN
+  ACTION_IF !VARIABLE_IS_SET ~macro_read_in_thac0~ BEGIN
+          COPY_EXISTING ~thac0.2da~ ~override~ READ_2DA_ENTRIES_NOW ~thac0_table_read~ 10
+          OUTER_SPRINT ~macro_read_in_thac0~ ~~
+  END
+END         
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in hit point levels for each class
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_hit_point_levels~ BEGIN
+
+ ACTION_IF !VARIABLE_IS_SET macro_read_in_hit_point_levels BEGIN
+   // do it this way if it's externalised
+
+   ACTION_IF FILE_EXISTS_IN_GAME ~hpbarb.2da~ BEGIN
+      COPY_EXISTING hpclass.2da override
+        READ_2DA_ENTRIES_NOW hpclass_readout 2
+        FOR (i=1;i<hpclass_readout;i=i+1) BEGIN
+         READ_2DA_ENTRY_FORMER hpclass_readout i 0 class
+         READ_2DA_ENTRY_FORMER hpclass_readout i 1 file
+         INNER_ACTION BEGIN
+            COPY_EXISTING ~%file%.2da~ ~override~
+                READ_2DA_ENTRIES_NOW hp_readout 3
+            BUT_ONLY
+         END
+         SET runningtotal=0
+         SET runningtotal_min=0
+         FOR (j=1;j<hp_readout;j=j+1) BEGIN
+            READ_2DA_ENTRY_FORMER hp_readout j 1 sides
+            READ_2DA_ENTRY_FORMER hp_readout j 2 rolls
+            READ_2DA_ENTRY_FORMER hp_readout j 3 mod
+            SET runningtotal = runningtotal + (sides * rolls) + mod
+            SET runningtotal_min = runningtotal_min + rolls + mod
+            SET $class_hp_maximum(~%class%~ ~%j%~) = runningtotal
+            SET $class_hp_minimum(~%class%~ ~%j%~) = runningtotal_min
+         END
+       END
+      BUT_ONLY
+   END ELSE BEGIN
+      // hardcode it
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY hp_hardcoded_array_dice BEGIN
+           MAGE => 4
+           FIGHTER => 10
+           CLERIC => 8
+           THIEF => 6
+           BARD => 6
+           PALADIN => 10
+           DRUID => 8
+           RANGER => 10
+           SORCERER => 4
+           MONK => 8
+           BARBARIAN => 12
+      END
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY hp_hardcoded_array_mod BEGIN
+           MAGE => 1
+           FIGHTER => 3
+           CLERIC => 2
+           THIEF => 2
+           BARD => 2
+           PALADIN => 3
+           DRUID => 2
+           RANGER => 3
+           SORCERER => 1
+           MONK => 2
+           BARBARIAN => 3
+      END
+      ACTION_PHP_EACH hp_hardcoded_array_dice AS class => dice BEGIN
+         OUTER_SET runningtotal=0
+         OUTER_SET modifier = $hp_hardcoded_array_mod(~%class%~)
+         ACTION_IF ~%class%~ STRING_EQUAL MAGE OR ~%class%~ STRING_EQUAL_CASE SORCERER BEGIN
+            OUTER_SET dicemax=10
+         END ELSE BEGIN
+            OUTER_SET dicemax=9
+         END
+         OUTER_FOR (i=1;i<=dicemax;i=i+1) BEGIN
+            OUTER_SET $class_hp_maximum(~%class%~ ~%i%~)=i * dice
+            OUTER_SET $class_hp_minimum(~%class%~ ~%i%~)=i
+         END
+         OUTER_FOR (i=dicemax + 1;i<41;i=i+1) BEGIN
+            OUTER_SET $class_hp_maximum(~%class%~ ~%i%~)= (i - dicemax)*modifier + dicemax * dice
+            OUTER_SET $class_hp_minimum(~%class%~ ~%i%~)= (i - dicemax)*modifier + dicemax
+         END
+      END
+
+   END
+   OUTER_SPRINT read_in_hit_point_levels ~~
+
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in item types
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_item_types 
+BEGIN
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY item_location_map BEGIN
+        1 => amulet
+        2 => armor
+        3 => belt
+        4 => boots
+        5 => quiver
+        6 => gloves
+        7 => helmet
+        10 => ring
+        12 => shield
+        14 => quiver
+        15 => two-handed
+        16 => weapon
+        17 => weapon
+        18 => weapon
+        19 => weapon
+        20 => weapon
+        21 => weapon
+        22 => weapon
+        23 => weapon
+        24 => weapon
+        25 => weapon
+        26 => weapon
+        27 => weapon
+        28 => weapon
+        29 => weapon
+        30 => two-handed
+        31 => quiver
+        32 => cloak
+        35 => qitem
+        41 => shield
+        44 => weapon
+        47 => shield
+        49 => shield
+        53 => shield
+        57 => two-handed
+        60 => armor
+        61 => armor
+        62 => armor
+        63 => armor
+        64 => armor
+        65 => armor
+        66 => armor
+        69 => weapon
+        72 => helmet
+        73 => gloves
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in proficiencies for each weapon
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_proficiencies BEGIN
+   ACTION_IF !VARIABLE_IS_SET proficiencies_read_in BEGIN
+    OUTER_SET proficiencies_read_in=1
+    COPY_EXISTING weapprof.2da ~%workspace%~
+       REPLACE_TEXTUALLY ~NAME_REF~ ~BLOOK NAME_REF~ // just to make column entries match up
+       READ_2DA_ENTRIES_NOW MACRO_weapprof_data 10
+       COUNT_2DA_COLS MACRO_colcount
+       FOR (i=1;i<MACRO_weapprof_data;i+=1) BEGIN
+         READ_2DA_ENTRY_FORMER MACRO_weapprof_data i 1 MACRO_weapon_id
+         FOR (j=4;j<MACRO_colcount;j+=1) BEGIN
+          READ_2DA_ENTRY_FORMER MACRO_weapprof_data 0 j MACRO_class
+          TO_UPPER MACRO_class
+          READ_2DA_ENTRY_FORMER MACRO_weapprof_data i j MACRO_max
+          SET  ~PROFICIENCY_%MACRO_weapon_id%_%MACRO_class%~=MACRO_max
+         END
+       END
+    BUT_ONLY
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in stats.ids
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_stats BEGIN
+   ACTION_IF !VARIABLE_IS_SET stats_read_in BEGIN
+    OUTER_SET stats_read_in=1
+    COPY_EXISTING stats.ids ~%workspace%~
+       READ_2DA_ENTRIES_NOW MACRO_stat_data 2
+       FOR (i=1;i<MACRO_stat_data;i+=1) BEGIN
+          READ_2DA_ENTRY_FORMER MACRO_stat_data i 0 MACRO_stat_id
+          READ_2DA_ENTRY_FORMER MACRO_stat_data i 1 MACRO_stat_name
+          TO_UPPER MACRO_stat_name
+          SET  ~STAT_VALUE_%MACRO_stat_name%~=MACRO_stat_id
+       END
+    BUT_ONLY
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               read in proficiency progression
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_proficiency_progression BEGIN
+   ACTION_IF !VARIABLE_IS_SET proficiency_progression_read_in BEGIN
+    OUTER_SET proficiency_progression_read_in=1
+    COPY_EXISTING profs.2da ~%workspace%~
+       READ_2DA_ENTRIES_NOW MACRO_prof_progression_data 3
+       FOR (i=0;i<MACRO_prof_progression_data;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER MACRO_prof_progression_data i 0 MACRO_class
+            READ_2DA_ENTRY_FORMER MACRO_prof_progression_data i 1 MACRO_first_level
+            READ_2DA_ENTRY_FORMER MACRO_prof_progression_data i 2 MACRO_rate
+            SET  ~PROFICIENCY_FIRST_LEVEL_%MACRO_class%~=MACRO_first_level
+            SET  ~PROFICIENCY_RATE_%MACRO_class%~=MACRO_rate
+       END
+    BUT_ONLY
+    COPY_EXISTING profsmax.2da "%workspace%"
+          READ_2DA_ENTRIES_NOW MACRO_prof_max_data 3
+          FOR (i=0;i<MACRO_prof_max_data;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 0 MACRO_class
+            READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 1 MACRO_first_level
+            READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 2 MACRO_other_level
+            SET "PROFICIENCY_FIRST_LEVEL_MAX_%MACRO_class%"=MACRO_first_level
+            SET "PROFICIENCY_OTHER_LEVEL_MAX_%MACRO_class%"=MACRO_other_level
+          END
+    BUT_ONLY
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  set the relation between item slots and slot numbers
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_item_slots
+BEGIN
+     ACTION_IF !VARIABLE_IS_SET $item_slot_map(0) BEGIN
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY item_slot_map_back BEGIN
+        0=>HELMET
+        1=>ARMOR
+        2=>SHIELD
+        3=>GLOVES
+        4=>LRING
+        5=>RRING
+        6=>AMULET
+        7=>BELT
+        8=>BOOTS
+        9=>WEAPON1
+        10=>WEAPON2
+        11=>WEAPON3
+        12=>WEAPON4
+        13=>QUIVER1
+        14=>QUIVER2
+        15=>QUIVER3
+        16=>QUIVER4
+        17=>CLOAK
+        18=>QUICKITEM1
+        19=>QUICKITEM2
+        20=>QUICKITEM3
+        21=>INV1
+        22=>INV2
+        23=>INV4
+        24=>INV5
+        25=>INV6
+        26=>INV7
+        27=>INV8
+        28=>INV9
+        29=>INV10
+        30=>INV11
+        31=>INV12
+        32=>INV13
+        33=>INV14
+        34=>INV15
+        35=>INV16
+        36=>MAGICWEAPON
+      END
+      ACTION_PHP_EACH item_slot_map_back AS slotnum=>slotname BEGIN
+         OUTER_SET $item_slot_map( ~%slotname%~)=slotnum
+      END
+     END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               get an offset array (as stipulated in the values of ~entry_type~ and ~file_ext~) and fill offset_array with it
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO get_offset_array BEGIN
+
+         LOCAL_SET offset_loc=0
+         LOCAL_SET offset_length=0
+         LOCAL_SET entrynum_loc=0
+         LOCAL_SET entrynum_length=0
+         LOCAL_SET entry_length=0
+         LOCAL_SET temp=0
+         LOCAL_SET entrynum=0
+         PATCH_CLEAR_ARRAY offset_array
+         TO_UPPER file_ext
+         SET offset_loc=$ ~%file_ext%offset_loc~(~%entry_type%~)
+         SET offset_length=$ ~%file_ext%offset_length~(~%entry_type%~)
+         SET entrynum_loc=$ ~%file_ext%entrynum_loc~(~%entry_type%~)
+         SET entrynum_length=$ ~%file_ext%entrynum_length~(~%entry_type%~)
+         SET entry_length=$ ~%file_ext%entry_length~(~%entry_type%~)
+         PATCH_IF entrynum_loc>0 BEGIN
+           GET_OFFSET_ARRAY offset_array offset_loc offset_length entrynum_loc entrynum_length 0 0 entry_length
+         END ELSE BEGIN
+           PATCH_MATCH offset_length WITH
+           1 BEGIN
+               READ_BYTE offset_loc offset_start
+           END
+           2 BEGIN
+               READ_SHORT offset_loc offset_start
+           END
+           DEFAULT
+               READ_LONG offset_loc offset_start
+           END
+           SET entrynum=0 - entrynum_loc
+           FOR (i=0;i<entrynum;i+=1) BEGIN
+              SET temp=i*entry_length+offset_start
+              SET $offset_array(~%i%~)=temp
+           END
+         END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  reinclusion macro (includes input)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO patch_reinclude_this BEGIN
+                  INNER_ACTION BEGIN
+                               <<<<<<<< temp_file
+                               %input%
+                               >>>>>>>>
+                  COPY + temp_file ~%workspace%/temp_file~ EVALUATE_BUFFER
+           END
+           PATCH_REINCLUDE ~%workspace%/temp_file~
+
+
+END
+
+DEFINE_ACTION_MACRO action_reinclude_this BEGIN
+                               <<<<<<<< temp_file
+                               %input%
+                               >>>>>>>>
+                  COPY + temp_file ~%workspace%/temp_file~ EVALUATE_BUFFER
+           REINCLUDE ~%workspace%/temp_file~
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  read in a row of a table into a string of variables (the table lives in 2da_array, we look at 2da_row, and read in var_list)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO read_in_2da_row
+BEGIN
+     LOCAL_SET col=0
+     LOCAL_SPRINT list ~%var_list%~
+     LOCAL_SPRINT input ""
+     PATCH_SILENT
+     WHILE ~%list%~ STRING_COMPARE_CASE "" BEGIN
+           LPF return_first_entry STR_VAR list RET list=list entry=entry END
+           SPRINT input ~READ_2DA_ENTRY_FORMER 2da_array %2da_row% %col% %entry%~
+           LAUNCH_PATCH_MACRO patch_reinclude_this
+         col=col+1
+    END
+    PATCH_VERBOSE
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              read in a file as an associative array   (file is array_to_read, array is array_name)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_assoc_array BEGIN
+      ACTION_IF !VARIABLE_IS_SET read_array_location BEGIN
+         OUTER_SPRINT read_array_location ""
+      END
+      ACTION_IF "%read_array_location%" STRING_EQUAL_CASE "" BEGIN
+         LAF action_get_directory RET location=directory END
+         OUTER_SPRINT read_array_location "%scsroot%/%location%"
+      END
+      ACTION_IF ("%read_array_backwards%" STRING_EQUAL_CASE yes) BEGIN
+         OUTER_SET array_loc_0=1
+         OUTER_SET array_loc_1=0
+      END ELSE BEGIN
+         OUTER_SET array_loc_0=0
+         OUTER_SET array_loc_1=1
+      END
+      COPY - "%read_array_location%/%array_to_read%" "%workspace%"
+             REPLACE_TEXTUALLY "=>" " "
+             COUNT_2DA_ROWS 2 array_rowcount
+             FOR (array_row=0;array_row<array_rowcount;array_row +=1) BEGIN
+                 READ_2DA_ENTRY array_row array_loc_0 2 array_key
+                 READ_2DA_ENTRY array_row array_loc_1 2 array_val
+                 SPRINT $ "%array_name%"("%array_key%") "%array_val%"
+             END
+      BUT_ONLY
+      OUTER_SPRINT read_array_location ""
+      OUTER_SPRINT read_array_backwards no
+END
+
+

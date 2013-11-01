@@ -1,0 +1,160 @@
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION patch_text_entry
+        INT_VAR loc=0
+        STR_VAR function=""
+                arguments=""
+BEGIN
+  LPF check_ini STR_VAR ini=Run_Silent RET value=value END
+  PATCH_IF value BEGIN
+     LPF warning STR_VAR warning= ~Running silent, so instruction to patch_text_entry with arguments loc=%loc%, function=%function%, warning=%warning%, was ignored~ END
+  END ELSE BEGIN
+
+   READ_STRREF loc entry
+   LPF ~%function%~ STR_VAR input= ~%entry%~ arguments= ~%arguments%~ RET newentry=output END
+   SAY_EVALUATED loc ~%newentry%~
+  END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION append_string   // includes a space
+        STR_VAR input=""
+                arguments=""
+        RET     output
+BEGIN
+   SPRINT ~output~ ~%input% %arguments%~
+END
+
+DEFINE_PATCH_FUNCTION append_string_nospace
+        STR_VAR input=""
+                arguments=""
+        RET     output
+BEGIN
+   SPRINT ~output~ ~%input%%arguments%~
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION substitute_string
+     STR_VAR input=""
+             arguments=""  // list of oldstring=> newstring
+     RET     output
+BEGIN
+          PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+          LPF return_first_pair STR_VAR list= ~%arguments%~ RET old=key new=value arguments=list END
+          INNER_PATCH_SAVE output ~%input%~ BEGIN
+             PATCH_IF ~%new%~ STRING_EQUAL_CASE ~NULL~ BEGIN
+                SPRINT new ~~
+             END
+             PATCH_IF ~%new%~ STRING_EQUAL_CASE ~SPACE~ BEGIN
+                SPRINT new ~ ~
+             END
+             REPLACE_TEXTUALLY ~%old%~ ~%new%~
+          END
+          LPF substitute_string STR_VAR input= ~%output%~ arguments= ~%arguments%~ RET output=output END
+       END ELSE BEGIN
+          SPRINT output ~%input%~
+       END
+END
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION set_string
+     STR_VAR input=""
+             arguments=""  // list of oldstring=> newstring
+     RET     output
+BEGIN
+       SPRINT output ~%arguments%~
+END
+
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION action_append_strref // includes a space
+        STR_VAR input=""
+                arguments=""
+        RET     output
+BEGIN
+   <<<<<<<< temp_file
+      OUTER_SPRINT ~output~ ~%input% %arguments%~
+   >>>>>>>>
+   COPY + temp_file ~%workspace%/temp_file2~ EVALUATE_BUFFER
+   REINCLUDE ~%workspace%/temp_file2~
+END
+
+
+DEFINE_PATCH_FUNCTION append_strref   // includes a space
+        STR_VAR input=""
+                arguments=""
+        RET     output
+BEGIN
+   INNER_ACTION BEGIN
+     LAF action_append_strref STR_VAR input= ~%input%~ arguments= ~%arguments%~ RET output=output END
+   END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////            Read in the entry in tlk_entry, append or (if new_first=1) prepend a new string, and write it back
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION append_to_tlk_entry
+             INT_VAR tlk_entry=~-1~
+                     new_first=0
+             STR_VAR arguments=""
+                     separator=" "
+BEGIN
+     ACTION_GET_STRREF tlk_entry oldstring
+     ACTION_IF new_first=1 BEGIN
+        OUTER_SPRINT newstring ~%arguments%%separator%%oldstring%~
+     END ELSE BEGIN
+        OUTER_SPRINT newstring ~%oldstring%%separator%%arguments%~
+     END
+     STRING_SET_EVALUATE tlk_entry ~%newstring%~
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////            Read in the entry in tlk_entry, run the substitutions defined by argument, and write it back
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION substitute_tlk_entry
+             INT_VAR tlk_entry=~-1~
+             STR_VAR arguments=""
+BEGIN
+     ACTION_GET_STRREF tlk_entry input
+     OUTER_INNER_PATCH ~~ BEGIN
+       LPF substitute_string STR_VAR input arguments RET output=output END
+     END
+     STRING_SET_EVALUATE tlk_entry ~%output%~
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////            Add a string to dialog.tlk
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION add_to_tlk 
+          STR_VAR string=""
+          RET strref
+BEGIN
+            OUTER_INNER_PATCH ~~ BEGIN
+                   INSERT_BYTES 0x0 4
+                   SAY 0x0 ~%string%~
+                   READ_LONG 0x0 strref
+            END
+END

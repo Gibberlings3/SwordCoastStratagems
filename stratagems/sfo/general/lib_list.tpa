@@ -1,0 +1,463 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            push a string onto the end of another
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION push 
+     STR_VAR head="SFO_unspecified"
+             tail="SFO_unspecified"
+     RET list
+BEGIN
+     PATCH_IF "%head%" STRING_EQUAL "SFO_unspecified" || "%tail%" STRING_EQUAL "SFO_unspecified" BEGIN
+        PATCH_FAIL "Head and/or tail unspecified in 'push'"
+     END
+     PATCH_MATCH "%tail%" WITH 
+     "" BEGIN
+        PATCH_MATCH "%head%" WITH
+        "" BEGIN
+           SPRINT list ""
+        END
+        ~[^"]*~ BEGIN // no "? wrap it in "
+           SPRINT list ~"%head%"~
+        END
+        "[^~]*" BEGIN // vice versa
+           SPRINT list "~%head%~"
+        END
+        DEFAULT   // warn
+           LPF warning STR_VAR warning="Unable to add %head% to list %tail% as it contains both kinds of quote marks" END
+        END
+     END
+     DEFAULT
+        PATCH_MATCH "%head%" WITH
+        "" BEGIN
+           SPRINT list "%tail%"
+        END
+        ~[^"]*~ BEGIN // no "? wrap it in "
+           SPRINT list ~"%head%" %tail%~
+        END
+        "[^~]*" BEGIN // vice versa
+           SPRINT list "~%head%~ %tail%"
+        END
+        DEFAULT   // warn
+           LPF warning STR_VAR warning="Unable to add %head% to list %tail% as it contains both kinds of quote marks" END
+        END
+     END
+END
+
+DEFINE_ACTION_FUNCTION push
+    STR_VAR head="SFO_unspecified"
+            tail="SFO_unspecified"
+    RET list
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF push STR_VAR head tail RET list=list END
+   END
+END
+
+DEFINE_PATCH_FUNCTION join
+   STR_VAR list1=""
+           list2=""
+   RET list
+BEGIN
+   PATCH_IF "%list1%" STRING_EQUAL "" BEGIN
+       SPRINT list "%list2%"
+   END ELSE
+   PATCH_IF "%list2%" STRING_EQUAL "" BEGIN
+       SPRINT list "%list1%"
+   END ELSE BEGIN
+       SPRINT list "%list1% %list2%"
+   END
+END
+
+DEFINE_ACTION_FUNCTION join
+   STR_VAR list1=""
+           list2=""
+   RET list
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF join STR_VAR list1 list2 RET list END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch or action, take a list of variables, return the first entry, and strip it from the list
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_first_entry
+     STR_VAR list=""
+             separator=" "
+     RET list
+         entry
+BEGIN
+     // clean out any "\n"; process separator
+     INNER_PATCH_SAVE list ~%list%~ BEGIN 
+             REPLACE_TEXTUALLY ~%WNL%~ ~~
+             REPLACE_TEXTUALLY ~%LNL%~ ~~
+             REPLACE_TEXTUALLY ~%MNL%~ ~~
+             REPLACE_TEXTUALLY ~%TAB%~ ~ ~
+     END
+     LPF strip_spaces_from_string STR_VAR string=  ~%list%~ RET list=string END
+    PATCH_IF "%list%" STRING_EQUAL_CASE "" BEGIN  // return nothing if string is empty
+        SPRINT entry ""
+        SPRINT list ""
+    END ELSE BEGIN
+     INNER_PATCH ~%list%~ BEGIN READ_ASCII 0 first_char (1) END
+     PATCH_IF (~%first_char%~ STRING_EQUAL ~"~ || ~%first_char%~ STRING_EQUAL "~") BEGIN
+        SPRINT ~divider~ ~%first_char%~
+        INNER_PATCH_SAVE ~list~ ~%list%~ BEGIN DELETE_BYTES 0 1 END // take off the " or ~
+     END ELSE BEGIN
+        SPRINT ~divider~ ~%separator%~
+     END
+     SET end_of_first= INDEX (~%divider%~ ~%list%~)
+     PATCH_IF end_of_first <0 BEGIN // this should only happen if there are no " or ~
+        SPRINT entry ~%list%~
+        SPRINT list ~~
+     END ELSE BEGIN
+       INNER_PATCH_SAVE ~list~ ~%list%~ BEGIN
+           READ_ASCII 0 entry (~end_of_first~)
+           DELETE_BYTES 0 (end_of_first+1)
+       END
+     END
+     LPF strip_spaces_from_string STR_VAR string=~%list%~ RET list=string END
+     LPF strip_quotes_from_string STR_VAR string=~%entry%~ RET entry=string END
+     LPF strip_spaces_from_string STR_VAR string=~%entry%~ RET entry=string END
+    END
+END
+
+DEFINE_ACTION_FUNCTION action_return_first_entry
+     STR_VAR list=""
+             separator=" "
+     RET list
+         entry
+BEGIN
+     OUTER_INNER_PATCH ~~ BEGIN
+        LPF return_first_entry STR_VAR list separator RET list=list entry=entry END
+     END
+END
+
+DEFINE_ACTION_FUNCTION return_first_entry
+     STR_VAR list=""
+             separator=" "
+     RET list
+         entry
+BEGIN
+     OUTER_INNER_PATCH ~~ BEGIN
+        LPF return_first_entry STR_VAR list separator RET list=list entry=entry END
+     END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            as a patch or action, take a list of space-separated key => value pairs (or key->value pairs), return the first entries, and strip them from the list
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION return_first_pair
+     STR_VAR list=""
+             arrow="=>"
+     RET list
+         key
+         value
+
+BEGIN
+     INNER_PATCH_SAVE list ~%list%~ BEGIN REPLACE_TEXTUALLY ~%arrow%~ ~ %arrow% ~ END
+     // we can now treat the list as an ordinary list. Return the first entry, discard the second (which should be =>), return the third
+     LPF return_first_entry STR_VAR list RET list=list key=entry END
+     LPF return_first_entry STR_VAR list RET list=list discard=entry END
+     PATCH_IF ~%discard%~ STRING_COMPARE_CASE ~%arrow%~ BEGIN
+        LPF warning STR_VAR warning= "Warning: it looks as if some entry that should be a key%arrow%value list, isn't (~list~ is currently %list%, key=%key%)" END
+     END
+     LPF return_first_entry STR_VAR list RET list=list value=entry END
+     PATCH_IF debug_variable=2 BEGIN
+        PATCH_PRINT "Returning key=%key%, value=%value%; rest of list is %list%"
+     END
+END
+
+
+DEFINE_ACTION_FUNCTION action_return_first_pair
+     STR_VAR list=""
+     RET key
+         value
+         list
+BEGIN
+     OUTER_INNER_PATCH ~~ BEGIN
+        LPF return_first_pair STR_VAR list RET list=list key=key value=value END
+     END
+END
+
+DEFINE_ACTION_FUNCTION return_first_pair
+     STR_VAR list=""
+     RET key
+         value
+         list
+BEGIN
+     OUTER_INNER_PATCH ~~ BEGIN
+        LPF return_first_pair STR_VAR list RET list=list key=key value=value END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              load a file (which should be a 1-column array) and turn col 1 into a white-space-separated list
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION read_in_list
+     STR_VAR file=""
+             location=""
+             locbase=""
+             locabs=""
+     RET list
+BEGIN
+     LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+     OUTER_SPRINT file "%file_loc%/%file%"
+     COPY ~%file%~ ~%workspace%~
+           SPRINT list ""
+           COUNT_2DA_ROWS 0 rowcount
+           FOR (i=0;i<rowcount;i+=1) BEGIN
+              READ_2DA_ENTRY i 0 0 entry
+              SPRINT list ~%list% %entry%~
+           END
+     BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION read_in_list
+      STR_VAR file=""
+             location=""
+             locbase=""
+      RET list
+BEGIN
+   INNER_ACTION BEGIN
+      LAF read_in_list STR_VAR file location locbase RET list=list END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              Write a space-separated list to a one-column file located in workspace
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION write_list
+     STR_VAR list=""
+             file=""
+             locabs="%workspace%"
+             location=""
+             locbase=""
+BEGIN
+     OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+           LAF return_first_entry STR_VAR list RET entry=entry list=list END
+           LAF log_this STR_VAR input="%entry%" file location locabs locbase END
+     END
+END
+
+DEFINE_PATCH_FUNCTION write_list
+     STR_VAR list=""
+             file=""
+             locabs="%workspace%"
+             location=""
+             locbase=""
+BEGIN
+   INNER_ACTION BEGIN
+      LAF write_list STR_VAR file list location locbase locabs END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              load a file (which should be a 2-column array or a 3-column array with => separator, or a list of x=>y pairs) and turn col 1-2 into an associative array list ("key1=>value1 key2=>value2" etc)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION read_in_assoc_array
+     STR_VAR file=""
+             location=""
+             locbase=""
+             locabs=""
+     RET list
+BEGIN
+     LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+     OUTER_SPRINT file "%file_loc%/%file%"
+     COPY ~%file%~ ~%workspace%~
+           REPLACE_TEXTUALLY "=>" " "
+           SPRINT list ""
+           COUNT_2DA_ROWS 1 rowcount
+           FOR (i=0;i<rowcount;i+=1) BEGIN
+              READ_2DA_ENTRY i 0 0 key
+              READ_2DA_ENTRY i 1 0 value
+              SPRINT list ~%list% %key%=>%value%~
+           END
+     BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION read_in_assoc_array
+      STR_VAR file=""
+             location=""
+             locbase=""
+             locabs=""
+      RET list
+BEGIN
+   INNER_ACTION BEGIN
+      LAF read_in_assoc_array STR_VAR file location locabs locbase RET list=list END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              count a list
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION length_of_list
+   STR_VAR list=""
+   RET value
+BEGIN
+   // if it has no elements, return 0
+   PATCH_IF "%list%" STRING_EQUAL "" BEGIN
+      SET value=0
+   END ELSE BEGIN // if not, strip an element; it's got one more than that!
+      LPF return_first_entry STR_VAR list RET list2=list END
+      LPF length_of_list STR_VAR list="%list2%" RET val1=value END
+      SET value=val1+1
+   END
+END
+
+
+DEFINE_ACTION_FUNCTION length_of_list
+    STR_VAR list=""
+    RET value
+BEGIN
+    OUTER_PATCH "" BEGIN
+       LPF length_of_list STR_VAR list RET value=value END
+    END
+END
+
+DEFINE_PATCH_FUNCTION count_list
+    STR_VAR list=""
+    RET value
+BEGIN
+      LPF length_of_list STR_VAR list RET value=value END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      check if element is in list (case-insensitive, no regexp)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION element_in_list
+      STR_VAR element=""
+              list=""
+      RET value
+BEGIN
+   SET value=0
+   PATCH_IF "%list%" STRING_COMPARE "" BEGIN
+      LPF return_first_entry STR_VAR list RET entry=entry list=list END
+      PATCH_IF "%entry%" STRING_EQUAL_CASE "%element%" BEGIN
+         SET value=1
+      END ELSE BEGIN
+         LPF element_in_list STR_VAR element list RET value=value END
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION element_in_list
+      STR_VAR element=""
+              list=""
+      RET value
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF element_in_list STR_VAR element list RET value=value END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Take a space-separated list containing "splitter", and return the strings to left and right of its first (or last) appearence
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION split_from_left
+    STR_VAR string=""
+            splitter=""
+    RET     left
+            right
+BEGIN
+   SET found=0
+   SPRINT right "%string%"
+   SPRINT left ""
+   WHILE !found BEGIN
+      PATCH_IF "%right%" STRING_EQUAL "" BEGIN
+         PATCH_FAIL "%string% does not contain any instances of %splitter%, so I can't split_from_left on it"
+      END ELSE BEGIN
+         LPF return_first_entry STR_VAR list="%right%" RET entry=entry right=list END
+         PATCH_IF "%entry%" STRING_EQUAL_CASE "%splitter%" BEGIN 
+            SET found=1 
+         END ELSE BEGIN
+             SPRINT left "%left% %entry%"
+         END
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION split_from_left
+    STR_VAR string=""
+            splitter=""
+    RET     left
+            right
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF split_from_left STR_VAR string splitter RET left=left right=right END
+   END
+END
+
+DEFINE_PATCH_FUNCTION split_from_right
+    STR_VAR string=""
+            splitter=""
+    RET left
+        right
+BEGIN
+   LPF invert_list STR_VAR list="%string%" RET string=list END
+   LPF split_from_left STR_VAR string splitter RET right=left left=right END // watch closely
+   LPF invert_list STR_VAR list="%left%" RET left=list END
+   LPF invert_list STR_VAR list="%right%" RET right=list END
+END
+
+DEFINE_ACTION_FUNCTION split_from_right
+    STR_VAR string=""
+            splitter=""
+    RET     left
+            right
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF split_from_right STR_VAR string splitter RET left=left right=right END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Take a space-separated list; return it in reverse order
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION invert_list
+   STR_VAR list=""
+   RET list
+BEGIN
+   SPRINT list_out ""
+   WHILE "%list%" STRING_COMPARE "" BEGIN
+      LPF return_first_entry STR_VAR list RET entry=entry list=list END
+      SPRINT list_out "%entry% %list_out%"
+   END
+   SPRINT list "%list_out%"
+END
+
+DEFINE_ACTION_FUNCTION invert_list
+   STR_VAR list=""
+   RET list
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF invert_list STR_VAR list RET list=list END
+   END
+END

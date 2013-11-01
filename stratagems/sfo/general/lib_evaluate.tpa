@@ -1,0 +1,805 @@
+///////////////////////////////////////////////////////////////////////
+///    Functions needed for evaluating SFO expressions
+////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               wrapper to handle the FP_func nomenclature
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION apply_standard_function
+    INT_VAR offset_secondary=0
+            entry_index=0
+    STR_VAR offset_base=""
+            func=""
+            arguments=""
+            filename=""
+            file_ext=""
+BEGIN
+   TO_UPPER file_ext
+   PATCH_TRY
+       PATCH_SILENT
+       LPF ~%file_ext%_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext END
+       PATCH_VERBOSE
+   WITH
+       ~Failure("Unknown function: %file_ext%_%func%")~
+       BEGIN
+          LPF ~%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext END
+       END
+       DEFAULT
+          PATCH_PRINT "ERROR: %ERROR_MESSAGE% in apply_standard_function: inputs were func=%func%, arguments=%arguments%"
+          PATCH_RERAISE
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               wrapper to handle the FP_func nomenclature
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION check_standard_function
+    INT_VAR offset_secondary=0
+            func_or_string=0
+            entry_index=0
+    STR_VAR offset_base=""
+            func=""
+            arguments=""
+            parameter=""
+            filename=""
+            file_ext=""
+    RET value
+BEGIN
+   PATCH_IF debug_variable=2 BEGIN
+      PATCH_PRINT "check_standard_function called with offset_secondary=%offset_secondary%, offset_base=%offset_base%, file prefix=%file_ext%, func=%func%"
+   END
+   TO_UPPER file_ext
+   PATCH_TRY
+       PATCH_SILENT
+       LPF ~%file_ext%_read_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments parameter filename file_ext RET value=value END
+       PATCH_VERBOSE
+   WITH
+       ~Failure("Unknown function: %file_ext%_read_%func%")~
+       BEGIN
+          PATCH_TRY
+             PATCH_SILENT
+             LPF ~%file_ext%_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments parameter filename file_ext RET value=value END
+             PATCH_VERBOSE
+          WITH
+                 ~Failure("Unknown function: %file_ext%_%func%")~
+                 BEGIN
+                      PATCH_TRY
+                           PATCH_SILENT
+                           LPF ~%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext parameter RET value=value END
+                           PATCH_VERBOSE
+                      WITH
+                           ~Failure("Unknown function: %func%")~
+                           BEGIN
+                                PATCH_IF func_or_string BEGIN
+                                   PATCH_IF "%func%" STRING_EQUAL_CASE "null" BEGIN
+                                      SPRINT value ""
+                                   END ELSE
+                                   PATCH_IF VARIABLE_IS_SET "SFO_RESERVED_var_%func%" BEGIN
+                                      SPRINT value EVALUATE_BUFFER "%SFO_RESERVED_var_%func%%"
+                                   END ELSE
+                                   PATCH_IF "%func%" STRING_EQUAL "no_change" BEGIN
+                                      SPRINT value no_change
+                                   END ELSE
+                                   PATCH_IF VARIABLE_IS_SET "SFO_RESERVED_%func%" BEGIN
+                                      SPRINT value EVALUATE_BUFFER "%SFO_RESERVED_%func%%"
+                                   END ELSE
+                                   PATCH_IF VARIABLE_IS_SET  "%func%" BEGIN
+                                      SPRINT value EVALUATE_BUFFER "%%func%%"
+                                   END ELSE BEGIN
+                                      SPRINT value "%func%"
+                                   END
+                                END ELSE BEGIN
+                                   PATCH_PRINT "%ERROR_MESSAGE%"
+                                   PATCH_RERAISE
+                                END
+                           END
+                           DEFAULT
+                                LPF warning STR_VAR warning= ~Failure %ERROR_MESSAGE% in check_standard_function: inputs were func=%func%, arguments=%arguments%~ END
+                                PATCH_RERAISE
+                           END
+
+                 END
+                 DEFAULT
+                      LPF warning STR_VAR warning= ~Failure %ERROR_MESSAGE% in check_standard_function: inputs were func=%func%, arguments=%arguments%~ END
+                      PATCH_RERAISE
+                 END
+       END
+       DEFAULT
+          LPF warning STR_VAR warning= ~Failure %ERROR_MESSAGE% in check_standard_function: inputs were func=%func%, arguments=%arguments%~ END
+          PATCH_RERAISE
+       END
+       PATCH_IF debug_variable=2 BEGIN
+          PATCH_PRINT "Returning value %value%"
+       END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////  Parse the argument of an expression
+////
+////  Here we build a parser in WEIDU, itself being parsed by an OCAML parser!
+////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION evaluate_expression
+    INT_VAR offset_base=0
+            offset_secondary=0
+            entry_index=0
+            integer=0
+            boolean=0
+            list_type=0
+            subterm=0
+    STR_VAR arguments=""
+            expression=""
+            filename=""
+            file_ext=""
+    RET value
+BEGIN
+  PATCH_IF debug_variable=2 BEGIN
+       PATCH_PRINT "Attempting to evaluate %expression%..."
+  END
+  LPF strip_spaces_from_string STR_VAR string="%expression%" RET expression=string END
+  PATCH_IF IS_AN_INT expression BEGIN  // if it's just a number, don't waste time parsing
+        SET value=expression
+  END ELSE
+  PATCH_IF "%expression%" STRING_EQUAL_CASE "null" BEGIN
+        SPRINT value "null"
+  END ELSE
+  PATCH_IF "%expression%" STRING_EQUAL_CASE "this" BEGIN
+        SPRINT value "%arguments%"
+  END ELSE
+  PATCH_IF !("%expression%" STRING_MATCHES_REGEXP "[A-Za-z0-9#!_]*$") BEGIN // if it's an ordinary string, don't waste time parsing
+        LPF check_standard_function INT_VAR offset_secondary  entry_index func_or_string=1 STR_VAR arguments offset_base func="%expression%" filename file_ext RET value=value END
+  END ELSE BEGIN
+     INNER_PATCH_SAVE expression "%expression%" BEGIN  // make sure we can use list-management techniques
+       REPLACE_TEXTUALLY " *( *" " ( "
+       REPLACE_TEXTUALLY " *) *" " ) "
+       REPLACE_TEXTUALLY " *{ *" " { "
+       REPLACE_TEXTUALLY " *} *" " } "
+       REPLACE_TEXTUALLY " *!= *" " = "
+       REPLACE_TEXTUALLY " *>= *" " >= "
+       REPLACE_TEXTUALLY " *<= *" " <= "
+     END
+    SET in_is_major=0
+    // function application takes a little care - "in" needs to be evaluated before brackets (consider " 7 in (this+1)*2" ) but only if it has major scope
+    PATCH_IF !"%expression%" STRING_CONTAINS_REGEXP " in " BEGIN
+          LPF has_major_scope STR_VAR list="%expression%" operator="in" RET in_is_major=value left=left right=right END
+    END
+    PATCH_IF in_is_major BEGIN
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%left%" filename file_ext RET val1=value END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index  subterm=1 STR_VAR arguments="%val1%" expression="%right%" filename file_ext RET value=value END
+    END ELSE BEGIN
+    PATCH_MATCH "%expression%" WITH
+
+    // check if it's literal
+    
+    " *{ *literal:[^}]*} *" " *literal:.*" BEGIN
+          SPRINT value "%expression%"
+    END
+
+    // after that, brackets have widest scope
+
+    ".*(.*" BEGIN
+        LPF extract_bounded_part STR_VAR left_bound="(" right_bound=")" string="%expression%" RET left=left middle=middle right=right END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%middle%" filename file_ext RET middle_val=value END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%left% %middle_val% %right%" filename file_ext RET value=value END
+    END
+
+
+    // control flow
+
+    "if.* then .*else .*" BEGIN
+        LPF extract_bounded_part STR_VAR left_bound="if" right_bound="then" string="%expression%" RET condition=middle rest=right END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%condition%" filename file_ext RET condition_val=value END
+        LPF extract_bounded_part STR_VAR left_bound="then" right_bound="else" string="then %rest%" RET if_true=middle if_false=right END
+        PATCH_IF condition_val BEGIN
+                 LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%if_true%" filename file_ext RET value=value END
+        END ELSE BEGIN
+                 LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%if_false%" filename file_ext RET value=value END
+        END
+    END
+
+    "\[.*->.*\]" BEGIN
+       INNER_PATCH_SAVE list "%expression%" BEGIN
+          DELETE_BYTES 0x0 1
+          REPLACE_TEXTUALLY "\]$" ""
+       END
+       SET done=0
+       WHILE "%list%" STRING_COMPARE "" && !done BEGIN
+          LPF return_first_pair STR_VAR list arrow="->" RET cond=key result=value list=list END
+          PATCH_IF !"%cond%" STRING_MATCHES_REGEXP " *default *$" BEGIN
+             SET done=1
+          END ELSE BEGIN
+              // if it doesn't contain "this", it should be compared to the argument (i.e., gain a tacit, 'this='/'this is' out front)
+              PATCH_IF "%cond%" STRING_CONTAINS_REGEXP "this" BEGIN
+                    LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index  subterm=1 STR_VAR arguments expression="%cond%" filename file_ext RET val1=value END
+                    PATCH_IF "%val1%" STRING_EQUAL_CASE "%arguments%" BEGIN
+                        SET done=1
+                    END
+              END ELSE BEGIN  // if it does, it should be compared to 1
+                    LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index  boolean=1 subterm=1 STR_VAR arguments expression="%cond%" filename file_ext RET val1=value END
+                    PATCH_IF val1=1 BEGIN
+                        SET done=1
+                    END
+              END
+          END
+          PATCH_IF done BEGIN
+             LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%result%" filename file_ext RET value=value END
+          END
+       END
+       PATCH_IF !done BEGIN
+          PATCH_FAIL "No condition matched in function %expression%"
+       END
+    END
+
+    // lists - are returned unchanged
+    
+    "\[[^]]*\]" BEGIN
+        SPRINT value "%expression%"
+    END
+
+    // propositional logic
+
+    ".* and .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="and" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 AND val2
+    END 
+    ".* or .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="or" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 OR val2
+    END
+    ".*not .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="not" RET  arg=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index boolean=1 subterm=1 STR_VAR arguments expression="%arg%" filename file_ext RET val1=value END
+          SET value=NOT val1
+    END
+    
+    // string comparison
+    
+    ".* is .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="is" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+
+       PATCH_IF !("%val1%" STRING_CONTAINS_REGEXP "literal:") BEGIN
+          INNER_PATCH_SAVE val1 "%val1%" BEGIN
+             REPLACE_TEXTUALLY "<literal:" ""
+             REPLACE_TEXTUALLY ">" ""
+          END
+       END
+       PATCH_IF !("%val2%" STRING_CONTAINS_REGEXP "literal:") BEGIN
+          INNER_PATCH_SAVE val2 "%val2%" BEGIN
+             REPLACE_TEXTUALLY "<literal: *" ""
+             REPLACE_TEXTUALLY ">" ""
+          END
+       END
+
+          SET value= ("%val2%" STRING_EQUAL_CASE "%val1%")
+    
+    
+    END
+
+    // string concatendation
+    
+    ".* join_with .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="join_with" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SPRINT value "%val1%%val2%"
+    END
+
+    // arithmetic comparison: =, !=, >, >=, <, <=
+    // given the number of errors I keep making, we'll let "=" accept strings too. So much for strong typing.
+
+    // quick sanity check
+
+    ".*=>.*" BEGIN
+       PATCH_FAIL "'%expression%' contains =>, which is never legal in an SFO expression"
+    END
+
+    ".*=.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="=" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          PATCH_IF (IS_AN_INT val1) && (IS_AN_INT val2) BEGIN
+              SET value=(val1 = val2)
+          END ELSE BEGIN
+              SET value=("%val1%" STRING_EQUAL_CASE "%val2%")
+          END
+
+    END
+    ".*!=.*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="!=" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=(val1 != val2) // if this reminds you of the proof of the Soundness Theorem, go to the head of the class
+    END 
+    ".*>.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator=">" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=(val1>val2)
+    END
+    ".*>=.*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter=">=" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=(val1>=val2)
+    END
+    ".*<.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="<" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=(val1<val2)
+    END 
+    ".*<=.*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="<=" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=(val1<=val2)
+    END
+
+    /// arithmetic operations - +,- have greater scope than *,/
+
+    ".*\+.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="+" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 + val2
+    END
+    ".* - .*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="-" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 - val2
+    END
+    ".*\*.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="*" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 * val2
+    END
+    ".*/.*" BEGIN
+          LPF return_first_entry STR_VAR list="%expression%" separator="/" RET arg1=entry arg2=list END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value=val1 / val2
+    END
+    ".* divides .*" BEGIN
+          LPF split_from_left STR_VAR string="%expression%" splitter="divides" RET arg1=left arg2=right END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+          LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%arg2%" filename file_ext RET val2=value END
+          SET value= ((val2 / val1) * val1 = val2)
+    END
+
+    // array commands
+    
+    ".* from_array *.*" BEGIN
+       LPF split_from_left STR_VAR string="%expression%" splitter="from_array" RET arg1=left arg2=right END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%arg1%" filename file_ext RET val1=value END
+       SPRINT value EVALUATE_BUFFER "%%arg2%_%val1%%"
+    END
+
+    // string commands
+
+    // length
+    
+    "length *\[.*\]" BEGIN
+       INNER_PATCH "%expression%" BEGIN
+           REPLACE_EVALUATE "length *\[\([^]]*\)\]" BEGIN
+             SPRINT list "%MATCH1%"
+          END
+          "discard"
+       END
+       LPF length_of_list STR_VAR list RET value=value END
+    END
+    
+    "length .*" BEGIN
+       INNER_PATCH "%expression%" BEGIN
+          REPLACE_EVALUATE "length +\(.*\)" BEGIN
+              SPRINT list_name "%MATCH1%"
+          END
+          discard
+       END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index list_type=1 subterm=1 STR_VAR arguments expression="%list_name%" filename file_ext RET list=value END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="length %list%" filename file_ext RET value=value END
+    END
+
+    // iterator?
+    
+    ".* *from *\[.*\]" BEGIN
+       INNER_PATCH "%expression%" BEGIN
+           REPLACE_EVALUATE "\(.*\) from *\[\([^]]*\)\]" BEGIN
+             SPRINT list "%MATCH2%"
+             SPRINT elt "%MATCH1%"
+          END
+          "discard"
+       END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%elt%" filename file_ext RET elt_val=value END
+       SET count=0
+       WHILE count<=elt_val BEGIN
+          LPF return_first_entry STR_VAR list RET exp=entry list=list END
+          SET count +=1
+       END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%exp%" filename file_ext RET value=value END
+    END
+    
+    ".* *from *.*" BEGIN
+        INNER_PATCH "%expression%" BEGIN
+              REPLACE_EVALUATE "\(.*\) from \(.*\)" BEGIN
+              SPRINT list_name "%MATCH2%"
+              SPRINT elt "%MATCH1%"
+              END
+              "discard"
+       END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index list_type=1 subterm=1 STR_VAR arguments expression="%list_name%" filename file_ext RET list=value END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%elt% from %list%" filename file_ext RET value=value END
+    END
+
+    // contains?
+
+    ".* +is_in *\[[^]]*\]" BEGIN
+        INNER_PATCH "%expression%" BEGIN
+          REPLACE_EVALUATE "\(.*\) is_in \[\([^]]*\)\]" BEGIN
+             SPRINT list "%MATCH2%"
+             SPRINT elt "%MATCH1%"
+          END
+          "discard"
+        END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%elt%" filename file_ext RET elt_val=value END
+       LPF evaluate_container INT_VAR offset_base offset_secondary entry_index STR_VAR arguments elt="%elt_val%" list filename file_ext RET value=value END
+    END
+
+    ".* +is_in *.*" BEGIN
+        INNER_PATCH "%expression%" BEGIN
+              REPLACE_EVALUATE "\(.*\) is_in \(.*\)" BEGIN
+              SPRINT list_name "%MATCH2%"
+              SPRINT elt "%MATCH1%"
+              END
+              "discard"
+        END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index list_type=1 subterm=1 STR_VAR arguments expression="%list_name%" filename file_ext RET list=value END
+       LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR arguments expression="%elt% is_in %list%" filename file_ext RET value=value END
+
+
+
+    END
+
+    DEFAULT // if we get this far, do Polish parsing
+      // get the first term; see if it's a control term
+      LPF return_first_entry STR_VAR list="%expression%" RET entry=entry right=list END
+      PATCH_MATCH "%entry%" WITH
+      sum prod max min div BEGIN
+        LPF polish_parser STR_VAR right RET left=left right=right END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%left%" filename file_ext RET val1=value END
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1 subterm=1 STR_VAR arguments expression="%right%" filename file_ext RET val2=value END
+        PATCH_MATCH "%entry%" WITH
+           sum BEGIN
+               SET value=val1+val2
+           END
+           prod BEGIN
+               SET value=val1*val2
+           END
+           div BEGIN
+               SET value=val1 / val2
+           END
+           max BEGIN
+               SET value=val1>val2?val1:val2
+           END
+           min BEGIN
+               SET value=val1<val2?val1:val2
+           END
+           DEFAULT END
+      END
+      neg BEGIN
+        LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index integer=1  subterm=1 STR_VAR arguments expression="%right%" filename file_ext RET val1=value END
+        SET value = 0 - val1
+      END
+      DEFAULT
+          PATCH_FAIL "Unable to parse %expression%"
+      END
+      END
+    END
+  END
+  PATCH_IF debug_variable=2 BEGIN
+       PATCH_PRINT "...%expression% evaluates to %value%"
+  END
+
+    PATCH_IF integer BEGIN
+       LPF fail_unless_int STR_VAR value expression END
+       PATCH_IF debug_variable=2 BEGIN
+          PATCH_PRINT "%value% is Integer"
+       END
+    END
+    PATCH_IF boolean BEGIN
+       LPF fail_unless_boolean STR_VAR value expression END
+       PATCH_IF debug_variable=2 BEGIN
+          PATCH_PRINT "%value% is Boolean"
+       END
+    END
+    PATCH_IF list_type BEGIN
+       LPF fail_unless_list STR_VAR value expression END
+       PATCH_IF debug_variable=2 BEGIN
+          PATCH_PRINT "%value% is a list"
+       END
+    END
+    PATCH_IF !subterm BEGIN
+       PATCH_IF !("%value%" STRING_CONTAINS_REGEXP "literal:") BEGIN
+          INNER_PATCH_SAVE value "%value%" BEGIN
+             REPLACE_TEXTUALLY " *{ *literal:" ""
+             REPLACE_TEXTUALLY "} *" ""
+          END
+       END
+       PATCH_IF !("%value%" STRING_MATCHES_REGEXP "\[.*\]$") BEGIN
+          INNER_PATCH_SAVE value "%value%" BEGIN
+             REPLACE_TEXTUALLY "^\[" ""
+             REPLACE_TEXTUALLY "\]$" ""
+          END
+       END
+       PATCH_IF "%value%" STRING_EQUAL_CASE null BEGIN
+          SPRINT value ""
+       END
+    END
+    PATCH_IF subterm && "%value%" STRING_EQUAL "" BEGIN
+          SPRINT value "null"
+    END
+END
+
+
+DEFINE_ACTION_FUNCTION evaluate_expression
+    INT_VAR entry_index=0
+    STR_VAR arguments=""
+            expression=""
+    RET value
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF evaluate_expression INT_VAR entry_index STR_VAR arguments expression RET value END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Given a list "list"=[a b ...] and an element elt, see if elt is in the list.
+/////
+///// Evaluate anything in the list. elt is already evaluated. (Why? To save doing it lots of times since this is recursively defined)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION evaluate_container
+    INT_VAR offset_base=0
+            offset_secondary=0
+            entry_index=0
+    STR_VAR arguments=""
+            list=""
+            elt=""
+            filename=""
+            file_ext=""
+    RET value
+BEGIN
+ // if the list is empty, return 0
+ PATCH_IF "%list%" STRING_EQUAL "" BEGIN
+      PATCH_IF debug_variable=2 BEGIN
+         PATCH_PRINT "...not on the list"
+      END
+   SET value=0
+ END ELSE BEGIN
+   // Get the first element of the list
+   LPF return_first_entry STR_VAR list RET entry=entry list=list END
+   // Evaluate it
+   LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR expression="%entry%" arguments filename file_ext RET val1=value END
+   PATCH_IF debug_variable=2 BEGIN
+      PATCH_PRINT "Comparing %elt% (element) with %val1% (list member)..."
+   END
+   // If it's contained, return 1; if not, return the value for the tail
+   PATCH_IF "%val1%" STRING_EQUAL_CASE "%elt%" BEGIN
+      SET value=1
+      PATCH_IF debug_variable=2 BEGIN
+         PATCH_PRINT "match"
+      END
+   END ELSE BEGIN
+      PATCH_IF debug_variable=2 BEGIN
+         PATCH_PRINT "... no match, moving on to next list element"
+      END
+      LPF evaluate_container INT_VAR offset_base offset_secondary entry_index STR_VAR arguments list elt filename file_ext RET value=value END
+   END
+ END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Take a pair of strings left, right, which together form the arguments of a binary function in Polish notation, & such that we expect
+/////  depth more sub-arguments before we reach the start of the second argument. Return the two arguments.
+/////
+/////  "to_parse" is copied over "right" if set
+/////  (You're never going to want to call this with depth other than 1, it's for recursion purposes)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION polish_parser
+    INT_VAR depth=1
+    STR_VAR left="" right=""
+    RET left right
+BEGIN
+  // PATCH_PRINT "left:%left% right:%right% depth:%depth%"
+   PATCH_IF depth>0 BEGIN // if it isn't, we're done.
+      PATCH_IF "%right%" STRING_COMPARE "" BEGIN
+          LPF return_first_entry STR_VAR list="%right%" RET entry=entry right=list END
+          SPRINT left "%left% %entry%"
+          PATCH_MATCH "%entry%" WITH
+          sum plus prod times max min div BEGIN
+             SET depth +=1
+          END
+          neg iter BEGIN
+          END
+          DEFAULT
+             SET depth = depth - 1
+          END
+          LPF polish_parser INT_VAR depth STR_VAR left right RET left=left right=right END
+      END ELSE BEGIN
+         PATCH_FAIL ~"%left% %right%" is not a correctly formed argument pair (i.e., you've messed up the syntax of something containing this string)~
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION polish_parser
+    INT_VAR depth=1
+    STR_VAR left="" right="" to_parse=""
+    RET left right
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF polish_parser INT_VAR depth STR_VAR left right to_parse RET left=left right=right END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  See if "operator" in a space-separated list "list" has major scope, i.e. appears outside parentheses. If so, return the two parts
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION has_major_scope
+   STR_VAR list=""
+           operator=""
+   RET value left right
+BEGIN
+   SET depth=0
+   SET value=0
+   SPRINT left ""
+   SPRINT right "%list%"
+   WHILE "%right%" STRING_COMPARE "" && value=0 BEGIN
+      LPF return_first_entry STR_VAR list="%right%" RET entry=entry right=list END
+      PATCH_MATCH "%entry%" WITH
+      "("  "{" BEGIN
+         SET depth+=1
+         SPRINT left "%left% %entry%"
+      END
+      ")" "}" BEGIN
+         SET depth = depth - 1
+         SPRINT left "%left% %entry%"
+      END
+      "%operator%" BEGIN
+         PATCH_IF depth=0 BEGIN
+            SET value=1
+         END ELSE BEGIN
+            SPRINT left "%left% %operator%"
+         END
+      END
+      DEFAULT
+         SPRINT left "%left% %entry%"
+      END
+   END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Take a space-separated list containing a left-bounder (e.g. "("), find the index of the associated right-bounder, and return the expression
+/////  as three strings
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION extract_bounded_part 
+    STR_VAR left_bound=""
+            right_bound=""
+            string=""
+    RET left middle right
+BEGIN
+    TO_LOWER left_bound
+    TO_LOWER right_bound
+    SPRINT left ""
+    SPRINT middle ""
+    SPRINT right ""
+    SPRINT list "%string%"
+    // find first left_bound
+    SET found_left=0
+    WHILE !found_left BEGIN
+       LPF return_first_entry STR_VAR list RET entry=entry list=list END
+       PATCH_IF "%entry%" STRING_EQUAL_CASE "%left_bound%" BEGIN
+          SET found_left=1
+       END ELSE BEGIN
+          SPRINT left "%left% %entry%"
+       END
+    END
+    SET depth=1
+    SET found_right=0
+    WHILE !found_right BEGIN
+       PATCH_IF "%list%" STRING_EQUAL "" BEGIN
+          PATCH_FAIL "'%left_bound%' in %string% lacks matching '%right_bound%'"
+       END
+       LPF return_first_entry STR_VAR list RET entry=entry list=list END
+       PATCH_MATCH "%entry%" WITH
+       "%left_bound%" BEGIN
+          SPRINT middle "%middle% %entry%"
+          SET depth +=1
+       END
+       "%right_bound%" BEGIN
+          PATCH_IF depth=1 BEGIN
+             SET found_right=1
+          END ELSE BEGIN
+             SPRINT middle "%middle% %entry%"
+             SET depth = depth - 1
+          END
+       END
+       DEFAULT
+          SPRINT middle "%middle% %entry%"
+       END
+    END
+    SPRINT right "%list%"
+    PATCH_IF "%middle%" STRING_EQUAL_CASE "" BEGIN
+       SPRINT middle null
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Is expression Boolean (1 or 0)? If not, fail
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION fail_unless_boolean
+    STR_VAR expression="" value=""
+BEGIN
+    SET failed=0
+    PATCH_IF !(IS_AN_INT value) BEGIN
+         PATCH_IF "%value%" STRING_COMPARE no_change BEGIN SET failed=1 END
+    END
+    PATCH_IF !(value=1 || value=0) BEGIN
+         PATCH_IF "%value%" STRING_COMPARE no_change BEGIN SET failed=1 END
+    END
+    PATCH_IF failed BEGIN
+            PATCH_IF "%expression%" STRING_EQUAL_CASE "" BEGIN
+             PATCH_FAIL "%value% is not a Boolean (0 or 1), but one was expected"
+            END ELSE BEGIN
+             PATCH_FAIL "%expression% evaluates to %value%, which is not an Boolean (0 or 1), but one is expected."
+            END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Is expression an integer? If not, fail
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION fail_unless_int
+    STR_VAR expression="" value=""
+BEGIN
+    PATCH_IF !(IS_AN_INT value) BEGIN
+         PATCH_IF "%value%" STRING_COMPARE no_change BEGIN
+            PATCH_IF "%expression%" STRING_EQUAL_CASE "" BEGIN
+             PATCH_FAIL "%value% is not an integer, but one was expected"
+            END ELSE BEGIN
+             PATCH_FAIL "%expression% evaluates to %value%, which is not an integer, but one is expected."
+            END
+         END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Is expression a list (i.e., bounded by []). If not, fail
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION fail_unless_list
+   STR_VAR expression="" value=""
+BEGIN
+   PATCH_IF "%value%" STRING_MATCHES_REGEXP "\[.*\]$" BEGIN
+       PATCH_FAIL "%expression% evaluates to %value%, which is not a list, but one is expected."
+   END
+END
+

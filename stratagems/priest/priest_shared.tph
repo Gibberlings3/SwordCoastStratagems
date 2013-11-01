@@ -15,15 +15,17 @@ BEGIN
       LAUNCH_ACTION_MACRO read_in_spell_choices
       LAUNCH_ACTION_MACRO read_in_individual_overrides
    END
-   LPF initialise_enforce_caster STR_VAR filename type arguments RET class=class race=race alignment=alignment hla=hla game=game spells_are_bg1=spells_are_bg1 modify_level=modify_level kitdata=kitdata prebuff=prebuff END
-   LPF find_priest_type STR_VAR class alignment kitdata filename RET scriptbase=scriptbase kit=kit castertype=castertype fighter=fighter END
-   LPF get_caster_level INT_VAR modify_level STR_VAR type=priest castertype filename RET level=level END
-   LPF allocate_priest_spells INT_VAR level spells_are_bg1 hla fighter refinements STR_VAR kit race filename END
-   LPF determine_priest_script INT_VAR game level STR_VAR scriptbase castertype race RET script=script END
+   LPF determine_stat STR_VAR stat=wisdom RET wisdom=value END
+   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment hla game spells_are_bg1 modify_level kitdata prebuff END
+   LPF find_priest_type STR_VAR class alignment kitdata filename RET scriptbase kit castertype fighter END
+   LPF get_caster_level INT_VAR modify_level STR_VAR type=priest castertype filename RET level END
+   LPF allocate_priest_spells INT_VAR level spells_are_bg1 hla fighter refinements wisdom STR_VAR kit race filename END
+   LPF determine_priest_script INT_VAR game level STR_VAR scriptbase castertype race RET script END
    LPF build_priest_script INT_VAR prebuff STR_VAR script END
    LPF strip_scs_scripts END
-   LPF CRE_insert_script_low STR_VAR arguments=EVALUATE_BUFFER ~%script%~ END
+   LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
 END
+
 
 
 
@@ -122,7 +124,7 @@ BEGIN
                OUTER_SPRINT ~variables~ ~%variables%&IsOptionTwo=True~
       END
    DEFAULT
-      LAF action_display_warning STR_VAR warning=EVALUATE_BUFFER ~%prebuff% is not a recognised prebuffing option~ END
+      LAF warning STR_VAR warning= ~%prebuff% is not a recognised prebuffing option~ END
    END
 END
 
@@ -154,14 +156,14 @@ BEGIN
       END ELSE BEGIN
          OUTER_SET needed=1
       END
-      ACTION_IF needed=1 BEGIN
-         LAF parse_priest_script_name STR_VAR script RET variables=variables base=base directory=directory END
+      ACTION_IF needed BEGIN
+         LAF parse_priest_script_name STR_VAR script RET variables base directory END
 
-         LAF get_priest_prebuff_variables INT_VAR prebuff STR_VAR game=EVALUATE_BUFFER ~%base%~ RET prebuff_variables=variables END
+         LAF get_priest_prebuff_variables INT_VAR prebuff STR_VAR game= ~%base%~ RET prebuff_variables=variables END
          OUTER_SPRINT variables ~%variables%&%prebuff_variables%~
          OUTER_SPRINT scriptname ~%script%~
          ACTION_IF debug_variable=2 BEGIN
-            LAF action_display_warning STR_VAR warning=EVALUATE_BUFFER ~Trying to compile priest base script %base% with variables %variables%~ END
+            LAF warning STR_VAR warning=~Trying to compile priest base script %base% with variables %variables%~ END
          END
          
          LAF check_label STR_VAR label=dw#shapeshift RET value=value END
@@ -170,7 +172,7 @@ BEGIN
          END
 
 
-         LAF ssl_to_bcs STR_VAR variables script=EVALUATE_BUFFER ~%base%~ location=EVALUATE_BUFFER ~priest/ssl/%directory%/main~ rename_to=EVALUATE_BUFFER ~%scriptname%~ END
+         LAF ssl_to_bcs STR_VAR variables script=~%base%~ location=~ssl/%directory%/main~ locbase=priest rename_to=~%scriptname%~ END
       END
 END
 
@@ -192,7 +194,7 @@ DEFINE_ACTION_FUNCTION parse_priest_script_name
       RET variables directory base
 BEGIN
    OUTER_INNER_PATCH ~~ BEGIN
-      LPF parse_priest_script_name STR_VAR script RET variables=variables directory=directory base=base END
+      LPF parse_priest_script_name STR_VAR script RET variables directory base END
    END
 END
 
@@ -231,7 +233,8 @@ BEGIN
             DRU BEGIN
                 SPRINT variables ~IsEvil=False&IsDruid=True&IsCleric=False&scsmeleechoice=standard_priest~
                 SPRINT base dw#priest
-                PATCH_IF FILE_EXISTS ~override/dw#shapeshift2.mrk~ BEGIN
+                LPF check_label STR_VAR label="dw#shapeshift2.mrk" RET value END
+                PATCH_IF value BEGIN
                    SPRINT variables ~%variables%&ImprovedShapeshift=True%~
                 END
             END
@@ -242,8 +245,8 @@ BEGIN
                    SPRINT variables ~IsEvil=False&IsDruid=True&IsCleric=False&IsAvenger=True&scsmeleechoice=standard_priest~
                 END
                 SPRINT base dw#priest
-
-1                PATCH_IF FILE_EXISTS ~override/dw#shapeshift2.mrk~ BEGIN
+                LPF check_label STR_VAR label="dw#shapeshift2.mrk" RET value END
+                PATCH_IF value BEGIN
                    SPRINT variables ~%variables%&ImprovedShapeshift=True%~
                 END
             END
@@ -269,7 +272,7 @@ BEGIN
          SPRINT variables ~%variables%&HasL%i%=True~
       END
       PATCH_IF warning=1 BEGIN
-         LPF patch_display_warning STR_VAR warning=EVALUATE_BUFFER ~Script %script% was not correctly identified~ END
+         LPF warning STR_VAR warning= ~Script %script% was not correctly identified~ END
       END
 END
 
@@ -320,7 +323,6 @@ BEGIN
       INNER_ACTION BEGIN
          OUTER_SPRINT spelltype priest
          LAUNCH_ACTION_MACRO read_in_spell_choices
-         LAUNCH_ACTION_MACRO add_extra_spell_entries
       END
       TO_LOWER kit
       TO_LOWER race
@@ -332,7 +334,7 @@ BEGIN
           PATCH_IF ~refinements~=1 BEGIN
            SET ~num_hla_innate~=level - 15 // blessing of nature
            SET wisdom=wisdom + 1
-           LPF CRE_wisdom STR_VAR arguments=EVALUATE_BUFFER ~%wisdom%~ END
+           LPF CRE_wisdom STR_VAR arguments= ~%wisdom%~ END
            PATCH_FOR_EACH resistance IN cold electricity fire BEGIN
               LPF ~CRE_read_resist_%resistance%~ RET value=value END
               SET arguments=value+10
@@ -364,11 +366,11 @@ BEGIN
                 PUSH innate_spells PLACEHOLDER
              END
              SPRINT swap_in $spell_choices_priest(~%kit%~ IR)
-             LPF substitute_spells STR_VAR spells=EVALUATE_BUFFER ~%innate_spells%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
+             LPF substitute_spells STR_VAR spells= ~%innate_spells%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
           END
           WHILE ~%innate_spells%~ STRING_COMPARE ~~ BEGIN
-             LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%innate_spells%~ RET arguments=entry innate_spells=list END
-             LPF CRE_add_spells STR_VAR arguments=EVALUATE_BUFFER ~CLERIC_%arguments%~ END
+             LPF return_first_entry STR_VAR list= ~%innate_spells%~ RET arguments=entry innate_spells=list END
+             LPF CRE_add_spells STR_VAR arguments= ~CLERIC_%arguments%~ END
           END
         END
 
@@ -381,11 +383,11 @@ BEGIN
       PATCH_MATCH ~%kit%~ WITH
       druid avenger BEGIN
          SPRINT class druid
-         LPF defensive_spells_druid INT_VAR level hla hla_innate refinements STR_VAR kit RET spells=spells END
+         LPF defensive_spells_druid INT_VAR level hla hla_innate refinements STR_VAR kit RET spells END
       END
       DEFAULT
          SPRINT class cleric
-         LPF defensive_spells_cleric INT_VAR level hla hla_innate refinements STR_VAR kit RET spells=spells END
+         LPF defensive_spells_cleric INT_VAR level hla hla_innate refinements STR_VAR kit RET spells END
       END
       
       // fine-tune basic defensive adjustments
@@ -393,9 +395,12 @@ BEGIN
       LPF individual_choices STR_VAR spells filename component=mage RET spells=spells END
 
       PATCH_IF spells_are_bg1=1 BEGIN
-         LPF priest_spell_swap_bg1_preparatory STR_VAR spells RET spells=spells END
+         LPF priest_spell_swap_bg1_preparatory STR_VAR spells RET spells END
       END
 
+      PATCH_IF debug_variable>0 BEGIN
+              PATCH_PRINT ~Allocating remaining spells~
+      END
       // work out remaining spell slots and allocate spells to them
       LPF determine_number_of_spells INT_VAR level wisdom STR_VAR class RET av_0=av_0 av_1=av_1 av_2=av_2 av_3=av_3 av_4=av_4 av_5=av_5 av_6=av_6 av_7=av_7 av_8=av_8 END
       LPF count_spell_levels STR_VAR spells prefix=~CLERIC_~ RET ct_0=ct_0 ct_1=ct_1 ct_2=ct_2 ct_3=ct_3 ct_4=ct_4 ct_5=ct_5 ct_6=ct_6 ct_7=ct_7 ct_8=ct_8 END
@@ -414,7 +419,7 @@ BEGIN
          END
          SET spell_num=$av(~%i%~)
          PATCH_IF spell_num < 0 BEGIN
-            LPF patch_log_this STR_VAR file=illegal_priest_spells.txt input=EVALUATE_BUFFER ~%SOURCE_RES% at level %spell_level%~ END
+            LPF patch_log_this STR_VAR file=illegal_priest_spells.txt input= ~%SOURCE_RES% at level %spell_level%~ END
          END
          SPRINT ~spells_here~ ~~
          PATCH_IF spell_num>0 BEGIN
@@ -422,7 +427,7 @@ BEGIN
                PUSH spells_here PLACEHOLDER
             END
             SPRINT swap_in $spell_choices_priest(~%kit%~ ~%spell_level%~)
-            LPF substitute_spells STR_VAR spells=EVALUATE_BUFFER ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
+            LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
             PUSH spells ~%spells_here%~
          END
       END
@@ -438,10 +443,11 @@ BEGIN
 
       SPRINT ~spells_expanded~ ~~
       WHILE ~%spells%~ STRING_COMPARE_CASE ~~ BEGIN
-         LPF return_first_entry STR_VAR list=EVALUATE_BUFFER ~%spells%~ RET spells=list entry=entry END
+         LPF return_first_entry STR_VAR list= ~%spells%~ RET spells=list entry=entry END
          PUSH spells_expanded ~CLERIC_%entry%~
       END
 
-      LPF CRE_add_spells STR_VAR arguments=EVALUATE_BUFFER ~%spells_expanded%~ END
+
+      LPF CRE_add_spells STR_VAR arguments= ~%spells_expanded%~ END
 
 END
