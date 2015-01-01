@@ -363,24 +363,63 @@ BEGIN
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("ITM_delete_opcodes") ""
 
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////              add an effect (via a patch)
+/////////////               give immunity to opcodes
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-DEFINE_PATCH_FUNCTION ITM_spell_immunity
-          STR_VAR arguments=""
+DEFINE_PATCH_FUNCTION ITM_immunity_to_opcode
+       STR_VAR arguments=""
 BEGIN
-          PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
-             LPF return_first_entry STR_VAR list= ~%arguments%~ RET entry=entry arguments=list END
-             LPF add_effect_inline STR_VAR arguments= ~target=>1 timing=>2 opcode=>206 resource=>%entry% parameter2=>"-1"~ equipped=yes file_ext=ITM END
-             LPF ITM_spell_immunity STR_VAR arguments END
-          END
+       PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+          LPF return_first_entry STR_VAR list=~%arguments%~ RET entry=entry arguments=list END
+         LPF delete_entry STR_VAR type=effect_global arguments=~opcode=101 and parameter2=%entry%~ file_ext=ITM END
+         LPF add_entry_inline STR_VAR arguments =~opcode=>101 parameter2=>%entry%~ type=effect_global file_ext=ITM END
+          LPF ITM_immunity_to_opcode STR_VAR arguments END
+       END
 END
-LAF log_this STR_VAR file=auto_function_list.txt input= ~ITM_spell_immunity - -~ END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ITM_immunity_to_opcode") ""
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              give immunity to a spell (opcode 206)
+/////////////
+/////////////              if we use "arguments" assume it's a string of entries
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ITM_immunity_to_spell
+       STR_VAR spellname=""
+               spellcode=""
+               arguments=""
+BEGIN
+       PATCH_IF ~%spellname%~ STRING_COMPARE_CASE ~~ BEGIN
+              LPF deabbreviate_spellname STR_VAR input=  ~%spellname%~ RET spellname END
+              PATCH_IF VARIABLE_IS_SET "%spellname%" BEGIN
+                  SPRINT spellcode EVALUATE_BUFFER ~%%spellname%%~
+              END ELSE BEGIN
+                 SPRINT spellcode "%spellname%"
+                 LPF warning STR_VAR warning="Spell %spellname% does not appear to exist" END
+              END
+       END
+       PATCH_IF ~%spellcode%~ STRING_COMPARE_CASE ~~ BEGIN
+         LPF add_entry_inline STR_VAR arguments =~opcode=>206 resource=>%spellcode%~ type=effect_global file_ext=ITM END
+       END
+       PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+          LPF return_first_entry STR_VAR list= ~%arguments%~ RET spell=entry arguments=list END
+          INNER_ACTION BEGIN
+                  ACTION_IF FILE_EXISTS_IN_GAME ~%spell%.spl~ BEGIN
+                     OUTER_SPRINT spellcode ~%spell%~
+                     OUTER_SPRINT spellname ~~
+                  END ELSE BEGIN
+                     OUTER_SPRINT spellname ~%spell%~
+                     OUTER_SPRINT spellcode ~~
+                  END
+          END
+          LPF ITM_immunity_to_spell STR_VAR arguments spellname spellcode END
+       END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ITM_immunity_to_spell") ""
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -434,6 +473,51 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              externalise an item's global effects to a spell (so the spell applies, permanently, all the item's effects) leaving the item itself unchanged
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION copy_item_effects_to_spell
+    STR_VAR item=""
+            spell=""
+BEGIN
+         // make a new spell
+         LAF make_spell STR_VAR spell END
+         COPY_EXISTING "%item%.itm" "%workspace%"
+             READ_SHORT 0x70 num_eff
+             READ_ASCII (LONG_AT 0x6a + (SHORT_AT 0x6e)*0x30) eff_array (num_eff*0x30) // read in whole effect block
+         BUT_ONLY
+         COPY_EXISTING "%spell%.spl" override
+                 INNER_PATCH_SAVE ability "" BEGIN
+                    INSERT_BYTES 0x0 0x28
+                    WRITE_SHORT 0x0 1 // type: melee
+                    WRITE_SHORT 0x2 4 // slot:innate
+                    WRITE_ASCII 0x4 "noicon"
+                    WRITE_BYTE 0xc 5 // target:caster
+                    WRITE_SHORT 0xe 1 // range
+                    WRITE_SHORT 0x10 1 // min level
+                    WRITE_SHORT 0x16 6 // dice size - just in case
+                    WRITE_SHORT 0x1c 1 // piercing type - just in case
+                    WRITE_SHORT 0x1e "%num_eff%"
+                    WRITE_SHORT 0x22 1 // num charges
+                    WRITE_SHORT 0x24 1 // unknown
+                    WRITE_SHORT 0x26 1 // projectile NONE
+
+                 END
+                 WRITE_SHORT 0x68 1
+                 INSERT_BYTES 0x72 0x28
+                 WRITE_ASCII 0x72 "%ability%"
+                 WRITE_LONG 0x6a 0x72+0x28
+                 INSERT_BYTES (0x72+0x28) (0x30*num_eff)
+                 WRITE_ASCII (0x72+0x28) "%eff_array%"
+         BUT_ONLY
+         LAF edit_spell STR_VAR spell editstring="patch_effect_inline=>~timing=>9~" END
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////              externalise an item's ability to a spell (so all the ability does is cast the spell)
 /////////////              The item has the same name as the spell unless you specify another explicitly
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -463,6 +547,8 @@ BEGIN
    END
    LAF edit_item STR_VAR item edits=patch_data END
 END
+
+
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -547,25 +633,12 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ITM_read_name
-   STR_VAR arguments=""
-   RET value
-BEGIN
-   READ_STRREF 0xc value
-END
-
 DEFINE_PATCH_FUNCTION ITM_set_name
    STR_VAR arguments=""
 BEGIN
    LPF patch_text_entry STR_VAR function=set_string loc=0xc arguments= ~%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("ITM_set_name") ""
-DEFINE_PATCH_FUNCTION ITM_set_name_evaluate
-   STR_VAR arguments=""
-BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0xc arguments= ~%arguments%~ END
-END
-
 
 DEFINE_PATCH_FUNCTION ITM_set_unidentified_name
    STR_VAR arguments=""
