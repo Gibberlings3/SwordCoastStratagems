@@ -389,6 +389,7 @@ DEFINE_PATCH_FUNCTION apply_patches
              really_no_default=0
              entry_index=0
              parent_index=0
+             stop_after_match=0
      STR_VAR
              edits=""
              arguments=""
@@ -396,8 +397,10 @@ DEFINE_PATCH_FUNCTION apply_patches
              filename=""
              offset_base="0"
              is_conditional="no" // a bit of a misnomer. We really mean: is it being called by one of patch_entry etc. (If so, we ignore match etc commands)
+     RET     
+             value // 1 if any patch is made, 0 otherwise
 BEGIN
-
+          SET value=0
           LPF edit_sanity_check STR_VAR edits task="applying patch to %filename%.%file_ext%" END
           PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
              SPRINT ~edits~ ~%arguments%~
@@ -422,6 +425,7 @@ BEGIN
           END
           DEFAULT
              LPF evaluate_condition STR_VAR filename file_ext match check checkLT checkGT RET found_match=value END
+             PATCH_IF found_match BEGIN SET value=1 END
           END
           PATCH_IF found_match BEGIN
           // ensure that none of the expressions we're trying to match has inherited a numerical value from elsewhere!
@@ -462,8 +466,8 @@ BEGIN
               END
               "var_.*"
               BEGIN
-                 LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR expression="%args%" filename file_ext RET value=value END
-                 SPRINT "SFO_RESERVED_%function2%" "%value%"
+                 LPF evaluate_expression INT_VAR offset_base offset_secondary entry_index subterm=1 STR_VAR expression="%args%" filename file_ext RET value_res=value END
+                 SPRINT "SFO_RESERVED_%function2%" "%value_res%"
               END
               // these ones don't get evaluated
               patch_entry add_entry delete_entry clone_entry patch_entry_inline add_entry_inline delete_entry_inline clone_entry_inline  level_based_blocks BEGIN // the arguments of these functions should not be evaluated
@@ -478,10 +482,10 @@ BEGIN
                        END
                        discard
                     END
-                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global BEGIN
+                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global && !VARIABLE_IS_SET "%file_ext%_virtual_type_parent_%type%" BEGIN
                                PATCH_FAIL "%type% is not a legal entry type for files of type %file_ext%"
                     END ELSE BEGIN
-                               LPF "%instr%_entry_inline" STR_VAR arguments="%args%" type filename file_ext END
+                               LPF "%instr%_entry_inline" INT_VAR stop_after_match STR_VAR arguments="%args%" type filename file_ext RET value END
                     END
               END
 
@@ -493,10 +497,10 @@ BEGIN
                        END
                        discard
                     END
-                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global BEGIN
+                    PATCH_IF !VARIABLE_IS_SET "%file_ext%offset_loc_%type%" && "%type%" STRING_COMPARE effect_global && !VARIABLE_IS_SET "%file_ext%_virtual_type_parent_%type%" BEGIN
                                SET default=1
                     END ELSE BEGIN
-                               LPF "%instr%_entry" STR_VAR arguments="%args%" type filename file_ext END
+                               LPF "%instr%_entry" INT_VAR stop_after_match STR_VAR arguments="%args%" type filename file_ext RET value END
                     END
               END
                
@@ -505,15 +509,16 @@ BEGIN
                  SET default=1
               END
               PATCH_IF default BEGIN
+                     SET value=1
                      PATCH_IF debug_variable=2 BEGIN
                         PATCH_PRINT ~Calling %function2%, arguments %offset_secondary% %args% %filename% %offset_base% %file_ext%~
                       END
                       PATCH_IF !VARIABLE_IS_SET $SFO_do_not_parse_arguments("%function2%") && !VARIABLE_IS_SET $SFO_do_not_parse_arguments("%file_ext%_%function2%") BEGIN
-                         LPF evaluate_expression INT_VAR offset_secondary offset_base entry_index STR_VAR filename file_ext expression="%args%" RET value=value END
+                         LPF evaluate_expression INT_VAR offset_secondary offset_base entry_index STR_VAR filename file_ext expression="%args%" RET value_ret=value END
                       END ELSE BEGIN
-                         SPRINT value "%args%"
+                         SPRINT value_ret "%args%"
                       END
-                      LPF apply_standard_function INT_VAR offset_secondary entry_index STR_VAR func=~%function2%~ arguments=~%value%~ filename offset_base file_ext END
+                      LPF apply_standard_function INT_VAR offset_secondary entry_index STR_VAR func=~%function2%~ arguments=~%value_ret%~ filename offset_base file_ext END
               END
           END
           END
@@ -530,6 +535,8 @@ DEFINE_PATCH_FUNCTION apply_patches_inline
                arguments=""
                file_ext=""
                filename=""
+        RET
+           value
 BEGIN
     PATCH_IF "%arguments%" STRING_EQUAL "" BEGIN
        SPRINT arguments "%editstring%"
@@ -545,6 +552,7 @@ BEGIN
     LPF apply_patches
              INT_VAR offset_base offset_secondary entry_index
              STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~
+             RET value
     END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("apply_patches_inline") ""
@@ -554,11 +562,14 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("apply_patches_inline") ""
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION patch_entry
+          INT_VAR stop_after_match=0
           STR_VAR arguments=""  // this is a patch
                   filename=""
                   file_ext=""
                   type=""
+          RET value // 1 if any patching occurs
 BEGIN
+     SET value=0
      LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
      // read in parameters
      SPRINT check ""
@@ -588,14 +599,15 @@ BEGIN
             SPRINT parent_type EVALUATE_BUFFER "%%file_ext%_virtual_type_parent_%type%%"
             SPRINT entry_type EVALUATE_BUFFER "%%file_ext%_virtual_type_child_%type%%"
             SET sec_index="%file_ext%_virtual_type_index_%type%"
-            LPF patch_entry_child INT_VAR sec_index  STR_VAR entry_type clone_above parent_type at_end insert_point  arguments check checkGT checkLT match match_parameter filename file_ext number_to_add END
+            LPF patch_entry_child INT_VAR sec_index stop_after_match STR_VAR entry_type clone_above parent_type at_end insert_point  arguments check checkGT checkLT match match_parameter filename file_ext number_to_add RET value END
      END ELSE BEGIN
-            LPF patch_entry_notchild  STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
+            LPF patch_entry_notchild  INT_VAR stop_after_match STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type RET value END
      END
 END
 
 DEFINE_PATCH_FUNCTION patch_entry_child
      INT_VAR sec_index=0
+             stop_after_match=0
      STR_VAR arguments=""
              check=""
              checkGT=""
@@ -605,8 +617,11 @@ DEFINE_PATCH_FUNCTION patch_entry_child
              parent_type=""
              filename=""
              file_ext=""
+     RET
+        value
 BEGIN
       // initialise
+         SET value=0
          LPF return_number_entries STR_VAR entry_type="%parent_type%" file_ext RET num_entries_parent=value END
          // cycle through parent
          FOR (parent_index=0;parent_index<num_entries_parent;parent_index+=1) BEGIN
@@ -615,6 +630,7 @@ BEGIN
             // cycle through child types
             LPF return_secondary_data INT_VAR offset_base ind_to_return=sec_index STR_VAR secondary_type="%entry_type%" entry_type="%parent_type%"  RET index number END
             FOR (entry_index=0;entry_index<number;entry_index+=1) BEGIN
+             PATCH_IF !(stop_after_match && value) BEGIN
                SET index_here=index+entry_index
                LPF return_offset INT_VAR offset_num=index_here STR_VAR entry_type file_ext RET offset_secondary=value END
                // check condition
@@ -627,14 +643,17 @@ BEGIN
                END
                PATCH_IF found_match BEGIN
                   // patch
+                     SET value=1
                      LPF apply_patches INT_VAR parent_index entry_index offset_secondary STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
                END
+             END
             END
          END
 END
 
 
 DEFINE_PATCH_FUNCTION patch_entry_notchild
+     INT_VAR stop_after_match=0
      STR_VAR arguments=""
              check=""
              checkGT=""
@@ -643,7 +662,10 @@ DEFINE_PATCH_FUNCTION patch_entry_notchild
              filename=""
              file_ext=""
              entry_type=""
+       RET
+          value
 BEGIN
+        SET value=0
         // handle effect_global as a special case
         PATCH_IF "%entry_type%" STRING_EQUAL_CASE effect_global BEGIN
             SET effect_global=1
@@ -656,6 +678,7 @@ BEGIN
 
          // cycle through
          FOR (entry_index=0;entry_index<num_entries;entry_index+=1) BEGIN
+          PATCH_IF !(stop_after_match && value) BEGIN
             // find the offset
             LPF return_offset INT_VAR offset_num=entry_index STR_VAR entry_type file_ext RET offset_base=value END
             // check condition
@@ -667,8 +690,10 @@ BEGIN
                    LPF evaluate_condition INT_VAR entry_index offset_secondary=offset_base STR_VAR offset_base match check checkGT checkLT filename file_ext RET found_match=value END
             END
             PATCH_IF found_match BEGIN  // apply patches
+                  SET value=1
                   LPF apply_patches INT_VAR entry_index offset_secondary=offset_base STR_VAR edits="%arguments%" file_ext offset_base filename is_conditional=yes END
             END
+          END
          END
 
 END
@@ -676,11 +701,13 @@ END
 
 
 DEFINE_PATCH_FUNCTION patch_entry_inline
+        INT_VAR stop_after_match=0
         STR_VAR
                arguments=""
                file_ext=""
                filename=""
                type=""
+        RET value
 BEGIN
     CLEAR_ARRAY temp_assoc
     WHILE "%arguments%" STRING_COMPARE "" BEGIN
@@ -688,7 +715,9 @@ BEGIN
        SPRINT $temp_assoc("%key%") "%value%"
     END
     LPF patch_entry
+             INT_VAR stop_after_match
              STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~  type
+             RET value
     END
 END
 
@@ -706,6 +735,7 @@ DEFINE_PATCH_FUNCTION add_entry
                   filename=""
                   file_ext=""
                   type=""
+          RET value // always 1
 BEGIN
      LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
      // read in parameters
@@ -744,6 +774,7 @@ BEGIN
      END ELSE BEGIN
             LPF add_entry_notchild INT_VAR insert_point STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
      END
+     SET value=1
 END
 
 DEFINE_PATCH_FUNCTION add_entry_child
@@ -956,6 +987,7 @@ DEFINE_PATCH_FUNCTION add_entry_inline
             file_ext=""
             filename=""
             type=""
+    RET value // always 1
 BEGIN
      LPF key_value_sanity_check INT_VAR is_key=1 STR_VAR arguments END
      CLEAR_ARRAY temp_assoc
@@ -966,6 +998,7 @@ BEGIN
     END
      LPF add_entry
              STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~ type
+             RET value
      END
 END
 
@@ -981,6 +1014,7 @@ DEFINE_PATCH_FUNCTION clone_entry
             file_ext=""
             filename=""
             type=""
+    RET value // always 1
 BEGIN
      LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
      // read in parameters
@@ -1018,6 +1052,7 @@ BEGIN
      END ELSE BEGIN
             LPF clone_entry_notchild STR_VAR clone_above at_end insert_point arguments check checkGT checkLT match match_parameter filename file_ext number_to_add entry_type END
      END
+     SET value=1
 END
 
 DEFINE_PATCH_FUNCTION clone_entry_child
@@ -1215,6 +1250,7 @@ DEFINE_PATCH_FUNCTION clone_entry_inline
             file_ext=""
             filename=""
             type=""
+    RET value // always 1
 BEGIN
         LPF key_value_sanity_check INT_VAR is_key=1 STR_VAR arguments END
      CLEAR_ARRAY temp_assoc
@@ -1225,6 +1261,7 @@ BEGIN
     END
         LPF clone_entry
              STR_VAR arguments=temp_assoc filename= ~%filename%~ file_ext= ~%file_ext%~ type
+             RET value
         END
 END
 
@@ -1242,8 +1279,9 @@ DEFINE_PATCH_FUNCTION delete_entry   // this uses indirection: the entries are i
                   filename=""
                   file_ext=""
                   type=""
+          RET value // always 1
 BEGIN
-     LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
+    LPF key_value_sanity_check INT_VAR is_key=0 STR_VAR arguments END
     PATCH_IF ~%type%~ STRING_EQUAL "" BEGIN
        PATCH_FAIL "You are trying to delete an entry on %filename%.%file_ext% but you have not specified the entry type"
     END
@@ -1256,6 +1294,7 @@ BEGIN
     END ELSE BEGIN
             LPF delete_entry_notchild STR_VAR arguments filename file_ext  entry_type END
     END
+    SET value=1
 
 END
 

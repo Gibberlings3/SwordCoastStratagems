@@ -45,13 +45,13 @@ BEGIN
           WITH ~ASCII~
           BEGIN
                     OUTER_SPRINT ~definition~
-                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string% PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (8) END SET value=1 END
+                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function% %arg_string% BEGIN %parse_string% PATCH_MATCH "%arguments%" WITH no_change BEGIN END null BEGIN WRITE_ASCII %offset_formula% "" (8) END DEFAULT WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (8) END SET value=1 END
                             DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value END~
           END
           ~ASCII20~
           BEGIN
                     OUTER_SPRINT ~definition~
-                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function%  %arg_string% BEGIN %parse_string% PATCH_IF "%arguments%" STRING_COMPARE no_change BEGIN WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (0x20) END SET value=1 END
+                           ~DEFINE_PATCH_FUNCTION %function_prefix%_%function%  %arg_string% BEGIN %parse_string% PATCH_MATCH "%arguments%" WITH no_change BEGIN END null BEGIN WRITE_ASCII %offset_formula% "" (0x20) END DEFAULT WRITE_ASCIIE %offset_formula% "%percentage%arguments%percentage%" (0x20) END SET value=1 END
                             DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_ASCII %offset_formula% value (0x20) NULL   END~
           END
           ~ASCII2~
@@ -314,6 +314,7 @@ DEFINE_ACTION_FUNCTION edit_template
            silent=0
            SFO_RESERVED_object_index=0
            allow_missing=0
+           stop_after_match=0
            tv=0
     STR_VAR
            file_list=""
@@ -322,7 +323,9 @@ DEFINE_ACTION_FUNCTION edit_template
            editstring=""
            external_file=""
            location=""
+    RET value // 1 if any successful edit is made
 BEGIN
+      OUTER_SET value=0
       LAF edit_sanity_check STR_VAR edits editstring task="editing %file_list%" END
       ACTION_IF !"%file_list%%external_file%" STRING_MATCHES_REGEXP " *$" BEGIN
             FAIL "Edit_%file_ext% cannot have an empty argument"
@@ -341,7 +344,7 @@ BEGIN
          PRINT ~SFO: Applying patch(es) to %file_ext% file(s) %file_list%... ~
       END
       SILENT
-      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~) BEGIN
+      OUTER_WHILE !(~%file_list%~ STRING_EQUAL ~~ || (stop_after_match && value)) BEGIN
           LAF action_return_first_entry
                  STR_VAR list= ~%file_list%~
                  RET file_list=list filename=entry
@@ -354,8 +357,9 @@ BEGIN
             ACTION_TRY
               COPY_EXISTING ~%filename%.%file_ext%~ ~override/%filename%.%file_ext%~
                 PATCH_IF (SOURCE_SIZE>0x1) BEGIN
-                    LPF apply_patches STR_VAR edits filename file_ext END
-                    LPF apply_patches_inline STR_VAR editstring filename file_ext END
+                    LPF apply_patches INT_VAR stop_after_match STR_VAR edits filename file_ext RET value_here=value END
+                    LPF apply_patches_inline INT_VAR stop_after_match STR_VAR editstring filename file_ext RET value_here2=value END
+                    SET value=value || value_here || value_here2
                 END
               BUT_ONLY
             WITH DEFAULT
@@ -375,8 +379,9 @@ BEGIN
                     PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
                        LPF FJ_CRE_EFF_V2 END
                     END
-                    LPF apply_patches STR_VAR edits filename file_ext END
-                    LPF apply_patches_inline STR_VAR editstring filename file_ext END
+                    LPF apply_patches INT_VAR stop_after_match STR_VAR edits filename file_ext RET value_here=value END
+                    LPF apply_patches_inline INT_VAR stop_after_match STR_VAR editstring filename file_ext RET value_here2=value END
+                    SET value=value || value_here || value_here2
               END
                
                BUT_ONLY

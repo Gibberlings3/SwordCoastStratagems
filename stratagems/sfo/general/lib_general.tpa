@@ -127,6 +127,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION install
+       INT_VAR overwrite=1
        STR_VAR file=""
                files=""
                location=""
@@ -149,6 +150,17 @@ BEGIN
        END
        OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
            LAF return_first_entry STR_VAR list= ~%file%~ RET entry file=list END
+           ACTION_IF "%entry%" STRING_EQUAL_CASE all BEGIN
+              ACTION_IF "%postfix%" STRING_EQUAL "" BEGIN
+                 ACTION_BASH_FOR "%file_loc%" ".*" BEGIN
+                    OUTER_SPRINT file "%file% %BASH_FOR_FILE%"
+                 END
+              END ELSE BEGIN
+                 ACTION_BASH_FOR "%file_loc%" ".*\.%postfix%" BEGIN
+                    OUTER_SPRINT file "%file% %BASH_FOR_RES%"
+                 END
+              END
+           END ELSE BEGIN
             ACTION_IF "%postfix%" STRING_EQUAL "" BEGIN
              OUTER_PATCH_SAVE entry ~%entry%~ BEGIN
               SET postfix_start = INDEX_BUFFER (~\.~) +1
@@ -161,21 +173,37 @@ BEGIN
                OUTER_SPRINT entry_full "%entry%.%postfix%"
                OUTER_SPRINT postfix_here "%postfix%"
             END
-            
-            ACTION_MATCH "%postfix_here%" WITH
-            baf d BEGIN
+            ACTION_IF !overwrite BEGIN
+               ACTION_MATCH "%postfix_here%" WITH
+               baf ssl BEGIN
+                  OUTER_SPRINT to_check "%entry%.bcs"
+               END
+               d BEGIN
+                  OUTER_SPRINT to_check "%entry%.dlg"
+               END
+               DEFAULT
+                  OUTER_SPRINT to_check "%entry_full%"
+               END
+            END
+            ACTION_IF (overwrite OR !FILE_EXISTS_IN_GAME "%to_check%") BEGIN
+             ACTION_MATCH "%postfix_here%" WITH
+             baf d BEGIN
               COMPILE ~%file_loc%/%entry_full%~ EVALUATE_BUFFER
-            END
-            ssl BEGIN
+             END
+             ssl BEGIN
               LAF ssl_to_bcs STR_VAR script="%entry%" location END
-            END
-            cre BEGIN
+             END
+             cre BEGIN
               COPY ~%file_loc%/%entry_full%~ ~override~
                   LPF FJ_CRE_EFF_V2 END
-            END
-            DEFAULT
+             END
+             DEFAULT
               COPY ~%file_loc%/%entry_full%~ ~override~
+             END
+            END ELSE BEGIN
+                   PRINT "Not installing %entry_full% as it is already present"
             END
+           END
        END
 END
 

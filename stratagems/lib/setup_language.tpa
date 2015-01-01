@@ -1,0 +1,56 @@
+// This works (I think) but requires distribution of iconv, which in turn requires a lot of space and wrestling with scary library stuff. So we'll carry on doing UTF-8 conversion statically.
+
+DEFINE_ACTION_FUNCTION get_lang_charset
+       RET charset
+BEGIN
+      INCLUDE "%scsroot%/lib/lang_charset.tph"
+      OUTER_SPRINT charset unknown
+      ACTION_PHP_EACH lang_charset AS this_lang=>this_charset BEGIN
+         ACTION_IF "%LANGUAGE%" STRING_EQUAL_CASE "%this_lang%" BEGIN
+            OUTER_SPRINT lang "%this_lang%"
+            OUTER_SPRINT charset "%this_charset%"
+         END
+      END
+      ACTION_IF "%charset%" STRING_EQUAL_CASE unknown BEGIN
+         FAIL "Unrecognised language; cannot convert to UTF-8"
+      END
+END
+
+DEFINE_ACTION_FUNCTION ee_lang_convert
+    STR_VAR infile=""
+BEGIN
+        OUTER_SPRINT outfile "%workspace%/%BASH_FOR_RES%.tra"
+        ACTION_MATCH ~%WEIDU_OS%~ WITH
+           win32
+           BEGIN
+              OUTER_SPRINT iconv ~%scsroot%/lib/iconv.exe~
+              OUTER_SPRINT quote ~"~
+           END
+           osx unix
+           BEGIN
+              OUTER_SPRINT iconv ~iconv~
+              OUTER_SPRINT quote ~'~
+           END
+           DEFAULT
+        END
+        AT_NOW ~%iconv% -f %charset% -t UTF-8 %quote%%infile%%quote% > %quote%%outfile%%quote%~
+END
+
+DEFINE_ACTION_FUNCTION setup_language BEGIN
+      MKDIR "%workspace%/tra"
+      ACTION_IF enhanced_edition BEGIN
+         LAF get_lang_charset RET charset END
+      END
+      ACTION_BASH_FOR "%scsroot%/tra/%LANGUAGE%" ".*\.tra" BEGIN
+        ACTION_IF !FILE_EXISTS "%workspace%/tra/%BASH_FOR_RES%.tra" BEGIN
+           ACTION_IF enhanced_edition BEGIN
+              LAF ee_lang_convert STR_VAR infile="%scsroot%/tra/%LANGUAGE%/%BASH_FOR_RES%.tra" END
+           END ELSE BEGIN
+              COPY "%scsroot%/tra/%LANGUAGE%/%BASH_FOR_RES%.tra" "%workspace%/tra/%BASH_FOR_RES%.tra"
+           END
+        END
+      END
+      ACTION_IF enhanced_edition BEGIN
+         LOAD_TRA "%workspace%/tra/setup.tra"
+      END
+END

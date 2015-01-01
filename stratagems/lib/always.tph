@@ -17,12 +17,56 @@ ACTION_IF !VARIABLE_IS_SET ~initialise~ BEGIN
     LOAD_TRA ~%scsroot%/tra/ee/%LANGUAGE%/%LANGUAGE%.tra~
   END
 
+
+////////////////////////////////////////////////////////
+//// detect third-party mods (needs to be at top because SFO takes notice)
+////////////////////////////////////////////////////////
+
+
+        // Detect Spell Revisions
+
+        ACTION_IF FILE_EXISTS_IN_GAME ~dvimhere.mrk~ THEN BEGIN
+           OUTER_SET ~demivrgvs~=1
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Demivrgvs=True~
+           APPEND ~SPELL.IDS~ ~1116 CLERIC_SUNSCORCH~ UNLESS ~1116 CLERIC_SUNSCORCH~
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_sr~
+        END ELSE BEGIN
+           OUTER_SET ~demivrgvs~=0
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notsr~
+        END
+
+        ACTION_IF FILE_EXISTS_IN_GAME ~dvsrv4here.mrk~ THEN BEGIN
+           OUTER_SET ~demivrgvs_v4~=1
+        END ELSE BEGIN
+           OUTER_SET ~demivrgvs_v4~=0
+        END
+
+        // detect Item Revisions
+        
+        ACTION_IF MOD_IS_INSTALLED "item_rev.tp2" 0 BEGIN
+           OUTER_SET item_revisions=1
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~ItemRevisions=True~
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_ir~
+        END ELSE BEGIN
+           OUTER_SET item_revisions=0
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notir~
+        END
+
+        // detect Refinements HLAs
+
+        ACTION_IF FILE_EXISTS_IN_GAME ~tg#come.spl~ BEGIN
+           OUTER_SET ~refinements~=1
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Refinements=True~
+        END ELSE BEGIN
+           OUTER_SET ~refinements~=0
+        END
+
 ////////////////////////////////////////////////////////
 //// general variables, macros and functions
 ////////////////////////////////////////////////////////
 
   INCLUDE ~%scsroot%/sfo/install_sfo.tpa~
-
+ 
 ////////////////////////////////////////////////////////
 //// stratagems-specific macros and functions
 ////////////////////////////////////////////////////////
@@ -154,7 +198,7 @@ OUTER_SET SFO_usable_string_tra_ref=16054
 
 
 ///////////////////////////////////////////////////////////////
-///	Third-party compatibility (NB some of this is in install_sfo)
+///	Third-party compatibility
 ///////////////////////////////////////////////////////////////
 
         // check for safe version of imprisonment
@@ -212,6 +256,28 @@ OUTER_SET SFO_usable_string_tra_ref=16054
            END
         END
 
+////////////////////////////////////////////////////////
+//// 	Check if Free Action protects from Stun
+////////////////////////////////////////////////////////
+
+
+   LAF check_label STR_VAR label="dw#freeaction_stun" RET stun=value END
+   LAF check_label STR_VAR label="dw#freeaction_nostun" RET nostun=value END
+   ACTION_IF !(stun || nostun) BEGIN
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY free_action_patch BEGIN
+         match=>"opcode=101 and parameter2=45"
+      END
+      LAF edit_spell INT_VAR stop_after_match=1 STR_VAR spell=CLERIC_FREE_ACTION editstring="patch_effect=>free_action_patch" RET value END
+      ACTION_IF value BEGIN
+         LAF make_label STR_VAR label="dw#freeaction_stun" END
+         OUTER_SET stun=1
+      END ELSE BEGIN
+         LAF make_label STR_VAR label="dw#freeaction_nostun" END
+      END
+   END
+   ACTION_IF stun THEN BEGIN
+       OUTER_SPRINT ssllibrary "%ssllibrary% %scsroot%/ssl/library_freeactionstun"
+   END
 
 
 END   // end of do-once part
@@ -237,3 +303,6 @@ END   // end of do-once part
     ACTION_IF FILE_EXISTS_IN_GAME ~dw#truesight_blindness.mrk~ BEGIN
            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&TruesightCuresBlindness=True~
     END
+    
+
+
