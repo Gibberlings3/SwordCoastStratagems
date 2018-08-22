@@ -6,7 +6,7 @@ call "%~dp0..\ModPackaging\utilities\ie_games.bat"
 
 REM /* MODIFY: set the values of the 3 variables below to reflect the current mod version */
 set "mod_name=Sword Coast Stratagems"
-set mod_version=v31_Release_Candidate
+set mod_version=v31_Release_Candidate_2
 set mod_folder=stratagems
 
 REM /* MODIFY: list here which IE games the mod is compatible with, from this list of possibilities: */
@@ -34,6 +34,6 @@ REM /* MODIFY: if you want to avoid making filenames lowercase, you can disable 
 set lowercase_filenames=1
 
 REM /* this performs the actual packaging */
-call "%~dp0..\ModPackaging\utilities\complete_packaging.bat"
+call "%~dp0..\ModPackaging\utilities\complete_packaging_scs.bat"
 
 endlocal
