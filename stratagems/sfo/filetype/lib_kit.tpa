@@ -4,34 +4,17 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION edit_kit
+      INT_VAR skip_lua=0
+              skip_clab=0
+              at_top_hla=0
       STR_VAR editstring=""
               edits=""
               kit=""
-BEGIN
+BEGIN    
           // synonyms
           LAF standardize_kit STR_VAR arguments="%kit%" RET kit=value END
           // get parent class
-          LAF read_table_entry INT_VAR lookup_column=1 dont_complain=1 STR_VAR row="%kit%" column=class file=kitlist RET class_id=value END
-          ACTION_IF class_id<0 BEGIN
-             OUTER_SET class_id= IDS_OF_SYMBOL (class "%kit%")
-             OUTER_SET true_class=1
-          END ELSE BEGIN
-             OUTER_SET true_class=0
-          END
-          ACTION_MATCH "%kit%" WITH
-          FIGHTER_MAGE FIGHTER_CLERIC FIGHTER_THIEF FIGHTER_MAGE_THIEF FIGHTER_MAGE_CLERIC CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER
-          BEGIN
-             OUTER_SET multiclassed=1
-          END
-          DEFAULT
-             OUTER_SET multiclassed=0
-          END
-          ACTION_IF class_id<0 BEGIN
-             FAIL "%kit% is not a valid kit or class (does not appear in kitlist.2da or class.ids)"
-          END
-          OUTER_PATCH "" BEGIN
-             LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%class_id%"
-          END
+          LAF resolve_parent_class STR_VAR kit RET parent_class true_class multiclassed END
           // get kit code
           ACTION_IF true_class=0 BEGIN
              COPY_EXISTING kitlist.2da "%workspace%" 
@@ -76,12 +59,12 @@ BEGIN
              END
           END
           // process CLAB editing
-          ACTION_IF "%clab_edits%" STRING_COMPARE "" BEGIN
+          ACTION_IF ("%clab_edits%" STRING_COMPARE "" && !skip_clab) BEGIN
              LAF edit_clab STR_VAR editstring="%clab_edits%" kit END
           END
           // process LUA editing
-          ACTION_IF "%lua_edits%" STRING_COMPARE "" BEGIN
-             LAF edit_lua STR_VAR editstring="%lua_edits%" kit END
+          ACTION_IF ("%lua_edits%" STRING_COMPARE "" && !skip_lua) BEGIN
+             LAF edit_lua INT_VAR at_top="%at_top_hla%" STR_VAR editstring="%lua_edits%" kit END
           END
 END
 
@@ -407,8 +390,8 @@ BEGIN
    AVENGER BEASTFRIEND BEGIN
      OUTER_SPRINT value BEAST_FRIEND
    END
-   SORCERER BEGIN
-      OUTER_SPRINT value SORCEROR
+   SORCEROR BEGIN
+      OUTER_SPRINT value SORCERER
    END
    WIZARDSLAYER BEGIN
       OUTER_SPRINT value WIZARD_SLAYER
@@ -541,15 +524,29 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    General kit maker - edits all kits with given parent
+/////
+/////    A hiccup is that clabma01 does triple duty, acting as the file for mages, sorcerers, and wildmages
+/////    We don't want to apply the same edits more than once when parentclass is mage.
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION edit_all_kits
+      INT_VAR at_top_hla=0
       STR_VAR editstring=""
               edits=""
               parent_class=""
+              filter=""
 BEGIN
    OUTER_SET class_id=IDS_OF_SYMBOL (class "%parent_class%")
-   COPY_EXISTING "kitlist.2da" "%workspace%" 
+   OUTER_SET continue=1
+   ACTION_IF "%filter%" STRING_COMPARE "" BEGIN
+       OUTER_PATCH "" BEGIN
+         LPF "%filter%" STR_VAR arguments=BASECLASS RET continue=value END
+       END
+   END
+   ACTION_IF continue BEGIN
+      LAF edit_kit INT_VAR at_top_hla STR_VAR edits editstring kit="%parent_class%" END
+   END
+   COPY_EXISTING "kitlist.2da" "%workspace%"
             COUNT_2DA_COLS colcount
             COUNT_2DA_ROWS colcount rowcount
             LPF get_table_column_coordinate STR_VAR column=class RET colnum END
@@ -557,8 +554,14 @@ BEGIN
                READ_2DA_ENTRY i colnum colcount this_id
                PATCH_IF this_id=class_id BEGIN
                   READ_2DA_ENTRY i 1 colcount kit
-                  INNER_ACTION BEGIN
-                     LAF edit_kit STR_VAR edits editstring kit END
+                  SET continue=1
+                  PATCH_IF "%filter%" STRING_COMPARE "" BEGIN
+                     LPF "%filter%" STR_VAR arguments="%kit%" RET continue=value END
+                  END
+                  PATCH_IF continue BEGIN
+                    INNER_ACTION BEGIN
+                     LAF edit_kit INT_VAR at_top_hla STR_VAR edits editstring kit END
+                    END
                   END
                END
             END
@@ -684,18 +687,23 @@ DEFINE_ACTION_FUNCTION edit_clab
 BEGIN
      // find and read in the CLAB file
      LAF find_clab STR_VAR kit RET clab END
+     PRINT "editing %clab% for %kit%"
      // if it doesn't exist, make it
      ACTION_IF !FILE_EXISTS_IN_GAME "%clab%.2da" BEGIN
         OUTER_SPRINT row ""
+        OUTER_SPRINT row2 "ABILITY1"
         OUTER_FOR (i=1;i<=40;i+=1) BEGIN
            OUTER_SPRINT row "%row% %i%"
+           OUTER_SPRINT row2 "%row2% ****"
         END
+
 <<<<<<<< .../stratagems-inline/clab_template.2da
 2DA V1.0
 ****
 %row%
+%row2%
 >>>>>>>>
-        COPY ".../stratagems-inline/clab_template.2da" "override/%clab%.2da"
+        COPY ".../stratagems-inline/clab_template.2da" "override/%clab%.2da" EVALUATE_BUFFER PRETTY_PRINT_2DA
      END
      COPY_EXISTING "%clab%.2da" override
           // read in the data
@@ -738,16 +746,29 @@ BEGIN
              END
              grant_power apply_power BEGIN
                  PATCH_MATCH "%argument%" WITH 
+                 "[^ ]+ +[0-9]+ +[0-9]+ +[0-9]+" BEGIN END
                  "[^ ]+ +[0-9]+ +[0-9]+" BEGIN END
                  "[^ ]+ +[0-9]+" BEGIN END
                  DEFAULT
-                    PATCH_FAIL "The argument for %command% is '%argument%', which is not valid syntax. (The right format is 'SPELLNAME level_to_receive' or 'SPELLNAME level_to_receive every_this_many_levels')."
+                    PATCH_FAIL "The argument for %command% is '%argument%', which is not valid syntax. (The right format is 'SPELLNAME level_to_receive' or 'SPELLNAME level_to_receive every_this_many_levels', or 'SPELLNAME level_to_receive every_this_many_levels if_at_most_this_level)."
                  END
                  LPF return_first_entry STR_VAR list="%argument%" RET spell=entry list=list END  // syntax is "spell n m" - granted at level n and every mth thereafter
-                 LPF return_first_entry STR_VAR list RET level=entry rec=list END
-                 PATCH_IF "%rec%" STRING_EQUAL "" BEGIN SET rec=99 END // if no recurrence, don't recur
+                 LPF return_first_entry STR_VAR list RET level=entry list END
+                 PATCH_IF "%list%" STRING_EQUAL "" BEGIN 
+                    SET rec=99  // if no recurrence, don't recur
+                    SET max_here=max_level 
+                 END
+                 ELSE BEGIN
+                    LPF return_first_entry STR_VAR list RET rec=entry max_here=list END
+                    PATCH_IF "%max_here%" STRING_EQUAL "" BEGIN SET max_here=max_level END
+                    ELSE BEGIN
+                       PATCH_IF max_here > max_level BEGIN
+                          SET max_here = max_level
+                       END
+                    END
+                 END
                  PATCH_IF rec<=0 BEGIN SET rec=99 END // guard against infinite loops
-                 WHILE level<max_level BEGIN
+                 WHILE level<=max_here BEGIN
                       LPF CLAB_add_ability INT_VAR level STR_VAR spell type="%command%" RET string=string END
                       SPRINT $abil("%level%") "%string%"
                       SET level += rec
@@ -848,13 +869,15 @@ BEGIN
           DRUID=>DR01
           MAGE=> MA01
           SORCEROR=>MA01
+          SORCERER=>MA01
+          SHAMAN=>SH01
           THIEF=>TH01
           BARD=>BA01
        END
        ACTION_IF VARIABLE_IS_SET $class_clab("%kit%") BEGIN
           OUTER_SPRINT clab EVALUATE_BUFFER "CLAB%class_clab_%kit%%"
        END ELSE BEGIN
-           LAF warning STR_VAR warning="Cannot find clab file for kit %kit%." END
+           LAF warning STR_VAR warning="Cannot find clab file for kit %kit%" END
        END
     END
 END
@@ -917,17 +940,29 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    General HLA editor
 /////    (Intended basically to be called from within edit_kit)
+/////
+/////      Syntax: grant|apply_hla => file list
+/////              remove_hla => file list
+/////              restrict_hla => key=> value list
+/////
+/////              where the most general restrict_hla command is 
+/////              hla=>file [required]
+/////              min_level=>int
+/////              max_level=>int
+/////              num_allowed=>int
+/////              prerequisite|excluded_by=>file [must already be in the lua]
+/////              alignment_restrict|exclude_alignment =>  good|evil
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION edit_lua
+DEFINE_ACTION_FUNCTION  edit_lua
+        INT_VAR at_top=0
         STR_VAR
             kit=""
             lua=""
             editstring=""
 BEGIN
        ACTION_IF "%lua%" STRING_EQUAL "" BEGIN
-          LAF read_table_entry STR_VAR row="%kit%" column=abbrev file=luabbr RET value END
-          OUTER_SPRINT lua "lu%value%"
+          LAF resolve_lua STR_VAR kit RET lua END
        END
        // if it doesn't exist, make it
        ACTION_IF !FILE_EXISTS_IN_GAME "%lua%.2da" BEGIN
@@ -981,11 +1016,24 @@ BEGIN
                END ELSE BEGIN
                  OUTER_SPRINT type AP
                END
-               OUTER_SET number_of_powers +=1
-               LAF write_table_entry STR_VAR row="%number_of_powers%" column=ability arguments="%type%_%spell%" file="%lua%" default_fill="*" END
-               LAF write_table_entry STR_VAR row="%number_of_powers%" column=min_lev arguments=1 file="%lua%" END
-               LAF write_table_entry STR_VAR row="%number_of_powers%" column=max_level arguments=99 file="%lua%" END
-               LAF write_table_entry STR_VAR row="%number_of_powers%" column=num_allowed arguments=20 file="%lua%" END
+               OUTER_SET number_of_powers +=1 
+               ACTION_IF at_top BEGIN
+                COPY_EXISTING "%lua%.2da" override
+                  COUNT_2DA_COLS colcount
+                  SPRINT insert "insert_here"
+                  FOR (i=1;i<colcount;i+=1) BEGIN
+                      SPRINT insert "%insert% * "
+                  END
+                  INSERT_2DA_ROW 0 colcount "%insert%"
+                  SPRINT write_point insert_here
+               BUT_ONLY
+               END ELSE BEGIN
+                  OUTER_SET write_point="%number_of_powers%"
+               END
+               LAF write_table_entry STR_VAR row="%write_point%" column=ability arguments="%type%_%spell%" file="%lua%" default_fill="*" END
+               LAF write_table_entry STR_VAR row="%write_point%" column=min_lev arguments=1 file="%lua%" END
+               LAF write_table_entry STR_VAR row="%write_point%" column=max_level arguments=99 file="%lua%" END
+               LAF write_table_entry STR_VAR row="%write_point%" column=num_allowed arguments=20 file="%lua%" END
                OUTER_SPRINT $hla_type("%spell%") "%type%"
               END
             END
@@ -1012,8 +1060,6 @@ BEGIN
                  COPY_EXISTING "%lua%.2da" override
                       REPLACE_TEXTUALLY "%to_remove%" "*"
                  BUT_ONLY
-              END ELSE BEGIN
-                 LAF warning STR_VAR warning="Tried to remove HLA %spell% but it wasn't there to begin with" END
               END
             END
            END
@@ -1055,6 +1101,12 @@ BEGIN
                     END
                     num_allowed number_allowed BEGIN
                        OUTER_SPRINT column num_allowed
+                    END
+                    prerequisite_hardcode excluded_by_hardcode BEGIN
+                       OUTER_PATCH_SAVE column "%key%" BEGIN
+                          REPLACE_TEXTUALLY _hardcode ""
+                       END
+                       ACTION_TO_UPPER value
                     END
                     prerequisite excluded_by BEGIN
                        OUTER_SPRINT column "%key%"
@@ -1119,9 +1171,6 @@ BEGIN
                    SET entry_num +=1
                 END
              END
-             PATCH_IF entry_num>25 BEGIN
-                LPF warning STR_VAR warning="HLA file %lua%.2da has more than 24 entries" END
-             END
              WHILE entry_num<25 BEGIN
                 SPRINT row "%entry_num%"
                 FOR (j=1; j< colcount;j+=1) BEGIN
@@ -1133,6 +1182,20 @@ BEGIN
              PRETTY_PRINT_2DA
        BUT_ONLY
 END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// Find LUA filename
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resolve_lua
+    STR_VAR kit=""
+    RET lua
+BEGIN
+   LAF read_table_entry STR_VAR row="%kit%" column=abbrev file=luabbr RET value END
+   OUTER_SPRINT lua "lu%value%"
+
+END
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /// Find unused CLAB filename
@@ -1302,3 +1365,260 @@ BEGIN
        FAIL "%command% is not a valid command for edit_race"
     END
 END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION get_parent_class
+    STR_VAR kit=""
+    RET class_id parent_class true_class
+BEGIN
+    LAF read_table_entry INT_VAR lookup_column=1 dont_complain=1 STR_VAR row="%kit%" column=class file=kitlist RET class_id=value END
+    ACTION_IF class_id<0 BEGIN
+             OUTER_SET class_id= IDS_OF_SYMBOL (class "%kit%")
+             OUTER_SET true_class=1
+    END ELSE BEGIN
+             OUTER_SET true_class=0
+    END
+    OUTER_PATCH "" BEGIN
+             LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%class_id%"
+    END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_luas_unique
+BEGIN
+   
+   // get the data
+   COPY_EXISTING "luabbr.2da" "%workspace%"
+   OUTER_SPRINT read_array_location "%workspace%"
+   OUTER_SPRINT array_to_read "luabbr.2da"
+   OUTER_SPRINT array_name luabbr
+   LAM read_in_assoc_array
+
+   // go through as a first pass, to see what's in use
+   ACTION_PHP_EACH luabbr AS kit=>lua BEGIN
+     ACTION_IF ("%kit%" STRING_COMPARE_CASE 2da) BEGIN
+        OUTER_SPRINT $in_luabbr("%lua%") ""
+     END
+   END
+
+   // go through
+   ACTION_PHP_EACH luabbr AS kit=>lua BEGIN
+    ACTION_IF ("%kit%" STRING_COMPARE_CASE 2da) BEGIN
+      ACTION_IF VARIABLE_IS_SET $in_use("%lua%") BEGIN
+         OUTER_PATCH "%lua%" BEGIN
+            READ_ASCII 0x0 prefix (2)
+         END
+         LAF make_luas_unique_helper STR_VAR prefix RET lua_new END
+         OUTER_SPRINT $luabbr("%kit%") "%lua_new%"
+         OUTER_SPRINT $in_use("%lua_new%") ""
+         OUTER_SPRINT $in_luabbr("%lua_new%") ""
+         COPY_EXISTING "lu%lua%.2da" "override/lu%lua_new%.2da"
+      END ELSE BEGIN
+         OUTER_SPRINT $in_use("%lua%") ""
+      END
+    END
+   END
+   // write out the updated luas
+   COPY_EXISTING luabbr.2da override
+        COUNT_2DA_ROWS 2 rowcount
+        FOR (i=0;i<rowcount;i+=1) BEGIN
+           READ_2DA_ENTRY i 0 2 kit
+           PATCH_IF VARIABLE_IS_SET $luabbr("%kit%") BEGIN
+              SPRINT temp $luabbr("%kit%")
+              SET_2DA_ENTRY i 1 2 "%temp%"
+           END
+        END
+   BUT_ONLY
+
+END
+
+DEFINE_ACTION_FUNCTION make_luas_unique_helper
+    INT_VAR min=1
+    STR_VAR prefix=""
+    RET lua_new
+BEGIN
+    OUTER_SPRINT lua_new "%prefix%%min%"
+    ACTION_IF VARIABLE_IS_SET $in_luabbr("%lua_new%") BEGIN
+       ACTION_IF min=9 BEGIN
+         LAF warning STR_VAR warning="Too many lua files; can't find unique one for %kit%" END
+         OUTER_SPRINT lua_new "%prefix%0"
+       END ELSE BEGIN
+         OUTER_SET min +=1
+         LAF make_luas_unique_helper INT_VAR min STR_VAR prefix RET lua_new END
+       END
+    END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resolve_parent_class
+    STR_VAR kit=""
+    RET parent_class
+        multiclassed
+        true_class
+BEGIN
+          LAF read_table_entry INT_VAR lookup_column=1 dont_complain=1 STR_VAR row="%kit%" column=class file=kitlist RET class_id=value END
+          ACTION_IF class_id<0 BEGIN
+             OUTER_SET class_id= IDS_OF_SYMBOL (class "%kit%")
+             OUTER_SET true_class=1
+          END ELSE BEGIN
+             OUTER_SET true_class=0
+          END
+          ACTION_MATCH "%kit%" WITH
+          FIGHTER_MAGE FIGHTER_CLERIC FIGHTER_THIEF FIGHTER_MAGE_THIEF FIGHTER_MAGE_CLERIC CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER
+          BEGIN
+             OUTER_SET multiclassed=1
+          END
+          DEFAULT
+             OUTER_SET multiclassed=0
+          END
+          ACTION_IF class_id<0 BEGIN
+             LAF warning STR_VAR warning="%kit% is not a valid kit or class (does not appear in kitlist.2da or class.ids)" END
+             OUTER_SPRINT parent_class "NOT_DEFINED"
+          END
+          OUTER_PATCH "" BEGIN
+             LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%class_id%"
+          END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_kit_spell_enforcer
+     INT_VAR force_rebuild=0
+             collect_apply=0
+     STR_VAR kit=""
+BEGIN
+
+
+ ACTION_IF (!FILE_EXISTS "%workspace%/kit_spell_build.2da" || force_rebuild) BEGIN
+  // mark things to ignore
+   ACTION_FOR_EACH spellname IN SET_SNARE_TRAP BEGIN
+       LAF get_spellcode STR_VAR input="%spellname%" RET resref=value END
+       ACTION_TO_UPPER resref
+       OUTER_SPRINT $kit_spell_ignore("%resref%") ""
+   END
+
+
+
+  COPY ".../stratagems-inline/blank" "%workspace%/kit_spell_build.tpa"
+  ACTION_IF collect_apply BEGIN
+       COPY ".../stratagems-inline/blank" "%workspace%/kit_collect_apply.txt"
+  END
+  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~DEFINE_PATCH_FUNCTION CRE_enforce_kit_spells_hardcoded INT_VAR level=1 STR_VAR kit="" BEGIN~
+  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~PATCH_MATCH "%percentage%kit%percentage%" WITH ~
+  OUTER_WHILE "%kit%" STRING_COMPARE "" BEGIN
+     LAF return_first_entry STR_VAR list="%kit%" RET kit=list kit_here=entry END
+     LAF find_clab STR_VAR kit="%kit_here%" RET clab END
+     ACTION_TO_LOWER kit_here
+     WITH_SCOPE BEGIN
+        COPY_EXISTING "%clab%.2da" "%workspace%"
+             COUNT_2DA_COLS colcount
+             READ_2DA_ENTRIES_NOW clab_entries colcount
+             FOR (j=0;j<colcount;j+=1) BEGIN
+                SET clab_level=j
+                SPRINT add_this_level ""
+                SPRINT apply_this_level ""
+                FOR (i=0;i<clab_entries;i+=1) BEGIN
+                    READ_2DA_ENTRY_FORMER clab_entries i j entry
+                    SET to_add=0
+                    SET to_apply=0
+                    TO_UPPER entry
+                    INNER_PATCH_SAVE spell "%entry%" BEGIN
+                       READ_ASCII 0x0 type (3)
+                       PATCH_MATCH "%type%" WITH
+                       "GA_" BEGIN
+                           DELETE_BYTES 0x0 3
+                           SET to_add=1
+                       END
+                       "AP_" BEGIN
+                           DELETE_BYTES 0x0 3
+                           SET to_apply=1
+                       END
+                       DEFAULT
+                        END
+                    END
+                    PATCH_IF VARIABLE_IS_SET $kit_spell_ignore("%spell%") BEGIN
+                             SET to_add=0
+                             SET to_apply=0
+                    END
+                    PATCH_IF to_apply BEGIN
+                       PATCH_IF collect_apply BEGIN
+                        PATCH_IF "%type%" STRING_EQUAL_CASE "AP_" BEGIN
+                             SPRINT apply_this_level "%apply_this_level% %entry%"
+                        END
+                       END
+                    END
+                    PATCH_IF to_add BEGIN
+                       TO_UPPER spell
+                       PATCH_IF !VARIABLE_IS_SET $kit_spell_type("%spell%") BEGIN
+                          INNER_ACTION BEGIN
+                            ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                              COPY_EXISTING "%spell%.spl" override
+                                 READ_SHORT 0x1c type
+                                 READ_LONG 0x34 level
+                                 SET level -= 1
+                              BUT_ONLY
+                            END
+                            OUTER_SET $kit_spell_type("%spell%")=type
+                            OUTER_SET $kit_spell_level("%spell%")=level
+                          END
+                       END
+                       PATCH_IF $kit_spell_type("%spell%")=4 BEGIN
+                              SPRINT $remove_these_spells("%spell%") ""
+                              SET type=$kit_spell_type("%spell%")
+                              SPRINT add_this_level "%add_this_level% ADD_MEMORIZED_SPELL %spell% #%level% innate"
+                       END
+                    END
+
+                END  // end of going through this level
+                PATCH_IF "%add_this_level%" STRING_COMPARE_CASE "" BEGIN
+                   SPRINT $add_level("%clab_level%") "%add_this_level%"
+                END
+                PATCH_IF "%apply_this_level%" STRING_COMPARE_CASE "" BEGIN
+                   SPRINT $apply_level("%clab_level%") "%apply_this_level%"
+                END
+             END
+     BUT_ONLY
+     OUTER_SPRINT remove_string ""
+     ACTION_PHP_EACH remove_these_spells AS spell=>null BEGIN
+          OUTER_SPRINT remove_string "%remove_string% REMOVE_MEMORIZED_SPELL %spell%"
+     END
+     OUTER_SPRINT add_string ""
+     OUTER_FOR (level=1;level<50;level+=1) BEGIN
+          ACTION_IF VARIABLE_IS_SET $add_level("%level%") BEGIN
+             OUTER_SPRINT add_this_level $add_level("%level%")
+             OUTER_SPRINT add_string "%add_string% PATCH_IF level>=%level% BEGIN %add_this_level% END"
+          END
+     END
+     APPEND_OUTER "%workspace%/kit_spell_build.tpa" "%kit_here% BEGIN  %remove_string% %add_string% END "
+     ACTION_IF collect_apply BEGIN
+       OUTER_SET made_insertion=0
+       OUTER_FOR (level=1;level<50;level+=1) BEGIN
+          ACTION_IF VARIABLE_IS_SET $apply_level("%level%") BEGIN
+             OUTER_SPRINT apply_this_level $apply_level("%level%")
+             ACTION_IF !made_insertion BEGIN
+                 OUTER_SET made_insertion=1
+                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" ""
+                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" "AP_ for kit %kit_here%"
+                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" ""
+             END
+             APPEND_OUTER "%workspace%/kit_collect_apply.txt" "Level %level%: %apply_this_level%"
+          END
+       END
+     END
+    END
+  END
+  APPEND_OUTER "%workspace%/kit_spell_build.tpa" "DEFAULT END"
+  APPEND_OUTER "%workspace%/kit_spell_build.tpa" "END"
+ END
+ INCLUDE "%workspace%/kit_spell_build.tpa"
+END
+
+
+
+
+
+
+DEFINE_PATCH_FUNCTION kit_hardcode BEGIN END // this is a placeholder, to be replaced by user-defined version (SCS's lives in lib/kit_hardcode.tpa)
