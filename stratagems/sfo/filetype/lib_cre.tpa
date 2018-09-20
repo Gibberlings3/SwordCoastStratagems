@@ -2562,12 +2562,13 @@ BEGIN
  // argument parsing
  SET even_if_monk=0
  SET joinable=0
+ SET read_clab_at_install=0
  WHILE "%arguments%" STRING_COMPARE "" BEGIN
     LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
     SET "%entry%"=1
  END
  // sanity check - is this an actual class? (or if not, do we have a kit other than MAGESCHOOL_GENERALIST?) Do we have at least one level? If not, skip.
- PATCH_IF (((BYTE_AT 0x273) <21 || ((LONG_AT 0x244) >0 && !(LONG_AT 0x244 = 1073741824))) && (BYTE_AT 0x234)>0 )BEGIN
+ PATCH_IF (((BYTE_AT 0x273) <30 || ((LONG_AT 0x244) >0 && !(LONG_AT 0x244 = 1073741824))) && (BYTE_AT 0x234)>0 )BEGIN
    // work out the various classes
    LPF CRE_read_class RET classfull=value END
    FOR (i=1;i<=3;i+=1) BEGIN
@@ -2587,7 +2588,7 @@ BEGIN
       LPF "CRE_read_level%classnum%" RET level=value END
       PATCH_IF level=0 BEGIN
           LPF "CRE_level%classnum%" STR_VAR arguments=1 END
-          LPF warning STR_VAR warning="%filename% has a level value of zero; setting to 1" END
+          LPF warning STR_VAR warning="%filename% has a level value of zero for class %this_class%; setting to 1" END
       END
       SET $classlevel("%classnum%")=level
    END
@@ -2710,6 +2711,7 @@ BEGIN
          END
       END
    END
+
    // some hardcoded kit-based item restrictions
    PATCH_MATCH "%kit%" WITH
    kensai BEGIN
@@ -2717,7 +2719,7 @@ BEGIN
       LPF CRE_read_item_in_slot STR_VAR arguments RET item=value END
       PATCH_IF ~%item%~ STRING_COMPARE_CASE ~~ BEGIN
               LPF CRE_remove_items STR_VAR arguments= ~%item%~ END
-         LPF patch_log_this STR_VAR file=illegal_kensai_gear.txt input= ~%filename% %item%~ END
+         LPF log_this STR_VAR file=illegal_kensai_gear.txt input= ~%filename% %item%~ END
       END
     END
    END
@@ -2726,7 +2728,7 @@ BEGIN
     INNER_PATCH ~%armor%~ BEGIN
       READ_ASCII 0x0 platecheck ELSE ~~(4)
     END
-    LPF patch_log_this STR_VAR file=illegal_barbarian_gear.txt input= ~%filename% %armor%~ END
+    LPF log_this STR_VAR file=illegal_barbarian_gear.txt input= ~%filename% %armor%~ END
    END
    STALKER BEGIN
 
@@ -2735,7 +2737,7 @@ BEGIN
       READ_ASCII 0x0 check ELSE ~~ (4)
    END
    PATCH_IF (~%check%~ STRING_EQUAL_CASE CHAN || ~%check%~ STRING_EQUAL_CASE PLAT) BEGIN
-         LPF patch_log_this STR_VAR file=illegal_stalker_gear.txt input= ~%filename% %armor%~ END
+         LPF log_this STR_VAR file=illegal_stalker_gear.txt input= ~%filename% %armor%~ END
    END
 
    END
@@ -2745,17 +2747,35 @@ BEGIN
       READ_ASCII 0x0 check ELSE ~~ (4)
    END
    PATCH_IF (~%check%~ STRING_EQUAL_CASE CHAN || ~%check%~ STRING_EQUAL_CASE PLAT) BEGIN
-         LPF patch_log_this STR_VAR file=illegal_archer_gear.txt input= ~%filename% %armor%~ END
+         LPF log_this STR_VAR file=illegal_archer_gear.txt input= ~%filename% %armor%~ END
    END
    END
    DEFAULT
    END
 
-
    SPRINT deletestring ""
    SPRINT addstring ""
    SPRINT spells ""
    SPRINT spells_known ""
+
+
+   // enforce the kit
+   
+    PATCH_IF (!read_clab_at_install && !joinable) BEGIN
+       LPF kit_hardcode INT_VAR level=classlevel_1 STR_VAR kit END
+    END ELSE BEGIN
+       LPM kit_softcode
+    END // end of softcoding
+
+  END // end of sanity check
+END
+
+
+/////////////////////////////////////////
+///// Not encapsulated at all, just extracted from enforce_class for readability
+/////////////////////////////////////////
+
+DEFINE_PATCH_MACRO kit_softcode BEGIN
    FOR (i=1;i<=classnum;i+=1) BEGIN
      PATCH_IF $class("%i%") STRING_COMPARE "null" BEGIN
        SPRINT kit $class("%i%")
@@ -2763,18 +2783,117 @@ BEGIN
        INNER_ACTION BEGIN
           // find the CLAB file
           LAF find_clab STR_VAR kit RET clab END
-          ACTION_IF FILE_EXISTS_IN_GAME "%clab%.2da" BEGIN
+          ACTION_IF FILE_EXISTS_IN_GAME "%clab%.2da"  BEGIN
             COPY_EXISTING "%clab%.2da" "%workspace%"
                COUNT_2DA_COLS colcount
                COUNT_2DA_ROWS colcount rowcount
                FOR (this_level=1;this_level<colcount && this_level <= level; this_level +=1) BEGIN
                   FOR (row=0;row<rowcount;row +=1) BEGIN
-                      READ_2DA_ENTRY row this_level colcount entry
+                   READ_2DA_ENTRY row this_level colcount entry
                       PATCH_MATCH "%entry%" WITH
                       "GA_.*" BEGIN
                          INNER_PATCH_SAVE spell "%entry%" BEGIN DELETE_BYTES 0x0 3 END
                          TO_LOWER spell
-                         PATCH_IF !VARIABLE_IS_SET $is_innate_spell("%spell%") BEGIN
+                         PATCH_IF VARIABLE_IS_SET EVALUATE_BUFFER "spells_in_clab_%spell%" BEGIN
+                            SET temp=$spells_in_clab("%spell%")
+                            SET temp += 1
+                            SET $spells_in_clab("%spell%")=temp
+                         END ELSE BEGIN
+                            SET $spells_in_clab("%spell%")=1
+                         END
+                      END
+                      "AP_.*" BEGIN
+                       INNER_PATCH_SAVE spell "%entry%" BEGIN DELETE_BYTES 0x0 3 END
+                       TO_UPPER spell
+                       
+                      PATCH_IF (!enforce_whitelist || "%spell%" STRING_MATCHES_REGEXP "SPCL.*" || VARIABLE_IS_SET $kit_whitelist("%spell%") ) BEGIN
+                         PATCH_IF !VARIABLE_IS_SET "RESREF_%spell%_KIT_EFFECTS_ADD" BEGIN
+                           SPRINT opcode_drop ""
+                           PATCH_FOR_EACH opcode IN 101 142 169 267 BEGIN
+                                          SPRINT "%opcode%_sec" ""
+                           END
+                           SPRINT resource_drop ""
+                           SPRINT tempadd ""
+                           SPRINT tempremove ""
+                           INNER_ACTION BEGIN
+                             ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                               COPY_EXISTING "%spell%.spl" "%workspace%"
+                                    LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
+                                    GET_OFFSET_ARRAY2 fx_arr offset_base ITM_V10_HEAD_EFFECTS
+                                    PHP_EACH fx_arr AS int=>offset_secondary BEGIN
+                                     READ_BYTE offset_secondary+0xc timing
+                                     PATCH_IF timing=9 BEGIN                    // we only care about instant/permanent effects
+                                       READ_SHORT offset_secondary opcode
+                                       READ_LONG offset_secondary+0x4 parameter1
+                                       READ_LONG offset_secondary+0x8 parameter2
+                                       READ_ASCII offset_secondary+0x14 resource
+                                       PATCH_IF "%resource%" STRING_COMPARE "" BEGIN
+                                          SPRINT resource_drop "%resource_drop% %resource%"
+                                          SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource% opcode=>%opcode% timing=>9 target=>2~"
+                                       END ELSE BEGIN
+                                        PATCH_MATCH "%opcode%" WITH
+                                        101 142 169 267 BEGIN
+                                         SPRINT temp EVALUATE_BUFFER "%%opcode%_sec%"
+                                         SPRINT "%opcode%_sec" "%temp% %parameter2%"
+                                         SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>null opcode=>%opcode% timing=>9 target=>2~"
+                                        END
+                                        DEFAULT
+                                         SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>null opcode=>%opcode% timing=>9 target=>2~"
+                                         SPRINT opcode_drop "%opcode_drop% %opcode%"
+                                        END
+                                       END
+                                     END
+                                    END
+                            BUT_ONLY
+                            END // end of ACTION_IF
+                         END // end of INNER_ACTION
+                         PATCH_IF "%opcode_drop%" STRING_COMPARE_CASE "" BEGIN
+                                SPRINT tempremove "delete_effect=>~opcode is_in [%opcode_drop%]~"
+                         END
+                         PATCH_FOR_EACH opcode IN 101 142 169 267 BEGIN
+                                SPRINT list EVALUATE_BUFFER "%%opcode%_sec%"
+                                PATCH_IF "%list%" STRING_COMPARE_CASE "" BEGIN
+                                     SPRINT tempremove "%tempremove% delete_effect=>~opcode=%opcode% and parameter2 is_in [%list%]~"
+                                END
+                         END
+                         PATCH_IF "%resource_drop%" STRING_COMPARE_CASE "" BEGIN
+                                  SPRINT tempremove "%tempremove% delete_effect=>~resource is_in [%resource_drop%]~"
+                         END
+                         SPRINT "RESREF_%spell%_KIT_EFFECTS_ADD" "%tempadd%"
+                         SPRINT "RESREF_%spell%_KIT_EFFECTS_REMOVE" "%tempremove%"
+                       END // end of PATCH_IF
+                       SPRINT tempremove EVALUATE_BUFFER "%RESREF_%spell%_KIT_EFFECTS_REMOVE%"
+                       SPRINT tempadd EVALUATE_BUFFER "%RESREF_%spell%_KIT_EFFECTS_ADD%"
+                       SPRINT addstring "%addstring% %tempadd%"
+                       PATCH_IF !VARIABLE_IS_SET $AP_already("%spell%") BEGIN
+                            PATCH_IF "%tempremove%" STRING_COMPARE "" BEGIN
+                                SPRINT deletestring "%deletestring% %tempremove%"
+                            END
+                            SPRINT $AP_already("%spell%") ""
+                       END
+                       END
+                      END
+                      DEFAULT
+                      END
+                  END
+               END
+          BUT_ONLY
+         END
+       END
+     END
+   END
+       PATCH_IF "%deletestring%" STRING_COMPARE_CASE "" BEGIN
+          LPF apply_patches_inline STR_VAR file_ext=CRE arguments="%deletestring%" END
+       END
+       LPF apply_patches_inline STR_VAR file_ext=CRE arguments="%addstring%" END
+       SPRINT spells_to_remove ""
+       SPRINT spells_to_add ""
+       SPRINT spells_known ""
+       PHP_EACH spells_in_clab AS key=>value BEGIN
+           REMOVE_MEMORIZED_SPELL "%key%"
+           SPRINT spells_to_add "%spells_to_add% ~%key%(%value%)~"
+           PATCH_IF joinable BEGIN
+                 PATCH_IF !VARIABLE_IS_SET $is_innate_spell("%spell%") BEGIN
                             INNER_ACTION BEGIN
                               ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
                                    COPY_EXISTING "%spell%.spl" override
@@ -2790,77 +2909,21 @@ BEGIN
                                  OUTER_SET $is_innate_spell("%spell%")=999
                               END
                             END
-                         END
-                         PATCH_IF $is_innate_spell("%spell%")=0 BEGIN
-                               SPRINT spells_known "%spells_known% %spell%"
-                         END
-                         PATCH_IF $is_innate_spell("%spell%")=1 BEGIN
-                              SPRINT spells "%spells% %spell%"
-                              SPRINT spells_known "%spells_known% %spell%"
-                         END
-                      END
-                      "AP_.*" BEGIN
-                         INNER_PATCH_SAVE spell "%entry%" BEGIN DELETE_BYTES 0x0 3 END
-                         TO_UPPER spell
-                         PATCH_IF !VARIABLE_IS_SET "RESREF_%spell%_KIT_EFFECTS_ADD" BEGIN
-                           INNER_ACTION BEGIN
-                             ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-                               COPY_EXISTING "%spell%.spl" "%workspace%"
-                                    SPRINT tempadd ""
-                                    SPRINT tempremove ""
-                                    LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
-                                    GET_OFFSET_ARRAY2 fx_arr offset_base ITM_V10_HEAD_EFFECTS
-                                    PHP_EACH fx_arr AS int=>offset_secondary BEGIN
-                                       READ_SHORT offset_secondary opcode
-                                       READ_LONG offset_secondary+0x4 parameter1
-                                       READ_LONG offset_secondary+0x8 parameter2
-                                       READ_ASCII offset_secondary+0x14 resource
-                                       PATCH_IF "%resource%" STRING_EQUAL "" BEGIN
-                                          SPRINT resource null
-                                       END
-                                       PATCH_MATCH "%opcode%" WITH
-                                       172 177 BEGIN // 177 is apply effect; we don't iterate through these, it's too unpredictable
-                                       END
-                                       DEFAULT
-                                         SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource% opcode=>%opcode%~"
-                                         SPRINT tempremove "%tempremove% delete_effect=>~opcode=%opcode% and parameter2=%parameter2% and resource=%resource%~" // parameter1 intentionally left out
-                                       END
-                                    END
-                               BUT_ONLY
-                               OUTER_SPRINT "RESREF_%spell%_KIT_EFFECTS_ADD" "%tempadd%"
-                               OUTER_SPRINT "RESREF_%spell%_KIT_EFFECTS_REMOVE" "%tempremove%"
-                            END // end of ACTION_IF
-                         END // end of INNER_ACTION
-                       END // end of PATCH_IF
-                       SPRINT tempadd EVALUATE_BUFFER "%RESREF_%spell%_KIT_EFFECTS_ADD%"
-                       SPRINT tempremove EVALUATE_BUFFER "%RESREF_%spell%_KIT_EFFECTS_REMOVE%"
-                       PATCH_IF "%tempadd%" STRING_COMPARE "" BEGIN
-                          SPRINT addstring "%addstring% %tempadd%"
-                       END
-                       PATCH_IF !VARIABLE_IS_SET $AP_already("%spell%") BEGIN
-                            PATCH_IF "%tempremove%" STRING_COMPARE "" BEGIN
-                                SPRINT deletestring "%deletestring% %tempremove%"
-                            END
-                            SPRINT $AP_already("%spell%") ""
-                       END
-                      END
-                      DEFAULT
-                      END
-                  END
-               END
-          BUT_ONLY
-         END
+                 END
+                 SET temp=$is_innate_spell("%spell%")
+                 PATCH_IF temp=0 BEGIN
+                     SPRINT spells_known "%spells_known% ~%key%~"
+                 END
+           END
        END
-     END
-   END
-       LPF apply_patches_inline STR_VAR file_ext=CRE arguments="%deletestring%" END
-       LPF apply_patches_inline STR_VAR file_ext=CRE arguments="%addstring%" END
-       LPF CRE_add_spells STR_VAR arguments="%spells%" END
-       PATCH_IF joinable BEGIN
+       LPF CRE_add_spells STR_VAR arguments="%spells_to_add%" END
+    PATCH_IF joinable BEGIN
            LPF CRE_add_known_spells STR_VAR arguments="%spells_known%" END
-       END
-       PATCH_IF joinable BEGIN
+    END
+    PATCH_IF joinable BEGIN
            LPF CRE_add_all_priest_spells END
-       END
-  END // end of sanity check
+    END
+
 END
+
+
