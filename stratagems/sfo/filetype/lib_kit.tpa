@@ -1506,7 +1506,7 @@ BEGIN
   ACTION_IF collect_apply BEGIN
        COPY ".../stratagems-inline/blank" "%workspace%/kit_collect_apply.txt"
   END
-  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~DEFINE_PATCH_FUNCTION CRE_enforce_kit_spells_hardcoded INT_VAR level=1 STR_VAR kit="" BEGIN~
+  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~DEFINE_PATCH_FUNCTION CRE_enforce_kit_spells_hardcoded INT_VAR level=1 full_delete=0 STR_VAR kit="" BEGIN~
   APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~PATCH_MATCH "%percentage%kit%percentage%" WITH ~
   OUTER_WHILE "%kit%" STRING_COMPARE "" BEGIN
      LAF return_first_entry STR_VAR list="%kit%" RET kit=list kit_here=entry END
@@ -1524,6 +1524,8 @@ BEGIN
                     READ_2DA_ENTRY_FORMER clab_entries i j entry
                     SET to_add=0
                     SET to_apply=0
+                    SET to_remove=0
+                    SET to_delete=0
                     TO_UPPER entry
                     INNER_PATCH_SAVE spell "%entry%" BEGIN
                        READ_ASCII 0x0 type (3)
@@ -1531,17 +1533,32 @@ BEGIN
                        "GA_" BEGIN
                            DELETE_BYTES 0x0 3
                            SET to_add=1
+                           SET to_remove=1
                        END
                        "AP_" BEGIN
                            DELETE_BYTES 0x0 3
                            SET to_apply=1
+                           SET to_delete=1
                        END
                        DEFAULT
                         END
                     END
+                    LPF kit_spell_exclude_func STR_VAR spell RET value END
+                    PATCH_IF value BEGIN
+                       SET to_add=0
+                       SET to_apply=0
+                       SET to_remove=0
+                       SET to_delete=0
+                    END
                     PATCH_IF VARIABLE_IS_SET $kit_spell_ignore("%spell%") BEGIN
                              SET to_add=0
                              SET to_apply=0
+                    END
+                    PATCH_IF to_remove BEGIN
+                       SPRINT $remove_these_spells("%spell%") ""
+                    END
+                    PATCH_IF to_remove BEGIN
+                       SPRINT $delete_these_spells("%spell%") ""
                     END
                     PATCH_IF to_apply BEGIN
                        PATCH_IF collect_apply BEGIN
@@ -1559,16 +1576,15 @@ BEGIN
                                  READ_SHORT 0x1c type
                                  READ_LONG 0x34 level
                                  SET level -= 1
-                              BUT_ONLY
+                              BUT_ONLY            
+                              OUTER_SET $kit_spell_type("%spell%")=type
+                              OUTER_SET $kit_spell_level("%spell%")=level
+                              ACTION_IF $kit_spell_type("%spell%")=4 BEGIN
+                                 OUTER_SET type=$kit_spell_type("%spell%")
+                                 OUTER_SPRINT add_this_level "%add_this_level% ADD_MEMORIZED_SPELL %spell% #%level% innate"
+                              END
                             END
-                            OUTER_SET $kit_spell_type("%spell%")=type
-                            OUTER_SET $kit_spell_level("%spell%")=level
                           END
-                       END
-                       PATCH_IF $kit_spell_type("%spell%")=4 BEGIN
-                              SPRINT $remove_these_spells("%spell%") ""
-                              SET type=$kit_spell_type("%spell%")
-                              SPRINT add_this_level "%add_this_level% ADD_MEMORIZED_SPELL %spell% #%level% innate"
                        END
                     END
 
@@ -1582,8 +1598,30 @@ BEGIN
              END
      BUT_ONLY
      OUTER_SPRINT remove_string ""
+     OUTER_SPRINT delete_string_core ""
      ACTION_PHP_EACH remove_these_spells AS spell=>null BEGIN
           OUTER_SPRINT remove_string "%remove_string% REMOVE_MEMORIZED_SPELL %spell%"
+     END
+     ACTION_PHP_EACH delete_these_spells AS spell=>null BEGIN
+          OUTER_SPRINT delete_string_core "%delete_string_core% %spell%"
+     END
+     ACTION_IF "%delete_string_core%" STRING_COMPARE "" BEGIN
+       OUTER_SPRINT delete_string ~
+       PATCH_IF full_delete BEGIN
+                        GET_OFFSET_ARRAY offset_array CRE_V10_EFFECTS 
+                        PHP_EACH offset_array AS ind=>fx_off BEGIN 
+                                    READ_ASCII (fx_off + 0x88) parent 
+                                    PATCH_MATCH "%parent%" WITH 
+                                    %delete_string_core% BEGIN 
+                                         WRITE_SHORT (fx_off+0x8) 999 
+                                    END 
+                                    DEFAULT 
+                                    END 
+                        END
+                        LPF DELETE_CRE_EFFECT INT_VAR opcode_to_delete=999 END
+                     END~
+     END ELSE BEGIN
+        OUTER_SPRINT delete_string ""
      END
      OUTER_SPRINT add_string ""
      OUTER_FOR (level=1;level<50;level+=1) BEGIN
@@ -1592,7 +1630,11 @@ BEGIN
              OUTER_SPRINT add_string "%add_string% PATCH_IF level>=%level% BEGIN %add_this_level% END"
           END
      END
-     APPEND_OUTER "%workspace%/kit_spell_build.tpa" "%kit_here% BEGIN  %remove_string% %add_string% END "
+     APPEND_OUTER "%workspace%/kit_spell_build.tpa" "%kit_here% BEGIN  
+     %remove_string% 
+     %add_string% 
+     %delete_string% 
+END "
      ACTION_IF collect_apply BEGIN
        OUTER_SET made_insertion=0
        OUTER_FOR (level=1;level<50;level+=1) BEGIN
@@ -1616,7 +1658,18 @@ BEGIN
  INCLUDE "%workspace%/kit_spell_build.tpa"
 END
 
-
+DEFINE_PATCH_FUNCTION kit_spell_exclude_func // things to be ignored entirely (not just skipped for reinstall)
+    STR_VAR spell=""
+    RET value
+BEGIN
+    PATCH_MATCH "%spell%" WITH
+    "DWAU.*" "DW#AU.*" BEGIN
+       SET value=1
+    END
+    DEFAULT
+       SET value=0
+    END
+END
 
 
 
