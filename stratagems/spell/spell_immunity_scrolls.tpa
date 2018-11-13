@@ -1,7 +1,10 @@
-// old code, basically left alone
+
+DEFINE_ACTION_FUNCTION spell_immunity_scrolls BEGIN
+
+
 
 <<<<<<<< .../stratagems-inline/immunity.2da
-Spell	Scroll		STRREF
+spell	scroll		strref
 SPWI590	dw#si590	31671
 SPWI591	dw#si591	31673
 SPWI592	dw#si592	31677
@@ -12,67 +15,53 @@ SPWI596	dw#si596	31672
 SPWI597	dw#si597	31674
 >>>>>>>>
 
+    LAF process_table STR_VAR table="immunity.2da" inline=yes function=make_immunity_scroll ext_args="old_title=~%old_title%~ old_desc=~%old_desc%~ addon_1=~%addon_1%~ addon_2=~%addon_2%~"  END
 
-DEFINE_ACTION_FUNCTION spell_immunity_scrolls BEGIN
 
-	COPY ~.../stratagems-inline/immunity.2da~ ~override~
-		COUNT_2DA_ROWS 0 ~rowcount~
-		FOR (j=1;j<~%rowcount%~;j=j+1) BEGIN
-			READ_2DA_ENTRY ~%j%~ 0 0 ~spell_name~
-			READ_2DA_ENTRY ~%j%~ 1 0 ~scroll_name~
-			READ_2DA_ENTRY ~%j%~ 2 0 ~school_name~
-			GET_STRREF 5019 ~old_title~
-			GET_STRREF 25913 ~old_desc~
-			GET_STRREF ~%school_name%~ ~new_title~
-			SPRINT ~addon_1~ @207
-			SPRINT ~addon_2~ @208
-			SPRINT ~addon~ ~%addon_1%~^~%new_title%~^~%addon_2%~
-			INNER_PATCH_SAVE ~new_desc~ ~%old_desc%~ BEGIN
-				REPLACE_TEXTUALLY CASE_INSENSITIVE ~%old_title%~ ~%new_title%~
-			END
-			SPRINT ~new_desc~ ~%new_desc%~^~%addon%~
-			INNER_ACTION BEGIN
-				COPY_EXISTING ~%spell_name%.spl~ ~override~
-					SAY_EVALUATED 0x50 ~%new_desc%~
+    OUTER_SPRINT store ""
+    COPY_EXISTING_REGEXP ".*\.sto" override
+        PATCH_IF INDEX_BUFFER ("%WIZARD_SPELL_IMMUNITY_SCROLL%") >=0 BEGIN
+           SPRINT store "%store% %SOURCE_RES%"
+        END
+    BUT_ONLY
+    MAKE_PATCH
+       match=>"item_resource=%WIZARD_SPELL_IMMUNITY_SCROLL%"
+       number_to_add=>8
+       item_resource=>"entry_index from [dw#si590 dw#si591 dw#si592 dw#si593 dw#si594 dw#si595 dw#si596 dw#si597]"
+    END
 
-				COPY_EXISTING ~scrl6s.itm~ ~override/%scroll_name%.itm~
-					REPLACE_TEXTUALLY CASE_INSENSITIVE ~spwi510~ ~%spell_name%~
-					SAY_EVALUATED 0x54 ~%new_desc%~
-					SAY_EVALUATED 0xc ~%new_title%~
-			SPRINT ~olditem~ ~scrl6s~
-			SPRINT ~newitem~ ~%scroll_name%~
-			LAUNCH_ACTION_FUNCTION ~legacy_add_related_item~ END
+    LAF edit_store STR_VAR store editstring="clone_item=>patch_data" END
 
-			END
-		END
-	BUT_ONLY_IF_IT_CHANGES
 
 END
 
-DEFINE_ACTION_FUNCTION ~legacy_add_related_item~ BEGIN
-	COPY_EXISTING_REGEXP GLOB ~.+\.sto$~ ~override~
-		PATCH_IF (SOURCE_SIZE > 0x71) THEN BEGIN // protects against invalid files - borrowed from TutuTweaks
-			READ_LONG 0x34 ~itemoffset~
-			READ_LONG 0x38 ~numitems~
-			SET ~hasspellinstore~=0
-			SET ~numsofar~=0
-			WHILE ~%numsofar%~<~%numitems%~ BEGIN
-				READ_ASCII ~%itemoffset%~+~%numsofar%~*0x1c ~storeitemname~
-				PATCH_IF ~%storeitemname%~ STRING_EQUAL_CASE ~%olditem%~ THEN BEGIN
-					SET ~hasspellinstore~=1
-					READ_LONG ~%itemoffset%~+~%numsofar%~*0x1c+0x14 ~numscrolls~
-					READ_LONG ~%itemoffset%~+~%numsofar%~*0x1c+0x18 ~infiniteflag~
-					SET ~%newscrollnum%~=~numsofar~+1
-					SET ~numsofar~=~%numitems%~
-				END ELSE BEGIN
-					SET ~numsofar~=~%numsofar%~+1
-				END
-			END
-			PATCH_IF ~%hasspellinstore%~=1 THEN BEGIN
-				ADD_STORE_ITEM ~%newitem%~ AFTER ~%olditem%~ #1 #0 #0 ~IDENTIFIED~ #1
-				WRITE_LONG ~%itemoffset%~+~%newscrollnum%~*0x1c+0x14 ~%numscrolls%~
-				WRITE_LONG ~%itemoffset%~+~%newscrollnum%~*0x1c+0x18 ~%infiniteflag%~
-			END
-		END
-	BUT_ONLY_IF_IT_CHANGES
+DEFINE_ACTION_FUNCTION make_immunity_scroll
+    STR_VAR spell=""
+            scroll=""
+            strref=""
+BEGIN
+     COPY_EXISTING "%WIZARD_SPELL_IMMUNITY%.spl" override
+       LPF SPL_name RET old_title=value END
+       LPF SPL_description RET old_desc=value END
+     BUT_ONLY
+     OUTER_SPRINT addon_1 @207
+     OUTER_SPRINT addon_2 @208
+     COPY_EXISTING "%spell%.spl" override
+         LPF SPL_name RET new_title=value END
+     BUT_ONLY
+     OUTER_SPRINT new_desc "%old_desc%"
+     LAF substitute_string STR_VAR input="%old_desc%" arguments="~%old_title%~=>~%new_title%~" RET new_desc=output END
+     OUTER_SPRINT new_desc "%new_desc%%addon_1%%new_title%%addon_2%"
+     MAKE_PATCH
+        set_description=>"%new_desc%"
+     END
+     LAF edit_spell STR_VAR spell edits=patch_data END
+     MAKE_PATCH
+        patch_effect_inline=>"match=>~opcode is_in [146 147]~ resource=>%spell%"
+        set_name=>"%new_title%"
+        set_description=>"%new_desc%"
+     END
+     LAF clone_item STR_VAR item="%WIZARD_SPELL_IMMUNITY_SCROLL%=>%scroll%" edits=patch_data END
 END
+
+

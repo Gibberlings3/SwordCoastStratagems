@@ -1,0 +1,222 @@
+////////////////////////////////////////////////////////////////////////////
+////  Slightly modified dw#wtacor+move for fighter/mages
+////////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(GlobalTimerNotExpired("castspell","LOCALS"))
+
+BEGIN_ACTION_DEFINITION
+	Name(Attack)
+	TRIGGER
+		!CheckStatGT(Myself,0,WIZARD_IMPROVED_ALACRITY)
+		!CheckStat(Myself,1,SANCTUARY)
+		ActionListEmpty() // ain't broke-don't fix
+		!StateCheck(scstarget,STATE_INVISIBLE)
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		AttackOneRound(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackIfEmpty)
+	TRIGGER
+		!CheckStatGT(Myself,0,WIZARD_IMPROVED_ALACRITY)
+		!CheckStat(Myself,1,SANCTUARY)
+		ActionListEmpty()
+		!StateCheck(scstarget,STATE_INVISIBLE)
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		AttackOneRound(scstarget)
+END
+
+////////////////////////////////////////////////////////////////////////////
+////	Don't melee in timestop if that option's disabled
+////////////////////////////////////////////////////////////////////////////
+
+
+IF
+  Global("DMWWTimestopMelee","GLOBAL",0)
+  CheckSpellState(Myself,TIME_STOP)
+  THEN
+  RESPONSE #100
+  	   NoAction()
+END
+
+////////////////////////////////////////////////////////////////////////////
+////	On Easiest difficulty, just kill nearest thing
+////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+   Target(NearestEnemyOf(Myself))
+   TriggerBlock(Easiest)
+THEN DO
+     Action(Attack)
+END
+
+////////////////////////////////////////////////////////////////////////////
+////	If I'm not a moron and I'm attacking something I can't hit, STOP!
+////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsBG1)
+	Target(LastTargetedBy(Myself))
+	CheckStat(Myself,0,WEAPON_ENCHANTMENT)
+	Global("validtarget","LOCALS",1)
+	!CheckStat(scstarget,0,WIZARD_PROTECTION_FROM_NORMAL_WEAPONS)
+THEN DO
+	SetGlobal("validtarget","LOCALS",0)
+	ClearAllActions()
+END
+
+IF TRIGGER
+	IgnoreBlock(IsBG1)
+	Target(LastTargetedBy(Myself))
+	CheckStatLT(Myself,3,WEAPON_ENCHANTMENT)
+	Global("validtarget","LOCALS",1)
+	CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	SetGlobal("validtarget","LOCALS",0)
+	ClearAllActions()
+END
+
+IF TRIGGER
+	IgnoreBlock(IsBG1)
+	Target(LastTargetedBy(Myself))
+	CheckStat(Myself,3,WEAPON_ENCHANTMENT)
+	Global("validtarget","LOCALS",1)
+	CheckStatGT(scstarget,1,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	SetGlobal("validtarget","LOCALS",0)
+	ClearAllActions()
+END
+
+IF TRIGGER
+	IgnoreBlock(IsBG1)
+	Target(LastTargetedBy(Myself))
+	CheckStat(Myself,4,WEAPON_ENCHANTMENT)
+	Global("validtarget","LOCALS",1)
+	CheckStatGT(scstarget,2,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	SetGlobal("validtarget","LOCALS",0)
+	ClearAllActions()
+END
+
+IF TRIGGER
+	IgnoreBlock(IsBG1)
+	Target(LastTargetedBy(Myself))
+	!CheckStat(Myself,0,WEAPON_ENCHANTMENT)
+	Global("validtarget","LOCALS",1)
+	CheckStat(scstarget,4,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+THEN DO
+	SetGlobal("validtarget","LOCALS",0)
+	ClearAllActions()
+END
+
+///////////////////////////////////////////////////////////////////////
+////	We start by looking at the very near opponents. Go for the 
+////	most vulnerable of them. In the first instance, try for PCs with no stoneskins
+////	and no mirror images
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(Enemy|Helpless|MirrorImage|PlusUnknownSafe)
+	!CheckStatGT(scstarget,0,STONESKINS)
+	!HPPercentGT(scstarget,20)
+	Range(scstarget,4)
+THEN DO
+	Action(Attack)
+END
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(Enemy|Helpless|MirrorImage|PlusUnknownSafe)
+	!CheckStatGT(scstarget,0,STONESKINS)
+	!HPPercentGT(scstarget,50)
+	Range(scstarget,4)
+THEN DO
+	Action(Attack)
+END
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(Enemy|Helpless|MirrorImage|PlusUnknownSafe)
+	!CheckStatGT(scstarget,0,STONESKINS)
+	Range(scstarget,4)
+THEN DO
+	Action(Attack)
+END
+
+
+///////////////////////////////////////////////////////////////////////
+////	Don't prioritise the helpless (that is: the stunned etc); don't attack
+////	people protected from your weapon.
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(CloseEnemies)
+	TriggerBlock(Enemy|Helpless|PlusUnknownSafe)
+	Range(scstarget,4)
+THEN DO
+	Action(Attack)
+END
+
+///////////////////////////////////////////////////////////////////////
+////	... but if there's a nearby target who *is* helpless (and no-one else), scac'em.
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	IgnoreBlock(IsMoron)
+	TargetBlock(CloseEnemies)
+	TriggerBlock(Enemy|PlusUnknownSafe)
+	Range(scstarget,4)
+THEN DO
+	Action(Attack)
+END
+
+
+
+///////////////////////////////////////////////////////////////////////
+////	If there's someone helpless nearby and you can't find a non-helpless
+////    target in weapon range, by all means kill them
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|PlusUnknownSafe)
+	OR(2)
+	      StateCheck(scstarget,STATE_HELPLESS)
+	      StateCheck(scstarget,STATE_IMMOBILE)
+	Range(scstarget,10)
+THEN DO
+	Action(MoveIfEmpty)
+END
+
+//////////////////////////////////////////////////////////////////////////
+////	look for PCs - preferably easily killed ones
+//// 	- and, failing that, settle for anything.
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringWeak;!HPPercentGT(scstarget,40))
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Enemy|Disabled|PlusUnknownSafe)
+THEN DO
+	Action(MoveIfEmpty)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////    If we've got this far, then there are no good targets in the vicinity. So just kill the nearest PC, 
+////    even if they are confused/charmed/whatever. Failing that, kill anything that moves.
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PlayersInRandomOrder)
+	TriggerBlock(PlusUnknownSafe)
+THEN DO
+	Action(Attack)
+END
+

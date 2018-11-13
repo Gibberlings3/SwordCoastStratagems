@@ -1,23 +1,3 @@
-//////////////////////////////////////////////////////////////////////////////////////////
-///	Work around death animation bug
-//////////////////////////////////////////////////////////////////////////////////////////
-
-IF
-	Die()
-		OR(2)
-			AreaCheck("ar6200")
-			AreaCheck("ar2900")
-THEN
-	RESPONSE #100
-		ReallyForceSpellDeadRES("baldead",Myself)
-END
-
-IF
-	Die()
-THEN
-	RESPONSE #100
-		DestroySelf()
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////
 ///	Ascension control block
@@ -30,21 +10,18 @@ INCLUDE FILE(%scsroot%/ascension/ssl/asc_control.ssl)
 ///	Gates
 //////////////////////////////////////////////////////////////////////////////////////////
 
-IF
+IF TRIGGER
 	Allegiance(Myself,ENEMY)
 	!GlobalTimerNotExpired("castspell","LOCALS")
 	NumCreatureLT([ENEMY.0.DEMONIC],3)
 	Global("gated","LOCALS",0)
 	!Range(NearestEnemyOf(Myself),10)
-	OR(2)
-		NumInPartyAliveGT(2)
-		DifficultyGT(EASY)
-THEN
-	RESPONSE #100
-		SetGlobalTimer("castspell","LOCALS",6)
+
+	TriggerBlock(CorePlus)
+THEN DO
+                Action(Literal|100|100)
+                SetGlobalTimer("castspell","LOCALS",6)
 		ForceSpellRES("GATE5",Myself) // Gate
-	RESPONSE #100
-		Continue()
 END
 
 IF
@@ -67,191 +44,7 @@ END
 
 
 //////////////////////////////////////////////////////////////////////////////////////
-///	Balor combat script
+///	Core combat script
 //////////////////////////////////////////////////////////////////////////////////////
 
-INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions.ssl)
-
-INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Begin stoneskinned
-//////////////////////////////////////////////////////////////////////////////////////
-
-IF
-	See(NearestEnemyOf(Myself))
-	!GlobalTimerNotExpired("stoneskin","LOCALS")
-	!AreaCheck("ar3004") // dead magic
-THEN
-	RESPONSE #100
-		SetGlobalTimer("stoneskin","LOCALS",36)
-		ApplySpell(Myself,WIZARD_STONE_SKIN)
-		Continue()
-END
-
-/////////////////////////////////////////////////////////////////////////////////////////
-///	Kill Baatezu
-/////////////////////////////////////////////////////////////////////////////////////////
-
-BEGIN LOOP(scsdemon||LAWFUL_EVIL)
-	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
-END LOOP
-
-/////////////////////////////////////////////////////////////////////////////////////////
-///	Fire Storm will usually be first action, but we don't use it for the Suldanesselar
-///	Balor that's chewing on elves, or for Irenicus's flunkies, or when summoned
-/////////////////////////////////////////////////////////////////////////////////////////
-/* no firestorm for Ascension baalors
-IF TRIGGER
-	TargetBlock(PCsInOrder)
-	!GlobalTimerNotExpired("firestorm","LOCALS")
-	!AreaCheck("AR2800") // Suldanesselar
-	!AreaCheck("AR2900") // Hell
-	!AreaCheck("AR2906") // Hell
-	!HasItem("dw#basum",Myself)
-THEN DO
-	SetGlobalTimer("firestorm","LOCALS",1000)
-	Action(SpellNoDec,CLERIC_FIRE_STORM)
-END
-*/
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Consider moving to a more interesting location in the battle
-//////////////////////////////////////////////////////////////////////////////////////
-
-INCLUDE FILE(%scsroot%/fiend/ssl/jump.ssl)
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Consider a Dispel Magic
-//////////////////////////////////////////////////////////////////////////////////////
-VARIABLE(FirstDispel=True)
-INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
-
-///////////////////////////////////////////////////////////////////////////////////////
-///	Breach enemy defenses
-///////////////////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	TargetBlock(PCsInOrder)
-	TriggerBlock(SpellTurn|Enemy|Helpless)
-	OR(5)
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
-		CheckStatGT(scstarget,0,SCRIPTINGSTATE2)
-		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
-		CheckStatGT(scstarget,2,STONESKINS)
-	!GlobalTimerNotExpired("DMWW_breach","LOCALS")
-THEN DO
-	Combine()
-	SetGlobalTimer("DMWW_breach","LOCALS",18)
-	Action(SpellNoDec,WIZARD_BREACH|150|150)
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////
-///	Blow someone up (ToB only)
-//////////////////////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	TargetBlock(EnemiesInOrder)
-	GlobalGT("chapter","GLOBAL",7)
-	!GlobalTimerNotExpired("implosion","LOCALS")
-	!Gender(scstarget,SUMMONED)
-	!Gender(scstarget,20)
-	TriggerBlock(SpellTurn|Helpless)
-THEN DO
-	SetGlobalTimer("implosion","LOCALS",1000)
-	Action(SpellNoDec,CLERIC_IMPLOSION|100|100)
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////
-///	Telekinesis - get rid of nearby warrior types
-//////////////////////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	TargetBlock(EnemiesInOrder)
-	TriggerBlock(Disabled)
-	OR(5)
-		Race(scstarget,DEMONIC) 
-		Class(scstarget,FIGHTER_ALL)
-		Class(scstarget,PALADIN_ALL)
-		Class(scstarget,RANGER_ALL)
-		Class(scstarget,MONK)
-	CheckStatGT(scstarget,-10,SAVEVSSPELL)
-THEN DO
-	Action(SpellNoDecRES,"dw#batel"|100|100)
-END
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Use offensive magic
-//////////////////////////////////////////////////////////////////////////////////////
-
-//////////////////////////////
-///   Symbol: Stun
-//////////////////////////////
-
-IF TRIGGER
-	TargetBlock(EnemiesInOrder)
-	!Gender(scstarget,SUMMONED)
-	!Gender(scstarget,20)
-	TriggerBlock(Stun|MR|SIConjuration|Enemy|Helpless)
-THEN DO
-	Combine()
-	Action(SpellNoDec,WIZARD_NPC_SYMBOL_STUN|100|100)
-END
-
-///////////////////////////////
-////	Symbol: Death
-///////////////////////////////
-
-IF TRIGGER
-	TargetBlock(EnemiesInOrder)
-	!Gender(scstarget,20)
-	!Gender(scstarget,SUMMONED)
-	TriggerBlock(Slay|MR|Enemy|SIConjuration)
-THEN DO
-	Combine()
-	Action(SpellNoDec,WIZARD_NPC_SYMBOL_DEATH|100|100)
-END
-
-//////////////////////////////////////////////////////////////////////////
-////	Domination
-//////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	TargetBlock(EnemiesInOrder)
-	TriggerBlock(MR|Charm|SIEnchantment|SpellTurn|Helpless)
-THEN DO
-	Combine()
-	Action(SpellNoDec,WIZARD_DOMINATION)
-END
-
-
-//////////////////////////////////////////////////////////////////////////////
-///	Combat
-//////////////////////////////////////////////////////////////////////////////
-
-///////////////////////////////////////////////////////////////////////
-////	At least *consider* chewing on stunned victims
-///////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	Target(NearestEnemyOfType([PC]))
-	StateCheck(scstarget,STATE_STUNNED)
-	TriggerBlock(Enemy|Plus4Safe)
-THEN DO
-	Action(Attack|100|100)
-END
-
-//////////////////////////////////////////////////////////////////////////////
-////	Core combat block
-///////////////////////////////////////////////////////////////////////////////
-
-
-
-BEGIN LOOP(MyWeaponStrength||4)
-BEGIN LOOP(MyWeaponDamageType||MultipleDamageType)
-INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
-INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
-INCLUDE FILE(%scsroot%/fiend/ssl/chase.ssl)
-END LOOP
-END LOOP
+INCLUDE FILE(%scsroot%/fiend/ssl/dembal01.ssl)

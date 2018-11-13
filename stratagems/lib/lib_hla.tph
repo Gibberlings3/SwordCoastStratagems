@@ -1,0 +1,103 @@
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///     Take a list of HLAs/feats, identified by IDS, and apply/grant them to the current creature
+///
+///     Assumes, in background, array hla_type
+///     Assumes each HLA ids is the variable whose value is the resref
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION implement_hla_feat
+     INT_VAR is_joinable=0
+     STR_VAR list=""
+             spells=""       //
+             spells_known="" // only used internally
+             edits=""        //
+BEGIN
+     PATCH_IF "%list%" STRING_COMPARE "" BEGIN
+          LPF return_first_entry STR_VAR list RET entry list END
+          TO_UPPER entry
+
+          PATCH_IF !VARIABLE_IS_SET $hla_resref("%entry%") BEGIN
+             SPRINT type grant
+          END ELSE BEGIN
+             SPRINT type $hla_type("%entry%")
+          END
+          SPRINT resref "%%entry%%"
+          PATCH_MATCH "%type%" WITH
+          grant BEGIN
+             LPM grant_hla_feat // a macro purely for readability
+          END
+          apply BEGIN
+             LPM apply_hla_feat // a macro purely for readability
+          END
+          DEFAULT
+             LPF warning STR_VAR warning="unrecognised value %type% in hla_type array as entry for HLA/feat %entry%" END
+          END
+          LPF implement_hla_feat STR_VAR list spells spells_known edits  END
+     END
+     PATCH_IF "%spells%" STRING_COMPARE "" BEGIN
+          LPF CRE_add_spells STR_VAR arguments="%spells%"
+     END
+     PATCH_IF "%spells_known%" STRING_COMPARE "" BEGIN
+          LPF CRE_add_known_spells STR_VAR arguments="%spells_known%"
+     END
+     PATCH_IF "%edits%" STRING_COMPARE "" BEGIN
+        LPF apply_patches_inline STR_VAR file_ext=CRE arguments="%edits%" END
+     END
+END
+
+DEFINE_PATCH_MACRO grant_hla_feat BEGIN
+                        SPRINT spells "%spells% %resref%"
+                        PATCH_IF !VARIABLE_IS_SET $is_innate_spell("%resref%") BEGIN
+                            INNER_ACTION BEGIN
+                              ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                                   COPY_EXISTING "%spell%.spl" override
+                                         READ_SHORT 0x1c type
+                                         PATCH_IF type=4 BEGIN
+                                            SET $is_innate_spell("%spell%")=1
+                                         END ELSE BEGIN
+                                            SET $is_innate_spell("%spell%")=0
+                                         END
+                                   BUT_ONLY
+                              END ELSE BEGIN
+                                 LAF warning STR_VAR warning="Tried to add HLA spell %resref%, but it doesn't exist" END
+                                 OUTER_SET $is_innate_spell("%spell%")=999
+                              END // end of ACTION_IF
+                            END // end of INNER_ACTION
+                         END // end of PATCH_IF
+                         SET innate=$is_innate_spell("%resref%")
+                         PATCH_IF !innate BEGIN
+                            SPRINT spells_known "%spells_known% %resref%"
+                         END
+END
+
+DEFINE_PATCH_MACRO apply_hla_feat BEGIN
+                       PATCH_IF !VARIABLE_IS_SET "RESREF_%resref%_HLA_EFFECTS_ADD" BEGIN
+                           INNER_ACTION BEGIN
+                             ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+                               COPY_EXISTING "%resref%.spl" "%workspace%"
+                                    SPRINT tempadd ""
+                                    LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
+                                    GET_OFFSET_ARRAY2 fx_arr offset_base ITM_V10_HEAD_EFFECTS
+                                    PHP_EACH fx_arr AS int=>offset_secondary BEGIN
+                                       READ_SHORT offset_secondary opcode
+                                       READ_LONG offset_secondary+0x4 parameter1
+                                       READ_LONG offset_secondary+0x8 parameter2
+                                       READ_ASCII offset_secondary+0x14 resource
+                                       PATCH_IF "%resource%" STRING_EQUAL "" BEGIN
+                                          SPRINT resource null
+                                       END
+                                       SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource% opcode=>%opcode%~"
+                                    END
+                               BUT_ONLY
+                               OUTER_SPRINT "RESREF_%resref%_HLA_EFFECTS_ADD" "%tempadd%"
+                            END // end of ACTION_IF
+                         END // end of INNER_ACTION
+                       END // end of PATCH_IF
+                       SPRINT newedit EVAL "%RESREF_%resref%_HLA_EFFECTS_ADD%"
+                       SPRINT edits "%edits% %newedit%"
+END
+
+

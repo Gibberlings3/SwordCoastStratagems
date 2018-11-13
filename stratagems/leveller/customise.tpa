@@ -1,0 +1,250 @@
+DEFINE_ACTION_FUNCTION customise
+BEGIN
+
+// make the spell that strips dual-classing
+
+       MAKE_PATCH
+          add_basic_ability=>null
+          name_if_debugging=>null
+          add_effect_inline'=>"opcode=>321 target=>2 timing=>0 resource=>DW#DUALC"
+       END
+       LAF make_spell STR_VAR spell="dw#nodua" edits=patch_data END
+
+
+ACTION_DEFINE_ASSOCIATIVE_ARRAY single_class_array BEGIN
+   bard=>5
+   cleric=>3
+   druid=>11
+   fighter=>2
+   mage=>1
+   monk=>20
+   paladin=>6
+   ranger=>12
+   shaman=>21
+   sorcerer=>19
+   thief=>4
+END
+ACTION_DEFINE_ASSOCIATIVE_ARRAY single_class_array_core BEGIN
+   cleric=>3
+   druid=>11
+   fighter=>2
+   mage=>1
+   ranger=>12
+   thief=>4
+END
+ACTION_DEFINE_ASSOCIATIVE_ARRAY double_class_array BEGIN
+   cleric_mage=>14
+   cleric_ranger=>18
+   cleric_thief=>15
+   fighter_cleric=>8
+   fighter_druid=>16
+   fighter_mage=>7
+   fighter_thief=>9
+   mage_thief=>10
+   fighter_mage_cleric=>17
+   fighter_mage_thief=>10
+END
+ACTION_DEFINE_ASSOCIATIVE_ARRAY class_levelling_scripts BEGIN
+   bard=>dwnpc1b
+   cleric=>dwnpc1c
+   druid=>dwnpc1d
+   fighter=>dwnpc1f
+   mage=>dwnpc1m
+   monk=>dwnpc1n
+   paladin=>dwnpc1p
+   ranger=>dwnpc1r
+   shaman=>dwnpc1h
+   sorcerer=>dwnpc1s
+   thief=>dwnpc1t
+   cleric_mage=>dwnpc2c
+   cleric_ranger=>dwnpc2r
+   cleric_thief=>dwnpc2t
+   fighter_cleric=>dwnpc2f
+   fighter_druid=>dwnpc2f
+   fighter_mage=>dwnpc2f
+   fighter_thief=>dwnpc2t
+   mage_thief=>dwnpc2t
+   fighter_mage_cleric=>dwnpc3f
+   fighter_mage_thief=>dwnpc3t
+END
+ACTION_DEFINE_ASSOCIATIVE_ARRAY dual_class_map BEGIN
+   1=>mage
+   2=>cleric
+   3=>fighter
+   4=>thief
+   5=>ranger
+   6=>druid
+END
+
+
+COPY_EXISTING "clastext.2da" "%workspace%"
+     PHP_EACH single_class_array AS name=>class_num BEGIN
+           LPF read_table_entry STR_VAR row="%name%" column=mixed RET value END
+           SET $class_names("%class_num%")=value
+     END
+     PHP_EACH double_class_array AS name=>class_num BEGIN
+           LPF read_table_entry STR_VAR row="%name%" column=mixed RET value END
+           SET $class_names("%class_num%")=value
+     END
+BUT_ONLY
+
+
+   <<<<<<<<  .../stratagems-inline/customise.d
+BEGIN ~dw#custo~
+
+IF ~~ THEN BEGIN class_acknowledge
+     SAY @26
+     IF ~~ THEN DO ~ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO main_menu
+END
+
+IF ~~ THEN BEGIN kit_acknowledge
+     SAY @27
+     IF ~Global("dw_dualclass_id","LOCALS",0)~ THEN GOTO main_menu
+     IF ~!Global("dw_dualclass_id","LOCALS",0)~ THEN GOTO dual_menu
+END
+
+IF ~Global("dw_dualclass_id","LOCALS",0)~ THEN BEGIN main_menu
+     SAY @21
+     IF ~Race(LastSummonerOf(Myself),HUMAN)~ THEN REPLY @24 GOTO select_class_human
+     IF ~!Race(LastSummonerOf(Myself),HUMAN)~ THEN REPLY @24 GOTO select_class_nonhuman
+   >>>>>>>>
+
+    COPY ".../stratagems-inline/customise.d" "%workspace%"
+    ACTION_PHP_EACH single_class_array AS discard=>class_num BEGIN
+       ACTION_MATCH "%class_num%" WITH
+       2 BEGIN  // fighter - not monk
+          APPEND_OUTER "%workspace%/customise.d" "IF ~Class(LastSummonerOf(Myself),2)!Class(LastSummonerOf(Myself),20)~ THEN REPLY @25 GOTO class_%class_num%_kit_selection"
+       END
+       1 BEGIN  // mage -  not sorcerer
+          APPEND_OUTER "%workspace%/customise.d" "IF ~Class(LastSummonerOf(Myself),1)!Class(LastSummonerOf(Myself),19)~ THEN REPLY @25 GOTO class_%class_num%_kit_selection"
+       END
+       11 BEGIN// druid - not shaman
+          APPEND_OUTER "%workspace%/customise.d" "IF ~Class(LastSummonerOf(Myself),11)!Class(LastSummonerOf(Myself),21)~ THEN REPLY @25 GOTO class_%class_num%_kit_selection"
+       END
+       DEFAULT
+          APPEND_OUTER "%workspace%/customise.d" "IF ~Class(LastSummonerOf(Myself),%class_num%)~ THEN REPLY @25 GOTO class_%class_num%_kit_selection"
+       END
+    END
+    APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~~ THEN REPLY @22 DO ~ActionOverride(LastSummonerOf(Myself),SetGlobal("auto_levelled","LOCALS",0))DestroySelf()~ EXIT END~~~~~
+    OUTER_SPRINT string ~!Global("dw_dualclass_id","LOCALS",0)~
+    APPEND_OUTER "%workspace%/customise.d" "IF ~%string%~ THEN BEGIN dual_menu SAY @30"
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN REPLY @31 GOTO abandon_dual_class"
+    ACTION_PHP_EACH single_class_array_core AS discard=>class_num BEGIN
+         APPEND_OUTER "%workspace%/customise.d" "IF ~Class(LastSummonerOf(Myself),%class_num%)~ THEN REPLY @25 GOTO class_%class_num%_kit_selection"
+    END
+    APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~~ THEN REPLY @22 DO ~ActionOverride(LastSummonerOf(Myself),SetGlobal("auto_levelled","LOCALS",0))DestroySelf()~ EXIT END~~~~~
+
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN BEGIN abandon_dual_class SAY @32"
+    OUTER_FOR (dualclass_id=1;dualclass_id<=6;dualclass_id+=1) BEGIN
+       OUTER_SPRINT final_class $dual_class_map("%dualclass_id%")
+       OUTER_SET final_class_num=$single_class_array("%final_class%")
+       APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~Global("dw_dualclass_id","LOCALS",%dualclass_id%)~ THEN REPLY @33 DO ~SetGlobal("dw_dualclass_id","LOCALS",0)ActionOverride(LastSummonerOf(Myself),SetGlobal("dw_dualclass_id","LOCALS",0))ChangeClass(LastSummonerOf(Myself),%final_class_num%)ApplySpellRES("dw#nodua",LastSummonerOf(Myself))~ GOTO main_menu~~~~~
+    END
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN REPLY @34 GOTO dual_menu END"
+
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN BEGIN select_class_human SAY @28"
+    LAF class_select STR_VAR array=single_class_array END
+    APPEND_OUTER "%workspace%/customise.d" "END"
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN BEGIN select_class_nonhuman SAY @28"
+    LAF class_select STR_VAR array=single_class_array END
+    LAF class_select STR_VAR array=double_class_array END
+    APPEND_OUTER "%workspace%/customise.d" "END"
+    
+    ACTION_PHP_EACH single_class_array AS discard=>class_num BEGIN
+       LAF customise_helper_kit INT_VAR class_num END
+    END
+    COMPILE EVALUATE_BUFFER "%workspace%/customise.d"
+
+    COPY "%scsroot%/lib/resource/dw#diffi.cre" "override/dw#custo.cre"
+        WRITE_ASCII 0x2cc dw#custo
+        WRITE_ASCII 0x248 dw#custo
+
+<<<<<<<< .../stratagems-inline/dw#custo.ssl
+BEGIN LOOP(scsvar||1;2;3;4;5;6)
+IF
+        NumberOfTimesTalkedTo(0)
+        NextTriggerObject(LastSummonerOf(Myself))
+        Global("dw_dualclass_id","LOCALS",scsvar)
+THEN
+    RESPONSE #100
+             SetGlobal("dw_dualclass_id","LOCALS",scsvar)
+             Continue()
+END
+
+
+
+END LOOP
+IF
+	NumberOfTimesTalkedTo(0)
+THEN
+	RESPONSE #100
+		StartDialogueNoSet(LastSummonerOf(Myself))
+END
+>>>>>>>>
+LAF ssl_to_bcs STR_VAR script=dw#custo inline=yes END
+
+   MAKE_PATCH
+   say_name=>29
+   add_basic_ability=>null
+   patch_ability_inline=>~ability_icon=>spwi110c ability_target=>5 ability_icon_loc=>4~
+   spell_type=>innate
+   add_effect_inline=>"opcode=>67 target=>1 duration=>60 resource=>dw#custo"
+   add_effect_inline'=>"opcode=>172 target=>1 timing=>1 resource=>dw#cust1"
+   add_effect_inline'=>"opcode=>171 target=>1 timing=>1 resource=>dw#cust1"
+   END
+   LAF make_spell STR_VAR spell=dw#cust1 edits=patch_data END
+
+   MAKE_PATCH
+   add_basic_ability=>null
+   add_effect_inline=>"opcode=>171 target=>2 timing=>1 resource=>dw#cust1"
+   END
+   LAF make_spell STR_VAR spell=dw#cust2 edits=patch_data END
+
+
+
+
+END
+
+
+
+//////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION customise_helper_kit
+      INT_VAR class_num=0
+BEGIN
+      APPEND_OUTER "%workspace%/customise.d"  "IF ~~ THEN BEGIN class_%class_num%_kit_selection SAY @19"
+      APPEND_OUTER "%workspace%/customise.d"  "IF ~~ THEN REPLY @20 DO ~ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO kit_acknowledge"
+      COPY_EXISTING "kitlist.2da" "%workspace%"
+          READ_2DA_ENTRIES_NOW kitlist_entries 10
+          FOR (row=0;row<kitlist_entries;row+=1) BEGIN
+             READ_2DA_ENTRY_FORMER kitlist_entries row 8 class
+             PATCH_IF IS_AN_INT class BEGIN
+                 PATCH_IF class=class_num BEGIN
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 9 kit_id
+                      SET kit_id=kit_id // forces hex string into INT
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 1 kit_ident
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 3 kit_name
+                      PATCH_MATCH "%kit_ident%" WITH
+                      GRIZZLY_BEAR LATHANDER_X BEGIN
+                      END
+                      DEFAULT
+                        INNER_ACTION BEGIN
+                            APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN REPLY #%kit_name% DO ~ActionOverride(LastSummonerOf(Myself),AddKit(%kit_id%))~ GOTO main_menu"
+                        END
+                      END
+                 END
+             END
+          END
+      BUT_ONLY
+      APPEND_OUTER "%workspace%/customise.d" "END"
+END
+
+DEFINE_ACTION_FUNCTION class_select
+   STR_VAR array=""
+BEGIN
+      ACTION_PHP_EACH "%array%" AS class_id=>class_num BEGIN
+         OUTER_SET class_name=$class_names("%class_num%")
+         OUTER_SPRINT class_script $class_levelling_scripts("%class_id%")
+         APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~~ THEN REPLY #%class_name% DO ~ActionOverride(LastSummonerOf(Myself),ChangeAIScript("%class_script%",OVERRIDE))ChangeClass(LastSummonerOf(Myself),%class_num%)ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO  class_acknowledge~~~~~
+      END
+END

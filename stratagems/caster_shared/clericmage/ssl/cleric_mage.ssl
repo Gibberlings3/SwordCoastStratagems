@@ -1,0 +1,364 @@
+//////////////////////////////////////////////////////////////////////////////////
+///
+///   Define actions
+///
+////////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/caster_shared/caster_definitions.ssl)
+
+////////////////////////////////////////////////////////////////
+/// Labelling, break-invisibility, hostile-undead, panic, etc
+////////////////////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/mage/ssl/main/preamble.ssl)
+
+BEGIN_ACTION_DEFINITION
+	Name(MoveIfEmpty)     // we're redefining this for the benefit of shapeshifters
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		MoveToObject(scstarget)
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+////	Setup, prep
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/caster_shared/clericmage/ssl/clericmage_setup.ssl)
+
+
+
+//////////////////////////////////////////////////////////////////////////////////
+////	If non-hostile, closedown - this script doesn't pretend to fight bad guys
+//////////////////////////////////////////////////////////////////////////////////
+
+IF
+	!Allegiance(Myself,ENEMY)
+	!HasItem("dw#mally",Myself)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+
+//////////////////////////////////////////////////////////////////////
+///CPU saver
+//////////////////////////////////////////////////////////////////////
+
+IF
+	!Detect(NearestEnemyOf(Myself))
+	!HPPercentLT(Myself,100)
+	!Global("inafight","LOCALS",1)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+////////////////////////////////////////////////////////////////////////////
+///	Contingencies renew defences
+////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/contingency.ssl)
+
+///////////////////////////////////////////////////////////////////////////
+////	Flee Cloudkill spell
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/fleecloud.ssl)
+
+///////////////////////////////////////////////////////////////////////////
+//	Turn undead
+///////////////////////////////////////////////////////////////////////////
+
+IF
+	IgnoreBlock(IsDruid)
+	See([GOODCUTOFF.UNDEAD])
+	!StateCheck(LastSeenBy(Myself),STATE_DISABLED)
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("turninitialise","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("turninitialise","LOCALS",30)
+		SetGlobalTimer("turning","LOCALS",4)
+		Continue()
+END
+
+IF
+	IgnoreBlock(IsDruid)
+	See([GOODCUTOFF.UNDEAD])
+	!StateCheck(LastSeenBy(Myself),STATE_DISABLED)
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	OR(2)
+		!GlobalTimerNotExpired("turninitialise","LOCALS")
+		GlobalTimerNotExpired("turning","LOCALS")
+THEN
+	RESPONSE #100
+		Turn()
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+////	Kill the timer if we're using Alacrity
+////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+        SSLBoolean(WIZARD_IMPROVED_ALACRITY|WIZARD_WISH)
+	CheckStatGT(Myself,0,WIZARD_IMPROVED_ALACRITY)
+	GlobalTimerNotExpired("castspell","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("castspell","LOCALS",0)
+END
+
+///////////////////////////////////////////////////////////////////////////
+//	Melee
+///////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/melfsetup.ssl)
+INCLUDE FILE(%scsroot%/priest/ssl/meleeblocks/touchattack.ssl)
+INCLUDE FILE(%scsroot%/mage/ssl/meleeblocks/standard_mage.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+// Sendai teleportation block (yes, only one creature, but she's like 20% of cleric/mages)
+///////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+IF
+	RequireBlock(IsSendai)
+        !GlobalTimerNotExpired("castspell","LOCALS")
+        !CheckSpellState(Myself,TIME_STOP)
+        !CheckSpellState(Player1,TIME_STOP)
+        !CheckSpellState(Player2,TIME_STOP)
+        !CheckSpellState(Player3,TIME_STOP)
+        !CheckSpellState(Player4,TIME_STOP)
+        !CheckSpellState(Player5,TIME_STOP)
+        !CheckSpellState(Player6,TIME_STOP)
+	OR(2)
+		RandomNum(2,1)
+		HPPercentLT(Myself,80)
+	Range(NearestEnemyOf(Myself),8)
+	Global("SendaiTelTrack","LOCALS",0)
+	GlobalLT("SendaiTeleport","LOCALS",20)
+	!GlobalTimerNotExpired("SendaiRing","LOCALS")
+THEN
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",1)
+		SetGlobalTimer("SendaiRing","LOCALS",5)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_1%.%sendai_yloc_1%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",2)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_2%.%sendai_yloc_2%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",3)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_3%.%sendai_yloc_3%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+END
+
+IF
+	RequireBlock(IsSendai)
+        !GlobalTimerNotExpired("castspell","LOCALS")
+        !CheckSpellState(Myself,TIME_STOP)
+        !CheckSpellState(Player1,TIME_STOP)
+        !CheckSpellState(Player2,TIME_STOP)
+        !CheckSpellState(Player3,TIME_STOP)
+        !CheckSpellState(Player4,TIME_STOP)
+        !CheckSpellState(Player5,TIME_STOP)
+        !CheckSpellState(Player6,TIME_STOP)
+	OR(2)
+		RandomNum(2,1)
+		HPPercentLT(Myself,80)
+	Range(NearestEnemyOf(Myself),8)
+	GlobalLT("SendaiTeleport","LOCALS",20)
+	Global("SendaiTelTrack","LOCALS",1)
+	!GlobalTimerNotExpired("SendaiRing","LOCALS")
+THEN
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",2)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_2%.%sendai_yloc_2%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",3)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_3%.%sendai_yloc_3%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+END
+
+IF
+	RequireBlock(IsSendai)
+        !GlobalTimerNotExpired("castspell","LOCALS")
+        !CheckSpellState(Myself,TIME_STOP)
+        !CheckSpellState(Player1,TIME_STOP)
+        !CheckSpellState(Player2,TIME_STOP)
+        !CheckSpellState(Player3,TIME_STOP)
+        !CheckSpellState(Player4,TIME_STOP)
+        !CheckSpellState(Player5,TIME_STOP)
+        !CheckSpellState(Player6,TIME_STOP)
+	OR(2)
+		RandomNum(2,1)
+		HPPercentLT(Myself,80)
+	Range(NearestEnemyOf(Myself),8)
+	GlobalLT("SendaiTeleport","LOCALS",20)
+	Global("SendaiTelTrack","LOCALS",2)
+	!GlobalTimerNotExpired("SendaiRing","LOCALS")
+THEN
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",1)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_1%.%sendai_yloc_1%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",3)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_3%.%sendai_yloc_3%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+END
+
+IF
+	RequireBlock(IsSendai)
+        !GlobalTimerNotExpired("castspell","LOCALS")
+        !CheckSpellState(Myself,TIME_STOP)
+        !CheckSpellState(Player1,TIME_STOP)
+        !CheckSpellState(Player2,TIME_STOP)
+        !CheckSpellState(Player3,TIME_STOP)
+        !CheckSpellState(Player4,TIME_STOP)
+        !CheckSpellState(Player5,TIME_STOP)
+        !CheckSpellState(Player6,TIME_STOP)
+	OR(2)
+		RandomNum(2,1)
+		HPPercentLT(Myself,80)
+	Range(NearestEnemyOf(Myself),8)
+	GlobalLT("SendaiTeleport","LOCALS",20)
+	Global("SendaiTelTrack","LOCALS",3)
+	!GlobalTimerNotExpired("SendaiRing","LOCALS")
+THEN
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",1)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_1%.%sendai_yloc_1%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+	RESPONSE #100
+		IncrementGlobal("SendaiTeleport","LOCALS",1)
+		SetGlobal("SendaiTelTrack","LOCALS",2)
+		SetGlobalTimer("SendaiRing","LOCALS",ONE_ROUND)
+		DisplayStringHead(Myself,73938) // *twists onyx ring*
+		ReallyForceSpellPoint([%sendai_xloc_2%.%sendai_yloc_2%],WIZARD_DIMENSION_DOOR) // SPWI402.SPL (Dimension Door)
+END
+
+
+//////////////////////////////////////////////////////////////////////////
+// Remove shapeshifting effect prior to casting
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+IF
+   RequireBlock(IsDruid)
+   RequireBlock(HasL4)
+   RequireBlock(ImprovedShapeshift)
+   OR(8)
+      HasItemEquipedReal("dw#shnbr",Myself)
+      HasItemEquipedReal("dw#shnw1",Myself)
+      HasItemEquipedReal("dw#shnw2",Myself)
+      HasItemEquipedReal("dw#shnw3",Myself)
+      HasItemEquipedReal("dw#shnsp",Myself)
+      HasItemEquipedReal("dw#shnsa",Myself)
+      HasItemEquipedReal("dw#shnea",Myself)
+      HasItemEquipedReal("dw#shnfi",Myself)
+THEN
+     RESPONSE #100
+                SelectWeaponAbility(SLOT_WEAPON,0)
+             Continue()
+END
+
+IF
+   RequireBlock(IsDruid)
+   IgnoreBlock(HasL4)
+   RequireBlock(ImprovedShapeshift)
+   HasItemEquipedReal("dw#shnw1",Myself)
+THEN
+     RESPONSE #100
+                SelectWeaponAbility(SLOT_WEAPON,0)
+
+
+//////////////////////////////////////////////////////////////////////////
+// Renew and retreat
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/renew.ssl)
+INCLUDE FILE(%scsroot%/priest/ssl/generalblocks/renew.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Easiest-level block
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+INCLUDE FILE(%scsroot%/caster_shared/clericmage/ssl/easy.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Look for PCs
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/chase.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+// Core magic block
+///////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+INCLUDE FILE(%scsroot%/caster_shared/clericmage/ssl/standard_clericmage.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+// Deactivate alacrity instruction for fast casting if relevant
+///////////////////////////////////////////////////////////////////////////
+
+IF
+	SSLBoolean(WIZARD_IMPROVED_ALACRITY|WIZARD_WISH)
+        ActionListEmpty()
+	CheckStatGT(Myself,0,WIZARD_IMPROVED_ALACRITY)
+	!Global("alacritycompromise","LOCALS",1)
+THEN
+	RESPONSE #100
+		SetGlobal("alacritycompromise","LOCALS",1)
+END
+
+DEFAULT TRIGGER()
+
+//////////////////////////////////////////////////////
+///	If everyone is helpless, kill'em.
+//////////////////////////////////////////////////////
+	
+IF
+	See(NearestEnemyOf(Myself))
+	BEGIN LOOP(scsloopvar||1;2;3;4;5;6)
+		OR(3)
+			!See(Playerscsloopvar)
+			StateCheck(Playerscsloopvar,STATE_IMMOBILE)
+			CheckStatGT(Playerscsloopvar,0,HELD)
+	END LOOP
+THEN
+	RESPONSE #100
+		AttackReevaluate(NearestEnemyOf(Myself),15)
+END
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/closedown.ssl)

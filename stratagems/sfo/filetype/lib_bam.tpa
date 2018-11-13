@@ -74,3 +74,94 @@ END
 
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR offset_base=~offset_base~ lookup_table=bam_frame_fields function_prefix=BAM END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             palette editor for BAMs
+/////////////
+/////////////
+/////////////             "condition" should either be blank, or a function that takes as INT_VAR inputs "green", "red" and "blue" and returns 
+/////////////             "value", which should be 1 (if the color should be patched) or 0 (if not)
+/////////////             "action" should be a function which takes "green", "red", "blue" as inputs and then outputs "green", "red" and "blue"
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION patch_colors
+   INT_VAR suppress_warning=0
+   STR_VAR condition=""
+           action=""
+           bam=""
+BEGIN
+   ACTION_IF "%bam%" STRING_COMPARE "" BEGIN
+      LAF return_first_entry STR_VAR list="%bam%" RET entry bam=list END
+      ACTION_IF FILE_EXISTS_IN_GAME "%entry%.bam" BEGIN
+         COPY_EXISTING "%entry%.bam" override
+             LPF patch_colors STR_VAR condition action END
+         BUT_ONLY
+      END ELSE BEGIN
+         ACTION_IF !suppress_warning BEGIN
+            LAF warning STR_VAR warning="tried to patch the palette of %entry%.bam but it doesn't exist" END
+         END
+      END
+      LAF patch_colors INT_VAR suppress_warning STR_VAR condition action bam END
+   END
+
+END
+
+DEFINE_PATCH_FUNCTION patch_colors
+    STR_VAR condition=""
+            action=""
+BEGIN
+   SET compressed=0
+   READ_ASCII 0x0 sg (4) //Signature
+   PATCH_IF ~%sg%~ STRING_EQUAL_CASE ~BAMC~  BEGIN
+       SET compressed=1
+       READ_LONG 0x8 dl //Uncompressed data length
+       DECOMPRESS_REPLACE_FILE 0xc (SOURCE_SIZE - 0xc) dl
+   END
+   READ_LONG 0x10 pal_off
+   FOR (i=1;i<256;i+=1) BEGIN // skip top left
+        SET offset= pal_off + i*4
+        LPF read_color INT_VAR offset RET red blue green END
+        PATCH_IF "%condition%" STRING_COMPARE "" BEGIN
+           LPF "%condition%" INT_VAR red green blue RET value END
+        END ELSE BEGIN
+           SET value=1
+        END
+        PATCH_IF value BEGIN
+           LPF "%action%" INT_VAR red blue green RET red blue green END
+           LPF write_color INT_VAR offset red blue green END
+        END
+   END
+   PATCH_IF compressed BEGIN
+    COMPRESS_REPLACE_FILE 0 dl 9
+    INSERT_BYTES 0x0 0xc
+    WRITE_ASCII 0x0 ~BAMCV1  ~
+    WRITE_LONG 0x8 dl
+   END
+END
+
+
+DEFINE_PATCH_FUNCTION read_color
+   INT_VAR offset=0
+   RET red green blue 
+BEGIN
+    READ_BYTE offset blue
+    READ_BYTE (offset+1) green
+    READ_BYTE (offset+2) red
+END
+
+DEFINE_PATCH_FUNCTION write_color
+   INT_VAR red=0 green=0 blue=0 offset=0
+BEGIN
+   LPF legal_byte INT_VAR input=green RET green=output END
+   LPF legal_byte INT_VAR input=blue RET blue=output END
+   LPF legal_byte INT_VAR input=red RET red=output END
+   WRITE_BYTE offset blue
+   WRITE_BYTE (offset+1) green
+   WRITE_BYTE (offset+2) red
+END
+
+DEFINE_PATCH_FUNCTION legal_byte INT_VAR input=0 RET output BEGIN
+   output = input>0x100 ? 0x100 : input
+   output = output<0 ? 0 : output
+END

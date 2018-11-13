@@ -1,0 +1,1717 @@
+// Detectable Spells v3.96
+//
+//  January 2017
+//  David, editing Ardanis version
+//
+//  Changes:
+//  - Now incorporate flexible handling of TOBEX stats using BGEE splstate baseline
+//  - if filename has no .spl suffix, try looking it up in SPELL.ids (and skip if not found)
+
+
+// Detectable Spells v3.95
+// February 3rd, 2016 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+//
+// Changes from previous version:
+//
+//  - the use of stats 176-182 now can be disabled
+
+// Detectable Spells v3.9xx
+// XX YYth, 201Z - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+//
+// Changes from previous version:
+//
+//  - added new spell states
+
+// Detectable Spells v3.92
+// October 17th, 2014 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+//
+// Changes from previous version:
+//
+//  - added detection by effects' generic type
+//  - added potion detection
+
+// Detectable Spells v3.91
+// July 24th, 2014 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+//
+// Changes from previous version:
+//
+//  - fixed a couple of things with SPLSTATE.IDS support
+//  - added SPLSTATE.IDS entries to the main table
+
+
+// Detectable Spells v3.9
+// July 4th, 2014 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+// 
+// Changes from previous version:
+//  - fixed some things in the code
+//  - moved all extra files into the main installer TPH
+//  - added support for SPLSTATE.IDS states
+
+
+// Detectable Spells v3.1
+// 
+// Assembled by Ardanis/GeN1e, using DavidW's version (SCS) as a base
+// 
+// Changes from previous version (SCS):
+//  - if Khelben's Warding Whip is broken, we first will attempt to repair it
+//  - removing older Ascension version of DS is less destructive
+//  - patching STATS.IDS is compatible with ToBEx
+//  - scripts from Kiara-Zaiya mod are also being updated to use new DS
+//  - core code is more compatibility-friendly with spell-altering mods
+//  - removed EFF-patching, it is not being used anywhere anyway
+//  - removed ~134 LEVELDRAIN~ stat, until somebody shows me a live example of the 200th stat NOT working
+//  - new ToBEx stats may be added on the fly, similar to how ADD_SPELL WeiDU command works (suggested by i30817 and aigleborgne)
+// 
+// Contents (don't change any, unless you're the next update maintainer!!!):
+//   ds.tph
+// 
+// Usage (basic):
+//   copypaste code below into your TP2, and set the path to match the directory
+/*
+INCLUDE ~XXXX/ds.tph~ // change "XXXX" to your mod folder
+LAF detectable_spells  END
+*/
+// 
+// Advanced options:
+//   1) table's format is:
+//        FILE - which file (SPL or ITM) you want patched
+//        OPCODE - which opcode will be added to the FILE (233 is proficiency, 282 is scripting state)
+//        PAR_1 - the first parameter of OPCODE (stat value for 233/282 opcodes)
+//        PAR_2 - the second paramater of OPCODE (stat's index in STATS.IDS, substract 156 for scripting states);
+//                if set to a string, it will be looked up in STATS.IDS and the corresponding index will be used instead
+//        CLONE - the opcode used as a marker (duration, etc.) for generating OPCODE; if CLONE is not found, OPCODE will not be added
+//        TICK - see the 4th option (below) for detailed explanation
+//        PATCH_WHAT - the location within FILE where OPCODE should be added to (and where CLONE is looked up):
+//                     "g" - global (equipped) effects
+//                     "a" - all ability headers
+//                     if you want only specific header patched, set PATCH_WHAT to that header's index (starting from 0)
+// 
+//   2) you can launch the second macro multiple times with different tables (change path, if required)
+// 
+//   3) you can use stats' ID names in your table instead of fixed values; to avoid compatibility issues with other ToBEx-using mods,
+//      consider using only strings (with your personal modder's prefix) for ToBEx stats, rather than values - DS then will find the
+//      lowerest unclaimed 400+ slot in STATS.IDS and use it for further patching
+// 
+//   4) you can update painlessly spells with ticking effects (Khelben's Whip, clouds) - change the letter in "tick" column to a value;
+//      DS will find the effect with the longest delay and use it for the cloning purpose, your value will be added to the total duration;
+//      non-zero values may be required in cases when the spell only has one effect in header and relies on the projectile to apply it
+//      multiple times (clouds)
+// 
+//   5) if you have altered some spells, so that their duration can no longer be correctly detected by the opcode in "clone" column, you
+//      must update the "ag#dsal2.2da" table in the "override" folder, to let other mods know of your changes; if you don't, those mods will
+//      erroneously assume that the spell's detection is invalid and delete it; this is how we'd proceed with the Spell Shield fix (SCS):
+/*
+LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END
+*/
+//   6) you can install detectable weapon enchantment, as per SCS:
+/*
+LAF ds_detectable_weapon_enchantment END
+*/
+// 
+// 
+// 
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Define the table
+DEFINE_ACTION_FUNCTION detectable_spells_setup BEGIN
+
+<<<<<<<<...inlined/ds/ag#detectable_spells_v4_stats_extra.2da
+FILE           OPCODE  PAR_1 PAR_2 CLONE  TICK  PATCH_WHAT //  DESCRIPTION
+SPWI108.SPL    282     1     20    142    n     A          //  PROTECTION_FROM_PETRIFICATION
+SPWI519.SPL    282     1     21    226    n     A          //  SPELL_SHIELD
+SPCL222.SPL    282     2     22    142    n     A          //  CAVALIER_REMOVE_FEAR
+SPPR108.SPL    282     2     22    142    n     A          //  RESIST_FEAR
+SPWI210.SPL    282     1     22    142    n     A          //  RESIST_FEAR
+SPRA303.SPL    282     1     23    142    n     A          //  STALKER_PROTECTION_FROM_NORMAL_MISSILES
+SPWI311.SPL    282     1     23    142    n     A          //  PROTECTION_FROM_NORMAL_MISSILES
+SPWI412.SPL    282     1     24    142    n     A          //  GREATER_MALISON
+SPWI511.SPL    282     1     25    142    n     A          //  PROTECTION_FROM_NORMAL_WEAPONS
+SPWI603.SPL    282     1     26    142    n     A          //  TENSER_TRANSFORMATION
+>>>>>>>>
+
+<<<<<<<<...inlined/ds/ag#detectable_spells_v4.2da
+FILE           OPCODE  PAR_1 PAR_2 CLONE  TICK  PATCH_WHAT //  DESCRIPTION
+
+SPCL900.SPL    282     4     3     142    n     A          //  HLA_WHIRLWIND_ATTACK
+SPCL901.SPL    282     5     3     142    n     A          //  HLA_GREATER_WHIRLWIND_ATTACK
+SPCL902.SPL    282     2     3     142    n     A          //  HLA_DEATHBLOW
+SPCL903.SPL    282     3     3     142    n     A          //  HLA_GREATER_DEATHBLOW
+SPCL905.SPL    282     3     3     142    n     A          //  HLA_CRITICAL_STRIKE
+SPCL906.SPL    282     2     3     142    n     A          //  HLA_POWER_ATTACK
+SPCL909.SPL    282     5     3     142    n     A          //  HLA_SMITE
+SPCL916.SPL    282     4     3     142    n     A          //  HLA_ASSASSINATION
+BALSHLD.SPL    233     1     125   232    n     A          //  ___FIRE_SHEILD_RED
+BHAAL1B.SPL    233     1     124   142    n     A          //  PC_TOB_REGENERATION
+BHAAL2A.SPL    282     4     5     142    n     A          //  PC_TOB_DRAW_UPON_HOLY_MIGHT
+DGARCHON.SPL   233     1     123   201    n     A          //  ___SHIELD_OF_THE_ARCHONS
+DGFAITH.SPL    233     1     110   142    n     A          //  ___ARMOR_OF_FAITH
+DGRIGHT.SPL    282     6     5     142    n     A          //  ___RIGHTEOUS_MAGIC
+MARW401.SPL    282     2     9     188    n     A          //  ___AURA_CLEANSING
+MELIS02.SPL    233     2     121   142    n     A          //  MELISSAN_BLADE_BARRIER
+SPCL144.SPL    282     2     3     142    n     A          //  KENSAI_KAI
+SPCL152.SPL    282     1     3     142    n     A          //  BARBARIAN_RAGE
+SPCL213.SPL    233     1     117   142    n     A          //  PALADIN_PROTECTION_FROM_EVIL
+SPCL232.SPL    233     1     118   142    n     A          //  INQUISITOR_TRUE_SIGHT
+SPCL233.SPL    233     1     117   142    n     A          //  ___PROTECTION_FROM_EVIL_TEN_FEET
+SPCL237.SPL    233     1     125   142    n     A          //  GREATER_SUN
+SPCL321.SPL    282     1     3     169    n     A          //  BERSERKER_ENRAGE
+SPCL321.SPL    101     0     45    169    n     A          //  BERSERKER_ENRAGE
+SPCL423.SPL    282     4     3     142    n     A          //  ASSASSIN_POISON_WEAPON
+SPCL521.SPL    282     2     3     142    n     A          //  BLADE_OFFENSIVE_SPIN
+SPCL522.SPL    282     2     3     142    n     A          //  BLADE_DEFENSIVE_SPIN
+SPCL732.SPL    233     1     118   142    n     A          //  HELM_TRUE_SIGHT
+SPCL741.SPL    282     1     2     142    n     A          //  LATHANDER_BOON
+SPCL741.SPL    282     1     3     142    n     A          //  LATHANDER_BOON
+SPCL811.SPL    282     2     3     142    n     A          //  MONK_STUNNING_BLOW
+SPCL820.SPL    282     5     3     142    n     A          //  MONK_QUIVERING_PALM
+SPIN103.SPL    282     4     5     142    n     A          //  PC_DRAW_UPON_HOLY_MIGHT
+SPIN117.SPL    282     1     3     142    n     A          //  MINSC_BERSERK
+SPIN117.SPL    101     0     45    142    n     A          //  MINSC_BERSERK
+SPIN121.SPL    233     1     117   142    n     A          //  ___PROTECTION_FROM_EVIL
+SPIN676.SPL    282     3     3     142    n     A          //  MAZZY_INVOKE_COURAGE
+SPIN684.SPL    233     1     118   142    n     A          //  _KOA_TRUE_SIGHT_NO_VIS
+SPIN686.SPL    233     4     128   142    n     A          //  _PROTECTION_MAGIC_WEAPON_NOEFF
+SPIN696.SPL    233     1     118   220    n     A          //  MOON_DOG_SIGHT
+SPIN710.SPL    233     2     116   142    n     A          //  _SPELL_DEFLECTION_NO_VISUAL
+SPIN920.SPL    233     1     129   200    n     A          //  _BEHOLDER_SPELL_TURNING
+SPPR107.SPL    233     1     117   142    n     A          //  PROTECTION_FROM_EVIL
+SPPR111.SPL    233     1     110   142    n     A          //  ARMOR_OF_FAITH
+SPPR202.SPL    282     1     4     142    n     A          //  BARKSKIN
+SPPR214.SPL    282     4     5     142    n     A          //  DRAW_UPON_HOLY_MIGHT
+SPPR312.SPL    282     2     5     142    n     A          //  STRENGTH_OF_ONE
+SPPR319.SPL    233     1     120   60     n     A          //  SUMMON_INSECTS
+SPPR403.SPL    233     1     131   142    n     A          //  FREE_ACTION
+SPPR406.SPL    233     1     133   142    n     A          //  DEFENSIVE_HARMONY
+SPPR408.SPL    233     1     117   142    n     A          //  PROTECTION_FROM_EVIL_TEN_FEET
+SPPR412.SPL    282     3     5     142    n     A          //  HOLY_POWER
+SPPR505.SPL    233     1     118   142    n     A          //  TRUE_SEEING
+SPPR507.SPL    282     1     3     142    n     A          //  CHAMPION_STRENGTH
+SPPR507.SPL    282     3     5     142    n     A          //  CHAMPION_STRENGTH
+SPPR508.SPL    233     1     119   142    n     A          //  CHAOTIC_COMMANDS
+SPPR513.SPL    282     6     5     142    n     A          //  RIGHTEOUS_MAGIC
+SPPR517.SPL    233     2     120   60     n     A          //  INSECT_PLAGUE
+SPPR603.SPL    233     2     121   142    n     A          //  BLADE_BARRIER
+SPPR613.SPL    233     1     122   197    n     A          //  PHYSICAL_MIRROR
+SPPR698.SPL    233     1     121   142    n     A          //  _NPC_BLADE_BARRIER
+SPPR701.SPL    233     1     123   201    n     A          //  SHIELD_OF_THE_ARCHONS
+SPPR711.SPL    233     1     124   142    n     A          //  REGENERATION
+SPPR717.SPL    233     3     120   60     n     A          //  CREEPING_DOOM
+SPPR725.SPL    233     1     121   142    n     A          //  HLA_GLOBE_OF_BLADES
+SPPR730.SPL    233     1     125   142    n     A          //  HLA_AURA_OF_FLAMING_DEATH
+SPRA302.SPL    233     1     116   201    n     A          //  STALKER_MINOR_SPELL_DEFLECTION
+SPWI102.SPL    282     3     4     142    n     A          //  ARMOR
+SPWI113.SPL    233     1     117   142    n     A          //  PROTECTION_FROM_EVIL
+SPWI114.SPL    282     2     4     142    n     A          //  SHIELD
+SPWI214.SPL    282     2     5     142    n     A          //  STRENGTH
+SPWI317.SPL    282     4     4     142    n     A          //  GHOST_ARMOR
+SPWI318.SPL    233     1     116   201    n     A          //  MINOR_SPELL_DEFLECTION
+SPWI403.SPL    233     2     125   142    n     A          //  FIRE_SHIELD_BLUE
+SPWI414.SPL    282     5     4     142    n     A          //  SPIRIT_ARMOR
+SPWI418.SPL    233     1     125   142    n     A          //  FIRE_SHIELD_RED
+SPWI522.SPL    233     1     129   200    n     A          //  MINOR_SPELL_TURNING
+SPWI590.SPL    282     1     6     142    n     A          //  SI_ABJURATION
+SPWI591.SPL    282     2     6     142    n     A          //  SI_CONJURATION
+SPWI592.SPL    282     3     6     142    n     A          //  SI_DIVINATION
+SPWI593.SPL    282     4     6     142    n     A          //  SI_ENCHANTMENT
+SPWI594.SPL    282     5     6     142    n     A          //  SI_ILLUSION
+SPWI595.SPL    282     6     6     142    n     A          //  SI_EVOCATION
+SPWI596.SPL    282     7     6     142    n     A          //  SI_NECROMANCY
+SPWI597.SPL    282     8     6     142    n     A          //  SI_TRANSMUTATION
+SPWI603.SPL    282     1     3     142    n     A          //  TENSER_TRANSFORMATION
+SPWI606.SPL    233     1     126   142    n     A          //  PROTECTION_FROM_MAGICAL_ENERGY
+SPWI607.SPL    233     1     127   236    n     A          //  MISLEAD
+SPWI609.SPL    233     1     118   142    n     A          //  TRUE_SIGHT
+SPWI611.SPL    233     4     128   142    n     A          //  PROTECTION_FROM_MAGICAL_WEAPONS
+SPWI618.SPL    233     2     116   201    n     A          //  SPELL_DEFLECTION
+SPWI701.SPL    233     2     129   200    n     A          //  SPELL_TURNING
+SPWI702.SPL    233     1     130   142    n     A          //  PROTECTION_FROM_ELEMENTS
+SPWI703.SPL    233     2     127   236    n     A          //  PROJECT_IMAGE
+SPWI705.SPL    233     1     132   230    0     A          //  WIZARD_WARDING_WHIP
+SPWI708.SPL    233     1     128   142    n     A          //  MANTLE
+SPWI802.SPL    233     2     116   142    n     A          //  UNUSED_SPELL_DEFLECTION
+SPWI803.SPL    282     1     7     142    n     A          //  PROTECTION_FROM_ENERGY
+SPWI804.SPL    233     3     127   236    n     A          //  SIMULACRUM
+SPWI808.SPL    233     2     128   142    n     A          //  IMPROVED_MANTLE
+SPWI902.SPL    282     1     8     259    n     A          //  SPELL_TRAP
+SPWI907.SPL    233     3     128   142    n     A          //  ABSOLUTE_IMMUNITY
+SPWI921.SPL    282     1     9     142    n     A          //  IMPROVED_ALACRITY
+SPWISH17.SPL   282     1     9     142    n     A          //  WISH_ALACRITY_AND_TIMESTOP
+
+J#YA05.SPL     233     1     119   142    n     A          //  
+KISH11.SPL     233     1     119   142    n     A          //  
+TG#DIVN.SPL    233     1     123   142    n     A          //  
+TG#DIVN.SPL    233     1     131   142    n     A          //  
+TG#DIVN.SPL    233     1     119   142    n     A          //  
+
+SCRL07.ITM     282     2   	 8     102    n     A
+POTN33.ITM     282     3     8     102    n     A
+STAF11.SPL     282     1     8     259    n     A
+IMMUNE1.ITM	   282     1     25    120    n     G
+IMMUNE2.ITM	   282     1     25    120    n     G
+IMMUNE3.ITM	   282     1     25    120    n     G
+IMMUNE4.ITM	   282     1     25    120    n     G
+IMMUNE3.ITM	   233     1     128   120    n     G
+IMMUNE4.ITM	   233     2     128   120    n     G
+POTN45.ITM     233     1     131   142    n     A          //  FREE_ACTION (Potion of Freedom)
+NMIMPERV.SPL   233     1     119   142    n     A
+NMIMPREG.SPL   233     1     119   142    n     A
+SPWISH17.SPL   282     1     9     142    n     A
+
+SPPR111.SPL    328     1     ARMOR_OF_FAITH                   142    n     A          //  ARMOR_OF_FAITH
+SPPR508.SPL    328     1     CHAOTIC_COMMANDS                 142    n     A          //  CHAOTIC_COMMANDS
+SPCL152.SPL    328     1     BARBARIAN_RAGE                   142    n     A          //  BARBARIAN_RAGE
+SPCL321.SPL    328     1     BERSERKER_RAGE                   142    n     A          //  BERSERKER_ENRAGE
+SPIN117.SPL    328     1     MINSC_BERSERK                    142    n     A          //  MINSC_BERSERK
+SPCL423.SPL    328     1     POISON_WEAPON                    142    n     A          //  ASSASSIN_POISON_WEAPON
+SPCL144.SPL    328     1     KENSAI_KIA                       142    n     A          //  KENSAI_KAI
+SPDWD02.SPL    328     1     DEFENSIVE_STANCE                 142    n     A          //  Defensive Stance
+SPCL121.SPL    328     1     ARCHER_CALL_SHOT                 142    n     A          //  Called Shot
+SPWI222.SPL    328     1     CHAOS_SHIELD                     142    n     A          //  Chaos Shield
+SPWI723.SPL    328     1     IMPROVED_CHAOS_SHIELD            142    n     A          //  Improved Chaos Shield
+SPCL542A.SPL   328     1     SKALD_SONG                       142    n     A          //  Skald Song
+SPCL751A.SPL   328     1     JESTER_SONG                      142    n     A          //  Jester Song
+POTN21.ITM     328     1     POTION_OF_CLARITY                142    n     A          //  Potion of Clarity
+POTN33.ITM     328     1     POTION_OF_MAGIC_BLOCKING         142    n     A          //  Potion of Magic Blocking
+SCRL07.ITM     328     1     SCROLL_OF_PROTECTION_FROM_MAGIC  142    n     A          //  Protection From Magic
+SCRL09.ITM     328     1     SCROLL_OF_PROTECTION_FROM_UNDEAD 142    n     A          //  Protection From Undead
+
+SPCL222.SPL    328     1     RESIST_FEAR                      142    n     A          //  CAVALIER_REMOVE_FEAR
+SPRA303.SPL    328     1     PROTECTION_FROM_NORMAL_MISSILES  142    n     A          //  STALKER_PROTECTION_FROM_NORMAL_MISSILES
+SPPR108.SPL    328     1     RESIST_FEAR                      142    n     A          //  RESIST_FEAR
+SPWI210.SPL    328     1     RESIST_FEAR                      142    n     A          //  RESIST_FEAR
+SPWI108.SPL    328     1     PROTECTION_FROM_PETRIFICATION    142    n     A          //  PROTECTION_FROM_PETRIFICATION
+SPWI519.SPL    328     1     SPELL_SHIELD                     226    n     A          //  SPELL_SHIELD
+SPWI311.SPL    328     1     PROTECTION_FROM_NORMAL_MISSILES  142    n     A          //  PROTECTION_FROM_NORMAL_MISSILES
+SPWI511.SPL    328     1     PROTECTION_FROM_NORMAL_WEAPONS   142    n     A          //  PROTECTION_FROM_NORMAL_WEAPONS
+SPWI603.SPL    328     1     TENSERS_TRANSFORMATION           142    n     A          //  TENSER_TRANSFORMATION
+
+BALSHLD.SPL    328     1     RED_FIRESHIELD            232    n     A          //  ___FIRE_SHEILD_RED
+SPCL237.SPL    328     1     RED_FIRESHIELD            142    n     A          //  GREATER_SUN
+SPCL721.SPL    328     1     STORM_SHELL               142    n     A          //  STORM_SHELL
+SPCL907.SPL    328     1     HARDINESS                 142    n     A          //  HLA_HARDINESS
+SPPR113.SPL    328     1     DOOM                      142    n     A          //  DOOM
+SPPR116.SPL    328     1     FAERIE_FIRE               142    n     A          //  FAERIE_FIRE
+SPPR202.SPL    328     1     BARKSKIN                  142    n     A          //  BARKSKIN
+SPPR310.SPL    328     1     MISCAST_MAGIC             142    n     A          //  MISCAST_MAGIC
+SPPR409.SPL    328     1     DEATH_WARD                142    n     A          //  DEATH_WARD
+SPPR412.SPL    328     1     HOLY_POWER                142    n     A          //  HOLY_POWER
+SPWI224.SPL    328     1     GLITTERDUST               142    n     A          //  GLITTERDUST
+SPWI403.SPL    328     1     BLUE_FIRESHIELD           142    n     A          //  FIRE_SHIELD_BLUE
+SPWI411.SPL    328     1     HOPELESSNESS              142    n     A          //  HOPELESSNESS
+SPWI412.SPL    328     1     MALISON                   142    n     A          //  GREATER_MALISON
+SPWI413a.SPL   328     1     OTILUKES_RESILIENT_SPHERE 142    n     A          //  OTILUKES_RESILIENT_SPHERE
+SPWI418.SPL    328     1     RED_FIRESHIELD            142    n     A          //  FIRE_SHIELD_RED
+SPWI590.SPL    328     1     SI_ABJURATION             142    n     A          //  SI_ABJURATION
+SPWI591.SPL    328     1     SI_CONJURATION            142    n     A          //  SI_CONJURATION
+SPWI592.SPL    328     1     SI_DIVINATION             142    n     A          //  SI_DIVINATION
+SPWI593.SPL    328     1     SI_ENCHANTMENT            142    n     A          //  SI_ENCHANTMENT
+SPWI594.SPL    328     1     SI_ILLUSION               142    n     A          //  SI_ILLUSION
+SPWI595.SPL    328     1     SI_EVOCATION              142    n     A          //  SI_EVOCATION
+SPWI596.SPL    328     1     SI_NECROMANCY             142    n     A          //  SI_NECROMANCY
+SPWI597.SPL    328     1     SI_TRANSMUTATION          142    n     A          //  SI_TRANSMUTATION
+
+SPCL232.SPL    328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  TRUE_SIGHT
+SPCL232D.SPL   328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  
+SPPR505.SPL    328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  TRUE_SEEING
+SPPR505D.SPL   328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  
+SPPR950.SPL    328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  
+SPWI224.SPL    328     1     CANNOT_TURN_INVISIBLE     142    n     A          //  GLITTERDUST
+SPWI609.SPL    328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  TRUE_SIGHT
+SPWI609D.SPL   328     1     CANNOT_TURN_INVISIBLE     221    7     A          //  
+
+SPPR613.SPL    328     1     BUFF_PRO_WEAPONS          197    n     A          //  PHYSICAL_MIRROR
+SPRA303.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  STALKER_PROTECTION_FROM_NORMAL_MISSILES
+SPWI311.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  PROTECTION_FROM_NORMAL_MISSILES
+SPWI511.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  PROTECTION_FROM_NORMAL_WEAPONS
+SPWI611.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  PROTECTION_FROM_MAGICAL_WEAPONS
+SPWI708.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  MANTLE
+SPWI808.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  IMPROVED_MANTLE
+SPWI907.SPL    328     1     BUFF_PRO_WEAPONS          142    n     A          //  ABSOLUTE_IMMUNITY
+
+SPCL237.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  GREATER_SUN
+SPCL721.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  STORM_SHELL
+SPPR730.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  HLA_AURA_OF_FLAMING_DEATH
+SPPR210.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  RESIST_FIRE_AND_COLD
+SPPR306.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_FIRE
+SPPR407.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_LIGHTNING
+SPWI319.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_FIRE
+SPWI320.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_COLD
+SPWI403.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  FIRE_SHIELD_BLUE
+SPWI418.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  FIRE_SHIELD_RED
+SPWI512.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_ELECTRICITY
+SPWI517.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_ACID
+SPWI606.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_MAGICAL_ENERGY
+SPWI702.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_ELEMENTS
+SPWI803.SPL    328     1     BUFF_PRO_DAMAGE           142    n     A          //  PROTECTION_FROM_ENERGY
+POTN02.ITM     328     1     BUFF_PRO_DAMAGE           142    n     A          //  POTION_OF_FIRE_RESISTANCE
+POTN18.ITM     328     1     BUFF_PRO_DAMAGE           142    n     A          //  POTION_OF_ABSORBTION
+POTN22.ITM     328     1     BUFF_PRO_DAMAGE           142    n     A          //  POTION_OF_COLD_RESISTANCE
+POTN31.ITM     328     1     BUFF_PRO_DAMAGE           142    n     A          //  POTION_OF_INSULATION
+POTN35.ITM     328     1     BUFF_PRO_DAMAGE           142    n     A          //  POTION_OF_MAGIC_SHIELDING
+
+SPPR701.SPL    328     1     BUFF_PRO_SPELLS           201    n     A          //  SHIELD_OF_THE_ARCHONS
+SPRA302.SPL    328     1     BUFF_PRO_SPELLS           201    n     A          //  STALKER_MINOR_SPELL_DEFLECTION
+SPWI318.SPL    328     1     BUFF_PRO_SPELLS           201    n     A          //  MINOR_SPELL_DEFLECTION
+SPWI406.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  MINOR_GLOBE_OF_INVULNERABILITY
+SPWI519.SPL    328     1     BUFF_PRO_SPELLS           226    n     A          //  SPELL_SHIELD
+SPWI522.SPL    328     1     BUFF_PRO_SPELLS           200    n     A          //  MINOR_SPELL_TURNING
+SPWI590.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_ABJURATION
+SPWI591.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_CONJURATION
+SPWI592.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_DIVINATION
+SPWI593.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_ENCHANTMENT
+SPWI594.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_ILLUSION
+SPWI595.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_EVOCATION
+SPWI596.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_NECROMANCY
+SPWI597.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  SI_TRANSMUTATION
+SPWI602.SPL    328     1     BUFF_PRO_SPELLS           142    n     A          //  GLOBE_OF_INVULNERABILITY
+SPWI618.SPL    328     1     BUFF_PRO_SPELLS           201    n     A          //  SPELL_DEFLECTION
+SPWI701.SPL    328     1     BUFF_PRO_SPELLS           200    n     A          //  SPELL_TURNING
+SPWI902.SPL    328     1     BUFF_PRO_SPELLS           259    n     A          //  SPELL_TRAP
+POTN33.ITM     328     1     BUFF_PRO_SPELLS           102    n     A          //  POTION_OF_MAGIC_BLOCKING
+
+SPPR108.SPL    328     1     BUFF_PRO_EFFECTS          142    n     A          //  RESIST_FEAR
+SPPR403.SPL    328     1     BUFF_PRO_EFFECTS          142    n     A          //  FREE_ACTION
+SPPR409.SPL    328     1     BUFF_PRO_EFFECTS          142    n     A          //  DEATH_WARD
+SPPR508.SPL    328     1     BUFF_PRO_EFFECTS          142    n     A          //  CHAOTIC_COMMANDS
+SPWI210.SPL    328     1     BUFF_PRO_EFFECTS          142    n     A          //  RESIST_FEAR
+POTN21.ITM     328     1     BUFF_PRO_EFFECTS          142    n     A          //  POTION_OF_CLARITY
+POTN45.ITM     328     1     BUFF_PRO_EFFECTS          142    n     A          //  POTION_OF_FREEDOM
+
+BHAAL2A.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  PC_TOB_DRAW_UPON_HOLY_MIGHT
+SPPR214.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  DRAW_UPON_HOLY_MIGHT
+SPPR312.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  STRENGTH_OF_ONE
+SPPR412.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  HOLY_POWER
+SPPR507.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  CHAMPION_STRENGTH
+SPPR508.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  CHAOTIC_COMMANDS
+SPPR513.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  RIGHTEOUS_MAGIC
+SPPR603.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  BLADE_BARRIER
+SPPR698.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  _NPC_BLADE_BARRIER
+SPPR730.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  HLA_AURA_OF_FLAMING_DEATH
+SPWI214.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  STRENGTH
+SPWI403.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  FIRE_SHIELD_BLUE
+SPWI418.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  FIRE_SHIELD_RED
+SPWI603.SPL    328     1     BUFF_ENHANCEMENT          142    n     A          //  TENSER_TRANSFORMATION
+POTN03.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_HILL_GIANT_STRENGTH
+POTN04.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_FROST_GIANT_STRENGTH
+POTN05.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_FIRE_GIANT_STRENGTH
+POTN06.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_CLOUD_GIANT_STRENGTH
+POTN07.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_STORM_GIANT_STRENGTH
+POTN09.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_HEROISM
+POTN12.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_STONE_GIANT_STRENGTH
+POTN41.ITM     328     1     BUFF_ENHANCEMENT          142    n     A          //  POTION_OF_POWER
+
+SPCL152.SPL    328     1     STATE_ENRAGED             142    n     A          //  BARBARIAN_RAGE
+SPCL321.SPL    328     1     STATE_ENRAGED             142    n     A          //  BERSERKER_ENRAGE
+SPIN117.SPL    328     1     STATE_ENRAGED             142    n     A          //  MINSC_BERSERK
+OHRRAGE.SPL    328     1     STATE_ENRAGED             142    n     A          //  WILSON RAGE
+
+>>>>>>>>
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Core patch
+// 
+// Now using intelligent compatibility-friendly check:
+//   we start by looking for existing 233/282 (with parameters matching CDDETECT.2DA) and opcode-to-be-detected
+//   - if both are present, we check if 233/282 has correct settings (timing, power, etc.)
+//     -- if yes, we do nothing
+//     -- if not, we delete 233/282 and generate new effect via cloning o-t-b-d
+//   - if o-t-b-d is present and 233/282 is not, we generate new effect via cloning o-t-b-d
+//   - if 233/282 is present and o-t-b-d is not, we delete 233/282
+//   - if neither is present, we do nothing
+// 
+// New features:
+//   - we allow for spells to have been changed by mods and use a different duration marker opcode (aka 'clone') than stated in %table%
+//   - you can define stats in %table% by their ID names rather than values (case insensitive)
+//   - you can add new ToBEx stats (opcode 318) on the fly, filling in the empty slots
+
+DEFINE_ACTION_FUNCTION detectable_spells
+  INT_VAR
+    append_stats = 1
+    use_stats_176_182 = 1 // use stats 176-182, disabled for official BG:EE / BGII:EE release
+    fix_khelben = 1
+    fix_old_ds = 1
+    install_ds = 1
+    flexible_extended_stats = 1
+  STR_VAR
+    path = ~~
+    table = ~...inlined/ds/ag#detectable_spells_v4.2da~
+    default = ~...inlined/ds/ag#detectable_spells_v4.2da~
+    extra = ~...inlined/ds/ag#detectable_spells_v4_stats_extra.2da~
+  BEGIN
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// append stats.ids with new entries
+ACTION_IF append_stats = 1 BEGIN
+
+<<<<<<<<...inlined/ds/stats.2da
+109 WEAPON_ENCHANTMENT
+110 CLERIC_ARMOR_OF_FAITH
+116 WIZARD_SPELL_DEFLECTION
+117 PROTECTION_FROM_EVIL
+118 TRUE_SIGHT
+119 CLERIC_CHAOTIC_COMMANDS
+120 CLERIC_INSECT_PLAGUE
+121 CLERIC_BLADE_BARRIER
+122 CLERIC_PHYSICAL_MIRROR
+123 CLERIC_SHIELD_OF_THE_ARCHONS
+124 CLERIC_REGENERATION
+125 WIZARD_FIRE_SHIELD
+126 WIZARD_PROTECTION_FROM_MAGIC_ENERGY
+127 WIZARD_MISLEAD
+128 WIZARD_PROTECTION_FROM_MAGIC_WEAPONS
+129 WIZARD_SPELL_TURNING
+130 WIZARD_PROTECTION_FROM_THE_ELEMENTS
+131 CLERIC_FREE_ACTION
+132 WIZARD_KHELBENS_WARDING_WHIP
+133 CLERIC_DEFENSIVE_HARMONY
+134 EXTRAPROFICIENCY20
+156 SCRIPTINGSTATE1
+157 SCRIPTINGSTATE2
+158 SCRIPTINGSTATE3
+159 SCRIPTINGSTATE4
+160 SCRIPTINGSTATE5
+161 SCRIPTINGSTATE6
+162 WIZARD_SPELL_IMMUNITY
+163 WIZARD_PROTECTION_FROM_ENERGY
+164 WIZARD_SPELL_TRAP
+165 WIZARD_IMPROVED_ALACRITY
+166 MELEE_THACO_BONUS
+167 MELEE_DAMAGE_BONUS
+168 MISSILE_DAMAGE_BONUS
+169 DISABLE_CIRCLE
+170 FIST_THACO_BONUS
+171 FIST_DAMAGE_BONUS
+172 CLASS_STRING_OVERRIDE_MIXED
+173 CLASS_STRING_OVERRIDE_LOWER
+174 PREVENT_SPELL_PROTECTION_EFFECTS
+175 IMMUNITY_TO_BACKSTAB
+176 LOCKPICKINGMTPBONUS
+177 MOVESILENTLYMTPBONUS
+178 TRAPSMTPBONUS
+179 PICKPOCKETMTPBONUS
+180 HIDEINSHADOWSMTPBONUS
+181 DETECTILLUSIONSMTPBONUS
+182 SETTRAPSMTPBONUS
+183 PREVENT_AI_SLOWDOWN
+184 EXISTANCE_DELAY_OVERRIDE
+185 ANIMATION_ONLY_HASTE
+186 NO_PERMANENT_DEATH
+187 IMMUNE_TO_TURN_UNDEAD
+200 LEVELDRAIN
+>>>>>>>>
+
+<<<<<<<<...inlined/ds/stats_extra.2da
+156 WING_BUFFET
+157 DEATH_WARD
+158 LEVEL_DRAIN_IMMUNITY
+159 OFFENSIVE_MODIFIER
+160 DEFENSIVE_MODIFIER
+161 STRENGTH_MODIFIER
+176 WIZARD_PROTECTION_FROM_PETRIFICATION
+177 WIZARD_SPELL_SHIELD
+178 WIZARD_RESIST_FEAR
+179 WIZARD_PROTECTION_FROM_NORMAL_MISSILES
+180 WIZARD_GREATER_MALISON
+181 WIZARD_PROTECTION_FROM_NORMAL_WEAPONS
+182 WIZARD_TENSERS_TRANSFORMATION
+>>>>>>>>
+
+  COPY_EXISTING stats.ids override
+    INSERT_FILE SOURCE_SIZE ~...inlined/ds/stats.2da~
+  LAM ds_sort_stats_ids
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// fix the bug in G3's DS
+ACTION_IF fix_khelben = 1 BEGIN
+  ACTION_IF NOT FILE_EXISTS_IN_GAME ~cddetect.spl~ BEGIN
+    COPY_EXISTING ~dw#marker_file.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
+    LAM ds_fix_khelben
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// fix old Ascension DS
+ACTION_IF fix_old_ds = 1 BEGIN
+  ACTION_IF NOT FILE_EXISTS_IN_GAME ~dw#DScleanout.mrk~ BEGIN
+    COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
+    LAM ds_fix_old_scripts
+    LAM ds_fix_old_ds
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+ACTION_IF install_ds = 1 BEGIN
+
+ACTION_IF FILE_EXISTS ~tobex.dll~ BEGIN
+  OUTER_SET engine_is_tobex = 1
+END ELSE BEGIN
+  OUTER_SET engine_is_tobex = 0
+END
+
+ACTION_IF FILE_EXISTS_IN_GAME ~spdm101.spl~ BEGIN // Dark Moon Monk, Blindness innate
+  OUTER_SET engine_is_bgee = 1
+END ELSE BEGIN
+  OUTER_SET engine_is_bgee = 0
+END
+
+ACTION_IF FILE_EXISTS_IN_GAME ~splstate.ids~ BEGIN
+  OUTER_SET engine_is_sod = 1
+END ELSE BEGIN
+  OUTER_SET engine_is_sod = 0
+END
+
+LAF detectable_spells_setup END
+
+ACTION_IF ~%path%~ STR_CMP ~~ BEGIN
+  OUTER_SPRINT table ~%path%/%table%~
+END
+ACTION_TRY // this is a mere file existance check by attempting to load it, because FILE_EXISTS doesn't return true for virtual files
+  COPY - ~%table%~ ~ag#detectable_spells_v4_custom.2da~
+WITH
+  DEFAULT
+    ACTION_IF ~%table%~ STR_CMP ~...inlined/ds/ag#detectable_spells_v4.2da~ BEGIN // if user specified a custom string
+      PRINT "Detectable Spells: Unable to locate ~%table%~, using default 2DA instead"
+    END
+    OUTER_SPRINT table ~%default%~
+END
+
+////////////////////
+
+OUTER_SET ds_alter=0
+ACTION_IF FILE_EXISTS_IN_GAME ~ag#dsal2.2da~ BEGIN
+  COPY_EXISTING - ~ag#dsal2.2da~ ~override~
+    READ_2DA_ENTRIES_NOW ds_alter 3
+END
+
+COPY - ~%table%~ ~override~
+  PATCH_IF (~%table%~ STRING_EQUAL_CASE ~%default%~) && use_stats_176_182 = 1 BEGIN
+    INSERT_FILE SOURCE_SIZE ~%extra%~
+  END
+    
+  READ_2DA_ENTRIES_NOW ds_table 7
+  FOR (r=0;r<ds_table;r+=1) BEGIN
+    READ_2DA_ENTRY_FORMER ds_table r 0 file
+    READ_2DA_ENTRY_FORMER ds_table r 1 new_op
+    READ_2DA_ENTRY_FORMER ds_table r 2 p1
+    READ_2DA_ENTRY_FORMER ds_table r 3 p2
+    READ_2DA_ENTRY_FORMER ds_table r 4 clone_op
+    READ_2DA_ENTRY_FORMER ds_table r 5 tick
+    READ_2DA_ENTRY_FORMER ds_table r 6 type
+
+    PATCH_IF INDEX ("\." "%file%") <0 BEGIN // possibly a spell.ids entry
+       SET ids_num=IDS_OF_SYMBOL (spell "%file%")
+       PATCH_IF ids_num>=1000 BEGIN
+        INNER_PATCH "%ids_num%" BEGIN
+          READ_ASCII 0x0 digit (1)
+          READ_ASCII 0x1 rest (3)
+          PATCH_MATCH "%digit%" WITH
+          1 BEGIN
+              SPRINT file "SPPR%rest%.spl"
+          END
+          2 BEGIN
+              SPRINT file "SPWI%rest%.spl"
+          END
+          3 BEGIN
+              SPRINT file "SPIN%rest%.spl"
+          END
+          4 BEGIN
+              SPRINT file "SPCL%rest%.spl"
+          END
+          DEFAULT
+          END
+        END
+       END
+    END
+
+
+    PATCH_IF FILE_EXISTS_IN_GAME EVAL ~%file%~ BEGIN
+      abort=0
+      ids=2
+
+      // check if this spell has been altered and it's original clonable opcode is no longer reliable
+      FOR (k=1;k<ds_alter;k+=1) BEGIN  // skip the first row with column descriptions
+        PATCH_IF (~%file%~ STRING_EQUAL_CASE EVAL ~%ds_alter_%k%_0%~) && (clone_op = EVAL ~ds_alter_%k%_1~) BEGIN
+          clone_op = EVAL ~ds_alter_%k%_2~
+          k=ds_alter
+        END
+      END
+      
+      // check the platform
+      PATCH_IF !flexible_extended_stats BEGIN
+         // old version insists on 318/328
+         PATCH_IF new_op=318 BEGIN // only add #318 opcode if it's ToBEx
+             abort = (engine_is_tobex = 0) ? 1 : 0
+         END
+         PATCH_IF new_op=328 BEGIN // only add #328 opcode if it's EE+
+               abort = (engine_is_sod = 0) ? 1 : 0
+         END
+      END ELSE BEGIN
+      // new version is fine either way
+
+        PATCH_IF (new_op=318 || new_op=328) BEGIN
+          PATCH_IF engine_is_sod BEGIN
+             SET new_op=328
+          END ELSE
+          PATCH_IF engine_is_tobex BEGIN
+             SET new_op=318
+          END ELSE BEGIN
+             SET abort=1
+          END
+         END
+      
+      END
+
+      PATCH_IF new_op=328 && abort=0 BEGIN // SoD
+        // skipping EXTSTATE.IDS, since it's short and is already almost full
+      //  ids = (p1 = 0) ? 0 : 1 // 0 = extstate.ids, 1 = splstate.ids, 2 = stats.ids
+        ids = 1 // 0 = extstate.ids, 1 = splstate.ids, 2 = stats.ids
+        p1 = 0
+      END
+
+      // resolve stat's index, if it was defined as a string
+      PATCH_IF NOT (IS_AN_INT ~%p2%~) BEGIN
+      
+        PATCH_IF abort=0 BEGIN
+      // add new stat anyway - even if it turns out illegit, it's still needed to avoid script compilation errors
+      //                       i.e. the user will be able to install a mod regardless, it just won't function to its full capacity
+      //
+      // huh? was i drunk? - Yaro, 9/18/2016
+          INNER_ACTION BEGIN
+            LAF ds_resolve_stat INT_VAR ids STR_VAR id= EVAL ~%p2%~ RET stat_ind=stat_ind END
+          END
+          PATCH_IF stat_ind>200 && new_op != 318 && ids=2 BEGIN
+            PATCH_PRINT ~Detectable Spells: Warning: unable to add %p2% to STATS.IDS! New stats may not be added on the fly if they don't use ToBEx's 318th opcode!~
+            abort=1
+          //  INNER_ACTION BEGIN
+          //    LAF ds_resolve_stat INT_VAR index=stat_ind delete=1 END
+          //  END
+          END
+          PATCH_IF (stat_ind>31 && ids=0) || (stat_ind>255 && ids=1) BEGIN // extstate.ids has 32 max, splstate.ids has 255 max
+            PATCH_PRINT ~Detectable Spells: Warning: maximum number of IDS entries is reached!~
+            abort=1
+          //  INNER_ACTION BEGIN
+          //    LAF ds_resolve_stat INT_VAR ids index=stat_ind delete=1 END
+          //  END
+          END
+          PATCH_IF stat_ind<201 && new_op=318 BEGIN
+            PATCH_PRINT ~Detectable Spells: Warning: %p2% already exists in %stat_ind%th slot! ToBEx's 318th opcode may not use values below 401!~
+            abort=1
+          END
+          PATCH_IF new_op=282 BEGIN // scripting states start from 156
+            stat_ind -= 156
+            PATCH_IF stat_ind<0 BEGIN
+              PATCH_PRINT ~Detectable Spells: Warning: unable to resolve %p2%! Scripting states may not exist in slots below 156th!~
+              abort=1
+            END
+          END
+          p2=stat_ind
+        END
+          
+      END
+      
+    END ELSE BEGIN
+      abort=1
+    END
+
+    INNER_ACTION BEGIN ACTION_IF abort=0 BEGIN
+      COPY_EXISTING ~%file%~ ~override~ PATCH_IF SOURCE_SIZE>0x71 BEGIN LPF ~FJ_SPL_ITM_REINDEX~ END
+        READ_LONG  0x64 ab_off
+        READ_SHORT 0x68 ab_num
+        READ_LONG  0x6a ef_off
+        READ_SHORT 0x6e ef_ind
+        READ_SHORT 0x70 ef_num
+        PATCH_IF ~%SOURCE_EXT%~ STRING_EQUAL_CASE ~spl~ BEGIN size=0x28 END // if spell
+                                                   ELSE BEGIN size=0x38 END // if not spell, then it's item
+        delta=0
+
+        // run through global effects
+        PATCH_IF ~%type%~ STRING_EQUAL_CASE ~g~ BEGIN
+          LPM ds_eval
+          WRITE_SHORT 0x70 ef_num+delta
+        END
+
+        // run through ability headers
+        FOR (j=0;j<ab_num;j+=1) BEGIN
+          READ_SHORT ab_off+j*size+0x20 ef_ind
+          WRITE_SHORT ab_off+j*size+0x20 ef_ind+delta
+          PATCH_IF (~%type%~ STRING_EQUAL_CASE ~a~) || (~%type%~ STRING_EQUAL_CASE ~%j%~) BEGIN
+            READ_SHORT ab_off+j*size+0x1e ef_num
+            LPM ds_eval
+            WRITE_SHORT ab_off+j*size+0x1e ef_num+local_delta
+          END
+        END
+
+      END BUT_ONLY // PATCH_IF SOURCE_SIZE
+    END END // INNER_ACTION, FILE_EXISTS_IN_GAME
+  END
+
+//////////////////////
+END // end of ACTION_IF install_ds = 1
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO ds_eval BEGIN
+
+  CLEAR_ARRAY clonable
+  CLEAR_ARRAY detectable
+  CLEAR_ARRAY auxil
+
+  // calculate the longest duration if the effect is ticking
+  dur=0
+  PATCH_IF IS_AN_INT ~%tick%~ BEGIN
+    FOR (i=0;i<ef_num;i+=1) BEGIN
+      offset=ef_off+(ef_ind+i+delta)*0x30
+      READ_SHORT offset opcode
+      PATCH_IF opcode=clone_op BEGIN // if clonable opcode exists
+        READ_LONG offset+0xe d
+        dur = (d>dur) ? d : dur // the longest duration
+      END
+    END
+  END
+
+  // look for existing effects
+  FOR (i=0;i<ef_num;i+=1) BEGIN
+    offset=ef_off+(ef_ind+i+delta)*0x30
+    READ_SHORT offset opcode
+    PATCH_IF opcode=clone_op BEGIN // if clonable opcode exists
+      READ_LONG offset+0xe d
+      PATCH_IF (NOT IS_AN_INT ~%tick%~) || (IS_AN_INT ~%tick%~ && d=dur) BEGIN
+        READ_ASCII offset cloned_effect (0x30)
+        INNER_PATCH_SAVE $clonable("%i%") ~%cloned_effect%~ BEGIN
+          WRITE_SHORT 0 new_op
+          WRITE_LONG  4 p1
+          WRITE_LONG  8 p2
+          PATCH_IF IS_AN_INT ~%tick%~ BEGIN
+            WRITE_LONG 0xc 0
+            WRITE_LONG 0xe dur+tick
+          END
+          PATCH_IF (ids=0 || ids=1) BEGIN // 0 = extstate.ids, 1 = splstate.ids
+            WRITE_LONG 0x2c ids
+          END
+        END
+      END
+    END
+    PATCH_IF opcode=new_op BEGIN // if detectable stat exists
+      READ_LONG offset+4 par1
+      READ_LONG offset+8 par2
+      READ_LONG offset+0x2c ids_type
+      PATCH_IF (ids=0 || ids=1) BEGIN
+        PATCH_IF (par2=p2) && (ids_type=ids) BEGIN
+          READ_ASCII offset $detectable("%i%") (0x30)
+        END
+      END ELSE BEGIN
+        PATCH_IF (par1=p1) && (par2=p2) BEGIN
+          READ_ASCII offset $detectable("%i%") (0x30)
+        END
+      END
+    END
+  END
+
+  // check if there're mismatching 233/282s
+  PHP_EACH detectable AS i1 => r1 BEGIN
+    nomatch=1
+    PHP_EACH clonable AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        nomatch=0
+      END
+    END
+    PATCH_IF nomatch BEGIN
+      SPRINT $auxil("%i1%") ~0~
+    END
+  END
+
+  // check if the matching 233/282 already exists
+  PHP_EACH clonable AS i1 => r1 BEGIN
+    exists=0
+    PHP_EACH detectable AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        exists=1
+      END
+    END
+    PHP_EACH auxil AS i2 => r2 BEGIN
+      PATCH_IF ~%r2%~ STRING_EQUAL_CASE ~%r1%~ BEGIN
+        exists=1
+      END
+    END
+    PATCH_IF exists=0 BEGIN
+      SPRINT $auxil("%i1%") ~%r1%~
+    END
+  END
+  
+  SPRINT sort_array auxil
+  LPM sort_array
+
+  // insert or delete data
+  local_delta=0
+  PHP_EACH auxil AS ind => res BEGIN
+    // 0 = delete, anything else = insert
+    PATCH_IF ~%res%~ STRING_EQUAL_CASE ~0~ BEGIN
+      DELETE_BYTES ef_off+(ef_ind+ind+delta)*0x30 0x30
+      delta -= 1
+      local_delta -= 1
+    END ELSE BEGIN
+      INSERT_BYTES ef_off+(ef_ind+ind+delta+1)*0x30 0x30
+      WRITE_ASCIIE ef_off+(ef_ind+ind+delta+1)*0x30 ~%res%~ (0x30)
+      delta += 1
+      local_delta += 1
+    END
+  END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Warding Whip can be broken by older versions of DS. Check it up.
+//
+// If broken, but in a recognizable shape, we try to fix it first, before resorting to replacement with a backup file.
+//
+// While it likely is possible to write sufficiently sophisticated code to reanimate the file even if it has
+// suffered the most dire kind of abuse, I feel that's rather excessive to do so.
+
+DEFINE_ACTION_MACRO ds_fix_khelben BEGIN
+
+COPY_EXISTING ~spwi705.spl~ override
+  READ_LONG  0x64 ab_off
+  READ_SHORT 0x68 ab_num
+  READ_LONG  0x6a ef_off
+  fubar=0
+
+  // check if the file is ok
+  repair=0
+  total=0
+  FOR (i=0;i<ab_num;i+=1) BEGIN
+    READ_SHORT ab_off+i*0x28+0x1e ef_num
+    total+=ef_num
+  END
+  PATCH_IF SOURCE_SIZE != ef_off+total*0x30 BEGIN
+    repair=1
+    PATCH_PRINT ~Detectable Spells: SPWI705.SPL is broken, attempting to repair the file~
+  END
+
+  PATCH_IF repair BEGIN
+
+    // calculate the number of effects
+    total=0
+    size = SOURCE_SIZE - ef_off
+    WHILE (size - 0x30) >= 0 BEGIN
+      total +=1
+      size -=0x30
+    END
+    PATCH_IF size > 0 && size < 0x30 BEGIN
+      fubar=1
+      PATCH_PRINT ~Detectable Spells: SPWI705.SPL is broken in unknown manner, restoring from a backup~
+    END
+
+    // check if the first effect in each header is the expected 233/1/132
+    PATCH_IF fubar=0 BEGIN
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        READ_SHORT ef_off+ef_ind*0x30 opcode
+        READ_LONG ef_off+ef_ind*0x30+4 par1
+        READ_LONG ef_off+ef_ind*0x30+8 par2
+        PATCH_IF (opcode!=233 || par1!=1 || par2!=132) // 
+              && (opcode!=233 || par1!=0 || par2!=116) // 
+              && (opcode!=233 || par1!=0 || par2!=129) // 
+              && (opcode!=282 || par1!=0 || par2!=5)   // 
+              && (opcode!=282 || par1!=0 || par2!=7)   // 
+              && (opcode!=282 || par1!=0 || par2!=21)  // 
+        BEGIN
+          fubar=1
+          PATCH_PRINT ~Detectable Spells: SPWI705.SPL is broken in unknown manner, restoring from a backup~
+        END
+      END
+    END
+
+    // write the real number of effects per header
+    PATCH_IF fubar=0 BEGIN
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        PATCH_IF i+1 < ab_num BEGIN // if not the last header
+          READ_SHORT ab_off+i*0x28+0x48 next_ind
+          number = next_ind - ef_ind
+          total -= number
+        END ELSE BEGIN // if the last
+          number = total
+        END
+        WRITE_SHORT ab_off+i*0x28+0x1e number
+      END
+    END
+
+    // now kill off the shit
+    PATCH_IF fubar=0 BEGIN
+      delta=0
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT ab_off+i*0x28+0x1e ef_num
+        READ_SHORT ab_off+i*0x28+0x20 ef_ind
+        ef_ind +=delta
+        WRITE_SHORT ab_off+i*0x28+0x20 ef_ind
+        local_delta=0
+        FOR (k=0;k<ef_num;k+=1) BEGIN
+          READ_SHORT ef_off+(k+ef_ind+local_delta)*0x30 opcode
+          READ_LONG ef_off+(k+ef_ind+local_delta)*0x30+4 par1
+          READ_LONG ef_off+(k+ef_ind+local_delta)*0x30+8 par2
+          PATCH_IF (opcode=233 && par1=1 && par2=132) // 
+                || (opcode=233 && par1=0 && par2=116) // 
+                || (opcode=233 && par1=0 && par2=129) // 
+                || (opcode=282 && par1=0 && par2=5)   // 
+                || (opcode=282 && par1=0 && par2=7)   // 
+                || (opcode=282 && par1=0 && par2=21)  // 
+          BEGIN
+            DELETE_BYTES ef_off+(k+ef_ind+local_delta)*0x30 0x30
+            delta -=1
+            local_delta -=1
+          END
+        END
+        WRITE_SHORT ab_off+i*0x28+0x1e ef_num+local_delta
+      END
+      PATCH_PRINT ~Detectable Spells: SPWI705.SPL has been successfully repaired~
+    END
+
+  END // PATCH_IF repair=1
+BUT_ONLY
+
+ACTION_IF fubar BEGIN
+  COPY_EXISTING ~spwi705.spl~ override
+    DELETE_BYTES 0x72 (SOURCE_SIZE - 0x72)
+    WRITE_LONG 0x64 0x72
+    WRITE_LONG 0x6a 0x72
+    WRITE_SHORT 0x68 0
+    WRITE_SHORT 0x6e 0
+    WRITE_SHORT 0x70 0
+    
+  COPY_EXISTING ~spwi705.spl~ override
+    LPF ~ADD_SPELL_HEADER~
+      INT_VAR type=2 location=2 target=1 range=20 required_level=1 speed=7 projectile=211
+      STR_VAR icon=~SPWI705B~
+    END
+
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=230 parameter1=8 parameter2=1 timing=1 duration=0 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=215 parameter1=0 parameter2=1 timing=0 duration=3 target=2 power=7 resist_dispel=2
+                           STR_VAR resource=~spattck1~ END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=139 parameter1=40690 parameter2=0 timing=1 duration=0 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=240 parameter1=0 parameter2=28 timing=1 duration=0 target=2 power=7 resist_dispel=2 END
+    
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=230 parameter1=8 parameter2=1 timing=4 duration=7 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=177 parameter1=0 parameter2=2 timing=3 duration=7 target=2 power=7 resist_dispel=2
+                           STR_VAR resource=~spattck1~ END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=139 parameter1=40690 parameter2=0 timing=4 duration=7 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=240 parameter1=0 parameter2=28 timing=4 duration=7 target=2 power=7 resist_dispel=2 END
+    
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=230 parameter1=8 parameter2=1 timing=4 duration=13 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=177 parameter1=0 parameter2=2 timing=3 duration=13 target=2 power=7 resist_dispel=2
+                           STR_VAR resource=~spattck1~ END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=139 parameter1=40690 parameter2=0 timing=4 duration=13 target=2 power=7 resist_dispel=2 END
+    LPF ~ADD_SPELL_EFFECT~ INT_VAR opcode=240 parameter1=0 parameter2=28 timing=4 duration=13 target=2 power=7 resist_dispel=2 END
+
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Rebuild STATS.IDS
+
+DEFINE_ACTION_MACRO ds_sort_stats_ids BEGIN
+
+COPY - ~...inlined/ds/stats_extra.2da~ override
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (i=0;i<stats;i+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats i 0 num
+    READ_2DA_ENTRY_FORMER stats i 1 str
+    SPRINT $arr3("%num%") ~%str%~
+  END
+
+COPY_EXISTING - stats.ids override
+  max=1
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (i=0;i<stats;i+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats i 0 num
+    READ_2DA_ENTRY_FORMER stats i 1 str
+    max = (num>max) ? num : max
+    SET $arr1("%num%") = 1
+    SPRINT $arr2("%num%") ~%str%~
+  END
+  PHP_EACH arr1 AS i1 => r1 BEGIN
+    min=max
+    PHP_EACH arr2 AS i2 => r2 BEGIN
+      PATCH_IF (i2<min) && (~%r2%~ STR_CMP ~~) BEGIN
+        min = (i2<min) ? i2 : min
+      END
+    END
+    SPRINT $stats("%min%""core") $arr2("%min%")
+    PATCH_IF VARIABLE_IS_SET $arr3("%min%") BEGIN
+      SPRINT $stats("%min%""append") $arr3("%min%")
+    END
+    SPRINT $arr2("%min%") ~~
+  END
+
+<<<<<<<<...ds/inline/blank
+>>>>>>>>
+COPY ~...ds/inline/blank~ ~override/stats.ids~
+ACTION_PHP_EACH stats AS ind => res BEGIN
+  APPEND stats.ids ~%ind% %res%~
+END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/// duplicated in stratagems_shared
+
+DEFINE_ACTION_FUNCTION ds_resolve_stat INT_VAR ids=2 index=0 delete=0 STR_VAR id="" RET stat_ind BEGIN
+
+OUTER_SPRINT ids_file stats OUTER_SET min_new=401
+
+ACTION_IF ids=0 BEGIN OUTER_SPRINT ids_file extstate OUTER_SET min_new=0 END
+ACTION_IF ids=1 BEGIN OUTER_SPRINT ids_file splstate OUTER_SET min_new=0 END
+
+COPY_EXISTING ~%ids_file%.ids~ override
+  stat_ind=0
+  found=0
+
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (row=0;row<stats;row+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats row 0 ind
+    READ_2DA_ENTRY_FORMER stats row 1 str
+    SET $stat("%row%") = ind
+    PATCH_IF index BEGIN
+      PATCH_IF ind=index BEGIN
+        REMOVE_2DA_ROW row 2
+        found=1
+        PATCH_IF delete=0 BEGIN
+          INSERT_2DA_ROW row 2 ~%index% %id%~
+        END
+        row=stats
+      END
+    END ELSE BEGIN
+      PATCH_IF ~%str%~ STRING_EQUAL_CASE ~%id%~ BEGIN
+        stat_ind=ind
+        found=1
+     /* row=stats */ // don't stop looking, the same ID may be assigned to a greater index, which takes priority when compiling
+      END
+    END
+  END
+
+  PATCH_IF found=0 BEGIN
+    stat_ind=min_new
+    PHP_EACH stat AS row => ind BEGIN
+      PATCH_IF found=0 && (row+1 < stats) BEGIN // not at the end of file
+        next_row = row+1
+        next_ind = EVAL $stat("%next_row%")
+        PATCH_IF index BEGIN
+          PATCH_IF index<next_ind && index>ind BEGIN
+            INSERT_2DA_ROW next_row 2 ~%index% %id%~
+            found=1
+          END
+        END ELSE BEGIN
+          PATCH_IF stat_ind<next_ind BEGIN
+            PATCH_IF ind<stat_ind BEGIN
+              INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+              found=1
+            END ELSE BEGIN
+              stat_ind+=1
+              PATCH_IF stat_ind<next_ind BEGIN
+                INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+                found=1
+              END
+            END
+          END
+        END
+      END ELSE BEGIN // at the end of file
+        PATCH_IF found=0 BEGIN
+          PATCH_IF index BEGIN
+            INSERT_2DA_ROW stats 2 ~%index% %id%~
+          END ELSE BEGIN
+            PATCH_IF stat_ind>ind BEGIN
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END ELSE BEGIN
+              stat_ind+=1
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END
+          END
+        END
+      END
+    END // PHP_EACH
+  END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Check if there're scripts using older version of DS and fix them if needed
+
+DEFINE_ACTION_MACRO ds_fix_old_scripts BEGIN
+
+<<<<<<<<...inlined/ds/ag#old_ds_swap.2da
+SCRIPTINGSTATE6 	                  WIZARD_SPELL_DEFLECTION
+WIZARD_SPELL_IMMUNITY 	            WIZARD_SPELL_TURNING
+MELEE_THACO_BONUS		                PROTECTION_FROM_EVIL
+MELEE_DAMAGE_BONUS		              TRUE_SIGHT
+MISSILE_DAMAGE_BONUS		            CLERIC_CHAOTIC_COMMANDS
+FIST_THACO_BONUS                		CLERIC_INSECT_PLAGUE
+FIST_DAMAGE_BONUS		                CLERIC_BLADE_BARRIER
+CLASS_STRING_OVERRIDE_MIXED		      CLERIC_PHYSICAL_MIRROR
+CLASS_STRING_OVERRIDE_LOWER		      CLERIC_SHIELD_OF_THE_ARCHONS
+PREVENT_SPELL_PROTECTION_EFFECTS		CLERIC_REGENERATION
+IMMUNITY_TO_BACKSTAB	            	CLERIC_INSECT_PLAGUE
+PREVENT_AI_SLOWDOWN	                WIZARD_PROTECTION_FROM_MAGIC_ENERGY
+EXISTANCE_DELAY_OVERRIDE	          WIZARD_MISLEAD
+ANIMATION_ONLY_HASTE	              WIZARD_PROTECTION_FROM_MAGIC_WEAPONS
+NO_PERMANENT_DEATH		              WIZARD_SPELL_IMMUNITY
+IMMUNE_TO_TURN_UNDEAD		            WIZARD_PROTECTION_FROM_THE_ELEMENTS
+>>>>>>>>
+
+COPY - ~...inlined/ds/ag#old_ds_swap.2da~ override
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (row=0;row<stats;row+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats row 0 old
+    READ_2DA_ENTRY_FORMER stats row 1 new
+    SPRINT $swap("%old%") ~%new%~
+  END
+
+// Ascension
+ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixasc~) && (FILE_EXISTS_IN_GAME ~finbodhi.bcs~) THEN BEGIN
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixasc~
+ACTION_FOR_EACH file IN
+finabaz
+finaluf
+finbabau
+finbalor
+finbalth
+finbodh
+finbodhi
+fincamb2
+finglab
+fingrom
+finilla
+finiren
+finmaril
+finmel
+finnabas
+finsarev
+finsend
+finsol04
+finsucc
+finyaga
+BEGIN
+  LAM ds_fix_scripts
+END
+END
+
+// Kelsey
+ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixkelsey~) && (FILE_EXISTS_IN_GAME ~j#ceara.bcs~) THEN BEGIN
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixkelsey~
+ACTION_FOR_EACH file IN
+j#ceara
+j#clinn
+j#cossun
+j#mert15
+j#pura
+j#vlamin
+BEGIN
+  LAM ds_fix_scripts
+END
+END
+
+// Kiara-Zaiya
+ACTION_IF !(FILE_EXISTS_IN_GAME ~ag#fixkiara~) && (FILE_EXISTS_IN_GAME ~amafight.bcs~) THEN BEGIN
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/ag#fixkiara~
+ACTION_FOR_EACH file IN
+kzjao
+kzwuje
+vampkia
+kz#dmlrd
+kz#rakma
+kiara
+kiarfigt
+sujon
+amafight
+amafigt1
+c6drud
+keriafit
+morticia
+BEGIN
+  LAM ds_fix_scripts
+END
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// The actual swap
+
+DEFINE_ACTION_MACRO ds_fix_scripts BEGIN
+
+ACTION_IF FILE_EXISTS_IN_GAME ~%file%.bcs~ BEGIN
+  COPY_EXISTING ~%file%.bcs~ override
+    DECOMPILE_BCS_TO_BAF
+    PHP_EACH swap AS ind => res BEGIN
+      REPLACE_TEXTUALLY ~,%ind%)~ ~,%res%)~
+    END
+    COMPILE_BAF_TO_BCS
+  BUT_ONLY
+END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Update older Ascension's version of DS
+
+DEFINE_ACTION_MACRO ds_fix_old_ds BEGIN
+
+<<<<<<<<...inlined/ds/ag#old_ds_swap.2da
+SPPR950.SPL    282 11  1   -1      0     0       A
+SPPR509.SPL    282 13  1   -1      0     0       A
+SPCL321D.SPL   282 3   1   -1      0     0       A
+MELIS02.SPL    282 1   1   -1      0     0       A
+MELIS02.SPL    282 9   1   -1      0     0       A
+SPCL213.SPL    282 10  1   233     1     117     A
+SPCL232.SPL    282 11  1   233     1     118     A
+SPCL732.SPL    282 11  1   233     1     118     A
+SPIN121.SPL    282 10  1   233     1     117     A
+SPIN684.SPL    282 11  1   233     1     118     A
+SPIN686.SPL    282 29  4   233     4     128     A
+SPIN710.SPL    282 5   2   233     2     116     A
+SPIN920.SPL    282 6   1   233     1     129     A
+SPPR107.SPL    282 10  1   233     1     117     A
+SPPR408.SPL    282 10  1   233     1     117     A
+SPPR505.SPL    282 11  1   233     1     118     A
+SPPR508.SPL    282 12  1   233     1     119     A
+SPPR517.SPL    282 14  1   233     2     120     A
+SPPR603.SPL    282 15  1   233     2     121     A
+SPPR613.SPL    282 16  1   233     1     122     A
+SPPR698.SPL    282 15  1   233     1     121     A
+SPPR701.SPL    282 17  1   233     1     123     A
+SPPR711.SPL    282 18  1   233     1     124     A
+SPPR717.SPL    282 19  1   233     3     120     A
+SPWI113.SPL    282 10  1   233     1     117     A
+SPWI318.SPL    282 5   1   233     1     116     A
+SPWI522.SPL    282 6   1   233     1     129     A
+SPWI590.SPL    282 30  1   282     1     6       A
+SPWI591.SPL    282 30  2   282     2     6       A
+SPWI592.SPL    282 30  3   282     3     6       A
+SPWI593.SPL    282 30  4   282     4     6       A
+SPWI594.SPL    282 30  5   282     5     6       A
+SPWI595.SPL    282 30  6   282     6     6       A
+SPWI596.SPL    282 30  7   282     7     6       A
+SPWI597.SPL    282 30  8   282     8     6       A
+SPWI606.SPL    282 27  1   233     1     126     A
+SPWI607.SPL    282 28  1   233     1     127     A
+SPWI609.SPL    282 11  1   233     1     118     A
+SPWI611.SPL    282 29  4   233     4     128     A
+SPWI618.SPL    282 5   2   233     2     116     A
+SPWI701.SPL    282 6   2   233     2     129     A
+SPWI702.SPL    282 31  1   233     1     130     A
+SPWI708.SPL    282 29  1   233     1     128     A
+SPWI802.SPL    282 5   2   233     2     116     A
+SPWI808.SPL    282 29  2   233     2     128     A
+SPWI907.SPL    282 29  3   233     3     128     A
+>>>>>>>>
+
+COPY - ~...inlined/ds/ag#old_ds_swap.2da~ ~override~
+  READ_2DA_ENTRIES_NOW row 8
+  FOR (t=0;t<row;t+=1) BEGIN
+    READ_2DA_ENTRY_FORMER row t 0 file
+    READ_2DA_ENTRY_FORMER row t 1 old_op
+    READ_2DA_ENTRY_FORMER row t 2 old_p2
+    READ_2DA_ENTRY_FORMER row t 3 old_p1
+    READ_2DA_ENTRY_FORMER row t 4 new_op
+    READ_2DA_ENTRY_FORMER row t 5 new_p1
+    READ_2DA_ENTRY_FORMER row t 6 new_p2
+    READ_2DA_ENTRY_FORMER row t 7 type
+
+    INNER_ACTION BEGIN ACTION_IF FILE_EXISTS_IN_GAME EVAL ~%file%~ BEGIN 
+      COPY_EXISTING ~%file%~ ~override~ PATCH_IF SOURCE_SIZE>0x71 BEGIN LPF ~FJ_SPL_ITM_REINDEX~ END
+
+        READ_LONG  0x64 ab_off
+        READ_SHORT 0x68 ab_num
+        READ_LONG  0x6a ef_off
+        READ_SHORT 0x6e ef_ind
+        READ_SHORT 0x70 ef_num
+        PATCH_IF ~%SOURCE_EXT%~ STRING_EQUAL_CASE ~spl~ BEGIN size=0x28 END // if spell
+                                                   ELSE BEGIN size=0x38 END // if not spell, then it's item
+        delta=0
+
+        // run through global effects
+        PATCH_IF ~%type%~ STRING_EQUAL_CASE ~g~ BEGIN
+          FOR (i=0;i<ef_num;i+=1) BEGIN
+            offset=ef_off+(ef_ind+i+delta)*0x30
+            READ_SHORT offset opcode
+            READ_LONG offset+4 par1
+            READ_LONG offset+8 par2
+            PATCH_IF opcode=old_op && par1=old_p1 && par2=old_p2 BEGIN
+              PATCH_IF new_op<0 BEGIN
+                DELETE_BYTES ef_off+(ef_ind+i+delta)*0x30 0x30
+                delta -= 1
+              END ELSE BEGIN
+                WRITE_SHORT offset new_op
+                WRITE_LONG offset+4 new_p1
+                WRITE_LONG offset+8 new_p2
+              END
+            END
+          END
+          WRITE_SHORT 0x70 ef_num+delta
+        END
+
+        // run through ability headers
+        FOR (j=0;j<ab_num;j+=1) BEGIN
+          READ_SHORT ab_off+j*size+0x20 ef_ind
+          WRITE_SHORT ab_off+j*size+0x20 ef_ind+delta
+          PATCH_IF (~%type%~ STRING_EQUAL_CASE ~a~) || (~%type%~ STRING_EQUAL_CASE ~%j%~) BEGIN
+            READ_SHORT ab_off+j*size+0x1e ef_num
+            local_delta=0
+            FOR (i=0;i<ef_num;i+=1) BEGIN
+              offset=ef_off+(ef_ind+i+delta)*0x30
+              READ_SHORT offset opcode
+              READ_LONG offset+4 par1
+              READ_LONG offset+8 par2
+              PATCH_IF opcode=old_op && par1=old_p1 && par2=old_p2 BEGIN
+                PATCH_IF new_op<0 BEGIN
+                  DELETE_BYTES ef_off+(ef_ind+i+delta)*0x30 0x30
+                  delta -= 1
+                  local_delta -= 1
+                END ELSE BEGIN
+                  WRITE_SHORT offset new_op
+                  WRITE_LONG offset+4 new_p1
+                  WRITE_LONG offset+8 new_p2
+                END
+              END
+            END
+            WRITE_SHORT ab_off+j*size+0x1e ef_num+local_delta
+          END
+        END
+
+      END BUT_ONLY // PATCH_IF SOURCE_SIZE
+    END END // INNER_ACTION, FILE_EXISTS_IN_GAME
+  END
+
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Since SCS occupies one of DS slots for weapons, I see no reason not to include it
+
+DEFINE_ACTION_FUNCTION ds_detectable_weapon_enchantment BEGIN
+
+LAF ds_resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END
+
+COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override PATCH_IF SOURCE_SIZE>0x71 BEGIN LPF ~FJ_SPL_ITM_REINDEX~ END
+  READ_LONG  0x64 ab_off
+  READ_SHORT 0x68 ab_num
+
+  weapon=0
+  FOR (i=0;i<ab_num;i+=1) BEGIN
+    READ_BYTE ab_off+i*0x38 typ
+    READ_BYTE ab_off+i*0x38+2 loc
+    PATCH_IF (typ=1 || typ=2) && loc=1 BEGIN
+      weapon=1
+    END
+  END
+
+  PATCH_IF weapon BEGIN
+    READ_LONG  0x60 ench
+    READ_LONG  0x6a ef_off
+    READ_SHORT 0x70 global
+    exists=0
+    FOR (i=0;i<global;i+=1) BEGIN
+      READ_SHORT ef_off+i*0x30 opc
+      READ_LONG ef_off+i*0x30+4 p1
+      READ_LONG ef_off+i*0x30+8 p2
+      PATCH_IF opc=233 && p2=109 BEGIN
+        PATCH_IF p1 !=ench BEGIN
+          WRITE_LONG ef_off+i*0x30+4 ench
+        END
+        i=global
+        exists=1
+      END
+    END
+
+    PATCH_IF exists=0 BEGIN
+      INSERT_BYTES ef_off 0x30
+      WRITE_SHORT ef_off 233
+      WRITE_BYTE ef_off+2 1
+      WRITE_LONG ef_off+4 ench
+      WRITE_LONG ef_off+8 109
+      WRITE_BYTE ef_off+0xc 2
+      WRITE_LONG ef_off+0x12 100
+
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        WRITE_SHORT ab_off+i*0x38+0x20 THIS+1
+      END
+
+      WRITE_SHORT 0x70 global+1
+    END
+
+  END // PATCH_IF weapon=1
+END BUT_ONLY
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// If we've altered some spells significantly (Spell Revisions v4 in particular),
+// then we must let other mods know how to react to that
+
+DEFINE_ACTION_FUNCTION ds_altered_spell BEGIN
+
+ACTION_IF NOT FILE_EXISTS_IN_GAME ~ag#dsal2.2da~ BEGIN
+<<<<<<<<...ds/inline/blank
+FILE          OLD  NEW
+>>>>>>>>
+COPY ~...ds/inline/blank~ ~override/ag#dsal2.2da~
+END
+
+COPY_EXISTING ~ag#dsal2.2da~ override
+  found=0
+  READ_2DA_ENTRIES_NOW ds_table 3
+  FOR (r=1;r<ds_table;r+=1) BEGIN  // skip the first row with column descriptions
+    READ_2DA_ENTRY_FORMER ds_table r 0 f
+    READ_2DA_ENTRY_FORMER ds_table r 1 old
+    READ_2DA_ENTRY_FORMER ds_table r 2 new
+    PATCH_IF ~%f%~ STRING_EQUAL_CASE ~%file%~ && old=old_clone BEGIN
+      PATCH_IF new != new_clone BEGIN // some mod has already altered the spell, but in a different way
+        REMOVE_2DA_ROW r 3
+        INSERT_2DA_ROW r 3 ~%file%  %old_clone%  %new_clone%~
+      END
+      found=1
+      r=ds_table
+    END
+  END
+
+  PATCH_IF found=0 BEGIN
+    INSERT_2DA_ROW ds_table 3 ~%file%  %old_clone%  %new_clone%~
+  END
+BUT_ONLY
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ~ADD_SPELL_HEADER~
+  INT_VAR
+    type=1
+    location=4
+    target=1
+    target_count=0
+    range=0
+    required_level=1
+    speed=0
+    projectile=1
+
+    copy_header=0
+    insert_point=~-1~
+  STR_VAR
+    icon=~~
+  RET
+    insert_point
+BEGIN
+  LPF ~FJ_SPL_ITM_REINDEX~ END
+  hs=0x28
+
+  READ_LONG 0x64 ho
+  READ_SHORT 0x68 hc
+  READ_LONG 0x6a eo
+  insert_point = (insert_point>hc || insert_point<0) ? hc : insert_point
+  copy_header = (copy_header<0) ? 0 : copy_header
+
+  PATCH_IF copy_header>hc BEGIN
+    PATCH_WARN ~Unable to copy %copy_header%th header, %SOURCE_FILE% contains only %hc% headers!~
+  END ELSE BEGIN
+    INSERT_BYTES ho+insert_point*hs hs
+    hc+=1
+    eo+=hs
+    PATCH_IF copy_header BEGIN
+      READ_SHORT ho+(copy_header - 1)*hs+0x1e ec
+      READ_SHORT ho+(copy_header - 1)*hs+0x20 ei
+      READ_ASCII eo+ei*0x30 effs (ec*0x30)
+      READ_ASCII ho+(copy_header - 1)*hs copy (hs)
+      WRITE_ASCIIE ho+insert_point*hs ~%copy%~ (hs)
+    END
+    WRITE_SHORT 0x68 hc
+    WRITE_LONG 0x6a eo
+
+    READ_SHORT 0x70 ei // technically, it is a counter
+    FOR (i=ho;i<ho+hc*hs;i+=hs) BEGIN
+      READ_SHORT i+0x1e ec
+      WRITE_SHORT i+0x20 ei
+      ei+=ec
+    END
+
+    PATCH_IF copy_header BEGIN
+      READ_SHORT ho+insert_point*hs+0x1e ec
+      READ_SHORT ho+insert_point*hs+0x20 ei
+      INSERT_BYTES eo+ei*0x30 ec*0x30
+      WRITE_ASCIIE eo+ei*0x30 ~%effs%~ (ec*0x30)
+    END ELSE BEGIN
+      off=ho+insert_point*hs
+      WRITE_BYTE off type
+      WRITE_BYTE off+0x2 location
+      WRITE_ASCIIE off+0x4 ~%icon%~ (8)
+      WRITE_BYTE off+0xc target
+      WRITE_BYTE off+0xd target_count
+      WRITE_SHORT off+0xe range
+      WRITE_SHORT off+0x10 required_level
+      WRITE_LONG off+0x12 speed
+      WRITE_SHORT off+0x26 projectile
+    END
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO sort_array BEGIN
+  SPRINT ag#sa_max ~~
+  CLEAR_ARRAY ag#sa_aux
+  CLEAR_ARRAY ag#sa_aux2
+  PHP_EACH ~%sort_array%~ AS ag#sa_i => ag#sa_r BEGIN
+    SPRINT $ag#sa_aux("%ag#sa_i%") ~%ag#sa_r%~
+    SET $ag#sa_aux2("%ag#sa_i%") = 1
+    PATCH_IF IS_AN_INT ~%ag#sa_i%~ && IS_AN_INT ~%ag#sa_max%~ BEGIN
+      PATCH_IF ~%ag#sa_i%~ > ~%ag#sa_max%~ BEGIN
+        SPRINT ag#sa_max ~%ag#sa_i%~
+      END
+    END ELSE BEGIN
+      PATCH_IF (~%ag#sa_i%~ STRING_COMPARE_CASE ~%ag#sa_max%~) > 0 BEGIN
+        SPRINT ag#sa_max ~%ag#sa_i%~
+      END
+    END
+  END
+  CLEAR_ARRAY EVAL ~%sort_array%~
+  PHP_EACH ag#sa_aux AS ag#sa_i => ag#sa_r BEGIN
+    SPRINT ag#sa_min ~%ag#sa_max%~
+    PHP_EACH ag#sa_aux2 AS ag#sa_i2 => ag#sa_r2 BEGIN
+      PATCH_IF IS_AN_INT ~%ag#sa_min%~ && IS_AN_INT ~%ag#sa_i2%~ BEGIN
+        PATCH_IF (~%ag#sa_min%~ > ~%ag#sa_i2%~) && (ag#sa_r2) BEGIN
+          SPRINT ag#sa_min ~%ag#sa_i2%~
+        END
+      END ELSE BEGIN
+        PATCH_IF ((~%ag#sa_min%~ STRING_COMPARE_CASE ~%ag#sa_i2%~) > 0) && (ag#sa_r2) BEGIN
+          SPRINT ag#sa_min ~%ag#sa_i2%~
+        END
+      END
+    END
+    SPRINT $ EVAL "%sort_array%"("%ag#sa_min%") $ag#sa_aux("%ag#sa_min%")
+    SET $ag#sa_aux2("%ag#sa_min%") = 0
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+// Tightly based on Nythrun's ~fj_spl_itm_reindex~ patch 
+
+DEFINE_PATCH_FUNCTION ~FJ_SPL_ITM_REINDEX~ BEGIN
+
+PATCH_IF !(~%SOURCE_FILE%~ STRING_MATCHES_REGEXP ~^.+\.spl~) BEGIN
+  hs = 0x28
+  WRITE_LONG 0xc ~-1~ //Identified name
+  WRITE_LONG 0x54 ~-1~ //Identified description
+  PATCH_FOR_EACH tz IN 0x44 0x48 0x58 0x5c BEGIN
+    WRITE_LONG tz 0
+  END
+END ELSE PATCH_IF !(~%SOURCE_FILE%~ STRING_MATCHES_REGEXP ~^.+\.itm~) BEGIN
+  hs = 0x38
+END
+READ_LONG 0x64 hf //Extended header offset
+READ_SHORT 0x68 hc //Extended header count
+READ_LONG 0x6a fb //Feature block table offset
+READ_SHORT 0x70 fc //Feature block count
+PATCH_IF ((hf > fb) AND (hc > 0)) BEGIN
+  READ_ASCII hf ~eh~ ELSE ~fail~ (hs * hc)
+  PATCH_IF (~%eh%~ STRING_EQUAL ~fail~) BEGIN
+    WHILE ((~%eh%~ STRING_EQUAL ~fail~) AND (hc > 0)) BEGIN
+      READ_ASCII hf ~eh~ ELSE ~fail~ (hs * hc)
+      hc -= 1
+    END
+  END
+  DELETE_BYTES hf (hs * hc)
+  hf = 0x72
+  WRITE_LONG 0x64 hf
+  WRITE_SHORT 0x68 hc
+  fb = (0x72 + (hs * hc))
+  WRITE_LONG 0x6a fb
+  PATCH_IF !(~%eh%~ STRING_EQUAL ~fail~) BEGIN
+    INSERT_BYTES hf (hs * hc)
+    WRITE_ASCIIE hf ~%eh%~
+  END
+END ELSE PATCH_IF ((hf != 0x72) AND (hc = 0)) BEGIN
+  hf = 0x72
+  WRITE_LONG 0x64 hf
+END
+FOR (i1 = 0; i1 < (hs * hc); i1 += hs) BEGIN
+  WRITE_SHORT (hf + i1 + 0x20) fc
+  READ_SHORT (hf + i1 + 0x1e) cx
+  fc += cx
+END
+PATCH_IF (SOURCE_SIZE > (0x72 + (hs * hc) + (0x30 * fc))) BEGIN
+  DELETE_BYTES (0x72 + (hs * hc) + (0x30 * fc)) (SOURCE_SIZE - (0x72 + (hs * hc) + (0x30 * fc)))
+END
+
+// added by Ardanis
+WRITE_SHORT 0x6e 0
+
+END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ds_individual_spell
+      STR_VAR file="" new_op="" p1="" p2="" clone_op="" tick="" type=""
+BEGIN
+
+<<<<<<<< .../inlined/ds/dw#individual.2da
+%file% %new_op% %p1% %p2% %clone_op% %tick% %type%
+>>>>>>>>
+
+    LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table=".../inlined/ds/dw#individual.2da" END
+
+END
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

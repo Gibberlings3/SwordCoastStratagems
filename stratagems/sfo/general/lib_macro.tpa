@@ -4,7 +4,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 OUTER_SET maximum_character_level = 40
-
+                   
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////               read in the offsets for a file type  (this has to be a macro as it's reading in content)
@@ -52,27 +52,52 @@ BEGIN
  LOCAL_SPRINT post ""
  LOCAL_SPRINT join ""
  ACTION_IF !VARIABLE_IS_SET ~macro_read_in_dialog_data~ BEGIN
-   OUTER_SPRINT ~macro_read_in_dialog_data~ ~~
+ OUTER_SPRINT ~macro_read_in_dialog_data~ ~~
+   ACTION_IF is_bg2 BEGIN
+      OUTER_SET rownum=7
+   END ELSE BEGIN
+      OUTER_SET rownum=4
+   END
    COPY_EXISTING ~pdialog.2da~ ~override~
-         READ_2DA_ENTRIES_NOW pdialog_contents (GAME_INCLUDES ~tob~) ? 8 : 4 // ToB has more columns
+         READ_2DA_ENTRIES_NOW pdialog_contents rownum
          FOR (i=0;i<pdialog_contents;i=i+1) BEGIN
             READ_2DA_ENTRY_FORMER pdialog_contents i 0 npc
-            READ_2DA_ENTRY_FORMER pdialog_contents i 1 post
-            READ_2DA_ENTRY_FORMER pdialog_contents i 2 join
             TO_UPPER npc
-            SPRINT  ~%npc%_POSTJOIN~ ~%post%~
-            SPRINT  ~%npc%_JOINED~ ~%join%~
+            PATCH_MATCH ~%npc%~ WITH
+                 ~POST_DIALOG_FILE~ BEGIN END
+                 DEFAULT
+                   SPRINT $npc_name_list(~%npc%~) ~~
+                   READ_2DA_ENTRY_FORMER pdialog_contents i 1 post
+                   READ_2DA_ENTRY_FORMER pdialog_contents i 2 join
+                   TO_UPPER post
+                   TO_UPPER join
+                   SPRINT ~%npc%_POSTJOIN~ ~%post%~
+                   SPRINT ~%npc%_JOINED~ ~%join%~
+                   PATCH_IF is_bg2 BEGIN
+                       READ_2DA_ENTRY_FORMER pdialog_contents i 4 25post
+                       READ_2DA_ENTRY_FORMER pdialog_contents i 5 25join
+                       TO_UPPER 25post
+                       TO_UPPER 25join
+                       SPRINT ~%npc%_25POSTJOIN~ ~%25post%~
+                       SPRINT ~%npc%_25JOINED~ ~%25join%~
+                   END
+            END
          END
    BUT_ONLY
    COPY_EXISTING ~interdia.2da~ ~override~
-         READ_2DA_ENTRIES_NOW interdia_contents (GAME_INCLUDES ~tob~) ? 3 : 2 // ToB has more columns
-         FOR (i=1;i<interdia_contents;i=i+1) BEGIN  // skip first line, it's just the "2DA" line
+         READ_2DA_ENTRIES_NOW interdia_contents 2
+         FOR (i=0;i<interdia_contents;i=i+1) BEGIN
             READ_2DA_ENTRY_FORMER interdia_contents i 0 npc
             READ_2DA_ENTRY_FORMER interdia_contents i 1 banter
             TO_UPPER npc
-            SPRINT  ~%npc%_BANTER~ ~%banter%~
+            PATCH_MATCH ~%npc%~ WITH
+                ~2DA~ ~FILE~ BEGIN END
+                DEFAULT
+                    SPRINT  ~%npc%_BANTER~ ~%banter%~
+            END
          END
    BUT_ONLY
+   
  END
 
 
@@ -90,8 +115,10 @@ DEFINE_ACTION_MACRO read_in_spells_in_use BEGIN
   COPY_EXISTING spell.ids "%workspace%"
   LAM read_in_assoc_array
   ACTION_PHP_EACH spellname_array AS code=>ids BEGIN
-   OUTER_SPRINT $ids_in_use("%code%") ""
-   OUTER_SPRINT $idscode("%ids%") "%code%"
+   ACTION_IF !~%code%~ STRING_EQUAL_CASE IDS BEGIN // avoid irrelevant first line on EE installs
+     OUTER_SPRINT $ids_in_use("%code%") ""
+     OUTER_SPRINT $idscode("%ids%") "%code%"
+   END
   END
   OUTER_SET spells_in_use_read_in=1
 END
@@ -108,21 +135,31 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
   LOCAL_SET spellcode=0
   LOCAL_SET level=0
   LOCAL_SPRINT spelltype ""
-  ACTION_IF !VARIABLE_IS_SET ~macro_read_in_spellcodes~ BEGIN
-   OUTER_SPRINT ~macro_read_in_spellcodes~ ~~
+  ACTION_IF !VARIABLE_IS_SET macro_spellcode_skip_scrolls BEGIN
+     OUTER_SET macro_spellcode_skip_scrolls=0
+  END
+  ACTION_IF !VARIABLE_IS_SET macro_spellcodes_read BEGIN
+     OUTER_SET macro_spellcodes_read=0
+  END
 
-    ACTION_IF ENGINE_IS ~bgee bg2ee eet~ BEGIN
-       OUTER_SET ids_first_row = 1
-    END ELSE BEGIN
-       OUTER_SET ids_first_row = 0
+  ACTION_IF !macro_spellcodes_read BEGIN
+   OUTER_SET macro_spellcodes_read=1
+
+    ACTION_IF debug_variable=3 BEGIN
+       PRINT "Beginning macro pass through spell.ids; press a key to continue"
+       ACTION_READLN blook
     END
+    
+    // correct the spelling mistake in IMPROVED_ALUCRITY
+
     COPY_EXISTING ~spell.ids~ ~override~
-         READ_2DA_ENTRIES_NOW ~spell_array~ 2
-         FOR (i=ids_first_row;i<~spell_array~;i=i+1) BEGIN
-           READ_2DA_ENTRY_FORMER ~spell_array~ i 0 ~spellcode~
+         READ_2DA_ENTRIES_NOW ~unique_macro_spell_array~ 2
+         FOR (i=0;i<~unique_macro_spell_array~;i=i+1) BEGIN
+          READ_2DA_ENTRY_FORMER ~unique_macro_spell_array~ i 0 ~spellcode~
+          PATCH_IF !~%spellcode%~ STRING_EQUAL_CASE ~IDS~ BEGIN
            INNER_PATCH_SAVE ~spellcode~ ~%spellcode%~ BEGIN
               READ_ASCII 0x1 ~level~ (1)
-              SET ~level~=~level~-1
+              SET level -= 1
               DELETE_BYTES 0 1
               INSERT_BYTES 0 4
               PATCH_IF (~spellcode~<2000) BEGIN
@@ -143,34 +180,32 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
                    SPRINT ~spelltype~ ~innate~
                    SET level=0
               END
-           END
+            END
 
-           PATCH_MATCH "%spellcode%" WITH // special cases handle inconsistent vBG2/BG2EE/BP conventions for remove/dispel magic
+            PATCH_MATCH "%spellcode%" WITH // special cases handle inconsistent vBG2/BG2EE/BP conventions for remove/dispel magic
                SPWI302 BEGIN
                   SPRINT spell_ID WIZARD_DISPEL_MAGIC
                END
                SPWI326 BEGIN
                   SPRINT spell_ID WIZARD_TRUE_DISPEL_MAGIC
                END
-           DEFAULT
-               READ_2DA_ENTRY_FORMER ~spell_array~ i 1 ~spell_ID~
+            DEFAULT
+               READ_2DA_ENTRY_FORMER ~unique_macro_spell_array~ i 1 ~spell_ID~
+            END
+            SPRINT  ~%spell_ID%~ ~%spellcode%~
+            SET  ~%spell_ID%_LEVEL~=~level~
+            SET ~RESREF_%spellcode%_LEVEL~=level
+            SPRINT  ~%spell_ID%_TYPE~ ~%spelltype%~
+            SPRINT ~RESREF_%spellcode%_TYPE~ ~%spelltype%~
            END
-           SPRINT  ~%spell_ID%~ ~%spellcode%~
-           SET  ~%spell_ID%_LEVEL~=~level~
-           SPRINT  ~%spell_ID%_TYPE~ ~%spelltype%~
         END
     BUT_ONLY
-    ACTION_FOR_EACH hlspell IN CLERIC_GLOBE_OF_BLADES CLERIC_SUMMON_DEVA CLERIC_SUMMON_FALLEN_DEVA
-                               CLERIC_IMPLOSION CLERIC_MASS_RAISE_DEAD CLERIC_AURA_OF_FLAMING_DEATH
-                               CLERIC_ELEMENTAL_TRANSFORMATION_FIRE CLERIC_ELEMENTAL_TRANSFORMATION_EARTH
-                               CLERIC_ENERGY_BLADES CLERIC_STORM_OF_VENGEANCE CLERIC_ELEMENTAL_SWARM
-                               CLERIC_GREATER_ELEMENTAL_SWARM WIZARD_ENERGY_BLADES WIZARD_IMPROVED_ALUCRITY
-                               WIZARD_DRAGONS_BREATH WIZARD_COMET WIZARD_SUMMON_PLANATAR_EVIL WIZARD_SUMMON_PLANATAR_GOOD
-    BEGIN
-        OUTER_SPRINT  ~%hlspell%_TYPE~ ~hla~
+    ACTION_IF debug_variable=3 BEGIN
+       PRINT "Adding bespoke spell variables; press a key to continue"
+       ACTION_READLN blook
     END
-
-     <<<<<<<< .../stratagems-inline/extra_spells_core.2da
+    
+     <<<<<<<< .../stratagems-inline/extra_spells.2da
        CLERIC_CHROMATIC_ORB           SPDR101 0 priest
        CLERIC_WEB                     SPDR201 1 priest
        CLERIC_LIGHTNING_BOLT          SPDR301 2 priest
@@ -178,56 +213,16 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
        CLERIC_CHAOS                   SPDR501 4 priest
        CLERIC_CHAIN_LIGHTNING         SPDR601 5 priest
        PSIONIC_SUPERIOR_INVISIBILITY  SPIN544 0 innate
-       CLERIC_SYMBOL_STUN             SPWI898 7 wizard
-       CLERIC_SYMBOL_DEATH            SPWI897 7 wizard
-       CLERIC_SYMBOL_FEAR             SPWI899 7 wizard
        DARK_MOON_BLINDNESS            SPDM101 0 innate
        DARK_MOON_BLUR                 SPDM102 0 innate
-       DARK_MOON_CHILL_TOUCH          SPDM105 0 innate
+       DARK_MOON_FROZEN_FIST          SPDM105 0 innate
        DARK_MOON_MIRROR_IMAGE         SPDM106 0 innate
        DARK_MOON_VAMPIRIC_TOUCH       SPDM108 0 innate
-     >>>>>>>>
-     <<<<<<<< .../stratagems-inline/extra_spells_demivrgvs.2da
-       CLERIC_SUNSCORCH               SPPR116 0 priest
-       CLERIC_CREATE_UNDEAD           SPPR623 5 priest
-       WIZARD_SUMMON_SHADOW           SPWI501 4 wizard
-       WIZARD_CREATE_UNDEAD           SPWI623 5 wizard
-       CLERIC_SUMMON_SHAMBLING_MOUND  SPPR702 6 priest
-       CLERIC_SPHERE_OF_CHAOS         SPPR709 6 priest
-     >>>>>>>>
-     <<<<<<<< .../stratagems-inline/extra_spells_refinements.2da
-       WIZARD_CREATE_BONEGUARD        TG#BONE 8 hla
-       WIZARD_SPELL_WORM              CA#SPWO 8 hla
-       WIZARD_MALAVONS_FURY           TG#GMAL 8 hla
-       WIZARD_FORESIGHT               TG#FORS 8 hla
-       WIZARD_AEGIS                   TG#AEGI 8 hla
-       CLERIC_DIVINE_INTERVENTION_EVIL TG#DIVE 6 hla
-       CLERIC_DIVINE_SHELL            TG#DIVN 6 hla
-       CLERIC_UNION                   TG#UNIO 6 hla
-       BARBARIAN_GREATER_WAR_CRY      TG#GCRY 0 innate
-       BARBARIAN_TIRELESS_RAGE        TG#TLES 0 innate
-       KENSAI_TRUE_KAI                TG#GKAI 0 innate
-       ARCHER_PRECISION               TG#PREC 0 innate
-       ASSASSIN_NERVE_POISON           TG#NPOI 0 innate
-       MONK_DRAGON_FIST               TG#BL03 0 innate
-       MONK_CHANT                     TG#CHNT 0 innate
-       MONK_DIAMOND_SOUL              TG#DIAM 0 innate
-       MONK_SHADOWLESS_KICK           TG#BL09 0 innate
-       MONK_TIGER_STRIKE              TG#TIGS 0 innate
+       DWARVEN_DEFENDER_DEFENSIVE_STANCE   SPDWD02 0 innate
      >>>>>>>>
 
-    OUTER_SPRINT macro_to_do core
-    ACTION_IF !VARIABLE_IS_SET refinements BEGIN
-       OUTER_SET refinements=0
-    END
-    ACTION_IF refinements BEGIN OUTER_SPRINT macro_to_do "%macro_to_do% refinements" END
-    ACTION_IF !VARIABLE_IS_SET demivrgvs BEGIN
-       OUTER_SET demivrgvs=0
-    END
-    ACTION_IF demivrgvs BEGIN OUTER_SPRINT macro_to_do "%macro_to_do% demivrgvs" END
-    OUTER_WHILE "%macro_to_do%" STRING_COMPARE "" BEGIN
-     LAF return_first_entry STR_VAR list="%macro_to_do%" RET macro_entry=entry macro_to_do=list END
-     COPY ~.../stratagems-inline/extra_spells_%macro_entry%.2da~ ~override~
+
+    COPY ~.../stratagems-inline/extra_spells.2da~ ~override~
           READ_2DA_ENTRIES_NOW temp_array  4
           FOR (i=0;i<temp_array;i+=1) BEGIN
              READ_2DA_ENTRY_FORMER temp_array i 0 macro_spell_ID
@@ -238,75 +233,147 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
              SPRINT  ~%macro_spell_ID%_LEVEL~ ~%macro_level%~
              SPRINT  ~%macro_spell_ID%_TYPE~ ~%macro_type%~
           END
-     BUT_ONLY
+    BUT_ONLY
+
+    OUTER_SET WIZARD_CREATE_BONEGUARD_LEVEL=8 // hardcode, since spell is added mid-stream
+
+    ACTION_IF !macro_spellcode_skip_scrolls BEGIN
+    ACTION_IF debug_variable=3 BEGIN
+       PRINT "First pass through the game to collect scrolls; press a key to continue"
+       ACTION_READLN blook
+    END
+    ACTION_IF GAME_IS "bgee bg2ee bg2 tob eet bgt tutu tutu_totsc" BEGIN
+
+      OUTER_SPRINT $scroll_prefix_to_search("scrl") ""
+      ACTION_IF iwd_arcane BEGIN
+         OUTER_SPRINT $scroll_prefix_to_search("cdia") ""
+      END
+      ACTION_IF iwd_divine BEGIN
+         OUTER_SPRINT $scroll_prefix_to_search("cdid") ""
+      END
+      ACTION_FOR_EACH scroll IN ttscrl01 ttscrl02 scrl57 BEGIN
+          OUTER_SPRINT $scroll_to_ignore_in_search("%scroll%") ""
+      END
     END
 
-    // first pass, to collect scrolls
-    OUTER_SPRINT macro_scrolls ~~
-    COPY_EXISTING_REGEXP ~scrl.*\.itm~ ~override~
+    ACTION_IF GAME_IS "iwd how totlm iwdee" BEGIN
+       OUTER_SPRINT $scroll_prefix_to_search("sc") ""
+       OUTER_SPRINT $scroll_prefix_to_search("spwi") ""
+       OUTER_SPRINT $scroll_prefix_to_search("sppr") ""
+    END
+
+    ACTION_PHP_EACH scroll_prefix_to_search AS prefix=>discard BEGIN
+        COPY_EXISTING_REGEXP "%prefix%.*\.itm" override
         PATCH_IF FILE_EXISTS_IN_GAME ~_%SOURCE_RES%.itm~ BEGIN
            SPRINT filename ~_%SOURCE_RES%~
         END ELSE BEGIN
            SPRINT filename ~%SOURCE_RES%~
         END
-        PATCH_IF (~%filename%~ STRING_COMPARE_CASE ttscrl01 && ~%filename%~ STRING_COMPARE_CASE ttscrl02) BEGIN
+        TO_LOWER filename
+        PATCH_IF !VARIABLE_IS_SET $scroll_to_ignore_in_search("%filename%") BEGIN
          INNER_ACTION BEGIN
             COPY_EXISTING ~%filename%.itm~ ~override~
               LPF ITM_read_category RET value END
               PATCH_IF value=11 BEGIN // scroll
                        PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPPR)>=0) BEGIN
-                                SPRINT macro_scrolls ~%macro_scrolls% %filename%~
+                                LPM log_scroll_main
                        END
               END
             BUT_ONLY
          END
         END
-    BUT_ONLY
-
-    ACTION_CLEAR_ARRAY patch_data
-    ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
-        match=>"opcode=147"
-        log_scroll=>null
+       BUT_ONLY 
     END
-    LAF edit_item INT_VAR silent=1 STR_VAR item=~%macro_scrolls%~ editstring=~patch_effect=>patch_data~ END
-        COPY ~%workspace%/scroll_map.txt~ ~%workspace%~
-            READ_2DA_ENTRIES_NOW scroll_map_data 2
-            FOR (i=0;i<scroll_map_data;i+=1) BEGIN
-                 READ_2DA_ENTRY_FORMER scroll_map_data i 0 macro_spell
-                 TO_UPPER macro_spell
-                 READ_2DA_ENTRY_FORMER scroll_map_data i 1 macro_scroll
-                 TO_UPPER macro_scroll
-                 INNER_PATCH_SAVE macro_spell ~%macro_spell%~ BEGIN
-                    READ_ASCII 0x0 macro_start (4)
-                    PATCH_MATCH ~%macro_start%~ WITH
+
+    ACTION_IF !VARIABLE_IS_SET "WIZARD_DISPEL_MAGIC_SCROLL" BEGIN
+       OUTER_SPRINT "WIZARD_DISPEL_MAGIC_SCROLL" "%WIZARD_REMOVE_MAGIC_SCROLL%"
+    END
+    END // end of scrolls
+
+    // now get HLAs
+
+    ACTION_IF FILE_EXISTS "%data_loc_root%/dw_shared/dw#hla_feat.2da" BEGIN
+       COPY "%data_loc_root%/dw_shared/dw#hla_feat.2da" "%workspace%"
+           READ_2DA_ENTRIES_NOW dw#hla_feat 3
+           FOR (i=0;i<dw#hla_feat;i+=1) BEGIN
+              READ_2DA_ENTRY_FORMER dw#hla_feat i 0 ids
+              READ_2DA_ENTRY_FORMER dw#hla_feat i 1 resref
+              READ_2DA_ENTRY_FORMER dw#hla_feat i 2 type
+              TO_UPPER ids
+              SPRINT "%ids%" "%resref%"
+              SPRINT $hla_type("%ids%") "%type%"  
+              INNER_ACTION BEGIN
+                    ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+                      COPY_EXISTING "%resref%.spl" override
+                         READ_SHORT 0x1c category
+                         SET $hla_spelltype("%ids%")=category
+                      BUT_ONLY
+                    END ELSE BEGIN
+                      OUTER_SET "hla_spelltype_%ids%"="-1"
+                    END
+                 END
+           END
+       BUT_ONLY
+    END
+    ACTION_CLEAR_ARRAY patch_data
+    OUTER_SET macro_spellcode_skip_scrolls=0
+   END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//    Helper
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_MACRO log_scroll_main BEGIN
+    LOCAL_SPRINT ab_arr ""
+    LOCAL_SPRINT fx_arr ""
+    LOCAL_SET ab_ind=0
+    LOCAL_SET ab_off=0
+    LOCAL_SET fx_ind=0
+    LOCAL_SET fx_off=0
+    LOCAL_SPRINT resref ""
+    LOCAL_SPRINT code ""
+    LOCAL_SPRINT spellname ""
+    LOCAL_SPRINT start ""
+    LOCAL_SET success=0
+    GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+    PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+       GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+       PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+          READ_SHORT fx_off opcode
+          PATCH_IF (opcode=146 || opcode=147 || opcode=148) BEGIN
+             READ_ASCII (0x14 + fx_off) resref
+             INNER_PATCH_SAVE code "%resref%" BEGIN
+                   READ_ASCII 0x0 start (4)
+                   PATCH_MATCH "%start%" WITH
                         SPWI SPIN SPCL SPPR BEGIN
-                           SET macro_success=1
+                           SET success=1
                            REPLACE_TEXTUALLY SPPR 1
                            REPLACE_TEXTUALLY SPWI 2
                            REPLACE_TEXTUALLY SPIN 3
                            REPLACE_TEXTUALLY SPCL 4
                         END
-                        DEFAULT
-                           SET macro_success=0
+                        DEFAULT 
+                           SET success=0
                         END
-                 END
-                 PATCH_IF macro_success=1 BEGIN
-                    LOOKUP_IDS_SYMBOL_OF_INT macro_spellname spell macro_spell
-                    TO_UPPER macro_spellname
-                    SPRINT  ~%macro_spellname%_SCROLL~ ~%macro_scroll%~
-                 END ELSE BEGIN
-                    LPF warning STR_VAR warning= ~Could not identify the spell %macro_spell% associated with scroll %macro_scroll%~ END
-                 END
-            END
-    BUT_ONLY          
-    ACTION_IF !VARIABLE_IS_SET "WIZARD_DISPEL_MAGIC_SCROLL" BEGIN
-       OUTER_SPRINT "WIZARD_DISPEL_MAGIC_SCROLL" "%WIZARD_REMOVE_MAGIC_SCROLL%"
+             END
+             PATCH_IF !IS_AN_INT code BEGIN
+                SET success=0
+             END
+             PATCH_IF success BEGIN
+                    LOOKUP_IDS_SYMBOL_OF_INT spellname spell code
+                    TO_UPPER spellname
+                    SPRINT  ~%spellname%_SCROLL~ ~%filename%~
+             END
+         END
+       END
     END
-    ACTION_CLEAR_ARRAY patch_data
-   END
 
 
 END
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -340,49 +407,77 @@ DEFINE_ACTION_MACRO ~read_in_clab_spelldata~ BEGIN
                      DELETE_BYTES 0x0 3
                   END
                   TO_UPPER resource
-                  PATCH_IF !VARIABLE_IS_SET "RESREF_%resource%_LEVEL" && FILE_EXISTS_IN_GAME "%resource%.spl" BEGIN
+                  PATCH_IF !VARIABLE_IS_SET "RESREF_%resource%_LEVEL" BEGIN
                       INNER_ACTION BEGIN
+                        ACTION_IF FILE_EXISTS_IN_GAME "%resource%.spl" BEGIN
                          COPY_EXISTING "%resource%.spl" "%workspace%"
                                LPF SPL_read_level RET "RESREF_%resource%_LEVEL"=value END
                                LPF SPL_read_spell_type RET "RESREF_%resource%_TYPE"=value END
                          BUT_ONLY
+                        END
                       END
                   END
               END
               "AP_.*" BEGIN
-                  INNER_PATCH_SAVE resource "%resource%" BEGIN
+                  INNER_PATCH_SAVE spell "%resource%" BEGIN
                      DELETE_BYTES 0x0 3
                   END
-                  TO_UPPER resource
-                  PATCH_IF !VARIABLE_IS_SET "RESREF_%resource%_KIT_EFFECTS_ADD" && FILE_EXISTS_IN_GAME "%resource%.spl" BEGIN
-                      INNER_ACTION BEGIN
-                        ACTION_IF FILE_EXISTS_IN_GAME "%resource%.spl" BEGIN
-                         COPY_EXISTING "%resource%.spl" "%workspace%"
-                            SPRINT tempadd ""
-                            SPRINT tempremove ""
-                            LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
+                  TO_UPPER spell
+                  PATCH_IF !VARIABLE_IS_SET "RESREF_%spell%_KIT_EFFECTS_ADD" BEGIN
+                           SPRINT opcode_drop ""
+                           PATCH_FOR_EACH opcode IN 101 142 169 267 BEGIN
+                                          SPRINT "%opcode%_sec" ""
+                           END
+                           SPRINT resource_drop ""
+                           SPRINT tempadd ""
+                           SPRINT tempremove ""
+                           INNER_ACTION BEGIN
+                             ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                               COPY_EXISTING "%spell%.spl" "%workspace%"
+                                    LPF return_offset STR_VAR entry_type=ability file_ext=SPL RET offset_base=value END
                                     GET_OFFSET_ARRAY2 fx_arr offset_base ITM_V10_HEAD_EFFECTS
                                     PHP_EACH fx_arr AS int=>offset_secondary BEGIN
+                                     READ_BYTE offset_secondary+0xc timing
+                                     PATCH_IF timing=9 BEGIN                    // we only care about instant/permanent effects
                                        READ_SHORT offset_secondary opcode
                                        READ_LONG offset_secondary+0x4 parameter1
                                        READ_LONG offset_secondary+0x8 parameter2
-                                       READ_ASCII offset_secondary+0x14 resource_here
-                                       PATCH_IF "%resource_here%" STRING_EQUAL "" BEGIN
-                                          SPRINT resource_here null
+                                       READ_ASCII offset_secondary+0x14 resource
+                                       PATCH_IF "%resource%" STRING_COMPARE "" BEGIN
+                                          SPRINT resource_drop "%resource_drop% %resource%"
+                                          SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource% opcode=>%opcode% timing=>9 target=>2~"
+                                       END ELSE BEGIN
+                                        PATCH_MATCH "%opcode%" WITH
+                                        101 142 169 267 BEGIN
+                                         SPRINT temp EVALUATE_BUFFER "%%opcode%_sec%"
+                                         SPRINT "%opcode%_sec" "%temp% %parameter2%"
+                                         SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>null opcode=>%opcode% timing=>9 target=>2~"
+                                        END
+                                        DEFAULT
+                                         SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>null opcode=>%opcode% timing=>9 target=>2~"
+                                         SPRINT opcode_drop "%opcode_drop% %opcode%"
+                                        END
                                        END
-                                       PATCH_MATCH "%opcode%" WITH
-                                       172 177 BEGIN END
-                                       DEFAULT
-                                          SPRINT tempadd "%tempadd% add_effect_inline=>~parameter1=>%parameter1%  parameter2=>%parameter2% resource=>%resource_here% opcode=>%opcode%~"
-                                          SPRINT tempremove "%tempremove% delete_effect=>~opcode=%opcode% and parameter2=%parameter2% and resource=%resource_here%~" // parameter1 intentionally left out
-                                       END
+                                     END
                                     END
-                         BUT_ONLY
-                       END
-                       OUTER_SPRINT "RESREF_%resource%_KIT_EFFECTS_ADD" "%tempadd%"
-                       OUTER_SPRINT "RESREF_%resource%_KIT_EFFECTS_REMOVE" "%tempremove%"
-                      END
-                  END
+                            BUT_ONLY
+                            END // end of ACTION_IF
+                         END // end of INNER_ACTION
+                         PATCH_IF "%opcode_drop%" STRING_COMPARE_CASE "" BEGIN
+                                SPRINT tempremove "delete_effect=>~opcode is_in [%opcode_drop%]~"
+                         END
+                         PATCH_FOR_EACH opcode IN 101 142 169 267 BEGIN
+                                SPRINT list EVALUATE_BUFFER "%%opcode%_sec%"
+                                PATCH_IF "%list%" STRING_COMPARE_CASE "" BEGIN
+                                     SPRINT tempremove "%tempremove% delete_effect=>~opcode=%opcode% and parameter2 is_in [%list%]~"
+                                END
+                         END
+                         PATCH_IF "%resource_drop%" STRING_COMPARE_CASE "" BEGIN
+                                  SPRINT tempremove "%tempremove% delete_effect=>~resource is_in [%resource_drop%]~"
+                         END
+                         SPRINT "RESREF_%spell%_KIT_EFFECTS_ADD" "%tempadd%"
+                         SPRINT "RESREF_%spell%_KIT_EFFECTS_REMOVE" "%tempremove%"
+                       END // end of PATCH_IF
               END
               DEFAULT
               END
@@ -454,9 +549,22 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_MACRO ~read_in_thac0~ BEGIN
+  LOCAL_SET entry=0
+  LOCAL_SET row=0
+  LOCAL_SET column=0
+  LOCAL_SET thac0_num=0
   ACTION_IF !VARIABLE_IS_SET ~macro_read_in_thac0~ BEGIN
-          COPY_EXISTING ~thac0.2da~ ~override~ READ_2DA_ENTRIES_NOW ~thac0_table_read~ 10
+            COPY_EXISTING ~thac0.2da~ ~%workspace%~
+                 READ_2DA_ENTRIES_NOW thac0_table_read 25
+                 FOR (row=1;row<thac0_table_read;row+=1) BEGIN
+                    READ_2DA_ENTRY_FORMER thac0_table_read row 0 class
+                    TO_UPPER class
+                    SET $thac0_table_row("%class%")=row
+                 END
+            BUT_ONLY
+
           OUTER_SPRINT ~macro_read_in_thac0~ ~~
+
   END
 END         
 
@@ -671,19 +779,16 @@ DEFINE_ACTION_MACRO read_in_proficiency_progression BEGIN
             SET  ~PROFICIENCY_RATE_%MACRO_class%~=MACRO_rate
        END
     BUT_ONLY
-	ACTION_IF ENGINE_IS ~bgee bg2ee eet~ BEGIN
-       OUTER_SET 2da_first_row = 1
-	END ELSE BEGIN
-       OUTER_SET 2da_first_row = 0
-	END
     COPY_EXISTING profsmax.2da "%workspace%"
           READ_2DA_ENTRIES_NOW MACRO_prof_max_data 3
-          FOR (i=2da_first_row;i<MACRO_prof_max_data;i+=1) BEGIN
+          FOR (i=0;i<MACRO_prof_max_data;i+=1) BEGIN
             READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 0 MACRO_class
             READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 1 MACRO_first_level
             READ_2DA_ENTRY_FORMER MACRO_prof_max_data i 2 MACRO_other_level
-            SET "PROFICIENCY_FIRST_LEVEL_MAX_%MACRO_class%"=MACRO_first_level
-            SET "PROFICIENCY_OTHER_LEVEL_MAX_%MACRO_class%"=MACRO_other_level
+            PATCH_IF !~%MACRO_class%~ STRING_EQUAL_CASE FIRST_LEVEL BEGIN
+               SET "PROFICIENCY_FIRST_LEVEL_MAX_%MACRO_class%"=MACRO_first_level
+               SET "PROFICIENCY_OTHER_LEVEL_MAX_%MACRO_class%"=MACRO_other_level
+            END
           END
     BUT_ONLY
    END
@@ -838,6 +943,9 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////              read in a file as an associative array   (file is array_to_read, array is array_name)
+/////////////              
+/////////////              read_array_location says where the array is; if it is blank, use the default. 
+/////////////              Other variables: read_array_backwards, read_array_column, read_array_is_inline
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -845,16 +953,23 @@ DEFINE_ACTION_MACRO read_in_assoc_array BEGIN
       ACTION_IF !VARIABLE_IS_SET read_array_location BEGIN
          OUTER_SPRINT read_array_location ""
       END
-      ACTION_IF "%read_array_location%" STRING_EQUAL_CASE "" BEGIN
-         LAF action_get_directory RET location=directory END
-         OUTER_SPRINT read_array_location "%scsroot%/%location%"
+      ACTION_IF "%read_array_is_inline%" STRING_EQUAL_CASE "yes" BEGIN
+        OUTER_SPRINT read_array_location ".../stratagems-inline"
+      END ELSE BEGIN
+        ACTION_IF "%read_array_location%" STRING_EQUAL_CASE "" BEGIN
+            LAF get_directory RET location=directory END
+            OUTER_SPRINT read_array_location "%location%"
+        END
       END
+      ACTION_IF !VARIABLE_IS_SET read_array_column BEGIN
+         OUTER_SET read_array_column=1
+      END 
       ACTION_IF ("%read_array_backwards%" STRING_EQUAL_CASE yes) BEGIN
-         OUTER_SET array_loc_0=1
+         OUTER_SET array_loc_0=read_array_column
          OUTER_SET array_loc_1=0
       END ELSE BEGIN
          OUTER_SET array_loc_0=0
-         OUTER_SET array_loc_1=1
+         OUTER_SET array_loc_1=read_array_column
       END
       COPY - "%read_array_location%/%array_to_read%" "%workspace%"
              REPLACE_TEXTUALLY "=>" " "
@@ -867,6 +982,165 @@ DEFINE_ACTION_MACRO read_in_assoc_array BEGIN
       BUT_ONLY
       OUTER_SPRINT read_array_location ""
       OUTER_SPRINT read_array_backwards no
+      OUTER_SET read_array_column=1
+      OUTER_SPRINT read_array_is_inline "no"
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              read in a file as an array; use the first row as a list of variables and set each to the value in the read column.
+/////////////              The column read is by default column 1 (i.e., the second column). If "read_array_column_name" is set, instead read the top row and
+/////////////              use the column with that row. If "read_in_func" is set, apply it as a standard function to the value before setting it
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+DEFINE_ACTION_MACRO read_in_variables BEGIN
+      LOCAL_SET startrow=0
+      LOCAL_SET readcol="-1"
+      LOCAL_SET colcount=0
+      LOCAL_SET rowcount=0
+      LOCAL_SET rownum=0
+      LOCAL_SET colnum=0
+      ACTION_IF !VARIABLE_IS_SET read_array_location BEGIN
+         OUTER_SPRINT read_array_location ""
+      END
+      ACTION_IF "%read_array_is_inline%" STRING_EQUAL_CASE "yes" BEGIN
+        OUTER_SPRINT read_array_location ".../stratagems-inline"
+      END ELSE BEGIN
+        ACTION_IF "%read_array_location%" STRING_EQUAL_CASE "" BEGIN
+            LAF get_directory RET location=directory END
+            OUTER_SPRINT read_array_location "%location%"
+        END
+      END
+      ACTION_IF !VARIABLE_IS_SET read_array_column_name BEGIN
+         OUTER_SPRINT read_array_column_name ""
+      END
+      COPY - "%read_array_location%/%array_to_read%" "%workspace%"
+          COUNT_2DA_COLS colcount
+          COUNT_2DA_ROWS colcount rowcount
+          PATCH_IF !("%read_array_column_name%" STRING_EQUAL_CASE "") BEGIN
+              SET startrow=1
+              FOR (colnum=1;colnum<colcount;colnum+=1) BEGIN
+                 READ_2DA_ENTRY 0 colnum colcount entry
+                 PATCH_IF "%entry%" STRING_EQUAL_CASE "%read_array_column_name%" BEGIN
+                    SET readcol=colnum
+                 END
+              END
+              PATCH_IF readcol<0 BEGIN
+                 PATCH_FAIL "read_in_variables macro failed to find column %read_array_column_name% in table %array_to_read%"
+              END
+          END ELSE BEGIN
+             SET readcol=1
+          END
+          PATCH_IF !VARIABLE_IS_SET read_in_func BEGIN
+              SPRINT read_in_func ""
+          END
+          FOR (rownum=startrow;rownum<rowcount;rownum+=1) BEGIN
+             READ_2DA_ENTRY rownum 0 colcount var
+             READ_2DA_ENTRY rownum readcol colcount val
+             PATCH_IF "%read_in_func%" STRING_COMPARE "" BEGIN
+                LPF "%read_in_func%" STR_VAR arguments="%val%" RET val=value END
+             END
+             PATCH_IF "%val%" STRING_EQUAL_CASE null BEGIN
+                SPRINT val ""
+             END
+             SPRINT "%var%" "%val%"
+          END
+      BUT_ONLY
+      OUTER_SPRINT read_array_location ""
+      OUTER_SPRINT read_array_is_inline no
+      OUTER_SPRINT read_array_column_name ""
+      OUTER_SPRINT array_to_read ""
+      OUTER_SPRINT read_in_func ""
+
+END
+
+///////////////////////////////////////////////////////////////
+///	Array to identify PCs' DVs
+///////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO ~read_in_PCs~ BEGIN
+  COPY_EXISTING - ~pdialog.2da~ ~.../scs-inline/pdialog.2da~
+	COUNT_2DA_ROWS 3 ~rowcount~
+	FOR (i=0;i<~%rowcount%~;i=i+1) BEGIN
+		READ_2DA_ENTRY ~%i%~ 0 3 ~entry~
+		TO_LOWER ~entry~
+		SPRINT $script_name_pdialog( ~%entry%~) ~~
+	END
+  BUT_ONLY
+  // add candlekeep training group names
+  ACTION_FOR_EACH npc IN arkanis canderous deder mordaine osprey BEGIN
+     OUTER_SPRINT $script_name_pdialog(~%npc%~) ~~
+  END
+  // check campaigns
+
+  ACTION_IF FILE_EXISTS_IN_GAME campaign.2da BEGIN
+     COPY_EXISTING campaign.2da "%workspace%"
+      COUNT_2DA_ROWS 5 check_for_campaign
+      PATCH_IF check_for_campaign>1 BEGIN
+          COUNT_2DA_COLS colcount
+          COUNT_2DA_ROWS colcount rowcount_campaign
+          FOR (i=0;i<rowcount_campaign; i+=1) BEGIN
+             LPF read_table_entry INT_VAR rownum=i STR_VAR column=PDIALOG RET file=value END
+             INNER_ACTION BEGIN
+                COPY_EXISTING "%file%.2da" "%workspace%"
+	                COUNT_2DA_ROWS 3 ~rowcount~
+	                FOR (i=0;i<~%rowcount%~;i=i+1) BEGIN
+		              READ_2DA_ENTRY ~%i%~ 0 3 ~entry~
+		              TO_LOWER ~entry~
+		              SPRINT $script_name_pdialog( ~%entry%~) ~~
+                        END
+                BUT_ONLY
+             END
+          END
+      END
+     BUT_ONLY
+  END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_hidespl BEGIN
+    ACTION_IF !VARIABLE_IS_SET hidespl_read_in BEGIN
+         OUTER_SET hidespl_read_in=1
+         ACTION_IF FILE_EXISTS_IN_GAME hidespl.2da BEGIN
+          COPY_EXISTING hidespl.2da "%workspace%"
+                COUNT_2DA_ROWS 1 rowcount
+                FOR (i=0;i<rowcount;i+=1) BEGIN
+                   READ_2DA_ENTRY i 0 1 entry
+                   SNPRINT 4 check "%entry%"
+                   PATCH_IF "%check%" STRING_EQUAL_CASE "sppr" BEGIN
+                      TO_LOWER entry
+                      SPRINT $spell_is_hidden("%entry%") ""
+                   END
+                END
+          BUT_ONLY
+         END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Read an ini file "ini_to_read.ini" into SFO_reserved_ini_hash (mostly borrowed from Kjeron)
+/////
+///// ini key values are treated case-insensitive
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO SFO_read_ini_file
+BEGIN 
+    LOCAL_SPRINT key ""
+    ACTION_IF FILE_EXISTS "%ini_to_read%" BEGIN
+       COPY - "%ini_to_read%" "%workspace%"
+	    REPLACE_EVALUATE ~^\([^ %TAB%%WNL%]+\) *= *\([^%WNL%$]+\)~
+                     BEGIN
+			// key must start line and cannot contain whitespace
+			// value is everything after the "=" until the newline/end
+			        SPRINT key "%MATCH1%"
+			        TO_LOWER key
+				TEXT_SPRINT $SFO_reserved_ini_hash(~%key%~) ~%MATCH2%~
+		     END	
+                     ~~
+    END
+END

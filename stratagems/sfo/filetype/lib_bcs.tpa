@@ -41,12 +41,21 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION process_baf
+   INT_VAR no_repeats=0
    STR_VAR editstring=""
            filename=""
+           until=""
+           after=""
 BEGIN
    // initialise
+   SET step=0
    PATCH_FOR_EACH type IN top main bottom BEGIN
       SET $count("%type%")=0
+   END
+   PATCH_IF "%after%" STRING_COMPARE_CASE "" BEGIN
+      SET active=0
+   END ELSE BEGIN
+      SET active=1
    END
    SET blocknum=0
    SPRINT trig ""
@@ -125,11 +134,23 @@ BEGIN
               SET blocknum +=1
            END
            DEFAULT
-              PATCH_IF step=1 BEGIN
-                 SPRINT trig "%trig% %row%"
-              END ELSE BEGIN
-                 SPRINT act "%act% %row%"
-              END
+             PATCH_IF active BEGIN
+                PATCH_IF "%until%" STRING_EQUAL_CASE "%row%" BEGIN
+                  SET active=0
+                  SPRINT trig ""
+                  SPRINT act ""
+                END ELSE BEGIN
+                  PATCH_IF step=1 BEGIN
+                     SPRINT trig "%trig% %row%"
+                  END ELSE BEGIN
+                     SPRINT act "%act% %row%"
+                  END
+                END
+             END ELSE BEGIN
+                PATCH_IF "%after%" STRING_EQUAL_CASE "%row%" BEGIN
+                   SET active=1
+                END
+             END
            END
        // end of PATCH
    END // end of FOR loop
@@ -147,7 +168,17 @@ BEGIN
    FOR (i=0;i<count_main;i+=1) BEGIN
       SPRINT trig_in $trig_main("%i%")
       SPRINT act_in $act_main("%i%")
-      LPF process_baf_block_inserter INT_VAR rowcount STR_VAR act_in trig_in RET rowcount=rowcount END
+      SET proceed=1
+      PATCH_IF no_repeats BEGIN
+         PATCH_IF VARIABLE_IS_SET $no_repeats("%trig_in%" "%act_in%") BEGIN
+            SET proceed=0
+         END ELSE BEGIN
+            SPRINT $no_repeats("%trig_in%" "%act_in%") ""
+         END
+      END
+      PATCH_IF proceed BEGIN
+         LPF process_baf_block_inserter INT_VAR rowcount STR_VAR act_in trig_in RET rowcount=rowcount END
+      END
    END
    FOR (i=0;i<count_bottom;i+=1) BEGIN
       SPRINT trig_in $trig_bottom("%i%")

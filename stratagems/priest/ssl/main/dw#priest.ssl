@@ -1,0 +1,174 @@
+//////////////////////////////////////////////////////////////////////////////////
+///
+///   Define actions
+///
+////////////////////////////////////////////////////////////////////////////////////////
+
+VARIABLE(IsNotMoron=True)  // unsure if needed
+INCLUDE FILE(%scsroot%/caster_shared/caster_definitions.ssl)
+VARIABLE(SPELLFAILUREMAGE=SPELLFAILUREPRIEST)
+
+////////////////////////////////////////////////////////////////
+/// Labelling, break-invisibility, hostile-undead, panic, etc
+////////////////////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/priest/ssl/main/preamble.ssl)
+
+
+BEGIN_ACTION_DEFINITION
+	Name(MoveIfEmpty)     // we're redefining this for the benefit of shapeshifters
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		MoveToObject(scstarget)
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+////	Prep
+//////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/priest/ssl/main/priestsetup.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////
+////	If non-hostile, closedown - this script doesn't pretend to fight bad guys
+//////////////////////////////////////////////////////////////////////////////////
+
+IF
+	!Allegiance(Myself,ENEMY)
+	IgnoreBlock(IsPartyAlly)
+THEN
+	RESPONSE #100
+		NoAction()
+END
+
+///////////////////////////////////////////////////////////////////////////
+////	Flee Cloudkill spell
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/mage/ssl/generalblocks/fleecloud.ssl)
+
+///////////////////////////////////////////////////////////////////////////
+//	Turn undead
+///////////////////////////////////////////////////////////////////////////
+
+IF
+	IgnoreBlock(IsDruid)
+	See([GOODCUTOFF.UNDEAD])
+	!StateCheck(LastSeenBy(Myself),STATE_DISABLED)
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	!GlobalTimerNotExpired("turninitialise","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("turninitialise","LOCALS",30)
+		SetGlobalTimer("turning","LOCALS",4)
+		Continue()
+END
+
+IF
+	IgnoreBlock(IsDruid)
+	See([GOODCUTOFF.UNDEAD])
+	!StateCheck(LastSeenBy(Myself),STATE_DISABLED)
+	!GlobalTimerNotExpired("castspell","LOCALS")
+	OR(2)
+		!GlobalTimerNotExpired("turninitialise","LOCALS")
+		GlobalTimerNotExpired("turning","LOCALS")
+THEN
+	RESPONSE #100
+		Turn()
+END
+
+
+///////////////////////////////////////////////////////////////////////////
+//	Melee
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/priest/ssl/meleeblocks/touchattack.ssl)
+INCLUDE FILE(%scsroot%/priest/ssl/meleeblocks/priest_melee_choice.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Remove shapeshifting effect prior to casting
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+IF
+   RequireBlock(IsDruid)
+   RequireBlock(HasL4)
+   RequireBlock(ImprovedShapeshift)
+   OR(8)
+      HasItemEquipedReal("dw#shnbr",Myself)
+      HasItemEquipedReal("dw#shnw1",Myself)
+      HasItemEquipedReal("dw#shnw2",Myself)
+      HasItemEquipedReal("dw#shnw3",Myself)
+      HasItemEquipedReal("dw#shnsp",Myself)
+      HasItemEquipedReal("dw#shnsa",Myself)
+      HasItemEquipedReal("dw#shnea",Myself)
+      HasItemEquipedReal("dw#shnfi",Myself)
+THEN
+     RESPONSE #100
+                SelectWeaponAbility(SLOT_WEAPON,0)
+                SmallWait(15)
+             Continue()
+END
+
+IF
+   RequireBlock(IsDruid)
+   IgnoreBlock(HasL4)
+   RequireBlock(ImprovedShapeshift)
+   HasItemEquipedReal("dw#shnw1",Myself)
+THEN
+     RESPONSE #100
+                SelectWeaponAbility(SLOT_WEAPON,0)
+                SmallWait(15)
+             Continue()
+END
+
+//////////////////////////////////////////////////////////////////////////
+// Renew and retreat
+//////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/priest/ssl/generalblocks/renew.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Easiest-level block
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+INCLUDE FILE(%scsroot%/priest/ssl/generalblocks/easy.ssl)
+
+//////////////////////////////////////////////////////////////////////////
+// Look for PCs
+//////////////////////////////////////////////////////////////////////////
+
+DEFAULT TRIGGER()
+
+INCLUDE FILE(%scsroot%/priest/ssl/generalblocks/chase.ssl)
+
+////////////////////////////////////////////////////////////////////////////
+// Core magic block
+///////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/priest/ssl/priesttypes/standard_priest.ssl)
+
+//////////////////////////////////////////////////////
+///	If everyone is helpless, kill'em.
+//////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	BEGIN LOOP(scsloopvar||1;2;3;4;5;6)
+		OR(3)
+			!See(Playerscsloopvar)
+			StateCheck(Playerscsloopvar,STATE_IMMOBILE)
+			CheckStatGT(Playerscsloopvar,0,HELD)
+	END LOOP
+THEN
+	RESPONSE #100
+		AttackReevaluate(NearestEnemyOf(Myself),15)
+END
+
+DEFAULT TRIGGER()
+INCLUDE FILE(%scsroot%/priest/ssl/generalblocks\closedown.ssl)

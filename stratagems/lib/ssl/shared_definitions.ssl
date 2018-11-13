@@ -1,0 +1,651 @@
+////////////////////////////////////////////////////////////////////////////////////////
+////    Core melee attack blocks
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(Attack)
+	TRIGGER
+		!StateCheck(scstarget,STATE_INVISIBLE)  // we check this because we use temporary see-invisible tricks in various places
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobal("validtarget","LOCALS",1)
+		SetGlobal("melee","LOCALS",1)
+		EquipMostDamagingMelee()
+		AttackOneRound(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(Attack2)
+	TRIGGER
+		!StateCheck(scstarget,STATE_INVISIBLE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobal("validtarget","LOCALS",1)
+		SetGlobal("melee","LOCALS",1)
+		EquipMostDamagingMelee()
+		Attack(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackIfEmpty)
+	TRIGGER
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		SetGlobal("melee","LOCALS",1)
+		AttackOneRound(scstarget)
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+////    Core ranged attack blocks
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackRanged)
+	TRIGGER
+		!StateCheck(scstarget,STATE_INVISIBLE)
+	ACTION
+		RESPONSE #scsprob1
+		EquipRanged()
+		SetGlobal("melee","LOCALS",0)
+		AttackReevaluate(scstarget,30)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackRangedIfEmpty)
+	TRIGGER
+		ActionListEmpty()
+		!StateCheck(scstarget,STATE_INVISIBLE)
+	ACTION
+		RESPONSE #scsprob1
+		EquipRanged()
+		SetGlobal("melee","LOCALS",0)
+		AttackReevaluate(scstarget,30)
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+////    Politically-incorrect low-INT attack block
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(MoronAttack)
+	TRIGGER
+	ACTION
+		RESPONSE #scsprob1
+		EquipMostDamagingMelee()
+		AttackReevaluate(scstarget,30)
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+////    Movement-based
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(MoveIfEmpty)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		MoveToObject(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION      // note: because you don't want to See the target, it goes in the argument slot, not the target slot
+        Name(FindIfOffscreen)
+        TRIGGER
+	   !See(NearestEnemyOf(Myself))
+	   !Detect(scsargument1)
+	   !StateCheck(scsargument1,STATE_INVISIBLE)
+	   !CheckStatGT(scsargument1,0,SANCTUARY)
+	ACTION
+           RESPONSE #scsprob1
+	   MoveToObject(scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+Name(EndScript)
+TRIGGER
+   ACTION
+       RESPONSE #scsprob1
+          NoAction()
+END
+
+////////////////////////////////////////////////////////////////////////////////////////
+////    Power use- for powers cast on self, without failure chance
+////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(Ability)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument1)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(Myself,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(AbilityRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpellRES(scsargument1)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellRES(scsargument1,Myself)
+END
+
+
+////////////////////////////////////////////////////////////////////
+//   For spells, the basic ordering is
+//
+//   Spell - [NoDec]  - [RES] - [Replace] - [Myself] - [Marker]
+//   and we list them binary-fashion
+//
+//   We also do the basic spells, then the no-decs, then the precasts, then the AoE
+//
+////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////
+///   Single-target spells
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(Spell)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+                HaveSpell(scsargument1)
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument1)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(Myself,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellReplace)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(scstarget,scsargument1)
+		RemoveSpell(scsargument2)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellReplaceMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(Myself,scsargument1)
+		RemoveSpell(scsargument2)
+END
+
+////////////////////////////////////////////////////////////////////
+///   Single-target spells, using SpellRES
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpellRES(scsargument1)
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellRES(scsargument1,scstarget)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellRESMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpellRES(scsargument1)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellRES(scsargument1,Myself)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellRESReplace)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDecRES(scsargument1,scstarget)
+		RemoveSpell(scsargument2)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellRESReplaceMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDecRES(scsargument1,Myself)
+		RemoveSpell(scsargument2)
+END
+
+////////////////////////////////////////////////////////////////////
+///   Single-target spells, using SpellNoDec
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellNoDec)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellNoDecMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(Myself,scsargument1)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellNoDecRESMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDecRES(scsargument1,Myself)
+END
+
+////////////////////////////////////////////////////////////////////
+///   Precast spells
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellPrecast)
+	TRIGGER
+		!HasItem("dw#nopre",Myself)
+		HaveSpell(scsargument1)
+		Global("instantprep","LOCALS",0)
+		See(NearestEnemyOf(Myself))
+		HPPercentGT(Myself,0)
+	ACTION
+		RESPONSE #scsprob1
+		ReallyForceSpellRES("%scsargument1_PREBUFF%",Myself)
+		RemoveSpell(scsargument1)
+		Continue()
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellPrecastRES)
+	TRIGGER
+		!HasItem("dw#nopre",Myself)
+		HaveSpellRES(scsargument1)
+		Global("instantprep","LOCALS",0)
+		See(NearestEnemyOf(Myself))
+		HPPercentGT(Myself,0)
+	ACTION
+		RESPONSE #scsprob1
+		ReallyForceSpellRES(scsargument1,Myself)
+	//	RemoveSpell(scsargument1) // a little suboptimal, but I can't remove spells by code
+	        SetGlobalTimer("scsargument2","LOCALS",1000)
+		Continue()
+END
+
+////////////////////////////////////////////////////////////////////
+///   Area-effect spells
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellArea)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument1)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#mgsee",Myself)
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellAreaReplace)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#mgsee",Myself)
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(scstarget,scsargument1)
+		RemoveSpell(scsargument2)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellAreaRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpellRES(scsargument1)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,50,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#mgsee",Myself)
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellRES(scsargument1,scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellAreaRESReplace)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,50,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#mgsee",Myself)
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDecRES(scsargument1,scstarget)
+		RemoveSpell(scsargument2)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellAreaNoDec)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#mgsee",Myself)
+		SetGlobalTimer("castspell","LOCALS",6)
+		SpellNoDec(scstarget,scsargument1)
+END
+
+////////////////////////////////////////////////////////////////////
+///  Markers
+////////////////////////////////////////////////////////////////////
+
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellMarker)
+	TRIGGER
+                !GlobalTimerNotExpired("castspell","LOCALS")
+                HaveSpell(scsargument1)
+		!StateCheck(scstarget,STATE_NOT_TARGETABLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ApplySpellRES("%scsargument2%",scstarget)
+		Spell(scstarget,scsargument1)
+END
+
+////////////////////////////////////////////////////////////////////
+///  Usable magical items
+////////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(Scroll)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+		HasItem(scsargument1,Myself)
+	ACTION
+		RESPONSE #scsprob1
+		SetInterrupt(FALSE)
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,@100201)
+		UseItem(scsargument1,scstarget)
+		SetInterrupt(TRUE)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(ScrollMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HasItem(scsargument1,Myself)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetInterrupt(FALSE)
+		DisplayStringHead(Myself,@100201)
+		UseItem(scsargument1,Myself)
+		SetInterrupt(TRUE)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(Potion)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HasItem(scsargument1,Myself)
+		!General(Myself,UNDEAD)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,scsargument2)
+		UseItem(scsargument1,Myself)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(Wand)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		HasItem(scsargument1,Myself)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+	ACTION
+		RESPONSE #scsprob1
+		SetInterrupt(FALSE)
+		SetGlobalTimer("castspell","LOCALS",6)
+		DisplayStringHead(Myself,@100200)
+		UseItem(scsargument1,scstarget)
+		SetInterrupt(TRUE)
+END
+
+
+
+
+////////////////////////////////////////////////////////////////////
+///  Forced spells
+////////////////////////////////////////////////////////////////////
+
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpell)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+                !CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpellMarker)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+                !CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ApplySpellRES("%scsargument2%",scstarget)
+		ForceSpell(scstarget,scsargument1)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpellRES)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+                !CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpellRES(scsargument1,scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(ReallyForceSpell)
+	TRIGGER
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)
+	ACTION
+		RESPONSE #scsprob1
+		ReallyForceSpell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpellMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpell(Myself,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpellRESMyself)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpellRES(scsargument1,Myself)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(ForceSpellReplace)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument2)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckSpellState(scstarget,DO_NOT_TARGET_SPELLS)// PM scroll
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		ForceSpell(scstarget,scsargument1)
+		RemoveSpell(scsargument2)
+END
+
+
+////////////////////////////////////////////////////////////////////
+///  Special
+////////////////////////////////////////////////////////////////////
+
+
+BEGIN_ACTION_DEFINITION
+	Name(SpellCuringBlindness)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument1)
+		!StateCheck(scstarget,STATE_IMPROVED_INVISIBILITY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(vsPMscroll)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(WIZARD_SPELL_STRIKE)
+		!StateCheck(scstarget,STATE_INVISIBLE)
+		!CheckStatGT(scstarget,0,SANCTUARY)
+		CheckStatLT(Myself,60,SPELLFAILUREMAGE)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,WIZARD_SPELL_STRIKE)
+END
+
+
+BEGIN_ACTION_DEFINITION
+	Name(MoveIfEmpty)
+	TRIGGER
+		ActionListEmpty()
+	ACTION
+		RESPONSE #scsprob1
+		MoveToObject(scstarget)
+END
+
+

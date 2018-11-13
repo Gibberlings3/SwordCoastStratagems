@@ -2,40 +2,22 @@ LAF include STR_VAR file=psionic_shared.tph END
 
 DEFINE_ACTION_FUNCTION illithid STR_VAR version="" BEGIN
 
-      ACTION_MATCH ~%version%~ WITH
-      1 2 BEGIN
-         LAF make_label STR_VAR label=dw#flayer_detect_invisible END
-      END
-      3 4 BEGIN
-      END
-      DEFAULT
-         PRINT ~Weird version in illithid.tpa~
-      END
-
-      ACTION_MATCH ~%version%~ WITH
-      2 4 BEGIN
-         LAF make_label STR_VAR label=dw#flayer_resistance END
-      END
-      1 3 BEGIN
-      END
-      DEFAULT 
-         PRINT ~Weird version in illithid.tpa~
-      END
+      LAF define_difficulty STR_VAR type=illithid RET difficulty_variable END
 
       LAF shared_psionic_resources END
       LAF illithid_resources END
       LAF illithid_scripts END
       LAF illithid_cre END
       LAF illithid_compatibility END
+      LAF illithid_rest END
 
 
       // alhoon
-      
-      LAF check_label STR_VAR label=dw#mage RET value=value END
+
+      LAF check_label STR_VAR label=dw#mage RET value END
       ACTION_IF value BEGIN
           LAF run STR_VAR file=alhoon END
       END
-
 
 END
 
@@ -44,18 +26,8 @@ END
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION illithid_scripts BEGIN
-         LAF ssl_to_bcs STR_VAR script=~flayer01 flayer02 flayun udflayer brainadd~ location=~ssl/illithid~ END
-
-	 LAF extend STR_VAR file=udmaster bottom=brainadd locabs=~%workspace%\ssl_out~ END
-
-         COPY_EXISTING ~udmaster.bcs~ ~override~
-	     DECOMPILE_AND_PATCH BEGIN
-		REPLACE_TEXTUALLY ~ReallyForceSpell(LastSeenBy(Myself),PSIONIC_EGOWHIP)~ ~ForceSpell(LastSeenBy(Myself),PSIONIC_EGOWHIP)~
-		REPLACE_TEXTUALLY ~ForceSpell(LastSeenBy(Myself),PSIONIC_EGOWHIP)~ ~SetGlobalTimer("castspell","LOCALS",2) ForceSpell(Player1,PSIONIC_EGOWHIP) ForceSpell(Player2,PSIONIC_EGOWHIP) ForceSpell(Player3,PSIONIC_EGOWHIP)  ForceSpell(Player4,PSIONIC_EGOWHIP) ForceSpell(Player5,PSIONIC_EGOWHIP) ForceSpell(Player6,PSIONIC_EGOWHIP)~
-	     END
-         BUT_ONLY
-
-
+ 
+       LAF ssl_to_bcs STR_VAR script=~flayer01 flayer02 flayun udmaster~ location=~ssl/illithid~ END
 
 END
 
@@ -66,8 +38,8 @@ END
 DEFINE_ACTION_FUNCTION illithid_cre BEGIN
 
        // mind flayers
-        
-       LAF edit_creature STR_VAR creature=~damind1 damind2 eleill01 elmind01 mindfl01 ppmind01 
+
+       LAF edit_creature STR_VAR creature=~damind1 damind2 eleill01 elmind01 mindfl01 ppmind01
                                            shmind  udill01 udmind01 udmind02 udmind03 udmind04
                                            udmind10~
                                  editstring=~make_illithid=>null~
@@ -87,6 +59,8 @@ DEFINE_ACTION_FUNCTION illithid_cre BEGIN
           level=>20
           class=>mage
           illithid_general=>null
+          remove_spells=>all
+          add_spells=>"PSIONIC_DISPEL_MAGIC PSIONIC_MAZE PSIONIC_DETONATE PSIONIC_BALLISTIC MIND_FLAYER_DOMINATION"
        END
        LAF edit_creature STR_VAR creature=udmaster edits=patch_data END
 
@@ -99,10 +73,6 @@ END
 
 
 DEFINE_ACTION_FUNCTION illithid_resources BEGIN
-
-	// make version of Detonation used for blowing up skeletons
-	
-	LAF install STR_VAR file=dw#detun.spl location=resource END
 
         // make longer-range Ulitharid attack
         
@@ -119,6 +89,10 @@ DEFINE_ACTION_FUNCTION illithid_resources BEGIN
         END
         LAF edit_item STR_VAR item=mindfl02 edits=patch_data END
 
+        // spells to boost illithid DR and let them see invisible
+        
+        LAF resistance_boost_effects INT_VAR bonus=50 STR_VAR spell=dw#illre END
+        LAF innate_see_invisible_effects END
 
 
 END
@@ -135,6 +109,103 @@ DEFINE_ACTION_FUNCTION illithid_compatibility BEGIN
 	ACTION_IF FILE_EXISTS_IN_GAME ~dw#melis.cre~ THEN BEGIN
 	        LAF edit_creature STR_VAR creature=dw#viill editstring=~make_illithid=>null~ END
 	END
+
+
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////     Resting in illithid lair
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION illithid_rest BEGIN
+
+// add random illithid spawns
+
+    APPEND_COL ~spawngrp.2da~ ~$ $ RDILLITH 60 mindfl01 mindfl01 mindfl01 umbhul01 umbhul01 mindul01 * *~
+
+// modify spawns in area file
+
+   COPY_EXISTING
+          ~ar2400.are~ ~override~
+      READ_LONG 0xc0 ~rest_off~
+      WRITE_ASCII 0x48+~rest_off~ ~RDILLITH~
+      WRITE_SHORT 0x98+~rest_off~ 1
+      WRITE_SHORT 0x9a+~rest_off~ 2
+      WRITE_SHORT 0xa4+~rest_off~ 6
+      WRITE_SHORT 0xa8+~rest_off~ 0
+
+
+
+   <<<<<<<< .../stratagems-inline/illithid_rest.ssl
+IF TRIGGER
+  !Global("DMWWRestSet","MYAREA",0)
+  Global("DMWWOverrideIllithidRest","GLOBAL",0)
+  TriggerBlock(EasyMinus)
+THEN DO
+    	     Action(Literal)
+             SetGlobal("DMWWRestSet","MYAREA",0)
+    	     SetRestEncounterProbabilityDay(0)
+    	     SetRestEncounterProbabilityNight(0)
+    	     Continue()
+END
+
+IF TRIGGER
+  !Global("DMWWRestSet","MYAREA",1)
+  Global("DMWWOverrideIllithidRest","GLOBAL",0)
+  !Dead("udmaster")
+  TriggerBlock(Core)
+THEN DO
+    	     Action(Literal)
+             SetGlobal("DMWWRestSet","MYAREA",1)
+    	     SetRestEncounterProbabilityDay(25)
+    	     SetRestEncounterProbabilityNight(25)
+    	     Continue()
+END
+
+IF TRIGGER
+  !Global("DMWWRestSet","MYAREA",2)
+  Global("DMWWOverrideIllithidRest","GLOBAL",0)
+  !Dead("udmaster")
+  TriggerBlock(Hard)
+THEN DO
+    	     Action(Literal)
+             SetGlobal("DMWWRestSet","MYAREA",2)
+    	     SetRestEncounterProbabilityDay(50)
+    	     SetRestEncounterProbabilityNight(50)
+    	     Continue()
+END
+
+IF TRIGGER
+  !Global("DMWWRestSet","MYAREA",3)
+  Global("DMWWOverrideIllithidRest","GLOBAL",0)
+  !Dead("udmaster")
+  TriggerBlock(Hard)
+THEN DO
+    	     Action(Literal)
+             SetGlobal("DMWWRestSet","MYAREA",3)
+    	     SetRestEncounterProbabilityDay(75)
+    	     SetRestEncounterProbabilityNight(75)
+    	     Continue()
+END
+
+IF
+  !Global("DMWWRestSet","MYAREA",0)
+  OR(2)
+     Dead("udmaster")
+     !Global("DMWWOverrideIllithidRest","GLOBAL",0)
+THEN
+    RESPONSE #100
+    	     SetGlobal("DMWWRestSet","MYAREA",2)
+    	     SetRestEncounterProbabilityDay(0)
+    	     SetRestEncounterProbabilityNight(0)
+    	     Continue()
+END
+>>>>>>>>
+
+   LAF extend_area_script STR_VAR area=ar2400 top=illithid_rest inline=yes ssl=yes END
 
 
 

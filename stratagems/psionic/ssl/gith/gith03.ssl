@@ -1,32 +1,20 @@
 //////// Definitions //////////////////////////////////////////
 
-
-BEGIN LOOP(scsspellsubstitute1||!StateCheck(scstarget,STATE_NOT_TARGETABLE))
-BEGIN LOOP(scsspellsubstitute2||!StateCheck(scstarget,STATE_INVISIBLE))
-	INCLUDE FILE (%scsroot%\psionic\ssl\psionic_defs.ssl)
-	INCLUDE FILE (%scsroot%\mage\ssl\mage_definitions.ssl)
-END LOOP
+BEGIN LOOP(CheckStatLT\(Myself,60,SPELLFAILUREMAGE\)|| )
+INCLUDE FILE (%scsroot%\lib\ssl\shared_definitions.ssl)
 END LOOP
 
-INCLUDE FILE (%scsroot%\genai\ssl\genai_definitions.ssl)
-
-/////// Give potions ///////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////
+///	Non-interruptable spell use
+///////////////////////////////////////////////////////////////////////////////////////
 
 IF
-	!Global("potionprep","LOCALS",1)
+  !Global("no_interrupts","LOCALS",1)
 THEN
-	RESPONSE #100
-		GiveItemCreate("potn14",Myself,0,0,0)
-		SetGlobal("potionprep","LOCALS",1)
-		Continue()
-	RESPONSE #100
-		GiveItemCreate("potn03",Myself,0,0,0)
-		SetGlobal("potionprep","LOCALS",1)
-		Continue()
-	RESPONSE #100
-		GiveItemCreate("potn04",Myself,0,0,0)
-		SetGlobal("potionprep","LOCALS",1)
-		Continue()
+    RESPONSE #100
+             ApplySpellRES("dw#innat",Myself)
+             SetGlobal("no_interrupts","LOCALS",1)
+             Continue()
 END
 
 ///////////// Initialise /////////////////////////////////////////////////////
@@ -47,61 +35,45 @@ THEN
 END
 	
 
-DEFAULT TRIGGER(!GlobalTimerNotExpired("castspell","LOCALS"))
-
 
 IF TRIGGER
-	!StateCheck(Myself,State_INVISIBLE)
 	TriggerBlock(TruesightSafe)
 	See(NearestEnemyOf(Myself))
 	!StateCheck(Myself,STATE_BLUR)
 THEN DO
-	Action(PsionicMyselfRES,"dw#psibl",blur,18|100|50)
+	Action(SpellMyself,PSIONIC_BLUR|100|50)
 END
 
 //////////////// Lay on Hands ///////////////////////////////////////////////////////
 
 IF TRIGGER
-	!Global("hands","LOCALS",2)
 	HPPercentLT(Myself,60)
 THEN DO
-	Action(ForceSpellMyself,EVIL_LAYONHANDS)
-	IncrementGlobal("hands","LOCALS",1)
+	Action(SpellMyself,EVIL_LAYONHANDS)
 END
 
 
 /////////////// Psionics ////////////////////////////////////////////////////////////
 
 IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;CheckStatGT(scstarget,5,SAVEVSSPELL))
 	TargetBlock(PCsPreferringStrong)
-	TriggerBlock(Enemy|Helpless)
-	!GlobalTimerNotExpired("firstmaze","LOCALS")
+	ConditionalTargetBlock(EnemiesInOrder;CheckStatGT(scstarget,7,Level)) // don't maze weak creatures
+	TriggerBlock(Enemy|Helpless|PsiMaze|EasyPlus)
+	CheckStatGT(scstarget,1,SAVEVSSPELL)
 THEN DO
 	Combine()
-	SetGlobalTimer("firstmaze","LOCALS",1000)
-	Action(Psionic,PSIONIC_MAZE,maze,18|100|50)
+	Action(Spell,PSIONIC_MAZE|100|50)
 END
 
-IF TRIGGER
-	TargetBlock(PCsPreferringStrong)
-	TriggerBlock(Enemy|Helpless|PsiMaze)
-THEN DO
-	Combine()
-	Action(Psionic,PSIONIC_MAZE,maze,18|100|50)
-END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
 	TriggerBlock(Enemy|Helpless|PsiBlast)
-	OR(2)
-		!GlobalTimerNotExpired("firstblast","LOCALS")
-		!CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
 THEN DO
 	Combine()
-	Action(Psionic,PSIONIC_MIND_BLAST,mindblast,18|100|100)
-	SetGlobalTimer("firstblast","LOCALS",1000)
+	Action(Spell,PSIONIC_MIND_BLAST|100|10)
 END
-
 
 ////////////// Jump ///////////////////////////////////////////////////////////////
 

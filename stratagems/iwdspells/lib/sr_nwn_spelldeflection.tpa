@@ -1,0 +1,85 @@
+DEFINE_ACTION_FUNCTION sr_nwn_spelldeflection
+   STR_VAR version="sr_nwn_arcane"
+BEGIN
+   CLEAR_IDS_MAP
+   LAF read_in_assoc_array STR_VAR location=data file=~%version%.2da~ RET_ARRAY array END
+   ACTION_PHP_EACH array AS input=>r2 BEGIN
+      LAF get_spellcode STR_VAR input RET i2=value END // we have changed the ids, so don't trust stored variables
+      LAF sr_nwn_spelldeflection_core INT_VAR r2 STR_VAR i2 END
+   END
+END
+
+
+
+
+
+
+
+DEFINE_ACTION_FUNCTION sr_nwn_spelldeflection_core /// basically taken direct from SR, other than the function wrapper
+  INT_VAR r2=1
+  STR_VAR i2=""
+BEGIN
+  OUTER_SET found=0
+  OUTER_SPRINT letter ~d~
+  ACTION_FOR_EACH char_check IN d e f g h i j k l m BEGIN
+    ACTION_IF found=0 BEGIN
+      ACTION_IF NOT FILE_EXISTS_IN_GAME ~%i2%%char_check%.spl~ BEGIN
+        OUTER_SET found=1
+        OUTER_SPRINT letter ~%char_check%~
+      END
+    END
+  END
+
+  ACTION_IF found && r2 && (FILE_EXISTS_IN_GAME ~%i2%.spl~) BEGIN
+    COPY_EXISTING ~%i2%.spl~ ~override/%i2%%letter%.spl~ // cloning original into the secondary spell
+      WRITE_ASCII 0x8 ~~ (8) // clearing out the name
+      GET_OFFSET_ARRAY headers 0x64 4 0x68 2 0 0 0x28
+      PHP_EACH headers AS i => r BEGIN
+        WRITE_SHORT (r+0x0c) 1 // target = creature
+        WRITE_SHORT (r+0x26) 1 // projectile = none
+      END
+    BUT_ONLY
+
+    COPY_EXISTING ~%i2%.spl~ ~override~        // modifying the original
+      READ_LONG 0x34  level
+      READ_LONG 0x64  ab_off
+      READ_SHORT 0x68 ab_num
+      READ_LONG 0x6a  ef_off
+      READ_SHORT 0x70 cast_num // global effects aka casting features
+
+      total_eff=cast_num
+      FOR (i=0;i<ab_num;i+=1) BEGIN
+        READ_SHORT  (ab_off+i*0x28+0x1e) ef_num  // effect number
+        READ_SHORT  (ab_off+i*0x28+0x20) ef_ind  // effect index
+        total_eff+=ef_num
+      END
+
+      DELETE_BYTES ef_off ((total_eff - 1)*0x30)
+      DELETE_BYTES ab_off ((ab_num - 1)*0x28)
+      WRITE_SHORT 0x68 1
+      WRITE_LONG 0x6a  (ef_off - (ab_num - 1)*0x28)
+      WRITE_SHORT 0x70 0
+      WRITE_SHORT (ab_off+0x1e) 1
+      WRITE_SHORT (ab_off+0x20) 0
+
+      // ability header
+      WRITE_SHORT (ab_off+0x10) 1 // level required
+
+      // effect
+      offset=(ef_off - (ab_num - 1)*0x28)
+      WRITE_SHORT (offset+0x00) 146   // opcode = cast spell on creature
+      WRITE_BYTE  (offset+0x02) 2     // target = pre-target
+      WRITE_BYTE  (offset+0x03) level   // power level = spell level
+      WRITE_LONG  (offset+0x04) 0     // parameter 1 = caster's level
+      WRITE_LONG  (offset+0x08) 1     // parameter 2 = instant
+      WRITE_BYTE  (offset+0x0c) 1     // timing mode = permanent
+      WRITE_ASCII (offset+0x0d) ~~ (5)  // clearing out the space
+      WRITE_BYTE  (offset+0x12) 100   // probability 1 = 100%
+      WRITE_BYTE  (offset+0x13) 0     // probability 2 = 0%
+      WRITE_ASCIIE (offset+0x14) ~%i2%%letter%~ (8) // resource
+      WRITE_ASCII (offset+0x1c) ~~ (20) // clearing out the space
+    BUT_ONLY
+    
+  END
+
+END

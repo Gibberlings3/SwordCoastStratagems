@@ -1,12 +1,12 @@
 LAF include STR_VAR file=dragon_shared.tph locbase=dragon END
 LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
 INCLUDE ~%scsroot%/lib/ai_wrap.tph~
-LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
-
 
 DEFINE_ACTION_FUNCTION abazigal_enclave BEGIN
 
 
+      LAF dragon_resources_shared END
+      LAM read_in_spell_trigger_data // do it after creating dragon sequencers
       // core
 
       ACTION_FOR_EACH func IN misc beholder fourdragons yellowdragon BEGIN
@@ -27,51 +27,58 @@ END
 
 DEFINE_ACTION_FUNCTION abazigal_misc BEGIN
 
+     LAF include STR_VAR file=clericmage_shared.tph locbase="caster_shared/clericmage" END
+
      // restored weapon animations - more kilobytes than the rest of the mod put together!
      LAF check_ini STR_VAR ini=No_Lizard_Biff RET value END
-     ACTION_IF (value OR ~%WEIDU_OS%~ STRING_EQUAL_CASE OSX) BEGIN
+     ACTION_IF (value || enhanced_edition) BEGIN
          LAF install STR_VAR overwrite=0 location=animations postfix=bam file=all END
      END ELSE BEGIN
          MAKE_BIFF dw#liza BEGIN ~%scsroot%/%component_loc%/animations~ ~.*\.bam~ END
      END
 
-     // undroppable armour
-
-     LAF clone_item STR_VAR item=~plat05=>dw#lizpl~ editstring=~droppable=>0~ END
-
-     // undroppable weapon with new animation type
+     // weapon with new animation type
      
      MAKE_PATCH
         inventory=>CL
-        droppable=>0
      END
      LAF clone_item STR_VAR item="blun34=>dw#lzwp3" edits=patch_data END
 
      // generic warriors
 
      MAKE_PATCH
-        remove_items=>~plat05 halb02~
-        add_items=>~dw#lizpl halb03~
+        remove_items=>~halb02~
+        add_items=>~plat05 halb03~
         enforce_charclass=>null
      END
      LAF edit_creature STR_VAR creature=bazliz03 edits=patch_data END
 
      MAKE_PATCH
         level=>25
-        remove_items=>~plat05 halb07~
-        add_items=>~dw#lizpl dw#lzwp3~
+        remove_items=>~halb07~
+        add_items=>~plat05 dw#lzwp3~
         enforce_charclass=>null
      END
      LAF edit_creature STR_VAR creature=bazliz04 edits=patch_data  END
+
+     // make relevant gear undroppable
+
+     MAKE_PATCH
+        match=>"item_resource is_in [plat05 halb03 dw#lzwp3]"
+        undroppable=>1
+        unstealable=>1
+     END
+     LAF edit_creature STR_VAR creature="bazliz03 bazliz04" editstring="patch_item=>patch_data" END
 
      // create lizard men shamans (high-level druids)
 
      MAKE_PATCH
 	   levelGT=>25
 	   class=>druid
-	   enforce_charclass=>null
+	   strip_script=>"cmacl20a"
      END
      LAF clone_creature STR_VAR creature=~bazliz01=>dw#lzsh1 bazliz01=>dw#lzsh2~ edits=patch_data END
+     LAF edit_creature STR_VAR creature="dw#lzsh1 dw#lzsh2" editstring="enforce_clericmage=>~accept_level druid_mage~" END
 
      // create fiends
      
@@ -80,6 +87,16 @@ DEFINE_ACTION_FUNCTION abazigal_misc BEGIN
      // replace frost salamanders in first area with lizard men, and set up fiend ambush
 
      LAF swap_text STR_VAR files=~ar6008.are~ swaps=~salgrice=>bazliz03~ END
+
+       MAKE_PATCH
+           add_actor_inline=>~actor_baseline=>null actor_x_coord=>637 actor_y_coord=>491 actor_orientation=>2 actor_resource=>bazliz03 actor_name=>lizard1~
+           add_actor_inline'0=>~actor_baseline=>null actor_x_coord=>741 actor_y_coord=>534 actor_orientation=>2 actor_resource=>bazliz03 actor_name=>lizard2~
+           add_actor_inline'1=>~actor_baseline=>null actor_x_coord=>507 actor_y_coord=>581 actor_orientation=>2 actor_resource=>dw#lzsh1 actor_name=>lizsha1~
+           add_actor_inline'2=>~actor_baseline=>null actor_x_coord=>590 actor_y_coord=>637 actor_orientation=>2 actor_resource=>dw#lzsh2 actor_name=>lizsha2~
+           add_actor_inline'3=>~actor_baseline=>null actor_x_coord=>723 actor_y_coord=>499 actor_orientation=>2 actor_resource=>bazliz04 actor_name=>lizcapt~
+       END
+       LAF edit_area STR_VAR area=ar6008 edits=patch_data END
+
      LAF extend_area_script STR_VAR area=ar6008 bottom=ar6008add location=resource END
 
      // replace lesser earth elementals with lizard men
@@ -117,13 +134,27 @@ DEFINE_ACTION_FUNCTION abazigal_beholder BEGIN
    LAF clone_creature STR_VAR creature=~behold01=>dw#tygol~ edits=patch_data END
 
 
-   ACTION_IF !FILE_EXISTS_IN_GAME ~dw#tygol.bcs~ BEGIN
+   ACTION_IF !FILE_EXISTS_IN_GAME ~dw#tygol.bcs~ BEGIN  // no Smarter Beholders
       COPY_EXISTING ~behold01.bcs~ ~override/dw#tygol.bcs~
+   END ELSE BEGIN
+      MAKE_PATCH
+         remove_spells=>all
+         add_spells=>"HIVE_MOTHER_ANTIMAGIC_RAY HIVE_MOTHER_DEATH_RAY HIVE_MOTHER_DISINTEGRATE
+         HIVE_MOTHER_CAUSE_SERIOUS_WOUNDS BEHOLDER_PARALYZATION BEHOLDER_CHARM_PERSON BEHOLDER_DOMINATION BEHOLDER_SLOW BEHOLDER_TELEKINESIS BEHOLDER_FEAR BEHOLDER_FLESH_TO_STONE"
+      END
+      LAF edit_creature STR_VAR creature=dw#tygol edits=patch_data END
    END
 
    // place them
-   
-   LAF extend_area_script STR_VAR area=ar6003 bottom=ar6003add location=resource END
+
+       MAKE_PATCH
+           add_actor_inline=>~actor_baseline=>null actor_x_coord=>1047 actor_y_coord=>962 actor_orientation=>0 actor_resource=>dw#tygol actor_name=>tygol1~
+           add_actor_inline'0=>~actor_baseline=>null actor_x_coord=>947 actor_y_coord=>1037 actor_orientation=>0 actor_resource=>dw#tygol actor_name=>tygol2~
+           add_actor_inline'1=>~actor_baseline=>null actor_x_coord=>1241 actor_y_coord=>1059 actor_orientation=>0 actor_resource=>dw#tygol actor_name=>tygol3~
+           add_actor_inline'2=>~actor_baseline=>null actor_x_coord=>1213 actor_y_coord=>936 actor_orientation=>0 actor_resource=>behund01 actor_name=>behund1~
+           add_actor_inline'3=>~actor_baseline=>null actor_x_coord=>1126 actor_y_coord=>914 actor_orientation=>0 actor_resource=>behund01 actor_name=>behund2~
+       END
+       LAF edit_area STR_VAR area=ar6003 edits=patch_data END
 
 
    // eyes get the "Beholder" item and marginally-better scripts
@@ -190,6 +221,8 @@ END
 
 DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
 
+     LAF define_difficulty STR_VAR type=dragon RET difficulty_variable END
+
       LAF abazigal_rope END
 
       // black dragons are clones of an unaltered Nizi
@@ -202,6 +235,7 @@ DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
        dialog=>dw#abbl1
        dv=>dw#abbl1
        allegiance=>enemy
+       dragon_general=>null
        say_both_names=>3021
        level_all=>23
        immunity=>acid
@@ -209,14 +243,9 @@ DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
        immunity=>poison
        remove_spells=>all
        add_spells=>~MAGIC_MISSILE(2) MELF_ACID_ARROW(2) WIZARD_DISPEL_MAGIC WIZARD_HASTE
-                    WIZARD_DIRE_CHARM(2) DRAGON_STONE_SKIN~
+                    WIZARD_DIRE_CHARM(2) DRAGON_STONE_SKIN DRAGON_ACID_ARROW_SEQUENCER~
        remove_items=>~misc41 miscb2 misc42 amul11 amul12 amul13 chan16 dart04 bolt06 bull03 arow07 arow11~
 
-      END
-      LAF check_label STR_VAR label="dw#dragon" RET value END
-      ACTION_IF value BEGIN
-          OUTER_SPRINT $patch_data("dragon_general") null
-          OUTER_SPRINT $patch_data("dragon_staying_power") null
       END
       LAF edit_creature STR_VAR creature=dw#abbl1 edits=patch_data END
       LAF clone_creature STR_VAR creature=~dw#abbl1=>dw#abbl2~ editstring=~say_both_names=>3022 dialog=>dw#abbl2 dv=>dw#abbl2~ END
@@ -232,6 +261,7 @@ DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
         dialog=>dw#abgre
         dv=>dw#abgre
         say_both_names=>3023
+         dragon_general=>null
         level_all=>25
         immunity=>poison
         immunity=>insects
@@ -239,19 +269,14 @@ DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
         add_spells=>~UNHOLY_BLIGHT(2) DEFENSIVE_HARMONY(2) CLERIC_TRUE_SIGHT HEAL
                      MAGIC_MISSILE(4) MELF_ACID_ARROW(4) WIZARD_DISPEL_MAGIC(2)
                      SPELL_THRUST(2) BREACH(2) DOMINATION DEATH_SPELL PROTECTION_FROM_MAGIC_WEAPONS
-                     WARDING_WHIP POWER_WORD_STUN DRAGON_STONE_SKIN(3) BLACK_DRAGON_PLANT
-                     CLERIC_RIGHTEOUS_MAGIC~
+                     WARDING_WHIP POWER_WORD_STUN DRAGON_STONE_SKIN(3) RIGHTEOUS_MAGIC
+                     GREEN_DRAGON_DEFENSIVE_SEQUENCER DRAGON_ACID_ARROW_SEQUENCER~
         remove_items=>~plot05d sw1h70 rndtre04~
         strip_script=>wtasight
    END
-   LAF check_label STR_VAR label="dw#dragon" RET value END
-       ACTION_IF value BEGIN
-          OUTER_SPRINT $patch_data("dragon_general") null
-          OUTER_SPRINT $patch_data("dragon_staying_power") null
-       END
    LAF edit_creature STR_VAR creature=dw#abgre edits=patch_data END
 
-   // red dragon uses Saladrex as starting point
+   // red dragon is basically a Saladrex clone
 
    COPY ~%scsroot%/%component_loc%/unaltered/gorsal.cre~ ~override/dw#abred.cre~
 
@@ -263,27 +288,23 @@ DEFINE_ACTION_FUNCTION abazigal_fourdragons BEGIN
          dialog=>dw#abred
          allegiance=>enemy
          dragon_general=>null
-         dragon_staying_power=>null
          level_all=>26
          immunity=>fire
          remove_spells=>all
-         add_spells=>~MAGIC_MISSILE(5) MELF_ACID_ARROW(3) WIZARD_DISPEL_MAGIC(2) SLOW
+     add_spells=>~MAGIC_MISSILE(5) MELF_ACID_ARROW(3) WIZARD_DISPEL_MAGIC(2) SLOW
                    GREATER_MALISON BREACH(3) DEATH_SPELL DRAGON_STONE_SKIN(3)
-                   DRAGON_SILENCE PROTECTION_MAGIC_WEAPON_NOEFF(2) POWER_WORD_BLIND
-                   RUBY_RAY_OF_REVERSAL(2)~
+                   DRAGON_SILENCE PROTECTION_MAGIC_WEAPON_NOEFF(2) POWER_WORD_BLIND DRAGON_LOWER_FIRE
+                   RUBY_RAY_OF_REVERSAL(2) SALADREX_TRIGGER DRAGON_MAGIC_MISSILE_SEQUENCER SALADREX_SEQUENCER~
+
          remove_items=>~rndtre04 rndtre05 misc45 staf21~
    END
-   LAF check_label STR_VAR label="dw#dragon" RET value END
-       ACTION_IF value BEGIN
-          OUTER_SPRINT $patch_data("dragon_general") null
-          OUTER_SPRINT $patch_data("dragon_staying_power") null
-       END
    LAF edit_creature STR_VAR creature=dw#abred edits=patch_data END
 
    // scripts
    
    LAF install STR_VAR files=~dw#abct0.baf dw#abct1.baf dw#abct2.baf multidragon.d~ location=resource END
-   LAF ssl_to_bcs STR_VAR script=~dw#abgre dw#abred~ location=ssl END
+   LAF ssl_to_bcs STR_VAR script=dw#abgre location=ssl END
+   LAF ssl_to_bcs STR_VAR script=gorsal locbase=dragon location=ssl rename_to=dw#abred END
    LAF clone_extend STR_VAR arguments=~dragblac=>dw#abbld~ location=resource END
    LAF extend_area_script STR_VAR area=ar6000 top=ar6000add location=resource END
    LAF extend STR_VAR script=tp6001 top=tp6001add location=resource END
@@ -295,15 +316,29 @@ END
 
 DEFINE_ACTION_FUNCTION abazigal_yellowdragon BEGIN
 
+     LAF define_difficulty STR_VAR type=dragon RET difficulty_variable END
+
      /// Copy the area, which is basically a clone of ar6008. Unideal, I know.
      // Place dragon into it
 
      LAF install STR_VAR files=~ar6012.are ar6012.baf~ location=resource END
+     
+       MAKE_PATCH
+           actor_baseline=>null
+           actor_x_coord=>613
+           actor_y_coord=>561
+           actor_orientation=>1
+           actor_resource=>DW#ABDGY
+           actor_name=>Anadramatis
+       END
+
+       LAF edit_area STR_VAR area=ar6012 editstring="add_actor=>patch_data" END
+
 
     // Create the yellow dragon Anadramatis
     // Start with an unmodified version of the Yellow Dragon - we'll hot-modify
 
-   COPY ~%scsroot%/%component_loc%/unaltered/dragyell.cre~ ~override/dw#abdgy.cre~
+ //  COPY ~%scsroot%/%component_loc%/unaltered/dragyell.cre~ ~override/dw#abdgy.cre~
     MAKE_PATCH
         say_both_names=>16050
         allegiance=>neutral
@@ -314,7 +349,7 @@ DEFINE_ACTION_FUNCTION abazigal_yellowdragon BEGIN
         resist_piercing=>75
         resist_missile=>75
         immunity=>fire
-        add_items=>~dragred1 minhp1 dw#abyds(INV)~
+        add_items=>~dragred1(WEAPON) minhp1 dw#abyds(INV)~
         strip_script=>wtasight
         script_override=>dw#abdgy
         dialog=>dw#abdgy
@@ -328,34 +363,27 @@ DEFINE_ACTION_FUNCTION abazigal_yellowdragon BEGIN
         color_hair=>50
         animation=>DRAGON_BROWN
         remove_spells=>all
+        dragon_general=>null
         add_spells=>~MAGIC_MISSILE(6) WIZARD_DISPEL_MAGIC(3) WIZARD_FLAME_ARROW(3) GREATER_MALISON BREACH(4)
                      ORACLE(2) DEATH_SPELL(2) PROTECTION_MAGIC_WEAPON_NOEFF(3) IMPROVED_HASTE  RUBY_RAY_OF_REVERSAL(2)
                      WARDING_WHIP(2) POWER_WORD_STUN(2) PIERCE_SHIELD(2) INCENDIARY_CLOUD ABI_DALZIMS_HORRID_WILTING(3)
                      WAIL_OF_THE_BANSHEE(2) SPELL_TRAP(2) POWER_WORD_KILL(2) DRAGON_STONE_SKIN(6)~
     END
-            LAF check_label STR_VAR label="dw#dragon" RET value END
-        ACTION_IF value BEGIN
-          OUTER_SPRINT $patch_data("dragon_general") null
-          OUTER_SPRINT $patch_data("dragon_staying_power") null
-        END
+    LAF install_creature STR_VAR creature=~dragyell=>dw#abdgy~ location=unaltered edits=patch_data END
 
-    LAF edit_creature STR_VAR creature=dw#abdgy edits=patch_data END
-
-    LAF ssl_to_bcs STR_VAR script=dw#abdgy location=ssl END
-
-   // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
-   // (may also be built by main Dragon code)
-
-   LAF clone_spell STR_VAR spell=~%WIZARD_SPELL_IMMUNITY_ABJURATION_INSTANT%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION_INSTANT%=>dw#0d592~
-                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
-   END
+    LAF check_label STR_VAR label=dw#mage RET value END // only use WISH if it's been built
+    ACTION_IF value BEGIN
+        LAF ssl_to_bcs STR_VAR script=dw#abdgy location=ssl booleans=WIZARD_WISH END
+    END ELSE BEGIN
+        LAF ssl_to_bcs STR_VAR script=dw#abdgy location=ssl END
+    END
 
    // misc
 
    LAF install STR_VAR files=~yellow.d dw#abyda.itm dw#abamu.itm~ location=resource END
    
    // dragon armour
-   
+
    LAF edit_item STR_VAR item=dw#abyda editstring=~say_both_names=>3016 say_both_descriptions=>3017~ END
    APPEND ~ITEMEXCL.2DA~ ~dw#abyda 1~
 
