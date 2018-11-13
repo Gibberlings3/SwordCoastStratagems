@@ -1,0 +1,201 @@
+///////////////////////////////////////////////////////////////////////////////////////
+///	Definitions
+///////////////////////////////////////////////////////////////////////////////////////
+
+
+BEGIN LOOP(!StateCheck\(scstarget,STATE_INVISIBLE\)||OR(2)!StateCheck(scstarget,STATE_INVISIBLE)Global("see_invisible","LOCALS",1))
+BEGIN LOOP(!StateCheck\(scstarget,STATE_NOT_TARGETABLE\)||OR(2)!StateCheck(scstarget,STATE_NOT_TARGETABLE)Global("see_invisible","LOCALS",1))
+BEGIN LOOP(CheckStatLT\(Myself,60,SPELLFAILUREMAGE\)|| )
+INCLUDE FILE (%scsroot%\lib\ssl\shared_definitions.ssl)
+END LOOP
+END LOOP
+END LOOP
+///////////////////////////////////////////////////////////////////////////////////////
+///	Non-interruptable spell use
+///////////////////////////////////////////////////////////////////////////////////////
+
+IF
+  !Global("no_interrupts","LOCALS",1)
+THEN
+    RESPONSE #100
+             ApplySpellRES("dw#innat",Myself)
+             SetGlobal("no_interrupts","LOCALS",1)
+             Continue()
+END
+
+///////////////////////////////////////////////////////////////////////////////////////
+///	Difficulty adjustments
+///////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+   TriggerBlock(CorePlus)
+   Global("see_invisible","LOCALS",0)
+THEN DO
+     Action(Literal)
+     ApplySpellRES("dw#sinat",Myself)
+     SetGlobal("see_invisible","LOCALS",1)
+     Continue()
+END
+
+IF TRIGGER
+   TriggerBlock(EasyMinus)
+   Global("see_invisible","LOCALS",1)
+THEN DO
+     Action(Literal)
+     ApplySpellRES("dw#sirem",Myself)
+     SetGlobal("see_invisible","LOCALS",0)
+     Continue()
+END
+
+IF TRIGGER
+   TriggerBlock(HardPlus)
+   Global("staying_power","LOCALS",0)
+THEN DO
+     Action(Literal)
+     ApplySpellRES("dw#illre",Myself)
+     SetGlobal("staying_power","LOCALS",1)
+     Continue()
+END
+
+IF TRIGGER
+   TriggerBlock(CoreMinus)
+   Global("staying_power","LOCALS",1)
+THEN DO
+     Action(Literal)
+     ApplySpellRES("dw#rerem",Myself)
+     SetGlobal("staying_power","LOCALS",0)
+     Continue()
+END
+
+///////////////////////////////////////////////////////////////////////////
+///	Vanilla core
+///////////////////////////////////////////////////////////////////////////
+
+IF
+	Detect([PC])
+	Global("doOnce","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		DisplayStringHead(Myself,62033) // The reek of chemicals and fermented brain overwhelms you as you step into sight of the famed elder brain of the illithids. An instant later, the brain lashes out at you with a psionic whip...
+		Wait(1)
+		ForceSpell(Player1,PSIONIC_EGOWHIP)
+		ForceSpell(Player2,PSIONIC_EGOWHIP)
+		ForceSpell(Player3,PSIONIC_EGOWHIP)
+		ForceSpell(Player4,PSIONIC_EGOWHIP)
+		ForceSpell(Player5,PSIONIC_EGOWHIP)
+		ForceSpell(Player6,PSIONIC_EGOWHIP)
+		SetGlobalTimer("castspell","LOCALS",6)
+		SetInterrupt(TRUE)
+		SetGlobal("doOnce","LOCALS",1)
+END
+
+IF
+	HitBy([ANYONE],CRUSHING)
+	Global("firstspawn","LOCALS",0)
+THEN
+	RESPONSE #100
+		SetGlobal("firstspawn","LOCALS",1)
+		CloseDoor("Door01")
+		Lock("Door01")
+		CreateVisualEffect("SPROTECT",[728.711])
+		CreateCreature("udgolem",[728.711],12) // Brain Golem
+		CreateVisualEffect("SPROTECT",[501.905])
+		CreateCreature("udgolem",[501.905],12) // Brain Golem
+END
+
+IF
+	Global("firstspawn","LOCALS",1)
+	Delay(45)
+	See(NearestEnemyOf(Myself))
+	!StateCheck(Myself,STATE_REALLY_DEAD)
+THEN
+	RESPONSE #100
+		CreateVisualEffect("SPROTECT",[501.905])
+		CreateCreature("udgolem",[501.905],12) // Brain Golem
+END
+
+
+
+///////////////////////////////////////////////////////////////////////////
+///	Psionic Disjunction
+///////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy|Helpless|CorePlus)
+THEN DO
+	Action(Spell,PSIONIC_DISPEL_MAGIC)
+END
+
+//////////////////////////////////////////////////////////////////////////
+////	Domination
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;CheckStatGT(scstarget,6,SAVEVSSPELL))
+	TargetBlock(PCsPreferringStrong)
+	ConditionalTargetBlock(EnemiesInOrder;CheckStatGT(scstarget,7,Level)) // don't dominate weak creatures
+	TriggerBlock(Enemy|Helpless|PsiDom)
+	CheckStatGT(scstarget,3,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(SpellMarker,MIND_FLAYER_DOMINATION,ITEM_PSIONIC_SEEN|100|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Maze
+//////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsPreferringStrong;CheckStatGT(scstarget,5,SAVEVSSPELL))
+	TargetBlock(PCsPreferringStrong)
+	ConditionalTargetBlock(EnemiesInOrder;CheckStatGT(scstarget,7,Level)) // don't maze weak creatures
+	TriggerBlock(Enemy|Helpless|PsiMaze|CorePlus)
+	CheckStatGT(scstarget,1,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(Spell,PSIONIC_MAZE|100|50)
+END
+
+///////////////////////////////////////////////////////////////////////////////
+///     Blow up skeletons (ranged)
+////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+   !Global("DMWWNoSkeletonDetonate","GLOBAL",1)
+   TargetBlock(EnemiesInOrderShort)
+   TriggerBlock(Enemy|HardPlus)
+   HaveSpell(PSIONIC_DETONATE)
+   OR(2)
+        Class(scstarget,SKELETON)
+        Class(scstarget,SKELETON_WARRIOR)
+THEN DO
+       Combine()
+       Action(ForceSpellRES,"dw#detun")
+END
+
+///////////////////////////////////////////////////////////////////////////////	
+////	Detonation and Ballistic attack
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsInOrder;HPPercentLT(scstarget,25))
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Enemy|Helpless|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,PSIONIC_DETONATE|100|100)
+END
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsInOrder;HPPercentLT(scstarget,25))
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Enemy|Helpless|Stoneskin|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,PSIONIC_BALLISTIC)
+END
+

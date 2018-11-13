@@ -1,11 +1,12 @@
 DEFINE_ACTION_FUNCTION fine_weapons STR_VAR version="shatter" BEGIN
+   OUTER_SET shatter = ("%version%" STRING_EQUAL_CASE shatter)? 1 : 0
 
 <<<<<<<< .../stratagems-inline/fineweapon.2da
 nonmagic_wpn  magic_wpn   hit   dmg cost  BAM1     BAM2	    kept_copy  desc_string     name_string
 ax1h01	   ax1h02         1     1   500   dw#axe01 dw#axe01 dw#axe1    401                        402
 blun06     blun07         1     1   600   dw#mstar dw#mstar dw#msta1   403                        404
-bow03      bow04          2     1   800   dw#bow02 dw#bow02 dw#lbow1   405                        406
-bow05      bow06          1     1   700   dw#bow03 dw#bow03 dw#sbow1   407                        408
+bow03      bow04          2     0   800   dw#bow02 dw#bow02 dw#lbow1   405                        406
+bow05      bow06          1     0   700   dw#bow03 dw#bow03 dw#sbow1   407                        408
 dagg01     dagg02         1     1   100   dw#dagg1 dw#dagg1 dw#dagg1   409                        410
 halb01     halb02         1     1   700   dw#halb1 dw#halb1 dw#halb1   411                        412
 hamm01     hamm02         1     2   500   dw#hamm1 dw#hamm1 dw#hamm1   413                        414
@@ -21,7 +22,7 @@ bow01      bow02          2     1   850   ibow02   ibow02   dw#cbow1   431      
 blun02     blun03         1     1   750   iblun03  iblun03  dw#flai1   433                        434
 >>>>>>>>
 
-  LAF process_table STR_VAR table=fineweapon.2da inline=yes function=make_fine_weapon END
+  LAF process_table STR_VAR table=fineweapon.2da inline=yes function=make_fine_weapon ext_args="shatter=%shatter%" END
 
     COPY ~%scsroot%/%component_loc%/icons~ ~override~
 
@@ -37,17 +38,16 @@ DEFINE_ACTION_FUNCTION make_fine_weapon
              cost=0
              desc_string=0
              name_string=0
+             shatter=0
      STR_VAR nonmagic_wpn=""
              magic_wpn=""
              BAM1=""
              BAM2=""
              kept_copy=""
-             version="shatter"
 BEGIN
     ACTION_IF !FILE_EXISTS_IN_GAME ~%kept_copy%.itm~ BEGIN
        LAF clone_item STR_VAR item= ~%magic_wpn%=>%kept_copy%~ END
-       ACTION_CLEAR_ARRAY patch_data
-       ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+       MAKE_PATCH
             say_both_names=>~%name_string%~
             say_both_descriptions=>~%desc_string%~
             icon=>~%BAM1%~
@@ -55,77 +55,51 @@ BEGIN
             patch_ability_inline=>~ability_icon=>%BAM2% to_hit=>%hit% damage_bonus=>%dmg%~
        END
        LAF clone_item STR_VAR item=~%tutu_var%%nonmagic_wpn%=>%tutu_var%%magic_wpn%~ edits=patch_data END
-       LAF ironcrisis STR_VAR nonmagic_wpn magic_wpn version END
-       ACTION_IF (GAME_IS ~bgt~ && ~%version%~ STRING_EQUAL_CASE ~shatter~) BEGIN
-            LAF ironcrisis_bgt STR_VAR magic_wpn version END
-       END
-       ACTION_IF (!GAME_IS ~bgt~ && "%version%" STRING_EQUAL_CASE "shatter") BEGIN
-          MAKE_PATCH
-             match=>"opcode=112"
-             resource=>"%magic_wpn%"
-          END
-          ACTION_IF FILE_EXISTS_IN_GAME "%nonmagic_wpn%.spl" BEGIN
-          LAF clone_spell STR_VAR spell="%nonmagic_wpn%=>%magic_wpn%" editstring="patch_effect=>patch_data" END
-          END
+       ACTION_IF is_bg1 BEGIN
+         OUTER_SET shatter_opcode = (GAME_IS ~bgt~)? 309 : 146
+         ACTION_IF shatter BEGIN
+              MAKE_PATCH
+                 match=>"opcode=%shatter_opcode% and resource=%tutu_var%%nonmagic_wpn%"
+                 resource=>"%tutu_var%%magic_wpn%"
+                 ironcrisis_bgt=>"%magic_wpn%"
+              END
+              LAF edit_item STR_VAR item="%tutu_var%%magic_wpn%" editstring="patch_effect=>patch_data" END
+              MAKE_PATCH
+                 match=>"opcode=112 and resource=%tutu_var%%nonmagic_wpn%"
+                 resource=>"%tutu_var%%magic_wpn%"
+              END
+              LAF clone_spell STR_VAR spell="%tutu_var%%nonmagic_wpn%=>%tutu_var%%magic_wpn%" editstring="patch_effect=>patch_data" allow_missing=1 END
+         END ELSE BEGIN
+              LAF edit_item STR_VAR item="%tutu_var%%magic_wpn%" editstring="delete_effect=>~opcode=%shatter_opcode% and resource=%tutu_var%%nonmagic_wpn%~" END
+         END
        END
     END
 END
 
-DEFINE_ACTION_FUNCTION ironcrisis
-    STR_VAR magic_wpn=""
-            nonmagic_wpn=""
-            version="shatter"
+DEFINE_PATCH_FUNCTION ironcrisis_bgt
+    STR_VAR arguments=""
 BEGIN
-          ACTION_IF ~%version%~ STRING_EQUAL_CASE shatter BEGIN
-             MAKE_PATCH
-                match=>"%nonmagic_wpn% in ironcrisis_check"
-                resource=>~%magic_wpn%~
-             END
-             LAF edit_item STR_VAR item= ~%magic_wpn%~ editstring=~patch_effect=>patch_data~ END
-          END ELSE BEGIN
-             LAF edit_item STR_VAR item= ~%magic_wpn%~ editstring=~delete_effect=>"%nonmagic_wpn% in ironcrisis_check"~ END
-          END
-
-END
-
-DEFINE_PATCH_FUNCTION ironcrisis_check
-         INT_VAR offset_secondary=0
-         STR_VAR arguments=""
-         RET value
-BEGIN
-         PATCH_IF GAME_IS ~bgt~ BEGIN
-            SET correct_opcode=309
-         END ELSE BEGIN
-            SET correct_opcode=146
-         END
-         LPF ITM_read_opcode INT_VAR offset_secondary RET opcode=value END
-         LPF ITM_read_resource INT_VAR offset_secondary RET resource=value END
-         PATCH_IF (opcode=correct_opcode && ~%resource%~ STRING_EQUAL_CASE ~%arguments%~) BEGIN
-              SET value=1
-         END ELSE BEGIN
-              SET value=0
-         END
-END
-
-DEFINE_ACTION_FUNCTION ironcrisis_bgt BEGIN
+   INNER_ACTION BEGIN
+    ACTION_IF GAME_IS ~bgt~ BEGIN
       <<<<<<<< .../stratagems-inline/crisis_add.baf
          IF
 	InParty(Myself)
 	Global("ENDOFBG1","GLOBAL",0)
-	HasItemEquipedReal("%magic_wpn%",Myself) // Flail
-	Global("%magic_wpn%","LOCALS",1)
+	HasItemEquipedReal("%arguments%",Myself)
+	Global("%arguments%","LOCALS",1)
 THEN
 	RESPONSE #50
 		DisplayStringHead(Myself,74465) // My weapon has shattered!
-		SetGlobal("%magic_wpn%","LOCALS",0)
-		TakeItemReplace("BGMISC56","%magic_wpn%",Myself) // Flail
+		SetGlobal("%arguments%","LOCALS",0)
+		TakeItemReplace("BGMISC56","%arguments%",Myself) // Flail
 	RESPONSE #50
-		SetGlobal("%magic_wpn%","LOCALS",0)
+		SetGlobal("%arguments%","LOCALS",0)
 		Continue()
 END
       >>>>>>>>
-    EXTEND_BOTTOM ~dplayer2.bcs~ ~.../stratagems-inline/crisis_add.baf~ EVALUATE_BUFFER
-
+       LAF extend STR_VAR script=dplayer2 bottom=crisis_add inline=yes END
+     END
+    END
 END
 
 

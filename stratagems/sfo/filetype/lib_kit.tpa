@@ -525,17 +525,17 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    General kit maker - edits all kits with given parent
 /////
-/////    A hiccup is that clabma01 does triple duty, acting as the file for mages, sorcerers, and wildmages
-/////    We don't want to apply the same edits more than once when parentclass is mage.
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION edit_all_kits
       INT_VAR at_top_hla=0
+              skip_trueclass=0
       STR_VAR editstring=""
               edits=""
               parent_class=""
               filter=""
 BEGIN
+   LAF make_clabs_unique END
    OUTER_SET class_id=IDS_OF_SYMBOL (class "%parent_class%")
    OUTER_SET continue=1
    ACTION_IF "%filter%" STRING_COMPARE "" BEGIN
@@ -543,9 +543,11 @@ BEGIN
          LPF "%filter%" STR_VAR arguments=BASECLASS RET continue=value END
        END
    END
-   ACTION_IF continue BEGIN
+   ACTION_IF continue && !skip_trueclass BEGIN
       LAF edit_kit INT_VAR at_top_hla STR_VAR edits editstring kit="%parent_class%" END
    END
+   LAF find_clab STR_VAR kit="%parent_class%" RET clab END
+   OUTER_SPRINT $done_clab("%clab%") ""
    COPY_EXISTING "kitlist.2da" "%workspace%"
             COUNT_2DA_COLS colcount
             COUNT_2DA_ROWS colcount rowcount
@@ -560,7 +562,13 @@ BEGIN
                   END
                   PATCH_IF continue BEGIN
                     INNER_ACTION BEGIN
-                     LAF edit_kit INT_VAR at_top_hla STR_VAR edits editstring kit END
+                     LAF find_clab STR_VAR kit RET clab END
+                     ACTION_IF !VARIABLE_IS_SET $done_clab("%clab%") BEGIN
+                        OUTER_SPRINT $done_clab("%clab%") ""
+                        LAF edit_kit INT_VAR at_top_hla STR_VAR edits editstring kit END
+                     END ELSE BEGIN
+                        LAF edit_kit INT_VAR at_top_hla skip_clab=1 STR_VAR edits editstring kit END
+                     END
                     END
                   END
                END
@@ -1218,7 +1226,8 @@ BEGIN
           CLERIC=>PR
           DRUID=>DR
           MAGE=> MA
-          SORCEROR=>MA
+          SORCEROR=>SO
+          SORCERER=>SO
           THIEF=>TH
           BARD=>BA
        END
@@ -1388,7 +1397,7 @@ END
 
 DEFINE_ACTION_FUNCTION make_luas_unique
 BEGIN
-   
+
    // get the data
    COPY_EXISTING "luabbr.2da" "%workspace%"
    OUTER_SPRINT read_array_location "%workspace%"
@@ -1675,3 +1684,41 @@ END
 
 
 DEFINE_PATCH_FUNCTION kit_hardcode BEGIN END // this is a placeholder, to be replaced by user-defined version (SCS's lives in lib/kit_hardcode.tpa)
+
+
+/////////////////////////////////////////////////////
+///    Wild Mage squats on the
+///    core CLABs mages;
+///    give them unique entries
+/////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_clabs_unique BEGIN
+    LAF check_label STR_VAR label="dw#uniqueclab" RET value END
+    ACTION_IF !value BEGIN
+       LAF make_label STR_VAR label="dw#uniqueclab" END
+       LAF find_free_clab INT_VAR to_try=10 STR_VAR prefix=MA RET clab_wildmage=clab END
+       LAF read_table_entry INT_VAR lookup_column=1 STR_VAR file=kitlist row=WILDMAGE column=ABILITIES RET value END
+       ACTION_IF "%value%" STRING_EQUAL_CASE CLABMA01 BEGIN
+            LAF write_table_entry INT_VAR lookup_column=1 STR_VAR file=kitlist row=WILDMAGE column=ABILITIES arguments="%clab_wildmage%" END
+            ACTION_IF FILE_EXISTS_IN_GAME "clabma01.2da" BEGIN
+                COPY_EXISTING "clabma01.2da" "override/%clab_wildmage%.2da"
+            END
+       END
+    END
+END
+
+DEFINE_ACTION_FUNCTION find_free_clab
+    INT_VAR to_try=1
+    STR_VAR prefix=""
+    RET clab
+BEGIN
+   ACTION_IF to_try<10 BEGIN
+      OUTER_SPRINT clab "CLAB%prefix%0%to_try%"
+   END ELSE BEGIN
+      OUTER_SPRINT clab "CLAB%prefix%%to_try%"
+   END
+   ACTION_IF FILE_EXISTS_IN_GAME "%clab%.2da" BEGIN
+       OUTER_SET to_try +=1 
+       LAF find_free_clab INT_VAR to_try STR_VAR prefix RET clab END
+   END
+END

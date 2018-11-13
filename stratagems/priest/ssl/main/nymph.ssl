@@ -1,0 +1,273 @@
+INCLUDE FILE(%scsroot%/lib/ssl/shared_definitions.ssl)
+VARIABLE(SPELLFAILUREMAGE=SPELLFAILUREPRIEST)
+
+
+//////////////////////////////////////////////////////////////////////////////////
+////	Deal with rogue undead
+//////////////////////////////////////////////////////////////////////////////////
+
+IF
+	AttackedBy([ENEMY.UNDEAD],DEFAULT)
+	Allegiance(LastAttackerOf(Myself),ENEMY)
+	General(LastAttackerOf(Myself),UNDEAD)
+	Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		ClearActions(LastAttackerOf(Myself))
+		Continue()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////
+//      Handle fear
+//////////////////////////////////////////////////////////////////////////////////
+
+IF
+  StateCheck(Myself,STATE_PANIC)
+THEN
+    RESPONSE #100
+             RandomWalkContinuous()
+END
+
+///////////////////////////////////////////////////
+////	If attacked by an unseen foe, mill around
+////	in confusion. You never know, you might
+////	bump into them!
+//////////////////////////////////////////////////
+
+IF
+	Allegiance(Myself,ENEMY)
+    OR(12)
+      AttackedBy([GOODCUTOFF.0.0.0.0.SUMMONED],DEFAULT)
+      AttackedBy([PC],DEFAULT)
+      AttackedBy([FAMILIAR],DEFAULT)
+      AttackedBy([ALLY],DEFAULT)
+      AttackedBy([CONTROLLED],DEFAULT)
+      AttackedBy([CHARMED],DEFAULT)
+      SpellCastOnMe([GOODCUTOFF.0.0.0.0.SUMMONED],0)
+      SpellCastOnMe([PC],0)
+      SpellCastOnMe([FAMILIAR],0)
+      SpellCastOnMe([ALLY],0)
+      SpellCastOnMe([CONTROLLED],0)
+      SpellCastOnMe([CHARMED],0) 
+!GlobalTimerNotExpired("whatthe","LOCALS")
+  !See(NearestEnemyOf(Myself))
+THEN
+  RESPONSE #100
+    SetGlobalTimer("whatthe","LOCALS",12)
+    Continue()
+END
+
+IF
+  !See(NearestEnemyOf(Myself))
+  GlobalTimerNotExpired("whatthe","LOCALS")
+THEN
+  RESPONSE #100
+    RandomWalkContinuous()
+END
+
+/////////////////////////////////////////////////////////////
+///	Return to summoner
+/////////////////////////////////////////////////////////////
+
+
+IF
+  !See(NearestEnemyOf(Myself))
+  !Range(LastSummonerOf(Myself),30)
+THEN
+    RESPONSE #100
+         ReallyForceSpell(LastSummonerOf(Myself),SUCCUBUS_TELEPORT) 
+         Wait(2)
+END
+
+
+IF
+  !See(NearestEnemyOf(Myself))
+  Range(LastSummonerOf(Myself),30)
+  !Range(LastSummonerOf(Myself),10)
+THEN
+    RESPONSE #100
+         MoveToObject(LastSummonerOf(Myself))
+END
+
+/////////////////////////////////////////////////////////////
+///    Priority attack block if CSW running
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+       Target(NearestEnemyOf(Myself))
+       Range(scstarget,5)
+       HasItem("serious",Myself)
+THEN DO                         
+     Action(Attack)
+END
+
+/////////////////////////////////////////////////////////////
+///    Healing and buffing
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Allegiance(Myself,ENEMY)
+	TargetBlock(HumanoidVillains)
+	HPPercentLT(scstarget,75)
+	Range(scstarget,20)
+THEN DO
+	Action(SpellMyself,CLERIC_MASS_CURE|100|50)
+END
+
+IF TRIGGER
+	!Allegiance(Myself,ENEMY)
+	TargetBlock(PCsInOrder)
+	HPPercentLT(scstarget,75)
+	Range(scstarget,20)
+THEN DO
+	Action(SpellMyself,CLERIC_MASS_CURE|100|50)
+END
+
+IF TRIGGER
+          Range(NearestEnemyOf(Myself),10)
+THEN DO   
+          Action(SpellMyself,CLERIC_BARKSKIN|100|50)
+END
+
+/////////////////////////////////////////////////////////////
+///    Confusion
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInReverseOrder)
+	TriggerBlock(AoEDisabled|Confused|ConfuseProof|MR|Enemy|NotUndead)
+	CheckStatGT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Action(SpellArea,CLERIC_CONFUSION|200|100)
+END
+
+IF TRIGGER
+        !Allegiance(Myself,ENEMY)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(AoEDisabled|Confused|ConfuseProof|MR|NotUndead)
+	CheckStatGT(scstarget,0,SAVEVSSPELL)
+THEN DO
+	Action(SpellArea,CLERIC_CONFUSION|200|100)
+END
+
+/////////////////////////////////////////////////////////////
+///    Mental domination
+/////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Disabled|Charm|MinorGlobe|MR|Enemy)
+	CheckStatGT(scstarget,4,SAVEVSSPELL)
+THEN DO
+	Action(Spell,CLERIC_MENTAL_DOMINATION|50|50)
+END
+
+IF TRIGGER
+        !Allegiance(Myself,ENEMY)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Disabled|Charm|MinorGlobe|MR)
+	CheckStatGT(scstarget,4,SAVEVSSPELL)
+THEN DO
+	Action(Spell,CLERIC_MENTAL_DOMINATION|50|50)
+END
+
+//////////////////////////////////////////////////////////////
+///	Call Lightning
+///////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(Disabled|MR|ResistElectric|MinorGlobe|Enemy|SIAlteration)
+	AreaType(OUTDOOR)
+THEN DO
+	Combine()
+	Action(Spell,CLERIC_CALL_LIGHTNING|70|30)
+END
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Disabled|MR|ResistElectric|MinorGlobe|SIAlteration)
+	!Allegiance(Myself,ENEMY)
+	AreaType(OUTDOOR)
+THEN DO
+	Action(Spell,CLERIC_CALL_LIGHTNING|50|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Cause wounds
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+          Range(NearestEnemyOf(Myself),5)
+THEN DO
+     Action(SpellMyself,CLERIC_CAUSE_SERIOUS_WOUNDS|50|50)
+END
+
+//////////////////////////////////////////////////////////////
+///	Hold monster/person, miscast magic
+///////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Disabled|Hold|MR|Enemy)
+THEN DO
+	Action(Spell,WIZARD_HOLD_MONSTER|70|30)
+END
+
+IF TRIGGER
+   TargetBlock(PCSpellcasters)
+   TriggerBlock(SpellTurn|Enemy|Disabled|MinorGlobe)
+   !CheckStatGT(scstarget,80,SPELLFAILUREMAGE)
+THEN DO
+     Action(Spell,CLERIC_MISCAST_MAGIC|100|100)
+END
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(Disabled|Hold|MR|Enemy|MinorGlobe|L2safe)
+THEN DO
+	Action(Spell,CLERIC_HOLD_PERSON|70|30)
+END
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	!Allegiance(Myself,ENEMY)
+	TriggerBlock(Disabled|Hold|MR)
+	CheckStatGT(scstarget,4,SAVEVSSPELL)
+THEN DO
+	Action(Spell,WIZARD_HOLD_MONSTER|70|30)
+END
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+	!Allegiance(Myself,ENEMY)
+	TriggerBlock(Disabled|Hold|MinorGlobe|MR|L2safe)
+	CheckStatGT(scstarget,4,SAVEVSSPELL)
+THEN DO
+	Action(Spell,CLERIC_HOLD_PERSON|70|30)
+END
+
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  !Allegiance(Myself,ENEMY)
+  TargetBlock(EnemiesInOrderShort)
+  TriggerBlock(Plus0Safe)
+THEN DO
+   Action(Literal)
+   AttackOneRound(scstarget)
+END
+
+
+BEGIN LOOP(MyWeaponStrength||0)
+BEGIN LOOP(MyWeaponDamageType||Crushing)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+END LOOP
+END LOOP
+
+

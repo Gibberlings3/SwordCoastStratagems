@@ -1,116 +1,58 @@
 DEFINE_ACTION_FUNCTION wk_early BEGIN
-   LAF wk_hack RET success END
 
-   ACTION_IF success BEGIN
-      LAF wk_edits END
+// redirect copy-ground-piles at end of SoA from AR4000 to AR3000
+
+   LAF swap_text STR_VAR files="cut59a.bcs" swaps="ar4000=>ar3000" END
+
+// first time in AR4000 (i.e., immediately after expansion starts), jump to AR3000, applying AR4000's on-creation journal and chapter updates
+
+   ACTION_IF enhanced_edition BEGIN
+      OUTER_SPRINT journalstring "EraseJournalEntry(97346)AddJournalEntry(97346,QUEST_DONE)EraseJournalEntry(4352)"
    END ELSE BEGIN
-      FAIL ~Sorry: your version of BG2:ToB does not allow this component to be installed. Component will be skipped.~
+      OUTER_SPRINT journalstring "EraseJournalEntry(4352)"
    END
 
+<<<<<<<< .../stratagems-inline/ar4000add.baf
+IF
+   Global("DMWWWKEarly","GLOBAL",0)
+THEN
+    RESPONSE #100
+		StartCutSceneMode()
+		SetGlobal("chapter","GLOBAL",%bg2_chapter_8%)
+		%journalstring%
+		LeaveAreaLUAPanic("AR3000","",[1300.1840],4)
+		ActionOverride(Player1,LeaveAreaLUA("AR3000","",[1631.2548],4))
+		ActionOverride(Player2,LeaveAreaLUA("AR3000","",[1717.2555],4))
+		ActionOverride(Player3,LeaveAreaLUA("AR3000","",[1713.2490],4))
+		ActionOverride(Player4,LeaveAreaLUA("AR3000","",[1712.2492],2))
+		ActionOverride(Player5,LeaveAreaLUA("AR3000","",[1637.2579],0))
+		ActionOverride(Player6,LeaveAreaLUA("AR3000","",[1642.2505],0))
+		SetGlobal("DMWWWKEarly","GLOBAL",1)
+		FadeFromColor([20.0],0)
+		EndCutSceneMode()
 END
+>>>>>>>>
 
-DEFINE_ACTION_FUNCTION wk_hack RET success BEGIN
+    LAF extend_area_script STR_VAR area=ar4000 top=ar4000add inline=yes END
 
-   OUTER_SET ~success~=0
 
-   COPY_EXISTING ~bgmain.exe~ ~bgmain.exe~
-    SET ~i~=0x720000
-    WHILE (~i~<0x730000) BEGIN
-       READ_ASCII ~i~ + 0x8 ~check~ (2)
-       PATCH_IF ~%check%~ STRING_EQUAL_CASE ~AR~ THEN BEGIN
-          READ_ASCII ~i~ + 0x8 ~check1~ (6)
-          READ_ASCII ~i~ ~check2~  (5)
-          READ_ASCII  ~i~ +0x10 ~check3~(8)
-          PATCH_IF ((~%check1%~ STRING_EQUAL ~AR4000~ OR ~%check1%~ STRING_EQUAL ~AR3000~) AND ~%check2%~ STRING_EQUAL ~Start~ AND ~%check3%~ STRING_EQUAL ~WorldM25~) THEN BEGIN
-             WRITE_ASCII ~i~ + 0x8 ~AR3000~
-             SET ~i~=0x730000
-             SET ~success~=1
-          END
-       END
-       SET ~i~=~i~+1
+    /// add an entrance point in the Forest of Tethyr
+    MAKE_PATCH
+            type=>entrance
+            entrance_name=>~dw#WKin~
+            entrance_xloc=>~1311~
+            entrance_yloc=>~2347~
     END
-   BUT_ONLY
-END
+    LAF edit_area STR_VAR area=ar4000 editstring=~add_entry=>patch_data~ END
 
+    // link that entrance point to Watchers' Keep (to the South exit block, to be specific)
 
-DEFINE_ACTION_FUNCTION wk_edits BEGIN
+    LAF edit_worldmap STR_VAR worldmap=worldm25 editstring="insert_link => ~from=>ar3000 to=>ar4000 dir_from=>S link_travtime_div_four=>9 entrance=>dw#WKin~" END
 
-		/// add an entrance point in the Forest of Tethyr
-                ACTION_CLEAR_ARRAY patch_data
-                ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
-                     type=>entrance
-                     entrance_name=>~dw#WKin~
-                     entrance_xloc=>~1311~
-                     entrance_yloc=>~2347~
-                END
-                LAF edit_area STR_VAR area=ar4000 editstring=~add_entry=>patch_data~ END
+    // Make Tethyr inaccessible once the party have reached the Pocket Plane (not that it matters really)
 
-		// link that entrance point to Watchers' Keep (to the South exit block, to be specific)	- legacy code
+    ACTION_IF !FILE_EXISTS_IN_GAME ~dw#teth.are~ BEGIN // Wheels of Prophecy not installed
 
-		COPY_EXISTING ~worldm25.wmp~ ~override~
-			READ_LONG 0x30 ~area_num~
-			READ_LONG 0x34 ~area_off~
-			READ_LONG 0x38 ~link_off~
-			READ_LONG 0x3c ~link_num~
-			WRITE_LONG 0x3c ~link_num~+1
-			// find which area is the Keep
-			FOR (i=0;i<~%area_num%~;i=i+1) BEGIN
-				READ_ASCII ~%area_off%~+0xf0*~%i%~ ~areaname~
-				PATCH_IF (~%areaname%~ STRING_EQUAL_CASE ~ar3000~) THEN BEGIN
-					// find how many exits there are in the South block; add one
-					READ_LONG 0x60+~%area_off%~+0xf0*~%i%~ ~firstexit~
-					READ_LONG 0x64+~%area_off%~+0xf0*~%i%~ ~numexits~
-					WRITE_LONG 0x64+~%area_off%~+0xf0*~%i%~ ~%numexits%~+1
-					// tidy up other exits in this area
-					READ_LONG 0x50+~%area_off%~+0xf0*~%i%~ ~firstexit_other~
-					PATCH_IF !(~%firstexit_other%~<~%firstexit%~) THEN BEGIN
-						WRITE_LONG 0x50+~%area_off%~+0xf0*~%i%~ ~firstexit_other~+1
-					END
-					READ_LONG 0x58+~%area_off%~+(0xf0*~%i%~) ~firstexit_other~
-					PATCH_IF !(~%firstexit_other%~<~%firstexit%~) THEN BEGIN
-						WRITE_LONG 0x58+~%area_off%~+0xf0*~%i%~ ~firstexit_other~+1
-					END
-					READ_LONG 0x68+~%area_off%~+0xf0*~%i%~ ~firstexit_other~
-					PATCH_IF !(~%firstexit_other%~<~%firstexit%~) THEN BEGIN
-						WRITE_LONG 0x68+~%area_off%~+0xf0*~%i%~ ~firstexit_other~+1
-					END
-					SET ~keepnum~=~%i%~
-					SET ~i~=~%area_num%~ // come out of the loop
-				END
-			END
-			// find which area is the Forest of Tethyr
-			FOR (i=0;i<~%area_num%~;i=i+1) BEGIN
-				READ_ASCII ~%area_off%~+0xf0*~%i%~ ~areaname~
-				PATCH_IF (~%areaname%~ STRING_EQUAL_CASE ~ar4000~) THEN BEGIN
-					SET ~destareanum~=~%i%~
-					SET ~i~=~%area_num%~ // come out of the loop
-				END
-			END
-			// add the new exit
-			INSERT_BYTES ~%firstexit%~*0xd8+~%link_off%~ 0xd8
-			WRITE_LONG ~%firstexit%~*0xd8+~%link_off%~ ~%destareanum%~ // destination
-			WRITE_ASCII 0x4+~%firstexit%~*0xd8+~%link_off%~ ~dw#WKin~ // destination entrance
-			WRITE_LONG 0x24+~%firstexit%~*0xd8+~%link_off%~ 9 // travel time
-			WRITE_LONG 0x28+~%firstexit%~*0xd8+~%link_off%~ 2 // default facing - not relevant
-		
-	
-			// tidy up all other area files
-			FOR (i=0;i<~%area_num%~;i=i+1) BEGIN
-				PATCH_IF !(~%i%~=~%keepnum%~) THEN BEGIN
-					FOR (j=0;j<4;j=j+1) BEGIN
-						READ_LONG 0x50+0x8*~%j%~+0xf0*~%i%~+~%area_off%~ ~linknum~
-						PATCH_IF !(~%linknum%~<~%firstexit%~) THEN BEGIN
-							WRITE_LONG 0x50+0x8*~%j%~+0xf0*~%i%~+~%area_off%~ ~%linknum%~+1
-						END	
-					END
-				END
-			END
-		BUT_ONLY_IF_IT_CHANGES
-		
-		// Make Tethyr inaccessible once the party have reached the Pocket Plane (not that it matters really)
-				
-ACTION_IF !FILE_EXISTS_IN_GAME ~dw#teth.are~ // Wheels of Prophecy not installed
-THEN BEGIN
 <<<<<<<<.../stratagems-inline/notethyr.baf
 IF
 	!Global("DMWWBlockTethyrAccess","GLOBAL",1)
@@ -123,74 +65,31 @@ THEN
 END
 >>>>>>>>
 
-			EXTEND_TOP ~ar4500.bcs~ ~.../stratagems-inline/notethyr.baf~
+        LAF extend_area_script STR_VAR area=ar4500 top=notethyr inline=yes END
+     END
+     
+     // Fake Tethyr  (nice to clone it, but adding new areas needs to be at the bottom)
+     
+     MAKE_PATCH
+        type=>area
+        short_name=>"dw#teth"
+        resource=>ar4000
+        long_name=>ar4000
+        x=>397
+        y=>56
+        sequence=>6
+        name_string=>61253
+        tooltip_string=>61253
+        reachable=>1
+     END
+     LAF edit_worldmap STR_VAR worldmap=worldm25 editstring="add_entry=>patch_data" END
 
-			// fake Tethyr (now we're being perfectionist) - legacy code
+     // postpone the start movie
+     
+     LAF swap_text STR_VAR files="cut100a.bcs cut100b.bcs" swaps=~StartMovie("INTRO") => SetGlobal("DMWWRequestIntroMovie","GLOBAL",1)~ END
 
-			COPY_EXISTING ~worldm25.wmp~ ~override~
-				READ_LONG 0x30 ~area_num~
-				READ_LONG 0x34 ~area_off~
-				READ_LONG 0x38 ~link_off~
-				READ_LONG 0x3c ~link_num~
-				WRITE_LONG 0x30 ~%area_num%~+1
-				WRITE_LONG 0x38 ~%link_off%~+0xf0
-				INSERT_BYTES ~%area_off%~+0xf0*~%area_num%~ 0xf0 
-				WRITE_ASCII ~%area_off%~+0xf0*~%area_num%~ ~dw#teth~ #8
-				WRITE_ASCII ~%area_off%~+0xf0*~%area_num%~+0x8 ~ar4000~ #8
-				WRITE_ASCII ~%area_off%~+0xf0*~%area_num%~+0x10 ~ar4000~ #8
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x30 0x04
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x34 6
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x38 397
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x3c 56
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x40 61253
-				WRITE_LONG ~%area_off%~+0xf0*~%area_num%~+0x44 61253
-			BUT_ONLY_IF_IT_CHANGES
-END
-
-
-	
-		// change the start location for ToB to Watchers' Keep
-	
-
-		COPY_EXISTING ~ar3000.bcs~ ~override~
-		DECOMPILE_BCS_TO_BAF
-		REPLACE_TEXTUALLY ~SetGlobal("EnteredArea","AR3000",1)~
-			~SetGlobal("EnteredArea","AR3000",1)
-			ActionOverride(Player1,JumpToPoint([2548.1631]))
-			ActionOverride(Player2,JumpToPoint([2555.1717]))
-			ActionOverride(Player3,JumpToPoint([2490.1713]))
-			ActionOverride(Player4,JumpToPoint([2492.1712]))
-			ActionOverride(Player5,JumpToPoint([2579.1637]))
-			ActionOverride(Player6,JumpToPoint([2505.1642]))
-			MoveViewPoint([2548.1631],INSTANT)~
-		COMPILE_BAF_TO_BCS
-	
-		<<<<<<<< .../stratagems-inline/ar3000add.baf
-	
-		IF
-			GlobalGT("TearDoor","GLOBAL",0) // been in Hell
-			!GlobalGT("Chapter","GLOBAL",%bg2_chapter_7%)
-		THEN
-			RESPONSE #100
-				SetGlobal("Chapter","GLOBAL",%bg2_chapter_8%)
-				EraseJournalEntry(4352) // Finding Irenicus in Hell  Irenicus' death did not have the same effect as Bodhi's did, and my soul has not returned to me.  Perhaps it was because of the power he gathered from the Tree of Life, or because Bodhi was undead. Regardless, Irenicus has fallen, dragging both my soul and myself inexorably behind.  I am now alone in what must be the Nine Hells, but I am certain Irenicus is here somewhere... and somehow, in this, I must find the mage and battle him once and for all to get my soul back.
-				Continue()
-		END
-	
-		>>>>>>>>
-	
-		EXTEND_TOP ~ar3000.bcs~ ~.../stratagems-inline/ar3000add.baf~ EVALUATE_BUFFER			
-	
-		COPY_EXISTING 
-			~cut100a.bcs~ ~override~
-			~cut100b.bcs~ ~override~
-				DECOMPILE_BCS_TO_BAF
-				REPLACE_TEXTUALLY ~StartMovie("INTRO")~ ~SetGlobal("DMWWRequestIntroMovie","GLOBAL",1)~
-				COMPILE_BAF_TO_BCS		
-	
-		<<<<<<<< .../stratagems-inline/ar4000add.baf
+		<<<<<<<< .../stratagems-inline/ar4000add2.baf
 			IF
-				OnCreation()
 				Global("DMWWRequestIntroMovie","GLOBAL",1)
 			THEN
 				RESPONSE #100
@@ -199,88 +98,41 @@ END
 					Continue()
 			END
 		>>>>>>>>
-		
-		// Block the Pocket Plane if party try to send NPCs there
-	
-		COPY_EXISTING
-			~imoen25p.dlg~ ~override~
-			~anome25p.dlg~ ~override~
-			~cernd25p.dlg~ ~override~
-			~edwin25p.dlg~ ~override~
-			~haerd25p.dlg~ ~override~
-			~jan25p.dlg~ ~override~
-			~keldo25p.dlg~ ~override~
-			~korga25p.dlg~ ~override~
-			~mazzy25p.dlg~ ~override~
-			~minsc25p.dlg~ ~override~
-			~nalia25p.dlg~ ~override~
-			~valyg25p.dlg~ ~override~
-			~vicon25p.dlg~ ~override~
-				DECOMPILE_DLG_TO_D
-				REPLACE_TEXTUALLY CASE_INSENSITIVE ~!AreaCheck("ar4000")~ ~!AreaCheck("ar4000") Global("DMWWBlockTethyrAccess","GLOBAL",1)~
-				COMPILE_D_TO_DLG
-	
-	
-		EXTEND_TOP ~ar4000.bcs~ ~.../stratagems-inline/ar4000add.baf~
-		
-		// wipe any pointless bit of ar4000.bcs
+      LAF extend_area_script STR_VAR area=ar4000 top=ar4000add2 inline=yes END
 
-		ACTION_IF !FILE_EXISTS_IN_GAME ~dw#hellloot.mrk~ THEN BEGIN
+      // prevent NPCs being sent to the Pocket Plane before it's obtained
 
-<<<<<<<< .../stratagems-inline/oldar4000.baf
-IF
-	Global("FORCETOBPARTYMOVE4000","GLOBAL",0)
-THEN
-	RESPONSE #100
-		StartCutSceneMode()
-		LeaveAreaLUAPanic("AR4000","",[1300.1840],4)
-		ActionOverride(Player1,LeaveAreaLUA("AR4000","",[1300.1840],4))
-		ActionOverride(Player2,LeaveAreaLUA("AR4000","",[1300.1840],4))
-		ActionOverride(Player3,LeaveAreaLUA("AR4000","",[1300.1840],4))
-		ActionOverride(Player4,LeaveAreaLUA("AR4000","",[1300.1840],2))
-		ActionOverride(Player5,LeaveAreaLUA("AR4000","",[1300.1840],0))
-		ActionOverride(Player6,LeaveAreaLUA("AR4000","",[1300.1840],0))
-		SetGlobal("FORCETOBPARTYMOVE4000","GLOBAL",1)
-		EndCutSceneMode()
-END
->>>>>>>>
+      ACTION_PHP_EACH npc_name_list AS npc=>null BEGIN
+         OUTER_SPRINT dialog ~%%npc%_25POSTJOIN%~
+         LAF swap_text STR_VAR files="%dialog%.dlg" allow_missing=1 swaps=~!AreaCheck("ar4000")=>!AreaCheck("ar4000")Global("DMWWBlockTethyrAccess","GLOBAL",1)~ END
+      END
+      
+      // wipe unneeded content from ar4000 script
+      
+      LAF edit_script STR_VAR script=ar4000 editstring="patch=>~ar4000_nojournal|delete_trigger_if(FORCETOBPARTYMOVE4000)~" END
 
-		END ELSE BEGIN
+      //////// Make WK inaccessible from the SoA map
 
-<<<<<<<< .../stratagems-inline/oldar4000.baf
-IF
-	Global("FORCETOBPARTYMOVE4000","GLOBAL",0)
-THEN
-	RESPONSE #100
-		SetGlobal("FORCETOBPARTYMOVE4000","GLOBAL",1)
-		MoveToExpansion()
-END
-
->>>>>>>>
-
-		END
-
-<<<<<<<< .../stratagems-inline/newar4000.baf
-
-
->>>>>>>>
-
-		COPY_EXISTING ~ar4000.bcs~ ~override~
-			REPLACE_BCS_BLOCK ~.../stratagems-inline/oldar4000.baf~ ~.../stratagems-inline/newar4000.baf~
-		BUT_ONLY_IF_IT_CHANGES
-
-
-		
-	//////// Make WK inaccessible from the SoA map
-        
-
-        COPY_EXISTING ~xnewarea.2da~ ~override~
-           COUNT_2DA_ROWS 15 ~rownum~
-           FOR (i=0;i<~rownum~;i=i+1) BEGIN
-              READ_2DA_ENTRY ~i~ 1 15 ~areaname~
-              PATCH_IF ~%areaname%~ STRING_EQUAL_CASE ~AR3000~ BEGIN
-                 SET_2DA_ENTRY ~i~ 3 15 0
-              END
-           END
+      //  LAF write_table_entry INT_VAR lookup_column=1 STR_VAR file=xnewarea row=AR3000 column=flags arguments=0 END
 
 END
+
+
+DEFINE_PATCH_FUNCTION BCS_ar4000_nojournal
+STR_VAR trig_in=""  act_in=""
+RET trig_out act_out
+BEGIN
+   PATCH_IF INDEX ("TurnDay" "%act_in%") >=0 BEGIN
+      INNER_PATCH_SAVE act_out "%act_in%" BEGIN
+         REPLACE_TEXTUALLY ~SetGlobal("chapter","GLOBAL",[0-9]+)~ ~~
+         REPLACE_TEXTUALLY ~EraseJournalEntry([0-9]+)~ ~~
+         REPLACE_TEXTUALLY ~AddJournalEntry([^,]+,QUEST_DONE)~ ~~
+      END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+   END
+   SPRINT trig_out "%trig_in%"
+END
+
+
+

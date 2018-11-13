@@ -1,5 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////  2da read/write tools based on the 2da file being in a standard table configuration
+/////
+///// lib_table is independent of my other functions, with the exception of the read-external-table function
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION get_table_column_coordinate
@@ -31,6 +33,7 @@ BEGIN
    SET rownum= "-1"
    FOR (i=0;i<rowcount;i+=1) BEGIN
          READ_2DA_ENTRY i lookup_column colcount this_row
+         // PATCH_PRINT "this_row: %this_row%; lookup_column: %lookup_column%"
          PATCH_IF "%this_row%" STRING_EQUAL_CASE "%row%" BEGIN
             SET rownum=i
             SET i=rowcount
@@ -144,7 +147,7 @@ BEGIN
    END ELSE BEGIN
       SET value= "-1"
       PATCH_IF !dont_complain BEGIN
-          LPF warning STR_VAR warning="Tried to read entry (%row%,%column%) from table (probably %SOURCE_FILE%) but it doesn't exist; returning -1" END
+          PATCH_PRINT "SFO warning: Tried to read entry name (%row%,%column%), apparent coordinates (%rownum%,%colnum%) from table (probably %SOURCE_FILE%) but it doesn't exist; returning -1"
       END
    END
 END
@@ -200,6 +203,7 @@ DEFINE_PATCH_FUNCTION write_table_entry
               do_not_insert=0
              rownum="-1"
              colnum="-1"
+             all_rows=0
       STR_VAR arguments=""
               row=""
               column=""
@@ -217,8 +221,13 @@ BEGIN
           PATCH_FAIL "No column specified in write_table_entry"
        END
    END
-   PATCH_IF "%row%" STRING_COMPARE "" BEGIN
-       LPF get_table_row_coordinate STR_VAR row RET rownum END
+   PATCH_IF all_rows BEGIN
+    FOR (i=0;i<rowcount;i+=1) BEGIN
+       SET_2DA_ENTRY i colnum colcount "%arguments%"
+    END
+   END ELSE BEGIN
+    PATCH_IF "%row%" STRING_COMPARE "" BEGIN
+       LPF get_table_row_coordinate INT_VAR lookup_column STR_VAR row RET rownum END
        PATCH_IF rownum<0 BEGIN
         PATCH_IF do_not_insert BEGIN
            PATCH_FAIL "Tried to add an entry (%row%,%column%) to table (probably %SOURCE_FILE%) but there is no %row% row (and this isn't a safe context to add a new one)"
@@ -234,12 +243,13 @@ BEGIN
            PATCH_FAIL "Tried to add an entry (%row%,%column%) to table (probably %SOURCE_FILE%) but there is no %row% row (and I can't add a new row as you're not looking up in column zero)"
         END
        END
-   END ELSE BEGIN
+    END ELSE BEGIN
        PATCH_IF rownum<0 BEGIN
           PATCH_FAIL "No row specified in write_table_entry"
        END
+    END
+    SET_2DA_ENTRY rownum colnum colcount "%arguments%"
    END
-   SET_2DA_ENTRY rownum colnum colcount "%arguments%"
 END
 
 
@@ -249,6 +259,7 @@ DEFINE_ACTION_FUNCTION write_table_entry
               do_not_insert=0
               rownum="-1"
               colnum="-1"
+              all_rows=0
       STR_VAR arguments=""
               row=""
               column=""
@@ -263,7 +274,7 @@ BEGIN
       END
    END
    COPY_EXISTING "%file%" "override"
-      LPF write_table_entry INT_VAR lookup_column do_not_insert rownum colnum STR_VAR row column arguments default_fill END
+      LPF write_table_entry INT_VAR lookup_column do_not_insert rownum colnum all_rows STR_VAR row column arguments default_fill END
       PRETTY_PRINT_2DA
    BUT_ONLY
 END
@@ -363,7 +374,7 @@ BEGIN
 
       END ELSE BEGIN
         ACTION_IF !dont_complain BEGIN
-         LAF warning STR_VAR warning="Tried to clone %clone_from% row of %file% to %clone_to%, but there is no such row, or else %clone_to% is already present" END
+         PRINT "Tried to clone %clone_from% row of %file% to %clone_to%, but there is no such row, or else %clone_to% is already present" 
         END
       END
 END
@@ -412,7 +423,7 @@ BEGIN
           PRETTY_PRINT_2DA
       END ELSE BEGIN
         ACTION_IF !dont_complain BEGIN
-         LAF warning STR_VAR warning="Tried to clone %clone_from% column of %file% to %clone_to%, but there is no such column, or else %clone_to% is already present" END
+         PRINT "Tried to clone %clone_from% column of %file% to %clone_to%, but there is no such column, or else %clone_to% is already present"
         END
       END
 END

@@ -5,8 +5,8 @@ INCLUDE ~%scsroot%/lib/ai_wrap.tph~
 DEFINE_ACTION_FUNCTION vampire BEGIN
 
         LAF vampire_early END
-        LAF vampire_scripts END
         LAF vampire_spells END
+        LAF vampire_scripts END
         LAF vampire_shapeshifts END
         LAF vampire_summons END
         LAF vampire_blood_drain END
@@ -36,7 +36,8 @@ END
 
 DEFINE_ACTION_FUNCTION vampire_scripts BEGIN
 
-
+    LAF define_difficulty STR_VAR type=vampire RET difficulty_variable END
+    CLEAR_IDS_MAP
     LAF ssl_to_bcs STR_VAR script=~vampir01 dw#vmran~ location=~ssl~ END
     ACTION_FOR_EACH script_new IN vamemi01 vamanc01 ppvamp ppvampir  
                                   c6vampir d0qpvafl sarvam02
@@ -57,14 +58,15 @@ DEFINE_ACTION_FUNCTION vampire_spells BEGIN
 
    // Bat clouds
 
-   LAF install STR_VAR file=dw#vbat1.spl location=resource END // actually just a clean copy of Summon Insects
+   LAF install_spell STR_VAR spell=dw#vbat1 idsname=VAMPIRE_BAT_CLOUD location=resource RET newname END // actually just a clean copy of Summon Insects, changed to Innate
+   OUTER_SPRINT VAMPIRE_BAT_CLOUD "%newname%"
    MAKE_PATCH
       say_name=>2400
       primary=>0
       patch_ability_inline=>~casting_time=>0~
       patch_effect_inline'=>~resist_dispel=>0~
    END
-   LAF edit_spell STR_VAR spell=dw#vbat1 edits=patch_data END
+   LAF edit_spell STR_VAR spell="%VAMPIRE_BAT_CLOUD%" edits=patch_data END
 
    // regeneration
 
@@ -73,19 +75,55 @@ DEFINE_ACTION_FUNCTION vampire_spells BEGIN
        patch_effect_global_inline=>~match=>"opcode=98" parameter1=>1~
     END
     LAF edit_item STR_VAR item=vampreg edits=patch_data END
+   
    // zero casting time for Domination
 
     LAF edit_spell STR_VAR spell=VAMPIRE_DOMINATION editstring=" patch_ability_inline=>~casting_time=>0~" END
 
    // make mesmerism spell
-     
+   
+   LAF add_spell_to_ids STR_VAR typename=innate idsname=VAMPIRE_MESMERISM RET newname END
+   OUTER_SPRINT VAMPIRE_MESMERISM "%newname%"
+
    MAKE_PATCH
       say_name=>14508
       delete_effect=>~opcode=177~
       patch_effect_inline=>~match=>"opcode=5" opcode=>76 parameter1=>0 parameter2=>0 savebonus=>"-4"~
    END
-   LAF clone_spell STR_VAR spell=~%VAMPIRE_DOMINATION%=>dw#hypno~  edits=patch_data END
+   LAF clone_spell STR_VAR spell=~%VAMPIRE_DOMINATION%=>%VAMPIRE_MESMERISM%~  edits=patch_data END
 
+   // innate-ify the spells
+   
+   LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=12
+            STR_VAR arguments="VAMPIRE_FEAR"
+   END
+
+   LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=6
+            STR_VAR arguments="VAMPIRE_MESMERISM VAMPIRE_DOMINATION"
+   END
+
+   LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=600
+            STR_VAR arguments="VAMPIRE_BAT_CLOUD"
+   END
+   
+   // spells to grant these effects
+   
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_maker BEGIN
+      VAMPIRE_BAT_CLOUD=>dw#vmbat
+      VAMPIRE_MESMERISM=>dw#vmmes
+      VAMPIRE_FEAR=>dw#vmfea
+   END
+
+   ACTION_PHP_EACH spell_maker AS resref=>spellname BEGIN
+    MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>171 target=>2 timing=>1 resource=>%resref%"
+    END
+    LAF make_spell STR_VAR spell="%spellname%" edits=patch_data END
+   END
 END
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -172,10 +210,10 @@ DEFINE_ACTION_FUNCTION vampire_blood_drain BEGIN
 
 
   ACTION_DEFINE_ASSOCIATIVE_ARRAY vamp_weapons BEGIN
-     vamp=>2
-     vamp1=>3
-     vamp2=>4 
-     vamp3=>5
+     vamp=>1
+     vamp1=>2
+     vamp2=>3
+     vamp3=>3
   END
   ACTION_PHP_EACH vamp_weapons AS item_old=>drain_amount BEGIN
    OUTER_SET gain_amount=5 * drain_amount

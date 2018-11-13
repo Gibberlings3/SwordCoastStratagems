@@ -1,0 +1,385 @@
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION friendly_fiends_core
+        INT_VAR grimoire=1
+        STR_VAR script_loc=""     // carries the locbase for the scripts
+                tph_loc=""        // where to find the maker for fiend spells
+                boot_loc="resource"       // where to find the fiend-hiding boots
+BEGIN
+  LAF check_label STR_VAR label=dw#friendly_fiends RET value END
+  ACTION_IF !value BEGIN
+    LAF make_label STR_VAR label=dw#friendly_fiends END
+
+    // define variables
+
+    OUTER_SET ids=enhanced_edition? 1 : 2
+
+    LAF ds_resolve_stat INT_VAR ids STR_VAR id=DW_SCS_CASTER RET stat_ind_npc=stat_ind END
+
+    OUTER_SPRINT splstate_low DW_POWER_UPGRADE4
+    OUTER_SPRINT splstate_high DW_POWER_UPGRADE5
+
+    LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
+    LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
+
+    // make needed spells
+
+    // vanilla is:
+    // - nabassu (demnabsu): silence once; Vampiric Touch and paralysis at will; death gaze overlaid
+    // - glabrezu (demglasu): Remove Magic once; PW:Stun at will (but maybe make 7 x)
+    // - pit fiend (dempitsu): Fear once; Remove Magic once; Symbol: Fear and Deathknight Fireball at will
+
+    // extra from SCS summon-alignment-based-fiends is:
+    // - bone fiend (dw#bfsum): Fear once; II at will; Cone of Cold 3x/day
+    // - cornugon (dw#cosum): fear once; LB at will
+    // - balor (dw#basum): Symbol: stun 3x/day, Remove Magic once, Confusion once, paralysis at will
+
+    // make SPL files
+
+    LAF run STR_VAR file=fiend_spells_basic locbase="%tph_loc%" END
+
+    // edit CRE files
+    
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"TANARI_PARALYZE TANARI_VAMPIRIC_TOUCH TANARI_SILENCE TANARI_DEATH_GAZE"
+    END
+    LAF edit_creature STR_VAR creature=demnabsu edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"WIZARD_POWER_WORD_STUN(7) WIZARD_DISPEL_MAGIC"
+    END
+    LAF edit_creature STR_VAR creature=demglasu edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"INNATE_FIEND_FIREBALL INNATE_FIEND_SYMBOL_FEAR WIZARD_DISPEL_MAGIC"
+    END
+    LAF edit_creature STR_VAR creature=dempitsu edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"INNATE_FIEND_IMPROVED_INVISIBILITY WIZARD_CONE_OF_COLD(3)"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#bfsum edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"INNATE_FIEND_LIGHTNING_BOLT"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#cosum edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"WIZARD_SYMBOL_STUN(3) WIZARD_DISPEL_MAGIC WIZARD_CONFUSION TANARI_PARALYZE"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#basum edits=patch_data END
+
+
+    // make scripts and amend existing scripts
+    CLEAR_IDS_MAP
+    //
+    LAF check_label STR_VAR label=dw#fiend RET value END
+    ACTION_IF value THEN BEGIN
+        OUTER_SPRINT variables "ImprovedFiends=True"
+    END ELSE BEGIN
+        OUTER_SPRINT variables ""
+    END
+ 
+    MAKE_PATCH
+       dempitsu=>dw#hlpit
+       demglasu=>dw#hlgla
+       demnabsu=>dw#hlnab
+       dw#llbnf=>dw#hlbnf
+       dw#llcor=>dw#hlcor
+       dw#llbal=>dw#hlbal
+    END
+    OUTER_SPRINT difficulty_variable DMWW_fiend_difficulty
+    ACTION_PHP_EACH patch_data AS script=>newscript BEGIN
+     ACTION_IF (FILE_EXISTS_IN_GAME "%script%.bcs") BEGIN
+       // make the scripts if they don't exist
+       ACTION_IF !FILE_EXISTS_IN_GAME "%newscript%.bcs" BEGIN
+            LAF ssl_to_bcs STR_VAR locbase="%script_loc%" script="%newscript%" variables END
+       END
+       ACTION_MATCH "%script%" WITH
+          dempitsu dw#llbal BEGIN
+              OUTER_SPRINT splstate "%splstate_high%"
+          END
+       DEFAULT
+              OUTER_SPRINT splstate "%splstate_low%"
+       END
+       <<<<<<<< .../stratagems-inline/demontop.ssl
+       IF
+             IgnoreBlock(Demivrgvs)
+             OnCreation()
+             CheckSpellState(LastSummonerOf(Myself),%splstate%)
+             Allegiance(LastSummonerOf(Myself),GOODCUTOFF)
+       THEN
+           RESPONSE #100
+             ChangeGeneral(Myself,MONSTER)
+             ChangeAIScript("%newscript%",OVERRIDE)
+             ChangeAIScript("",DEFAULT)
+	     DestroyItem("dw#sumfi")
+             Ally()
+       END
+
+       IF
+             IgnoreBlock(Demivrgvs)
+             OnCreation()
+             OR(2)
+                 CheckSpellState(LastSummonerOf(Myself),%splstate%)
+                 CheckSpellState(LastSummonerOf(Myself),%stat_ind_npc%)
+             Allegiance(LastSummonerOf(Myself),EVILCUTOFF)
+       THEN
+           RESPONSE #100
+             ChangeGeneral(Myself,MONSTER)
+             ChangeAIScript("%newscript%",OVERRIDE)
+             ChangeAIScript("",DEFAULT)
+	     DestroyItem("dw#sumfi")
+             Enemy()
+       END
+
+       IF
+             RequireBlock(Demivrgvs)
+             OnCreation()
+             Allegiance(LastSummonerOf(Myself),EVILCUTOFF)
+       THEN
+           RESPONSE #100
+             ChangeGeneral(Myself,MONSTER)
+             ChangeAIScript("%newscript%",OVERRIDE)
+             ChangeAIScript("",DEFAULT)
+	     DestroyItem("dw#sumfi")
+	     SetGlobal("FiendControl","LOCALS",0)
+             Enemy()
+       END
+       
+       IF
+         RequireBlock(Demivrgvs)
+	Global("FiendControl","LOCALS",0)
+	OR(6)
+		CheckStatGT(LastSummonerOf(Myself),18,INT)
+		CheckStatGT(LastSummonerOf(Myself),18,WIS)
+		CheckStatGT(LastSummonerOf(Myself),18,CHR)
+		CheckStatGT(LastSummonerOf(Myself),20,LEVEL)
+		CheckStatGT(LastSummonerOf(Myself),20,LEVEL2)
+		CheckStatGT(LastSummonerOf(Myself),20,LEVEL3)
+       THEN
+	RESPONSE #100
+	        DestroyItem("dw#sumfi")
+		FaceObject(LastSummonerOf(Myself))
+		Wait(2)
+		LeaveParty()
+		ChangeEnemyAlly(Myself,ALLY)
+                ChangeGeneral(Myself,MONSTER)
+                ChangeAIScript("%newscript%",OVERRIDE)
+                ChangeAIScript("",DEFAULT)
+		SetGlobal("FiendControl","LOCALS",1)
+       END
+       
+       IF
+         RequireBlock(Demivrgvs)
+	Global("FiendControl","LOCALS",0)
+THEN
+	RESPONSE #50
+	        DestroyItem("dw#sumfi")
+		FaceObject(LastSummonerOf(Myself))
+		Wait(2)
+		DisplayStringHead(Myself,12663) // Now I will kill you all, foolish ones!
+		Enemy()
+		SetGlobal("FiendControl","LOCALS",1)
+	RESPONSE #50
+		FaceObject(LastSummonerOf(Myself))
+		Wait(2)
+		DisplayStringHead(Myself,7841) // Very well, I shall follow you.
+		LeaveParty()
+		ChangeEnemyAlly(Myself,ALLY)
+		SetGlobal("FiendControl","LOCALS",1)
+END
+
+       >>>>>>>>
+       LAF extend STR_VAR script top=demontop ssl=yes inline=yes END
+     END
+    END
+
+    // hide fiends until they're summoned
+
+    LAF install STR_VAR file=~dw#sumfi.itm~ location="%boot_loc%" END
+    LAF edit_creature STR_VAR creature=~dempitsu demglasu demnabsu dw#llbnf dw#llcor dw#llbal~ allow_missing=1 editstring=~gender=>SUMMONED_DEMON add_items=>dw#sumfi(boots)~ END
+
+    // if appropriate, make the Grimoires of Demon Binding
+    
+    ACTION_IF (grimoire && enhanced_edition && !demivrgvs) BEGIN
+       LAF grimoire END
+    END
+
+    // if enhanced edition (and no Demi), make the damnation resources
+    
+    ACTION_IF enhanced_edition && !demivrgvs BEGIN
+       LAF damnation END
+    END
+  END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION damnation INT_VAR damned=40011 no_resurrection=40010 more_evil=40012 BEGIN
+ ACTION_IF !FILE_EXISTS_IN_GAME dw#damn.spl BEGIN // only do all this once
+  LAF check_ini STR_VAR ini=do_not_lose_soul RET value END
+  ACTION_IF !value BEGIN
+
+    OUTER_SPRINT splstate_low DW_POWER_UPGRADE4
+    OUTER_SPRINT splstate_high DW_POWER_UPGRADE5
+
+    LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
+    LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
+
+
+   // create a specific-alignment-check SPLPROT entry
+   LAF resolve_splprot_entry INT_VAR stat=0x110 value="-1" STR_VAR relation=equal  RET splprot_align=value END
+   
+   // get some strings from the dialog file
+  // OUTER_SET damned=RESOLVE_STR_REF ((AT damned))
+   OUTER_SET no_resurrection=RESOLVE_STR_REF ((AT no_resurrection))  // aren't we theological today?
+   OUTER_SET more_evil=RESOLVE_STR_REF ((AT more_evil))
+   
+   // create the spell that marks you as damned
+   MAKE_PATCH
+      say_name=>"%damned%"
+      add_basic_ability=>null
+      add_effect_inline'1=>"opcode=>232 target=>1 timing=>1 parameter2=>16 resource=>dw#dampl"
+   END
+   LAF make_spell STR_VAR spell=dw#damn edits=patch_data END
+
+   // create the actual payload, that deletes you if you die
+   MAKE_PATCH
+      add_effect_inline=>"opcode=>330 target=>2 parameter1=>%no_resurrection%"
+      name1_string=>"-1"
+      name2_string=>"-1"
+      delete_effect=>"opcode=12"
+      patch_effect_inline=>"match=>~opcode=55~ opcode=>168 parameter1=>0 parameter2=>0"
+   END
+   LAF clone_spell STR_VAR spell="spin864=>dw#dampl" edits=patch_data END // clone of Rapture of the Father
+
+   // create the "become more evil" spell
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"target=>2 opcode=>326 parameter1=>17 parameter2=>%splprot_align% resource=>dw#amkln"
+      add_effect_inline'=>"target=>2 opcode=>326 parameter1=>18 parameter2=>%splprot_align% resource=>dw#amkle"
+      add_effect_inline'0=>"target=>2 opcode=>326 parameter1=>33 parameter2=>%splprot_align% resource=>dw#amknn"
+      add_effect_inline'1=>"target=>2 opcode=>326 parameter1=>34 parameter2=>%splprot_align% resource=>dw#amkne"
+      add_effect_inline'2=>"target=>2 opcode=>326 parameter1=>49 parameter2=>%splprot_align% resource=>dw#amkcn"
+      add_effect_inline'3=>"target=>2 opcode=>326 parameter1=>50 parameter2=>%splprot_align% resource=>dw#amkce"
+      add_effect_inline'4=>"target=>2 opcode=>139 parameter1=>%more_evil%"
+  END
+  LAF make_spell STR_VAR spell=dw#evil edits=patch_data END
+  
+  // create its needed subspells
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY align_map BEGIN
+     ln=>18
+     le=>19
+     nn=>34
+     ne=>35
+     cn=>50
+     ce=>51
+  END
+  ACTION_PHP_EACH align_map AS code=>val BEGIN
+     MAKE_PATCH
+        add_basic_ability=>null
+        add_effect_inline=>"target=>2 timing=>9 opcode=>57 parameter2=>%val%"
+     END
+     LAF make_spell STR_VAR spell="dw#amk%code%" edits=patch_data END
+  END
+  // edit the various fiend-summoning spells
+  ACTION_FOR_EACH spell IN WIZARD_CACOFIEND WIZARD_SUMMON_FIEND WIZARD_GATE DW#HLBA DW#HLPF DW#HLIC DW#HLAP BEGIN
+       // set parameters
+       ACTION_MATCH "%spell%" WITH
+       WIZARD_GATE DW#HLBA DW#HLPF BEGIN
+          OUTER_SET stat_ind=stat_ind_high
+          OUTER_SET damnation_chance=25
+       END 
+       DEFAULT
+          OUTER_SET stat_ind=stat_ind_low
+          OUTER_SET damnation_chance=100
+       END
+
+       // edit the baseline spell
+
+       MAKE_PATCH
+            add_effect_inline=>"at_end=>1 opcode=>318 target=>1 power=>0 parameter1=>%stat_ind% parameter2=>111 resource=>%spell%" // block rest of spell if variable is not set
+            add_effect_inline'0=>"at_end=>1 opcode=>326 target=>1 probability1=>%damnation_chance% resource=>dw#evil parameter2=>38" // make evil (skip if already evil)
+            add_effect_inline'1=>"at_end=>1 opcode=>318 target=>1 resource=>filename parameter2=>38" // if you're nonevil, skip the rest
+            add_effect_inline'2=>"at_end=>1 opcode=>146 target=>1 resource=>dw#damn parameter2=>1"
+            add_effect_inline'3=>"at_end=>1 opcode=>206 target=>1 parameter1=>~-1~ timing=>4 duration=>6 probability1=>%damnation_chance% resource=>dw#damn" // only apply damnation effect once (but delay this a few seconds so as to give dw#damn a chance to kick in)
+       END
+       LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell edits=patch_data END
+   END
+  END
+ END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION grimoire BEGIN
+
+        LAF return_detectable_string STR_VAR type="DW_POWER_UPGRADE4" RET string_low=string END
+        LAF return_detectable_string STR_VAR type="DW_POWER_UPGRADE5" RET string_high=string END
+
+        OUTER_SET strref_low=RESOLVE_STR_REF (@40004)
+        OUTER_SET strref_high=RESOLVE_STR_REF (@40005)
+
+        MAKE_PATCH
+           delete_effect=>null
+           unusable_druid=>1
+           unusable_cleric=>1
+           unusable_cleric_thief=>1
+           unusable_cleric_ranger=>1
+           unusable_fighter_cleric=>1
+           unusable_fighter=>1
+           unusable_fighter_druid=>1
+           unusable_fighter_thief=>1
+           unusable_paladin=>1
+           unusable_ranger=>1
+           unusable_thief=>1
+           add_effect_inline'=>"opcode=>215 target=>1 power=>1 timing=>1 resource=>spcontin"
+        END
+        LAF clone_item STR_VAR item="book03=>dw#grmls book03=>dw#grmgt" edits=patch_data END
+
+        MAKE_PATCH
+           say_name=>40000
+           say_description=>40001
+           add_effect_inline=>"%string_low% timing=>9"
+           add_effect_inline''=>"opcode=>139 target=>1 timing=>1 parameter1=>%strref_low%"
+        END
+        LAF edit_item STR_VAR item="dw#grmls" edits=patch_data END
+
+        MAKE_PATCH
+           say_name=>40002
+           say_description=>40003
+           add_effect_inline=>"%string_low% timing=>9"
+           add_effect_inline'=>"%string_high% timing=>9"
+           add_effect_inline''=>"opcode=>139 target=>1 timing=>1 parameter1=>%strref_high%"
+        END
+        LAF edit_item STR_VAR item="dw#grmgt" edits=patch_data END
+
+   // Shangalar has the Lesser Grimoire
+   
+   LAF edit_creature STR_VAR creature=hlshang editstring="add_items=>dw#grmls" END
+   // Azamantes has the Greater Grimoire
+   MAKE_PATCH
+      match=>"container_xloc=502"
+      item_resource=>dw#grmgt
+   END
+   LAF edit_area STR_VAR area=AR3027 editstring="add_item=>patch_data" END
+
+
+
+
+
+
+
+
+
+END
+
+

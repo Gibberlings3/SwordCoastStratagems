@@ -401,7 +401,7 @@ BEGIN
       LPF return_first_entry STR_VAR list="%link_list%" RET link_list=list link=entry END
       READ_SHORT $offset_array("%link%") dest
       PATCH_IF dest=to_code BEGIN
-          LPF push STR_VAR head=link tail="%value%" RET value=list END
+          LPF push STR_VAR head="%link%" tail="%value%" RET value=list END
       END
    END
 END
@@ -429,6 +429,7 @@ END
 DEFINE_PATCH_FUNCTION WMP_edit_link_between
    STR_VAR arguments=""
            filename=""
+   RET value
 BEGIN
    SPRINT patch ""
    SPRINT from ""
@@ -443,10 +444,10 @@ BEGIN
          SPRINT to "%value%"
       END
       DEFAULT
-         LPF push STR_VAR head="%key%=>%value%" tail="%patch%" RET tail=list END
+         SPRINT patch "%key% => %value% %patch%"
       END
    END
-   PATCH_IF "%from%" STRING_COMPARE "" && "%to%" STRING_COMPARE_CASE "" BEGIN
+   PATCH_IF "%from%" STRING_COMPARE "" && "%to%" STRING_COMPARE "" BEGIN
       LPF WMP_find_link_between STR_VAR arguments="%from%=>%to%" RET linklist=value END
       SPRINT entry_type link
       SPRINT file_ext WMP
@@ -454,13 +455,15 @@ BEGIN
       WHILE "%linklist%" STRING_COMPARE "" BEGIN
          LPF return_first_entry STR_VAR list="%linklist%" RET link=entry linklist=list END
          SET offset_base=$offset_array("%link%")
-         LPF apply_patch STR_VAR offset_base filename file_ext=WMP arguments="%patch%" END
+         LPF apply_patches_inline STR_VAR offset_base filename file_ext=WMP arguments="%patch%" END
       END
    END ELSE BEGIN
       LPF warning STR_VAR warning="Could not find from and to commands to edit link" END
    END
+   SET value=1
 
 END
+OUTER_SPRINT $SFO_do_not_parse_arguments("WMP_edit_link_between") ""
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -515,11 +518,11 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////               Add a link between two areas
-/////////////               "arguments" is of form "from=>[area shortname] to=>[area_shortname] dir_from=>[NSEW] func=>arg"
+/////////////               "arguments" is of form "from=[area shortname] to=[area_shortname] dir_from=[NSEW] func=arg"
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION WMP_add_link
+DEFINE_PATCH_FUNCTION WMP_insert_link
     STR_VAR arguments=""
             filename=""
 BEGIN
@@ -546,18 +549,20 @@ BEGIN
       END
    END
    PATCH_IF (!VARIABLE_IS_SET from_code | !VARIABLE_IS_SET to_code | !VARIABLE_IS_SET dir_from) BEGIN
-         LPF warning STR_VAR warning="Cannot add area link: source or destination or direction of travel unspecified" END
+         LPF warning STR_VAR warning="Cannot insert area link: source or destination or direction of travel unspecified" END
    END ELSE BEGIN
      // insert link
-     LPF WMP_add_link_by_codes INT_VAR area_ind=from_code STR_VAR area_dir="%dir_from%" RET offset_base=insert_offset END
+     LPF WMP_insert_link_by_codes INT_VAR area_ind=from_code STR_VAR area_dir="%dir_from%" RET offset_base=insert_offset END
      // write destination
      LPF WMP_link_dest_ind STR_VAR offset_base arguments="%to_code%" END
      // patch
-     LPF apply_patches STR_VAR filename file_ext=WMP editstring offset_base END
+     LPF apply_patches_inline STR_VAR filename file_ext=WMP editstring offset_base END
    END
 END
+OUTER_SPRINT $SFO_do_not_parse_arguments("WMP_insert_link") ""
 
-DEFINE_PATCH_FUNCTION WMP_add_link_by_codes
+
+DEFINE_PATCH_FUNCTION WMP_insert_link_by_codes
       INT_VAR  area_ind=0
       STR_VAR  area_dir=""
       RET insert_offset
@@ -581,6 +586,8 @@ BEGIN
       INSERT_BYTES insert_offset 0xd8
       WRITE_LONG 0x3c ((LONG_AT 0x3c) + 1)
 END
+OUTER_SPRINT $SFO_do_not_parse_arguments("WMP_insert_link_by_codes") ""
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -618,7 +625,7 @@ BEGIN
    LPM get_offset_array
    SET delete_at=$offset_array("%area_code%")
    DELETE_BYTES delete_at 0xf0
-   
+
    // update offsets
    
    WRITE_LONG 0x30 ((LONG_AT 0x30) - 1)
@@ -628,18 +635,21 @@ BEGIN
    END
 END
 
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////        Area adder (wrapper for add_entry_inline)
+/////////////        Area adder (wrapper for add_entry)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION add_area 
+DEFINE_PATCH_FUNCTION insert_area
     STR_VAR filename=""
             arguments=""
 BEGIN
-    LPF add_entry_inline STR_VAR arguments="%arguments% type=>area" filename file_ext=WMP END
+    LPF add_entry_inline INT_VAR at_end=1 STR_VAR arguments="apply_patches=>%arguments% type=>area" filename file_ext=WMP END
 END
+
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

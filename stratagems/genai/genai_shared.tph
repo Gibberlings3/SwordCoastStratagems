@@ -1,4 +1,4 @@
-LAF include STR_VAR files="hla.tph" locbase=genai END
+LAF include STR_VAR files="hla.tph" locbase=lib END
 
 DEFINE_ACTION_FUNCTION build_genai_script
        INT_VAR force_build=0
@@ -6,15 +6,18 @@ DEFINE_ACTION_FUNCTION build_genai_script
 BEGIN
        // scripts are named as follows:
      //
-     // dw[1/2/3][m/r][c/p/s/m][0/1/2/3/4/5/6][ge/ke/ba/be/as/ar/th/ws/mn/ss/dm/pa/bg/st]
+     // dw[1/2/3][m/r][c/p/s/m][0/1/2/3/4/5/6][ge/ke/ba/be/as/ar/th/ws/mn/ss/dm/pa/bg/st/dd]
      //
      // where: m/r is melee/range
      //        1/2/3 is BG1/BG2/BG2 with HLAs
      //        c/p/s/m is crushing/piercing/slashing/missile damage
-     //        0/1/2/3/4/5/6 is the plus on your weapon type
-     //        mo is unintelligent, ge is generic, ke is kensai, ba is barbarian, be is berserker, as is assassin, ar is archer, th is thief (or stalker), ws is wizard-slayer, mn is monk, dm is dark moon, ss is sun soul, pa is paladin, bg is blackguard, st is stalker
+     //        0/1/2/3/4/5/6 is the plus on your weapon type [but all EE scripts default to "2", since we use WeaponCanDamage etc instead of enchantment tricks]
+     //        mo is unintelligent, ge is generic, ke is kensai, ba is barbarian, be is berserker, as is assassin, ar is archer, th is thief (or stalker), ws is wizard-slayer, mn is monk, dm is dark moon, ss is sun soul, pa is paladin, bg is blackguard, st is stalker, dd is dwarven defender
      //        mw and gw are the unintelligent and generic blocks with a "wander-around" block on the end
      //
+   LAF define_difficulty STR_VAR type=genai RET difficulty_variable END
+   OUTER_SPRINT difficulty_marker_object dw#mkhla
+
    OUTER_INNER_PATCH ~~ BEGIN
          TO_LOWER script
    END
@@ -127,6 +130,9 @@ BEGIN
               st BEGIN
                  SPRINT variables ~%variables%&IsStalker=True~
               END
+              dd BEGIN
+                 SPRINT variables ~%variables%&IsDwarvenDefender=True~
+              END
               DEFAULT
                 SET warning=1
               END
@@ -147,7 +153,6 @@ BEGIN
            LPF CRE_read_class RET class=value END
            LPF CRE_read_kit RET kit=value END
            LPF CRE_read_level RET level=value END
-           LPF num_hlas RET num_warrior num_thief has_hlas END
            SET identified=0
            // parse input
            PATCH_FOR_EACH argtype IN all kit hla prof script conditional fix_thac0 abils BEGIN
@@ -157,25 +162,38 @@ BEGIN
                  SET  ~install_%argtype%~=0
               END
            END
+           // split up the GPxxx scripts
+           LPF split_gp_scripts STR_VAR filename END
+           // check if there is a script we're willing to swap
+           LPF locate_genai_script RET loc wander END
            // THAC0 adjustments
            PATCH_IF (install_fix_thac0=1) BEGIN
               LPF CRE_enforce_thac0 STR_VAR arguments=within_tolerance END
            END
-
-           // script
+           // look to see if we should be assigning a script
            PATCH_IF (install_all=1 || install_script=1) BEGIN
-                 LPF split_gp_scripts STR_VAR filename END
-                 LPF locate_genai_script RET loc=loc wander=wander END
                  PATCH_IF loc>=0 BEGIN
-                       LPF identify_weapon_preferences STR_VAR filename RET has_ranged=has_ranged skip_me=skip_me onhandprof=onhandprof offhandprof=offhandprof rangedprof=rangedprof damagetype=damagetype enchantment=enchantment style=style END
+                       LPF identify_weapon_preferences STR_VAR filename RET has_ranged skip_me onhandprof offhandprof rangedprof damagetype enchantment style END
                        SET identified=1
+                       PATCH_IF enhanced_edition BEGIN
+                          SET enchantment=2 // it doesn't matter on EE, just make it constant to avoid script duplication
+                       END
                        LPF CRE_check_if_moron RET is_moron=value END
-                       LPF assign_genai_script INT_VAR loc wander is_moron has_ranged enchantment has_hlas STR_VAR damagetype filename END
                  END
+           END    
+           // hlas (we only install hlas if we are adding a script)
+           PATCH_IF ((install_all=1 || install_hla=1) && (identified=1 || install_conditional=0) && loc>=0 && !disable_hlas ) BEGIN
+               LPF grant_hlas STR_VAR class kit resref="%filename%" RET has_hlas END
+           END ELSE BEGIN
+              SET has_hlas=0
+           END
+           // actually assign the script
+           PATCH_IF identified BEGIN
+                       LPF assign_genai_script INT_VAR loc wander is_moron has_ranged enchantment has_hlas STR_VAR damagetype filename END
            END
            // kit
            PATCH_IF ((install_all=1 || install_kit=1) && (identified=1 || install_conditional=0)) BEGIN
-              LPF CRE_enforce_class STR_VAR filename END
+              LPF CRE_enforce_class STR_VAR filename arguments="enforce_whitelist" END
            END
            // profs
            PATCH_IF ((install_all=1 || install_prof=1) && (identified=1 || install_conditional=0)) BEGIN
@@ -200,11 +218,6 @@ BEGIN
               END
               DEFAULT END
            END
-           // hlas
-           PATCH_IF ((install_all=1 || install_hla=1) && (identified=1 || install_conditional=0)) BEGIN
-               LPF assign_hlas STR_VAR filename END
-           END
-
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -220,15 +233,15 @@ BEGIN
       READ_ASCII i temp
       TO_LOWER temp
       PATCH_MATCH ~%temp%~ WITH
-      gpmerc gparcher gpthief chalpc01 BEGIN
+      gpmerc gparcher gpthief chalpc01 gpkensai balmonk BEGIN
              SPRINT gpscript ~%temp%~
              SET has_gp=1
       END
       DEFAULT END
    END
-   PATCH_IF has_gp=1 BEGIN
+   PATCH_IF has_gp BEGIN
      PATCH_MATCH ~%gpscript%~ WITH
-     gpmerc gparcher gpthief chalpc01 balmonk BEGIN
+     gpmerc gparcher gpthief chalpc01 gpkensai balmonk BEGIN
            LPF CRE_insert_script STR_VAR arguments=~dw#gphlp above %gpscript%~ filename END
      END
      DEFAULT END
@@ -250,9 +263,22 @@ BEGIN
    SPRINT combatscript ~~
    SET loc= "-1"
    SET wander=0
-   FOR (i=0;i<6;i+=1) BEGIN
+   FOR (i=0;i<5;i+=1) BEGIN
       READ_ASCII 0x248+8*i script
+      READ_ASCII 0x248+8*i script8 (8)
       TO_LOWER script
+      INNER_PATCH "%script8%" BEGIN
+         READ_ASCII 0x0 prefix (3)
+         PATCH_MATCH "%prefix%" WITH 
+         DW1 DW2 DW3 BEGIN
+             SET loc=i
+             READ_ASCII 0x7 wander_char (1)
+             PATCH_IF "%wander_char%" STRING_EQUAL_CASE w BEGIN
+                SET wander=1
+             END
+         END
+         DEFAULT END
+      END
       PATCH_IF VARIABLE_IS_SET $combat_script( ~%script%~) BEGIN
          PATCH_IF (loc="-1") BEGIN
            PATCH_MATCH ~%script%~ WITH gpuse useitem BEGIN END DEFAULT SET loc=i END
@@ -261,7 +287,7 @@ BEGIN
          WRITE_ASCII 0x248+8*i ~~ (8)
 
       END
-      PATCH_MATCH ~%script%~ WITH wdasight wdarsgt _dasight _wdarsgt BEGIN
+      PATCH_MATCH ~%script%~ WITH wtarsgt wdasight wdarsgt _dasight _wdarsgt BEGIN
          SET wander=1
       END
       DEFAULT END
@@ -304,24 +330,9 @@ BEGIN
              SPRINT scriptdmg m
           END
           // work out number
-          PATCH_IF is_bg2=0 BEGIN
-             SPRINT scriptnum 1
-          END ELSE BEGIN
-             PATCH_IF has_hlas BEGIN
-                SPRINT scriptnum 3
-             END ELSE BEGIN
-                PATCH_IF is_bg1=0 BEGIN
-                 SPRINT scriptnum 2
-                END ELSE BEGIN
-                 LPF is_bg1_char STR_VAR filename RET value=value END
-                 PATCH_IF value BEGIN
-                   SPRINT scriptnum 1
-                 END ELSE BEGIN
-                   SPRINT scriptnum 2
-                 END
-                END
-             END
-          END
+          LPF is_bg1_char STR_VAR filename RET value END
+          SET scriptnum = value? 1 : (has_hlas? 3 : 2)
+          
           // work out code
           PATCH_MATCH ~%kit%~ WITH
           KENSAI BEGIN
@@ -339,7 +350,7 @@ BEGIN
           STALKER BEGIN
                SPRINT scriptcode st
           END
-          ASSASIN BEGIN // spelling mistake in KIT.IDS
+          ASSASIN ASSASSIN BEGIN // spelling mistake in KIT.IDS
                SPRINT scriptcode as
           END
           SWASHBUCKLER BEGIN
@@ -353,6 +364,9 @@ BEGIN
           END
           BLACKGUARD BEGIN
                SPRINT scriptcode bg
+          END
+          DWARVEN_DEFENDER BEGIN
+               SPRINT scriptcode dd
           END
           DEFAULT
                LPF CRE_read_class RET class=value END
@@ -394,8 +408,8 @@ BEGIN
           END
           SPRINT scriptname ~%script%~
 
-          // install the script
-          WRITE_ASCIIE (0x248+0x8 * loc) ~%scriptname%~
+          WRITE_ASCIIE (0x248+0x8 * loc) ~~ (8)
+          LPF CRE_insert_script_low STR_VAR arguments="%script%" END
           // if necessary, make the script
           INNER_ACTION BEGIN
              LAF build_genai_script STR_VAR script END
@@ -412,7 +426,7 @@ DEFINE_PATCH_MACRO read_in_combat_scripts BEGIN
        SET combat_scripts_read=1
        PATCH_FOR_EACH script IN
               carch20b thiefrg amsmug01 cassa20b cassa20c cthie20a cthie20b thief14t
-              kuoarc20 magesly gpthief gparcher duearc01 duewar01 ft12t
+              kuoarc20 magesly gpkensai gpthief gparcher duearc01 duewar01 ft12t palad10 palad16
                ATTACKPC cbarb20b cbers20b cfigh20a
               cfigh20b cfigh30b fight16a chalcy02 attackpc cdryad dreadwlf ghast
               kuowar20 ogre CKENS20B CKENS30B KENSAI gpmerc

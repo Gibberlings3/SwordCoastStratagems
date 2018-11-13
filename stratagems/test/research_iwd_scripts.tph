@@ -1,0 +1,654 @@
+DEFINE_ACTION_FUNCTION iwd_script_explore BEGIN
+    MKDIR "%workspace%/iwd_scripts"
+    MKDIR "%workspace%/iwd_scripts/top"
+    MKDIR "%workspace%/iwd_scripts/bottom"
+    MKDIR "%workspace%/iwd_scripts_preprocessing"
+    MKDIR "%workspace%/iwd_scripts_preprocessing_2"
+    MKDIR "%workspace%/iwd_scripts_preprocessing_2/top"
+    MKDIR "%workspace%/iwd_scripts_preprocessing_2/bottom"
+ //     COPY_EXISTING "gnmbgsg.bcs" "%workspace%/iwd_scripts/gnmbgsg.baf"
+    COPY_EXISTING_REGEXP GLOB "[A-D].*\.bcs" "%workspace%/iwd_scripts_preprocessing"
+    ACTION_BASH_FOR "%workspace%/iwd_scripts_preprocessing" ".*" BEGIN
+       COPY "%BASH_FOR_FILESPEC%" "%BASH_FOR_FILESPEC%"
+          DECOMPILE_AND_PATCH BEGIN
+              PATCH_IF (INDEX_BUFFER ("Spell")<0 && (INDEX_BUFFER ("Attack(")>=0 || INDEX_BUFFER ("AttackOneRound")>=0 || INDEX_BUFFER ("AttackReevaluate")>=0)) BEGIN
+                 INNER_ACTION BEGIN
+                    COPY_EXISTING "%BASH_FOR_RES%.bcs" "%workspace%/iwd_scripts_preprocessing_2/%BASH_FOR_RES%.bcs"
+                       DECOMPILE_AND_PATCH BEGIN
+                          LPF decompose_script END
+                       END
+                 END
+              END
+          END
+    END
+    ACTION_BASH_FOR "%workspace%/iwd_scripts_preprocessing_2" ".*" BEGIN
+       COPY "%workspace%/iwd_scripts_preprocessing_2/%BASH_FOR_RES%.bcs" "%workspace%/iwd_scripts_preprocessing_2/top/%BASH_FOR_RES%.baf"
+          DECOMPILE_BCS_TO_BAF
+          LPF process_baf STR_VAR editstring="leave_alone=>null" until=~SetGlobal("DW_COMBAT_BLOCK_LABEL","GLOBAL",1)~ END
+       COPY "%workspace%/iwd_scripts_preprocessing_2/%BASH_FOR_RES%.bcs" "%workspace%/iwd_scripts_preprocessing_2/bottom/%BASH_FOR_RES%.baf"
+          DECOMPILE_BCS_TO_BAF
+          LPF process_baf STR_VAR editstring="leave_alone=>null" after=~SetGlobal("DW_COMBAT_BLOCK_LABEL","GLOBAL",1)~ END
+    END
+    ACTION_BASH_FOR "%workspace%/iwd_scripts_preprocessing_2/top" ".*" BEGIN
+          ACTION_IF !FILE_SIZE "%BASH_FOR_FILESPEC%" 0 BEGIN
+             COPY "%BASH_FOR_FILESPEC%" "%workspace%/iwd_scripts/top"
+          END
+    END
+    ACTION_BASH_FOR "%workspace%/iwd_scripts_preprocessing_2/bottom" ".*" BEGIN
+          ACTION_IF !FILE_SIZE "%BASH_FOR_FILESPEC%" 0 BEGIN
+             COPY "%BASH_FOR_FILESPEC%" "%workspace%/iwd_scripts/bottom"
+          END
+    END
+END
+
+
+
+
+DEFINE_PATCH_FUNCTION decompose_script
+    STR_VAR script=""
+BEGIN
+    PATCH_PRINT "Checking script %SOURCE_RES%"
+    LPF process_baf INT_VAR no_repeats=1 STR_VAR editstring="patch=>map_group_hostile_1|map_group_hostile_2|map_group_hostile_3|help_call_check|is_ranged_attack_block|is_ranged_melee_block|is_melee_melee_block|attack_attacker|is_responding_to_help|go_hostile|is_hostile_if_attacked|attack_enemy|attack_if_enemy|uses_potions|is_panicking" END
+END
+
+
+DEFINE_PATCH_FUNCTION log_if_not_simple
+    STR_VAR trig_in="" act_in=""
+    RET trig_out act_out
+BEGIN
+   SPRINT trig_out "%trig_in%"
+   SPRINT act_out "%act_in%"
+   LPF strip_response STR_VAR act_in RET act_in END
+   PATCH_MATCH "%act_in%" WITH
+   "AttackReevaluate(LastSeenBy(Myself),[0-9]+)" "AttackReevaluate(NearestEnemyOf(Myself),[0-9]+)" "AttackReevaluate(LastAttackerOf(Myself),[0-9]+)" "AttackReevaluate([PC],[0-9]+)" BEGIN END
+   DEFAULT
+      LPF log_this STR_VAR file="non-simple-attack.txt" input="%filename%" repeat=no END
+   END
+
+END
+
+DEFINE_PATCH_FUNCTION strip_surplus
+   STR_VAR act_in=""
+   RET act_in
+BEGIN
+   INNER_PATCH_SAVE act_in "%act_in%" BEGIN
+      REPLACE_TEXTUALLY "RESPONSE-#[0-9]+" ""
+      REPLACE_TEXTUALLY " +" ""
+   END
+END
+
+
+
+DEFINE_PATCH_FUNCTION is_ranged_attack_block
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ".*!Range(LastSeenBy(Myself),[0-9]+).*"
+   ".*!Range(NearestEnemyOf(Myself),[0-9]+).*"
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *EquipRanged() *AttackReevaluate(LastSeenBy(Myself),[0-9]+)"
+   " *RESPONSE-#[0-9]+ *EquipRanged() *AttackReevaluate(LastAttackerOf(Myself),[0-9]+)" 
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+      LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% ranged_attack(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION is_ranged_melee_block
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ".*Range(LastSeenBy(Myself),[0-9]+).*"
+   ".*!Range(NearestEnemyOf(Myself),[0-9]+).*"
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *EquipMostDamagingMelee() *AttackReevaluate(LastSeenBy(Myself),[0-9]+)"
+   " *RESPONSE-#[0-9]+ *EquipMostDamagingMelee() *AttackReevaluate(LastAttackerOf(Myself),[0-9]+)" 
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+      LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% ranged_melee(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION is_melee_melee_block
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ".*Range(LastSeenBy(Myself),4).*"
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *EquipMostDamagingMelee() *AttackReevaluate(LastSeenBy(Myself),[0-9]+)" 
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+      LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% ranged_melee(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+
+DEFINE_PATCH_FUNCTION attack_attacker
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *AttackedBy(NearestEnemyOf(Myself),DEFAULT)"
+   " *AttackedBy(\[PC\],DEFAULT)"
+   " *AttackedBy(\[ANYONE\],DEFAULT)"
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *MoveToObject(LastAttackerOf(Myself))"
+   " *RESPONSE-#[0-9]+ *Attack(LastAttackerOf(Myself))"
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(LastAttackerOf(Myself),[0-9]+)"
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION is_responding_to_help
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *Help([^)]*)"
+   BEGIN
+      INNER_PATCH "%trig_in%" BEGIN
+         REPLACE_EVALUATE
+         "Help(\([^)]*\))"
+         BEGIN
+         SPRINT help_type "%MATCH1%"
+         END
+         ""
+      END
+   END
+   " *Heard([^)]*)"
+   BEGIN
+      INNER_PATCH "%trig_in%" BEGIN
+         REPLACE_EVALUATE
+         "Help(\([^)]*\))"
+         BEGIN
+         SPRINT help_type "%MATCH1%"
+         END
+         ""
+      END
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *MoveToObject(NearestEnemyOf(LastHelp(Myself)))"
+   " *RESPONSE-#[0-9]+ *MoveToObject(LastHelp(Myself))"
+   " *RESPONSE-#[0-9]+ *MoveToObject(NearestEnemyOf(Myself))"
+   " *RESPONSE-#[0-9]+ *MoveToObject(NearestEnemyOf(Myself)) *Continue() *"
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+         LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% respond_to_help[%help_type%](%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+
+
+DEFINE_PATCH_FUNCTION uses_potions
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%act_in%" WITH
+   " .*UseItem.*" BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+         LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% respond_to_help(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION go_hostile
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ~ *!Allegiance(Myself,ENEMY)~
+   ~ *AttackedBy([^)]*) *Allegiance(Myself,NEUTRAL)~
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *Enemy() *"
+   " *RESPONSE-#[0-9]+ *Enemy() *Continue() *"
+
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+         LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% go_hostile(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION move_if_offscreen
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ~ *Allegiance(Myself,ENEMY) *ActionListEmpty() *!See(\[PC\])~
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ MoveToObject(Player[0-9])"
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+         LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% move_if_offscreen(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION help_shout_attack
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   ~ *Allegiance(Myself,ENEMY) *ActionListEmpty() *!See(\[PC\])~
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ MoveToObject(Player[0-9])"
+   BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+         LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% move_if_offscreen(%guard%)" repeat=no END
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION is_hostile_if_attacked
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *AttackedBy(NearestEnemyOf(Myself),DEFAULT)"
+   " *AttackedBy(\[GOODCUTOFF\],DEFAULT)" BEGIN END
+   " *!Allegiance(Myself,ENEMY) *AttackedBy(\[GOODCUTOFF\],DEFAULT)" BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *Enemy() *Continue() *" BEGIN
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION attack_enemy
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *See(NearestEnemyOf(Myself))"
+   BEGIN  END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(NearestEnemyOf(Myself),[0-9]+) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(NearestEnemyOf(Myself)) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(LastSeenBy(Myself),[0-9]+) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(LastSeenBy(Myself)) *" BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION attack_if_enemy
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *Allegiance(Myself,ENEMY) OR(13) See(NearestEnemyOf(Myself)) See([PC.0.0.FIGHTER_DRUID]) See([PC.0.0.FIGHTER_MAGE_THIEF]) See([PC.0.0.FIGHTER_MAGE_CLERIC]) See([PC.0.0.FIGHTER_CLERIC]) See([PC.0.0.BARD]) See([PC.0.0.CLERIC_THIEF]) See([PC.0.0.MAGE_THIEF]) See([PC.0.0.FIGHTER_MAGE]) See([PC.0.0.DRUID]) See([PC.0.0.CLERIC_MAGE]) See([PC.0.0.CLERIC]) See([PC.0.0.MAGE])"
+   " *Allegiance(Myself,ENEMY) OR(13) See(NearestEnemyOf(Myself)) See([PC.0.0.FIGHTER_DRUID]) See([PC.0.0.FIGHTER_MAGE_THIEF]) See([PC.0.0.FIGHTER_MAGE_CLERIC]) See([PC.0.0.FIGHTER_CLERIC]) See([PC.0.0.BARD]) See([PC.0.0.CLERIC_THIEF]) See([PC.0.0.MAGE_THIEF]) See([PC.0.0.FIGHTER_MAGE]) See([PC.0.0.DRUID]) See([PC.0.0.CLERIC_MAGE]) See([PC.0.0.CLERIC]) See([PC.0.0.MAGE])"   BEGIN  END
+   " *Allegiance(Myself,ENEMY) See([PC])"
+   BEGIN END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(NearestEnemyOf(Myself),[0-9]+) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(NearestEnemyOf(Myself)) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(LastSeenBy(Myself),[0-9]+) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(LastSeenBy(Myself)) *" BEGIN     END
+   " *RESPONSE-#[0-9]+ *MoveToObject(LastAttackerOf(Myself)) *" BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+
+DEFINE_PATCH_FUNCTION is_panicking
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *StateCheck(Myself,STATE_PANIC)" BEGIN  END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *RandomWalkContinuous() *" BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+
+
+DEFINE_PATCH_FUNCTION always_attack
+   STR_VAR act_in=""
+           trig_in=""
+   RET act_out trig_out
+BEGIN
+   LPF guard_check STR_VAR trig_in RET trig_in guard END
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *True()" 
+   ""
+   "See(NearestEnemyOf(Myself))"
+   "See(NearestEnemyOf(Myself)) *!StateCheck(NearestEnemyOf(Myself),STATE_HELPLESS)"
+   "ActionListEmpty()"
+   BEGIN  END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *AttackReevaluate([PC],[0-9]+)" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(\[PC\])" BEGIN     END
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(NearestEnemyOf(Myself),[0-9]+)" BEGIN     END
+   " *RESPONSE-#[0-9]+ *AttackReevaluate(LastSeenBy(Myself),[0-9]+)" BEGIN     END
+   " *RESPONSE-#[0-9]+ *Attack(NearestEnemyOf(Myself))" BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION guard_check STR_VAR trig_in="" RET trig_in guard BEGIN
+   SPRINT guard ""
+   INNER_PATCH_SAVE trig_in "%trig_in%" BEGIN
+      REPLACE_EVALUATE
+      ~GlobalGT(\(^[)]*\))~
+      BEGIN
+        SPRINT guard "GlobalGT(%MATCH1%)"
+      END
+      ""
+      REPLACE_EVALUATE
+      ~Global(\(^[)]*\))~
+      BEGIN
+        SPRINT guard "Global(%MATCH1%)"
+      END
+      ""
+   END
+END
+
+DEFINE_PATCH_FUNCTION help_call_check STR_VAR act_in="" trig_in="" RET trig_out act_out BEGIN
+   SPRINT trig_out "%trig_in%"
+   INNER_PATCH_SAVE act_out "%act_in%" BEGIN
+      REPLACE_EVALUATE
+      ~Help()~
+      BEGIN 
+        LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% calls_for_help()" repeat=no END
+      END
+      ""
+   END
+END
+
+DEFINE_PATCH_FUNCTION map_group_hostile_1 STR_VAR act_in="" trig_in="" RET trig_out act_out BEGIN
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *Global([^)]*) *See(NearestEnemyOf(Myself)) *"
+   BEGIN
+        INNER_PATCH "%trig_in%" BEGIN
+           REPLACE_EVALUATE "Global(\([^)]*\))"
+           BEGIN
+             SPRINT map_group_hostile "%MATCH1%"
+           END
+           ""
+        END
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *SetGlobal([^)]*) *Continue() *"
+   " *RESPONSE-#[0-9]+ *SetGlobal([^)]*) *"
+   BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+        LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% map_group_hostile(%map_group_hostile%)" repeat=no END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION map_group_hostile_2 STR_VAR act_in="" trig_in="" RET trig_out act_out BEGIN
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *!Allegiance(Myself,ENEMY) *!Global([^)]*) *"
+   BEGIN  
+        INNER_PATCH "%trig_in%" BEGIN
+           REPLACE_EVALUATE "Global(\([^)]*\))"
+           BEGIN
+             SPRINT map_group_hostile "%MATCH1%"
+           END
+           ""
+        END
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *Enemy() *SetGlobal([^)]*) Continue() *"
+   " *RESPONSE-#[0-9]+ *Enemy() *SetGlobal([^)]*) *"
+   BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+        LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% map_group_hostile(%map_group_hostile%)" repeat=no END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION map_group_hostile_3 STR_VAR act_in="" trig_in="" RET trig_out act_out BEGIN
+   SET value=1
+   PATCH_MATCH "%trig_in%" WITH
+   " *!Global([^)]*) *ActionListEmpty() *!See(\[PC\]) *"
+   BEGIN  
+        INNER_PATCH "%trig_in%" BEGIN
+           REPLACE_EVALUATE "Global(\([^)]*\))"
+           BEGIN
+             SPRINT map_group_hostile "%MATCH1%"
+           END
+           ""
+        END
+   END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_MATCH "%act_in%" WITH
+   " *RESPONSE-#[0-9]+ *MoveToObject(Player1) *"
+   BEGIN     END
+   DEFAULT
+      SET value=0
+   END
+   PATCH_IF value BEGIN
+        LPF combat_block_labeller STR_VAR act_in trig_in RET act_out trig_out END
+        LPF log_this STR_VAR file=attack_script_decomposition.txt input="%SOURCE_RES% map_group_hostile(%map_group_hostile%)" repeat=no END
+   END ELSE BEGIN
+      SPRINT act_out "%act_in%"
+      SPRINT trig_out "%trig_in%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION combat_block_labeller 
+   STR_VAR act_in="" trig_in=""
+   RET act_out trig_out
+BEGIN
+   SPRINT trig_out ~Global("DW_COMBAT_BLOCK_TRIGGER_LABEL","GLOBAL",1)~
+   SPRINT act_out ~RESPONSE-#100 SetGlobal("DW_COMBAT_BLOCK_LABEL","GLOBAL",1)~
+END

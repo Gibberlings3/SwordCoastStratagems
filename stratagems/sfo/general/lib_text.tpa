@@ -45,7 +45,7 @@ DEFINE_PATCH_FUNCTION substitute_string
              arguments=""  // list of oldstring=> newstring
      RET     output
 BEGIN
-          PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+      PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
           LPF return_first_pair STR_VAR list= ~%arguments%~ RET old=key new=value arguments=list END
           INNER_PATCH_SAVE output ~%input%~ BEGIN
              PATCH_IF ~%new%~ STRING_EQUAL_CASE ~NULL~ BEGIN
@@ -60,6 +60,16 @@ BEGIN
        END ELSE BEGIN
           SPRINT output ~%input%~
        END
+END
+
+DEFINE_ACTION_FUNCTION substitute_string
+    STR_VAR input=""
+            arguments=""
+    RET     output
+BEGIN
+   OUTER_PATCH ~~ BEGIN
+      LPF substitute_string STR_VAR input arguments RET output END
+   END
 END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -159,3 +169,50 @@ BEGIN
             END
 END
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////            Extract a subset of strings from a TRA file
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION extract_from_tra
+           INT_VAR relativise_tra_in=0
+                   force_ref="-1"
+           STR_VAR
+                   language_list="ENGLISH"
+                   tra_in=""
+                   tra_in_loc=""
+                   tra_out=""
+                   tra_out_loc=""
+                   tra_entries=""
+BEGIN
+  OUTER_WHILE "%language_list%" STRING_COMPARE_CASE "" BEGIN
+   LAF return_first_entry STR_VAR list="%language_list%" RET language_list=list this_language=entry END
+   ACTION_IF relativise_tra_in BEGIN
+      OUTER_SPRINT tra_in "%this_language%.tra"
+   END
+   OUTER_SPRINT tra_entries_here "%tra_entries%"
+   PRINT "Loading translation %tra_in_loc%/%this_language%/%tra_in%"
+
+     WITH_TRA "%tra_in_loc%/%this_language%/%tra_in%" BEGIN
+      ACTION_IF !FILE_EXISTS "%tra_out_loc%/%this_language%/%tra_out%" BEGIN
+        // MKDIR "%tra_out_loc%/%this_language%"
+         COPY ".../stratagems-inline/blank" "%tra_out_loc%/%this_language%/%tra_out%"
+      END
+      OUTER_WHILE "%tra_entries_here%" STRING_COMPARE "" BEGIN
+         LAF return_first_entry STR_VAR list="%tra_entries_here%" RET tra_entries_here=list entry END
+         ACTION_TRY
+            OUTER_SPRINT string (AT entry)
+            ACTION_IF force_ref>=0 BEGIN
+               APPEND_OUTER "%tra_out_loc%/%this_language%/%tra_out%" "%atsymbol%%force_ref% = ~%string%~"
+            END ELSE BEGIN
+               APPEND_OUTER "%tra_out_loc%/%this_language%/%tra_out%" "%atsymbol%%entry% = ~%string%~"
+            END
+         WITH DEFAULT
+            LAF warning STR_VAR warning="No translation for string %entry% in language %this_language%" END
+         END
+      END
+   END
+  END
+END

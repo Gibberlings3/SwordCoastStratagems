@@ -7,52 +7,75 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 ///// BG1/BG2
 ////////////////////////
 
-   LAF random_useful_items END
-   
-   LAF detectable_spells_setup STR_VAR path= ~%scsroot%/ds~ END
-   LAF detectable_spells STR_VAR path= ~%scsroot%/ds~ table = ~cddetect.2da~ END
-   
-   ACTION_IF !skip_tobex BEGIN
-       LAF detectable_spells STR_VAR path=~%scsroot%/ds~ table = dw_enchantment.2da END
-   END
-   ACTION_IF enhanced_edition BEGIN
-      LAF ee_specific_content END
+   LAF speed_debug STR_VAR string="Beginning Initial install" END
+
+   // configure tobex first, DS assumes it
+   ACTION_IF !enhanced_edition BEGIN
+       LAF configure_tobex END
    END
 
+   // some general resources needed
+   LAF random_useful_items END
+   
+   // detectable spells/items
+
+   LAF speed_debug STR_VAR string="Running DS" END
+
+   LAF check_label STR_VAR label=dw#detectablespells RET value END // don't install it twice! (It's idempotent, but wastes time)
+   ACTION_IF !value BEGIN
+        LAF make_label STR_VAR label=dw#detectablespells END
+        LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
+   END
+   LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table = "%scsroot%/ds/ds_scs.2da" END  // additional SCS entries
+   LAF scs_ds_correction END // A couple of manual fixes
+
+   LAF speed_debug STR_VAR string="Running Detectable Items" END
 
    LAF detectable_items END
 
+   LAF speed_debug STR_VAR string="Running Detectable Clouds" END
+
    LAF run STR_VAR file=detectcloud END
+
+   LAF speed_debug STR_VAR string="Running general creature patch" END
+
    LAF general_creature_patch END
+
+   LAF speed_debug STR_VAR string="Running misc stuff" END
+
    LAF run STR_VAR file=sim_compat END
-   LAF configure_tobex END
    LAF level_one_innates END
 
-   LAF misc_ids END                              
+   LAF misc_ids END
+   
+   // spellbook, for debugging
+   LAF run STR_VAR file=universal_spellbook locbase=spell tra=spell END
 
 ////////////////////////
 ///// BG2
 ////////////////////////
    ACTION_IF is_bg2 BEGIN
    
-     LAF spell_shield END
+     LAF speed_debug STR_VAR string="Running BG2 block" END
 
+
+     // fix the Spell Shield spell on non-EE installs
+     ACTION_IF !enhanced_edition BEGIN
+        LAF spell_shield END
+     END
+     // some misc bugfixes
      LAF initial_bg2_misc END
-
-     LAF include STR_VAR file=stoneskin.tph END // stoneskins that are immune to breach
+     LAF include STR_VAR file=stoneskin.tph END // eliminate a couple of stoneskins that are immune to breach
      LAF initial_stoneskin END
 
-     LAF detectable_weapon_enchantment END
-   
+     // some BG2-specific bits of Detectable X
+     LAF ds_detectable_weapon_enchantment END // weapon enchantment
      LAF include STR_VAR file=detecttrap.tph END
      LAF detect_trap END
-     
-
-
 
    END ELSE BEGIN
    
-            LAF resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END
+            LAF ds_resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END // since we use this occasionally even in BG1 scripts, we need it in stats.ids
 
    END
 ////////////////////////
@@ -68,9 +91,47 @@ DEFINE_ACTION_FUNCTION initial BEGIN
       LAF run STR_VAR file=~bg1fix~ END
    END
 
+////////////////////////
+///// Spell core
+////////////////////////
+
+   LAF speed_debug STR_VAR string="Running spell edits" END
+
+   LAF install_spell_core END
+
+////////////////////////
+///// The old AI-initialise bit
+////////////////////////
+
+   OUTER_SPRINT component_loc caster_shared
+   LAF run STR_VAR file=ai_initialise END
+
+////////////////////////
+///// Easter egg
+////////////////////////
+
+  ACTION_IF is_bg2 BEGIN
+  LAF check_ini STR_VAR ini=disable_easter_eggs RET value END
+  ACTION_IF !value BEGIN
+
+   MAKE_PATCH
+      say_name=>50074
+      say_description=>50075
+   END
+   LAF clone_item STR_VAR item="book60=>dw#eegg1" edits=patch_data END
+
+   MAKE_PATCH
+      match=>"container_xloc=661"
+      item_resource=>dw#eegg1
+   END
+   LAF edit_area STR_VAR area=AR1515 editstring="add_item=>patch_data" END
+
+  END
+
+
+  END
+
 END
-
-
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -98,14 +159,10 @@ END
 
 DEFINE_ACTION_FUNCTION random_useful_items BEGIN
 
-  LAF clone_item STR_VAR item=~misc02=>dw#noptn misc02=>dw#magat misc02=>dw#attac misc02=>dw#move0 misc02=>dw#noinv misc02=>dw#deseq misc02=>dw#area misc02=>dw#nopre misc02=>dw#dispe~ editstring=~droppable=>0~ END
 
-  ACTION_FOR_EACH item IN dw#mgsee.spl dw#silin.spl dw#brkin.spl BEGIN
-        ACTION_IF NOT FILE_EXISTS_IN_GAME ~%item%~ THEN BEGIN
-          LAF install STR_VAR file=  ~%item%~ location=~spl~ END
-	END
+  LAF clone_item STR_VAR item=~dw#marker_file=>dw#noptn dw#marker_file=>dw#magat dw#marker_file=>dw#attac dw#marker_file=>dw#move0 dw#marker_file=>dw#noinv dw#marker_file=>dw#deseq dw#marker_file=>dw#area dw#marker_file=>dw#nopre dw#marker_file=>dw#dispe~ editstring=~droppable=>0~ END
+  LAF install STR_VAR file="dw#mgsee.spl dw#silin.spl dw#brkin.spl" overwrite=0 location=~spl~ END
 
-  END
 END
 ///////////////////////////////////////////////////////////////////////////
 // general patch on all creatures
@@ -116,8 +173,8 @@ LAM read_in_saving_throws
 LAM read_in_thac0
 // much of this is hardcoded for speed
 
-LAF action_check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
-LAF action_check_ini STR_VAR ini=do_not_fix_thac0_errors RET ignore_thac0=value END
+LAF check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
+LAF check_ini STR_VAR ini=do_not_fix_thac0_errors RET ignore_thac0=value END
 
 OUTER_SPRINT skeleton ~~
 OUTER_SET counter=0
@@ -125,7 +182,7 @@ OUTER_SET counter2=0
 COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    PATCH_SILENT
    SPRINT filename ~%SOURCE_RES%~
-   LPF CRE_read_effect_type RET value=value END
+   LPF CRE_read_effect_type RET value END
    PATCH_IF value=0 BEGIN
       LPF FJ_CRE_EFF_V2 END
    END
@@ -188,103 +245,6 @@ END
 
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// install ToB Extender and configure (Windows only)
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION configure_tobex BEGIN
-
-  ACTION_IF ~skip_tobex~=0 BEGIN
-    OUTER_SPRINT ~TOBEX_MOD_DIRECTORY~ ~%scsroot%~
-    LOAD_TRA ~%scsroot%/tobex_redist/tobex.tra~
-    INCLUDE ~%scsroot%/tobex_redist/tobex.tpa~
-
-    ///////////////////////
-    // Mirror Image fix
-    ///////////////////////
-
-    ACTION_IF (!(MOD_IS_INSTALLED ~setup-spell_rev~ 20) AND ENGINE_IS ~tob~ AND FILE_EXISTS ~bgmain.exe~) THEN BEGIN
-        LAF include STR_VAR file=~mirror_image_aoe.tph~ END
-        LAF ~mirror_image_AoE~ END
-    END
-
-    ///////////////////////
-    // general settings
-    ///////////////////////
-
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY tobex_settings BEGIN
-        ~No Spell Interruption On Zero Damage=0~ => ~No Spell Interruption On Zero Damage=1~
-        ~Use Caster Level On Mirror Image=0~ => ~Use Caster Level On Mirror Image=1~
-   END
-   ACTION_PHP_EACH tobex_settings AS old=>new BEGIN
-      ACTION_IF FILE_CONTAINS_EVALUATED (~tobex_ini/ToBExTweak.ini~ ~%old%~) BEGIN
-         COPY_EXISTING ~tobex_ini/ToBExTweak.ini~ ~tobex_ini~
-            REPLACE_TEXTUALLY ~%old%~ ~%new%~
-         BUT_ONLY
-      END
-   END
-    ///////////////////////
-    // deactivate components that clash with SR
-    ///////////////////////
-
-    // MI fix
-
-    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 20 BEGIN
-        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~
-            REPLACE_TEXTUALLY ~Configurable Damage Effect Bypasses Mirror Images=1~ ~Configurable Damage Effect Bypasses Mirror Images=0~
-        BUT_ONLY
-    END
-
-    // dispel fix
-
-    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 30 BEGIN
-        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~ 
-            REPLACE_TEXTUALLY ~Dispel Formula Fix=1~ ~Dispel Formula Fix=0~
-        BUT_ONLY
-    END
-
-    // cure sleep fix
-
-    ACTION_IF MOD_IS_INSTALLED ~setup-spell_rev~ 40 BEGIN
-        COPY_EXISTING ~tobex_ini/ToBExCore.ini~ ~tobex_ini~
-            REPLACE_TEXTUALLY ~Awaken Fix=1~ ~Awaken Fix=0~
-        BUT_ONLY
-    END
-
-
-  END ELSE
-  ACTION_IF ~skip_hacks~=0 BEGIN
-   PRINT ~ToBEx disabled; applying backup EXE hacks instead~
-
-    LAF include STR_VAR file=~taimonhacks.tph~ END
-
-   // Dispel fix
-
-    LAUNCH_ACTION_MACRO ~Taimon_fix_dispel~
-
-   // MI fix
-   
-    LAUNCH_ACTION_MACRO ~Taimon_MI_AoE~
-    ACTION_IF (!FILE_EXISTS_IN_GAME ~dvimhere.mrk~ AND ENGINE_IS ~tob~ AND FILE_EXISTS ~bgmain.exe~) THEN BEGIN
-        LAF include STR_VAR file=~mirror_image_aoe.tph~ END
-        LAF mirror_image_AoE END
-    END
-
-
-  END
-
-END
-
-///////////////////////////////////////////////////////////////////////////
-// EE-specific content
-///////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION ee_specific_content BEGIN
-
-
-
-
-END
 
 
 ///////////////////////////////////////////////////////////////////////////
@@ -292,25 +252,41 @@ END
 ///////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION detectable_items BEGIN
-LAF check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value END
-ACTION_IF !value BEGIN
-  LAF check_ini STR_VAR ini=integrated RET integrated=value END
-  ACTION_IF integrated BEGIN // here's one we made earlier
-    COPY ~%scsroot%/ee/autolib.slb~ ~%workspace%~
-  END ELSE BEGIN
-    ACTION_IF skip_tobex=0 BEGIN
-        INCLUDE ~%scsroot%/ssl/tobex_item_labels.tph~
-        LAF tobex_item_labels END
-        INCLUDE ~%scsroot%/ssl/tobex_immunity_labels.tph~
-        LAF tobex_immunity_labels END
-    END ELSE BEGIN
-        INCLUDE ~%scsroot%/ssl/ssl.tph~
-        LAUNCH_ACTION_MACRO ~generate_SSL_autolib~
-    END
+  LAF check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value END
+  ACTION_IF !value BEGIN
+    LAF check_ini STR_VAR ini=~AI_Is_Omniscient~ RET omniscient=value END
+    LAF include STR_VAR file=item_labels.tpa END
+    LAF item_labels INT_VAR omniscient END
+    LAF run STR_VAR file=immunity_labels END
+  END ELSE BEGIN // need a blank autolib.slb
+    COPY ~.../stratagems-inline/blank~ ~%workspace%/autolib.slb~
   END
-END ELSE BEGIN // need a blank autolib.slb
-  COPY ~.../stratagems-inline/blank~ ~%workspace%/autolib.slb~
-  END
+END
+
+////////////////////////////////////////////////////////////////////
+// Manual edits to some SCS detectable-spell effects
+////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION scs_ds_correction BEGIN
+   OUTER_SET opcode_stat= enhanced_edition? 328 : 318
+
+   // imprisonment and maze DS needs to be only a few seconds
+   MAKE_PATCH
+      match=>"opcode=%opcode_stat%"
+      timing=>0
+      duration=>3
+   END
+   LAF edit_spell STR_VAR spell="WIZARD_IMPRISONMENT DEMILICH_TRAP_SOUL WIZARD_MAZE PSIONIC_MAZE" editstring="patch_effect=>patch_data" END
+   
+   // a quirk in the Timestop opcode means its duration is half as long as stated (we'll fix an error with the sound effects at the same time)
+   
+   MAKE_PATCH
+      match=>"opcode is_in [%opcode_stat% 174]"
+      duration=>"duration / 2"
+   END
+   LAF edit_spell STR_VAR spell="WIZARD_TIME_STOP SPWISH17" editstring="patch_effect=>patch_data" allow_missing=1 END
+
+
 END
 
 ///////////////////////////////////////////////////////////////////////////
@@ -404,6 +380,21 @@ DEFINE_ACTION_FUNCTION misc_ids BEGIN
       OUTER_SET length=300*i
       OUTER_SPRINT $gtimes_entries(~%name%_HOURS~) ~%length%~
    END
+   
+   //minutes
+   
+   OUTER_SPRINT $gtimes_entries(ONE_MINUTE) 5
+   OUTER_FOR (i=2;i<=20;i+=1) BEGIN
+      OUTER_SPRINT name $ascii_num(~%i%~)
+      OUTER_SET length=5*i
+      OUTER_SPRINT $gtimes_entries(~%name%_MINUTES~) ~%length%~
+   END
+   
+   // special cases
+   
+   OUTER_SPRINT $gtimes_entries(THIRTY_MINUTES) 150
+   OUTER_SPRINT $gtimes_entries(FORTY_MINUTES) 200
+   OUTER_SPRINT $gtimes_entries(FIFTY_MINUTES) 250
 
    // new blank gtimes.ids
    
@@ -431,10 +422,17 @@ END
 // Ardanis's Spell Shield patch
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 DEFINE_ACTION_FUNCTION spell_shield BEGIN
-  ACTION_IF !demivrgvs_v4 BEGIN
-    ACTION_IF demivrgvs BEGIN
-       LAF install STR_VAR file=~spwi519.spl~ location=spl END
+  ACTION_IF !demivrgvs BEGIN
+    
+    // externalise the spells cast by the Wand of Spell Striking
+
+    MAKE_PATCH
+       delete_effect=>"ability_icon is_in [spwi513b spwi608b]"
+       add_effect_inline=>"match=>~ability_icon=spwi513b~ opcode=>146 parameter2=>1 resource=>%WIZARD_BREACH% target=>2 timing=>1"
+       add_effect_inline'=>"match=>~ability_icon=spwi608b~ opcode=>146 parameter2=>1 resource=>%WIZARD_PIERCE_MAGIC% target=>2 timing=>1"
     END
+    LAF edit_item STR_VAR item=wand18 edits=patch_data END
+
     LAF include STR_VAR file=~ardanis_spell_shield.tph~ END
     LAF ardanis_spell_shield END
     LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END // let other mods know spell is altered
@@ -455,24 +453,22 @@ LAF edit_creature
 
 LAF install STR_VAR file=~werewyv.baf ds52329.baf~ location=baf END
 
-// fix the Ascension/Fixpack incompatibility (because I'm a nice guy)
+// fix the Ascension/Fixpack incompatibility (because I'm a nice guy) - shouldn't be needed on EE install
 
-ACTION_IF MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0 BEGIN
+ACTION_IF ( (MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0) && !enhanced_edition) BEGIN
    ACTION_IF !FILE_EXISTS ~override/player1.dlg~ BEGIN
-      COPY_EXISTING ~player1.dlg~ ~override~
-   END
-   OUTER_INNER_PATCH ~~ BEGIN
+      WITH_TRA ~%scsroot%/tra/%LANGUAGE%/player1.tra~ BEGIN COPY_EXISTING ~player1.dlg~ ~override~ END
+    OUTER_INNER_PATCH ~~ BEGIN
       PATCH_IF !(FILE_CONTAINS ~override/player1.dlg~ ~slayer3~) BEGIN
           INNER_ACTION BEGIN
                 COMPILE ~%scsroot%/%component_loc%/dlg/player1.d~
-                   USING  ~%scsroot%/tra/%eetra%english/player1.tra~
-                          ~%scsroot%/tra/%eetra%%s/player1.tra~
+                   USING  ~%scsroot%/tra/english/player1.tra~
+                          ~%scsroot%/tra/ee/%LANGUAGE%/player1.tra~
           END
       END
-   END
-   
-   ADD_JOURNAL EXISTING @314 @315 @316 USING ~%scsroot%/tra/%eetra%english/player1.tra~
-											  ~%scsroot%/tra/%eetra%%s/player1.tra~
+    END
+    ADD_JOURNAL EXISTING @314 @315 @316 USING  ~%scsroot%/tra/english/player1.tra~
+                          ~%scsroot%/tra/ee/%LANGUAGE%/player1.tra~ END
 END
 
 // rudimentary scripting shift to make enemy-summoned Planetars and Devas avoid healing the party
@@ -508,3 +504,156 @@ LAF edit_script STR_VAR script="plangood devagood" editstring="patch=>rep1 patch
 
 END
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// spell core
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION install_spell_core BEGIN
+
+   OUTER_SPRINT component_loc spell
+   // definition blocks
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install BEGIN
+           modify_breach => dw#breach
+           web_and_the_large => dw#web_large
+           elemental_area_immunity=>dw#elem_area_immune
+           fiend_summoning=>dw#fiend_summoning
+           bonus_spell_scrolls=>dw#extra_scrolls
+           freedom_scrolls=>dw#freedomscroll
+           elemental_arrows=>dw#elemental_arrows
+           extra_healing=>dw#extra_healing
+   END
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_no_SR BEGIN
+           nerf_greater_restoration => dw#restoration
+           pro_normal_missiles => dw#pro_NM
+           spellstrike_vs_pm_scroll => dw#spellstrikevsPM
+           antimagic_penetrates_ii => dw#antimagicII
+           ironskins => dw#ironskin
+           blade_barrier => dw#blades
+           power_word_blind => dw#PWblind
+           meteors => dw#meteor
+           insect_plague => dw#insectplague
+           universal_trigger => dw#sequencer_universal
+           truesight_blindness => dw#truesightblindness
+           mantle => dw#mantle
+           elemental_summoning=>dw#elemental_summoning
+           harm=>dw#harm
+           spell_immunity=>dw#spellimm
+           skull_trap=>dw#skulltrap
+           clone_slots=>dw#clone_slots
+           npc_symbols=>dw#npcsymbols
+   END
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_divine BEGIN
+           sanctity_of_mind=>dw#sanctity
+           circle_of_bones_duration=>dw#circleofbones
+           rebalance_lathander=>dw#rebalancelathander
+           enhance_thorn_spray=>dw#thornspray
+   END
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_arcane BEGIN
+           acid_storm_tonedown=>dw#acidstorm
+           rebalance_force_missiles=>dw#forcemissiles
+           create_boneguard=>dw#createboneguard
+   END
+   // skip some, depending on install
+   ACTION_IF !is_bg2 BEGIN
+      ACTION_FOR_EACH file IN fiend_summoning bonus_spell_scrolls freedom_scrolls spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF !is_bg1 BEGIN
+      ACTION_FOR_EACH file IN elemental_arrows extra_healing BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF enhanced_edition BEGIN
+      OUTER_SPRINT $skip_component("nerf_greater_restoration") ""
+   END ELSE BEGIN
+      OUTER_SPRINT $skip_component("rebalance_force_missiles") ""
+   END
+
+   // installation
+
+   ACTION_PHP_EACH spell_install AS files=>label BEGIN
+     LAF install_spell_helper STR_VAR files label END
+   END
+   ACTION_IF !demivrgvs BEGIN
+      ACTION_PHP_EACH spell_install_no_SR AS files=>label BEGIN
+           LAF install_spell_helper STR_VAR files label END
+      END
+   END
+   ACTION_IF iwd_arcane BEGIN
+      ACTION_PHP_EACH spell_install_iwd_arcane AS files=>label BEGIN
+           LAF install_spell_helper STR_VAR files label END
+      END
+   END
+   ACTION_IF iwd_divine BEGIN
+      ACTION_PHP_EACH spell_install_iwd_divine AS files=>label BEGIN
+           LAF install_spell_helper STR_VAR files label END
+      END
+   END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// helper function
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION install_spell_helper
+    STR_VAR files=""
+            label=""
+BEGIN
+     ACTION_IF VARIABLE_IS_SET $skip_component("%files%") BEGIN
+        OUTER_SET skip=1
+     END ELSE BEGIN
+        LAF check_ini STR_VAR ini="no_initial_change_%files%" RET skip=value END
+        ACTION_IF skip BEGIN 
+              PRINT "Skipping spell component %files% as it is disabled in the ini"
+        END ELSE BEGIN
+              LAF check_label STR_VAR label RET skip=value END
+              ACTION_IF skip BEGIN
+                 PRINT "Skipping spell component %files% as it is already installed"
+              END
+        END
+     END
+     ACTION_IF !skip BEGIN
+        LAF run STR_VAR files tra=spell END
+        LAF make_label STR_VAR label END
+     END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// ToBeX-based tweaks for vanilla BG2
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION configure_tobex BEGIN
+
+    ///////////////////////
+    // Mirror Image fix
+    ///////////////////////
+
+    LAF include STR_VAR file=~mirror_image_aoe.tph~ END
+    LAF ~mirror_image_AoE~ END
+
+    ///////////////////////
+    // general settings
+    ///////////////////////
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY tobex_settings BEGIN
+        ~No Spell Interruption On Zero Damage=0~ => ~No Spell Interruption On Zero Damage=1~
+        ~Use Caster Level On Mirror Image=0~ => ~Use Caster Level On Mirror Image=1~
+   END
+   ACTION_PHP_EACH tobex_settings AS old=>new BEGIN
+      ACTION_IF FILE_CONTAINS_EVALUATED (~tobex_ini/ToBExTweak.ini~ ~%old%~) BEGIN
+         COPY_EXISTING ~tobex_ini/ToBExTweak.ini~ ~tobex_ini~
+            REPLACE_TEXTUALLY ~%old%~ ~%new%~
+         BUT_ONLY
+      END
+   END
+
+
+END

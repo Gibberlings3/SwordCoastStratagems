@@ -1,0 +1,186 @@
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Used by summoned Nabassu who are summoner-friendly
+//////////////////////////////////////////////////////////////////////////////////////////
+
+VARIABLE(IsSummoned=True)
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Work around death animation bug
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	Die()
+	IgnoreBlock(EnhancedEdition)
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Redefine spellcasting to include death gazes
+//////////////////////////////////////////////////////////////////////////////////////////
+INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions_summoned.ssl)
+
+
+BEGIN_ACTION_DEFINITION
+	Name(Spell)
+	TRIGGER
+		!GlobalTimerNotExpired("castspell","LOCALS")
+		HaveSpell(scsargument1)
+		OR(2)
+		     Allegiance(Myself,ENEMY)
+		     !HotKey(E)
+	ACTION
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+		ForceSpell(NearestEnemyOf(Myself),TANARI_DEATH_GAZE)
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+		ForceSpell(SecondNearestEnemyOf(Myself),TANARI_DEATH_GAZE)
+	RESPONSE #scsprob1
+		SetGlobalTimer("castspell","LOCALS",6)
+		Spell(scstarget,scsargument1)
+		ForceSpell(ThirdNearestEnemyOf(Myself),TANARI_DEATH_GAZE)
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Initialise
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
+
+////////////////////////////////////////////////////////////////////////////////////////
+///	Kill Baatezu
+/////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsdemon||LAWFUL_EVIL)
+	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
+END LOOP
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider moving to a more interesting location in the battle
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/jump.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+VARIABLE(FirstDispel=True)
+INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Silence mages and clerics (we trade the at-will PnP version for the -5-to-saves
+///	BG2 version)
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(Enemy|Disabled|Silence|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,TANARI_SILENCE|200|300)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Paralysis
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR|Hold|SIEnchantment|Enemy|Helpless)
+	CheckStatGT(scstarget,5,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(Spell,TANARI_PARALYZE|100|300)
+END
+
+IF TRIGGER
+        !Allegiance(Myself,ENEMY)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR|Hold|SIEnchantment|Helpless)
+	CheckStatGT(scstarget,5,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(Spell,TANARI_PARALYZE|100|300)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Vampiric touch
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	ConditionalTargetBlock(PCsInOrder;HPPercentLT(scstarget,30))
+	TargetBlock(PCsInOrderShort)
+	TriggerBlock(Enemy|MR|SINecromancy|SpellTurn)
+	Range(scstarget,10)
+	HPPercentLT(Myself,75)
+THEN DO
+	Combine()
+	Action(Spell,TANARI_VAMPIRIC_TOUCH)
+END
+
+IF TRIGGER
+        !Allegiance(Myself,ENEMY)
+	ConditionalTargetBlock(EnemiesInOrderShort;HPPercentLT(scstarget,30))
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(MR|SINecromancy|SpellTurn)
+	Allegiance(scstarget,ENEMY)
+	Range(scstarget,10)
+	HPPercentLT(Myself,75)
+THEN DO
+	Combine()
+	Action(Spell,TANARI_VAMPIRIC_TOUCH)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+///	Combat
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////
+////	At least *consider* chewing on paralysed victims
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target(NearestEnemyOfType([PC]))
+	StateCheck(scstarget,STATE_HELPLESS)
+	TriggerBlock(Enemy|Plus4Safe)
+THEN DO
+	Action(Attack|100|100)
+END
+
+IF TRIGGER
+	Target(NearestEnemyOf(Myself))
+	StateCheck(scstarget,STATE_HELPLESS)
+	TriggerBlock(Plus4Safe)
+THEN DO
+	Action(Attack|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  !Allegiance(Myself,ENEMY)
+  TargetBlock(EnemiesInOrderShort)
+  TriggerBlock(Plus4Safe)
+THEN DO
+   Action(Literal)
+   AttackOneRound(scstarget)
+END
+
+
+BEGIN LOOP(MyWeaponStrength||4)
+BEGIN LOOP(MyWeaponDamageType||Crushing)
+INCLUDE FILE(%scsroot%/genai/ssl/easy_melee.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+END LOOP
+END LOOP

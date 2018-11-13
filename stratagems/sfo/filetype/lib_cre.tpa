@@ -253,6 +253,8 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_rel_fields BEGIN
      memorization_type => ~0x6,SHORT~
      parent_resource_type=>~0x88,LONG~
      parent_resource=>~0x8c,ASCII~
+     parent_item_slot=>~0x9c,LONG~
+     mode=>~0x40,LONG~
 END
 
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=cre_rel_fields offset_base=~offset_base~ function_prefix=CRE END
@@ -804,8 +806,34 @@ BEGIN
            SET i=0
         END
      END
-     PATCH_IF blank=0 BEGIN
-          LAUNCH_PATCH_FUNCTION warning STR_VAR warning= "Failed to find a space to insert script %arguments% in file %filename%" END
+     PATCH_IF blank=0 BEGIN // merge the last two scripts, but check both exist first!
+          READ_ASCII 0x260 top
+          READ_ASCII 0x268 bottom
+          INNER_ACTION BEGIN
+                ACTION_IF FILE_EXISTS_IN_GAME "%top%.bcs" BEGIN
+                   OUTER_SET top_exists=1
+                END ELSE BEGIN
+                   OUTER_SET top_exists=0
+                END
+                ACTION_IF FILE_EXISTS_IN_GAME "%bottom%.bcs" BEGIN
+                   OUTER_SET bottom_exists=1
+                END ELSE BEGIN
+                   OUTER_SET bottom_exists=0
+                END
+                ACTION_IF top_exists && bottom_exists BEGIN
+                   LAF find_unique_filename STR_VAR extension=bcs RET script=filename END
+                   LAF merge_scripts STR_VAR top bottom script END
+                END
+          END
+          PATCH_IF top_exists && bottom_exists BEGIN
+             WRITE_ASCIIE 0x260 "%script%" (8)
+             LPF warning STR_VAR warning="found space for script %arguments% in file %filename% by merging %top%.bcs and %bottom%.bcs into %script%.bcs" END
+          END ELSE BEGIN
+             PATCH_IF bottom_exists BEGIN // in which case, top doesn't exist
+                WRITE_ASCIIE 0x260 "%bottom%" (8)
+             END // if it doesn't exist, we just overwrite bottom
+          END
+          WRITE_ASCIIE 0x268 "%arguments%" (8)
      END ELSE BEGIN
            FOR (i=blank;i<0x268;i=i+8) BEGIN
               READ_ASCII i+8 ~move~
@@ -828,8 +856,34 @@ BEGIN
            SET i=0x270
         END
      END
-     PATCH_IF blank=0 BEGIN
-          LAUNCH_PATCH_FUNCTION warning STR_VAR warning= "Failed to find a space to insert script %arguments% in file %filename%" END
+     PATCH_IF blank=0 BEGIN // merge the first two scripts, but check both exist first!
+          READ_ASCII 0x248 top
+          READ_ASCII 0x250 bottom
+          INNER_ACTION BEGIN
+                ACTION_IF FILE_EXISTS_IN_GAME "%top%.bcs" BEGIN
+                   OUTER_SET top_exists=1
+                END ELSE BEGIN
+                   OUTER_SET top_exists=0
+                END
+                ACTION_IF FILE_EXISTS_IN_GAME "%bottom%.bcs" BEGIN
+                   OUTER_SET bottom_exists=1
+                END ELSE BEGIN
+                   OUTER_SET bottom_exists=0
+                END
+                ACTION_IF top_exists && bottom_exists BEGIN
+                   LAF find_unique_filename STR_VAR extension=bcs RET script=filename END
+                   LAF merge_scripts STR_VAR top bottom script END
+                END
+          END
+          PATCH_IF top_exists && bottom_exists BEGIN
+             WRITE_ASCIIE 0x250 "%script%" (8)
+             LPF warning STR_VAR warning="found space for script %arguments% in file %filename% by merging %top%.bcs and %bottom%.bcs into %script%.bcs" END
+          END ELSE BEGIN
+             PATCH_IF top_exists BEGIN // in which case, bottom doesn't exist
+                WRITE_ASCIIE 0x250 "%top%" (8)
+             END // if it doesn't exist, we just overwrite top
+          END
+          WRITE_ASCIIE 0x248 "%arguments%" (8)
      END ELSE BEGIN
            FOR (i=blank;i>0x248;i=i - 8) BEGIN
               READ_ASCII i - 8 ~move~
@@ -915,7 +969,6 @@ BEGIN
       END
       DEFAULT
        INNER_ACTION BEGIN
-         PRINT "Don't know details for %spell%; looking them up"
          COPY_EXISTING ~%spell%.spl~ ~override~
                LPF SPL_read_spell_type RET spell_type=value END
                LPF SPL_read_level RET spell_level=value END
@@ -1186,8 +1239,9 @@ DEFINE_PATCH_FUNCTION CRE_add_spells
 BEGIN
        PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
           LPF return_first_entry STR_VAR list= ~%arguments%~ RET spellname=entry arguments=list END
-
-          LPF QUICK_ADD_SPELL INT_VAR as_known=0 STR_VAR spellname END
+          PATCH_IF "%spellname%" STRING_COMPARE_CASE "null" BEGIN
+             LPF QUICK_ADD_SPELL INT_VAR as_known=0 STR_VAR spellname END
+          END
           LPF CRE_add_spells STR_VAR arguments END
        END
 END
@@ -1205,7 +1259,9 @@ BEGIN
       DEFAULT
        PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
           LPF return_first_entry STR_VAR list= ~%arguments%~ RET spellname=entry arguments=list END
-          LPF QUICK_ADD_SPELL INT_VAR as_known=1 STR_VAR spellname END
+          PATCH_IF "%spellname%" STRING_COMPARE_CASE "null" BEGIN
+              LPF QUICK_ADD_SPELL INT_VAR as_known=1 STR_VAR spellname END
+          END
           LPF CRE_add_known_spells STR_VAR arguments END
        END
       END
@@ -2081,7 +2137,15 @@ BEGIN
         LPF CRE_read_dv RET dv=value END
         TO_LOWER dv
         PATCH_IF VARIABLE_IS_SET $script_name_pdialog( ~%dv%~) BEGIN
-           SET value=1
+           PATCH_MATCH "%filename%" WITH
+              sarev1 sarevo sarevo2 // BG1 sarevok in EET, shares DV with joinable sarevok 
+              "%tutu_var%arkani3" "%tutu_var%deder3" // false positives - all copies of the illusionary Candlekeep NPCs who exist in RL as INNOCENTs
+           BEGIN
+              SET value=0
+           END
+           DEFAULT
+              SET value=1
+           END
         END ELSE BEGIN
            PATCH_IF ~%filename%~ STRING_EQUAL_CASE ~charbase~ BEGIN
               SET value=1
@@ -3060,5 +3124,55 @@ DEFINE_PATCH_MACRO kit_softcode BEGIN
     END
 
 END
+
+
+/////////////////////////////////////////
+///// Enforce legal ability scores on dual-classing creatures
+/////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_dualclass_legal
+   STR_VAR original_class=""
+           final_class=""
+           creature=""
+BEGIN
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY dual_legal BEGIN
+      original=>15
+      final=>17
+   END
+   COPY_EXISTING "%creature%.cre" override
+    PHP_EACH dual_legal AS type=>min BEGIN
+
+      SPRINT class EVAL "%%type%_class%"
+      PATCH_MATCH "%class%" WITH
+      FIGHTER BEGIN
+         LPF CRE_strGT STR_VAR arguments="%min%" END
+       END
+       THIEF BEGIN
+         LPF CRE_dexGT STR_VAR arguments="%min%" END
+       END
+       RANGER BEGIN
+         LPF CRE_strGT STR_VAR arguments="%min%" END
+         LPF CRE_dexGT STR_VAR arguments="%min%" END
+         LPF CRE_conGT STR_VAR arguments="%min%" END
+       END
+       CLERIC BEGIN
+         LPF CRE_wisGT STR_VAR arguments="%min%" END
+       END
+       MAGE BEGIN
+         LPF CRE_intGT STR_VAR arguments="%min%" END
+       END
+       DRUID BEGIN
+         LPF CRE_wisGT STR_VAR arguments="%min%" END
+         LPF CRE_chaGT STR_VAR arguments="%min%" END
+
+       END
+       DEFAULT END
+
+      END
+
+
+END
+
+
 
 

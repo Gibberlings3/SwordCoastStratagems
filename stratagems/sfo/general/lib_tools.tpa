@@ -45,7 +45,7 @@ BEGIN
      "" null BEGIN END
      DEFAULT
         PATCH_PRINT ~%warning%%arguments%~
-        LPF patch_log_this STR_VAR file=sfo_warnings.txt input= ~%warning%%arguments%~ repeat END
+        LPF log_this STR_VAR file=sfo_warnings.txt input= ~%TP2_BASE_NAME% component %COMPONENT_NUMBER%: %warning%%arguments%~ repeat END
      END
 END
 
@@ -244,7 +244,12 @@ DEFINE_PATCH_FUNCTION key_value_sanity_check
     STR_VAR arguments=""
 BEGIN
    PATCH_IF ("%arguments%" STRING_CONTAINS_REGEXP "=>")=is_key && "%arguments%" STRING_COMPARE "" BEGIN
-         PATCH_FAIL "The  variable for task is set to %arguments%, which is illegal. (Check if you are entering inline data into a patch command, or vice versa.)"
+         PATCH_IF is_key BEGIN 
+            SPRINT censure "it should be a key"
+         END ELSE BEGIN
+            SPRINT censure "it should not be a key"
+         END
+         PATCH_FAIL "The  variable for task is set to %arguments%, which is illegal: %censure%. (Check if you are entering inline data into a patch command, or vice versa.)"
    END
 END
 
@@ -313,10 +318,10 @@ BEGIN
    END
 END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               check the ini file
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Check an ini value (case-insensitive)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION check_ini
@@ -324,10 +329,10 @@ DEFINE_PATCH_FUNCTION check_ini
         RET value
 BEGIN
         TO_LOWER ini
-        PATCH_IF !VARIABLE_IS_SET $scs_ini_hash(~%ini%~) BEGIN
+        PATCH_IF !VARIABLE_IS_SET $SFO_reserved_ini_hash(~%ini%~) BEGIN
            SPRINT value 0
         END ELSE BEGIN
-           SPRINT value $scs_ini_hash(~%ini%~)
+           SPRINT value $SFO_reserved_ini_hash(~%ini%~)
         END
 END
 
@@ -338,15 +343,6 @@ BEGIN
        OUTER_PATCH "" BEGIN
         LPF check_ini STR_VAR ini RET value END
        END
-END
-
-DEFINE_ACTION_FUNCTION action_check_ini
-       STR_VAR ini=""
-       RET value
-BEGIN
-     OUTER_INNER_PATCH ~~ BEGIN
-          LPF check_ini STR_VAR ini RET value END
-     END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -387,19 +383,9 @@ DEFINE_ACTION_FUNCTION get_directory
         RET directory
 BEGIN
    OUTER_INNER_PATCH ~~ BEGIN
-      LPF get_directory STR_VAR location locbase locabs RET directory=directory END
+      LPF get_directory STR_VAR location locbase locabs RET directory END
    END
 END
-
-DEFINE_ACTION_FUNCTION action_get_directory
-        STR_VAR location=""  locbase="" locabs=""
-        RET directory
-BEGIN
-   OUTER_INNER_PATCH ~~ BEGIN
-      LPF get_directory STR_VAR location locbase locabs RET directory=directory END
-   END
-END
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -424,7 +410,7 @@ BEGIN
        PRINT ~Including file(s) %file%~
        LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
        OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
-           LAF action_return_first_entry STR_VAR list= ~%file%~ RET entry=entry file=list END
+           LAF return_first_entry STR_VAR list= ~%file%~ RET entry=entry file=list END
            COPY ~%file_loc%/%entry%~ ~%workspace%/%entry%~
               LPF define_make_patch END
               LPF define_push END
@@ -435,6 +421,10 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////               include all the listed files with a .tpa suffix, assume each contains a function with the same name as itself, and run that function
+/////////////
+/////////////               when doing so, implement the MAKE_PATCH and PUSH pseudocode
+/////////////
+/////////////               If it's the outermost "run" being called, also make a label, called dw#[func]
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -445,7 +435,20 @@ DEFINE_ACTION_FUNCTION run
                locbase=""
                locabs=""
                version=""
+               tra=""
 BEGIN
+       ACTION_IF !VARIABLE_IS_SET SFO_reserved_outer_run BEGIN
+          OUTER_SET SFO_reserved_outer_run=1
+          OUTER_SET make_labels=1
+          OUTER_SPRINT component_loc "%location%"
+          OUTER_SPRINT location ""
+          ACTION_IF "%tra%" STRING_EQUAL "" BEGIN
+             OUTER_SPRINT tra "%component_loc%"
+          END
+       END ELSE BEGIN
+          OUTER_SET make_labels=0
+       END
+
        ACTION_IF ~%file%~ STRING_EQUAL_CASE ~~ BEGIN
           ACTION_IF ~%files%~ STRING_EQUAL_CASE ~~ BEGIN
               PRINT ~Warning: you've called an include with no argument~
@@ -461,7 +464,15 @@ BEGIN
               LPF define_make_patch END
               LPF define_push END
            INCLUDE ~%workspace%/%entry%.tpa~
-           LAF ~%entry%~ STR_VAR version= ~%version%~ END
+           ACTION_IF make_labels BEGIN
+              LAF make_label STR_VAR label="dw#%entry%" END
+           END
+           ACTION_IF debug_variable=2 BEGIN
+              PRINT "about to run %entry%, with tra %scs_tra_loc%/english/%tra%.tra %scs_tra_loc%/%LANGUAGE%/%tra%.tra"
+           END
+           WITH_TRA "%scs_tra_loc%/english/%tra%.tra" "%scs_tra_loc%/%LANGUAGE%/%tra%.tra" BEGIN
+              LAF ~%entry%~ STR_VAR version= ~%version%~ END
+           END
        END
 END
 
@@ -475,12 +486,11 @@ DEFINE_ACTION_FUNCTION log_this
         STR_VAR file=""
                 input=""
                 repeat="yes"
-                locabs="%workspace%"
+                locabs="%data_loc%"
                 location=""
                 locbase=""
 BEGIN
-    ACTION_IF !~%file%~ STRING_EQUAL_CASE ~auto_function_list.txt~ BEGIN  // in case we left any in place!
-        ACTION_IF debug_variable>0 BEGIN
+        ACTION_IF debug_variable=2 BEGIN
            PRINT ~trying to append %input% to %file%; location defined by locabs=%locabs% location=%location% locbase=%locbase%~
          END
         LAF get_directory STR_VAR location locabs locbase RET directory END
@@ -489,22 +499,6 @@ BEGIN
         END
         ACTION_IF (~%repeat%~ STRING_COMPARE_CASE ~no~) || !FILE_CONTAINS_EVALUATED ("%directory%/%file%" "%input%\($\|%WNL%\|%MNL%\|%LNL\)")BEGIN
            APPEND_OUTER ~%directory%/%file%~ ~%input%~
-        END ELSE BEGIN
-        
-        END
-    END
-END
-
-DEFINE_PATCH_FUNCTION patch_log_this  // legacy
-        STR_VAR file=""
-                input=""
-                repeat="yes"
-                locabs="%workspace%"
-                location=""
-                locbase=""
-BEGIN
-        INNER_ACTION BEGIN
-          LAF log_this STR_VAR file input repeat locbase locabs location END
         END
 END
 
@@ -512,7 +506,7 @@ DEFINE_PATCH_FUNCTION log_this
         STR_VAR file=""
                 input=""
                 repeat="yes"
-                locabs="%workspace%"
+                locabs="%data_loc%"
                 location=""
                 locbase=""
 BEGIN
@@ -530,19 +524,18 @@ END
 DEFINE_ACTION_FUNCTION make_label
     STR_VAR label=""
 BEGIN
-   LAF get_label_loc RET location=location END
+   LAF get_label_loc RET location END
    COPY ~.../stratagems-inline/blank~ ~%location%/%label%.mrk~
-   LPF log_this STR_VAR file=SFO_warnings.txt input= ~Component with label:%label%~ END
 END
 
 DEFINE_ACTION_FUNCTION get_label_loc
 RET location
 BEGIN
-   LAF action_check_ini STR_VAR ini=put_labels_in_workspace RET loc=value END
+   LAF check_ini STR_VAR ini=label_location RET loc=value END
    ACTION_IF loc BEGIN
-       OUTER_SPRINT location ~%workspace%~
+       OUTER_SPRINT location ~%loc%~
    END ELSE BEGIN
-       OUTER_SPRINT location ~override~
+       OUTER_SPRINT location ~%marker_loc%~
    END
 END
 
@@ -556,7 +549,7 @@ DEFINE_ACTION_FUNCTION check_label
     STR_VAR label=""
     RET value
 BEGIN
-   LAF get_label_loc RET location=location END
+   LAF get_label_loc RET location END
    ACTION_IF FILE_EXISTS ~%location%/%label%.mrk~ BEGIN
       OUTER_SET value=1
    END ELSE BEGIN
@@ -569,8 +562,32 @@ DEFINE_PATCH_FUNCTION check_label
    RET value
 BEGIN
    INNER_ACTION BEGIN
-      LAF check_label STR_VAR label RET value=value END
+      LAF check_label STR_VAR label RET value END
    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               Check if a LABELed component of a mod (by default, this mod) is installed
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION check_component
+    STR_VAR label=""
+            mod="%scsroot%"
+    RET value
+BEGIN
+    OUTER_SET value=MOD_IS_INSTALLED "%mod%.tp2" (ID_OF_LABEL "%mod%.tp2" "%label%")
+END
+
+DEFINE_PATCH_FUNCTION check_component
+    STR_VAR label=""
+            mod=""
+    RET value
+BEGIN
+    INNER_ACTION BEGIN
+       LAF check_component STR_VAR label RET value END
+    END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -817,9 +834,19 @@ END
 ///// given names and feed them as STR_VAR entries to the ACTION_FUNCTION "function"
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION process_table STR_VAR table="" location="" locbase="" locabs="" inline="no" function="" BEGIN
+DEFINE_ACTION_FUNCTION process_table 
+            INT_VAR cumulative=0 
+            STR_VAR table="" 
+                    location="" 
+                    locbase="" 
+                    locabs=""
+                    inline="no"
+                    function=""
+                    ext_args="" 
+            RET value
+BEGIN
   ACTION_IF "%inline%" STRING_COMPARE_CASE yes BEGIN
-     LAF action_get_directory STR_VAR location locbase locabs RET directory END
+     LAF get_directory STR_VAR location locbase locabs RET directory END
      ACTION_IF !FILE_EXISTS "%directory%/%table%" BEGIN
           FAIL "Tried to process table %table% but it doesn't exist at %directory%"
      END
@@ -830,6 +857,7 @@ DEFINE_ACTION_FUNCTION process_table STR_VAR table="" location="" locbase="" loc
       REPLACE_TEXTUALLY "//.*" ""
       COUNT_2DA_COLS colcount
       COUNT_2DA_ROWS colcount rowcount
+      SPRINT value ""
       FOR (i=1;i<rowcount;i+=1) BEGIN
          SPRINT to_include "LAF %function% STR_VAR"
          FOR (j=0;j<colcount;j+=1) BEGIN
@@ -837,9 +865,15 @@ DEFINE_ACTION_FUNCTION process_table STR_VAR table="" location="" locbase="" loc
             READ_2DA_ENTRY i j colcount val
             SPRINT to_include "%to_include% %var%=~%val%~"
          END
-         SPRINT to_include "%to_include% END"
+         SPRINT to_include "%to_include% %ext_args%"
+         PATCH_IF cumulative BEGIN
+              SPRINT to_include ~%to_include% last_value="%value%" RET value END~
+         END ELSE BEGIN
+              SPRINT to_include "%to_include% END"
+         END
          INNER_ACTION BEGIN
-            LAF reinclude_this STR_VAR input="%to_include%" END
+            OUTER_SPRINT input "%to_include%"
+            LAM action_reinclude_this
          END
       END
     BUT_ONLY
@@ -886,17 +920,236 @@ END
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION list_files 
+DEFINE_ACTION_FUNCTION list_files
     STR_VAR location=""
             locbase=""
             locabs=""
             postfix=""
     RET list
 BEGIN
-      LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+      LAF get_directory STR_VAR location locbase RET file_loc=directory END
       OUTER_SPRINT list ""
       ACTION_BASH_FOR "%file_loc%" ".*\.%postfix%" BEGIN
          OUTER_SPRINT list "%list% ~%BASH_FOR_FILESPEC%~"
       END
 
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////       add new entry to an IDS file if needed, and return its number
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION get_or_add_to_IDS
+        INT_VAR minimum=1
+                maximum=99999
+        STR_VAR to_add=""
+                idsfile=""
+        RET idsnum
+BEGIN
+        ACTION_IF minimum>maximum BEGIN
+           LAF warning STR_VAR warning="Failed to add IDS entry %to_add% to idsfile %idsfile%" END
+           OUTER_SET idsnum=0 - 1
+        END ELSE BEGIN
+           OUTER_SET idsnum=IDS_OF_SYMBOL ("%idsfile%" "%to_add%")
+           ACTION_IF idsnum<0 BEGIN
+              OUTER_PATCH "" BEGIN
+                   LOOKUP_IDS_SYMBOL_OF_INT test "%idsfile%" minimum
+              END
+              ACTION_IF "%test%" STRING_EQUAL "%minimum%" BEGIN
+                   APPEND "%idsfile%.ids" "%minimum% %to_add%"
+                   OUTER_SET idsnum=minimum
+              END ELSE BEGIN
+                   OUTER_SET minimum +=1
+                   LAF get_or_add_to_IDS INT_VAR minimum maximum STR_VAR to_add idsfile RET idsnum END
+              END
+           END
+        END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////       quicksort
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION quicksort
+      STR_VAR list=""
+      RET list
+BEGIN
+   ACTION_IF "%list%" STRING_COMPARE "" BEGIN
+      LAF return_first_entry STR_VAR list RET entry list END
+      OUTER_SPRINT left ""
+      OUTER_SPRINT right ""
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+         LAF return_first_entry STR_VAR list RET cmp=entry list END
+         ACTION_IF "%cmp%" STRING_COMPARE "%entry%" >= 0 BEGIN
+            LAF push STR_VAR head="%cmp%" tail="%right%" RET right=list END
+         END ELSE BEGIN
+            LAF push STR_VAR head="%cmp%" tail="%left%" RET left=list END
+         END
+      END
+      LAF quicksort STR_VAR list="%left%" RET left=list END
+      LAF quicksort STR_VAR list="%right%" RET right=list END
+      LAF push STR_VAR head="%entry%" tail="" RET list END
+      LAF join STR_VAR list1="%left%" list2="%list%" RET list END
+      LAF join STR_VAR list1="%list%" list2="%right%" RET list END
+   END
+END
+
+DEFINE_ACTION_FUNCTION quicksort_numerical
+      STR_VAR list=""
+      RET list
+BEGIN
+   ACTION_IF "%list%" STRING_COMPARE "" BEGIN
+      LAF return_first_entry STR_VAR list RET entry list END
+      OUTER_SPRINT left ""
+      OUTER_SPRINT right ""
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+         LAF return_first_entry STR_VAR list RET cmp=entry list END
+         ACTION_IF cmp>entry BEGIN
+            LAF push STR_VAR head="%cmp%" tail="%right%" RET right=list END
+         END ELSE BEGIN
+            LAF push STR_VAR head="%cmp%" tail="%left%" RET left=list END
+         END
+      END
+      LAF quicksort_numerical STR_VAR list="%left%" RET left=list END
+      LAF quicksort_numerical STR_VAR list="%right%" RET right=list END
+      LAF push STR_VAR head="%entry%" tail="" RET list END
+      LAF join STR_VAR list1="%left%" list2="%list%" RET list END
+      LAF join STR_VAR list1="%list%" list2="%right%" RET list END
+   END
+END
+
+DEFINE_PATCH_FUNCTION quicksort
+     STR_VAR list=""
+     RET list
+BEGIN
+   INNER_ACTION BEGIN
+      LAF quicksort STR_VAR list RET list END
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      debugger
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION speed_debug
+   INT_VAR var=4
+   STR_VAR string="Unspecified debug check"
+BEGIN
+   ACTION_IF debug_variable=var BEGIN
+      PRINT "%string%"
+      ACTION_READLN blook
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      apply a function to all files of a certain type (for mod self-editing, not for
+////////////      live release)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION recurse_through_files
+    STR_VAR base_dir=""
+            allowed_ext=""
+            function=""
+            arguments=""
+BEGIN
+    ACTION_TO_UPPER allowed_ext
+    OUTER_WHILE "%allowed_ext%" STRING_COMPARE "" BEGIN
+       LAF return_first_entry STR_VAR list="%allowed_ext%" RET entry allowed_ext=list END
+       OUTER_SPRINT $ext_array("%entry%") ""
+    END
+    ACTION_BASH_FOR "%base_dir%" ".*" BEGIN
+       OUTER_SPRINT ext_here "%BASH_FOR_EXT%"
+       ACTION_TO_UPPER ext_here
+       ACTION_IF VARIABLE_IS_SET $ext_array("%ext_here%") BEGIN
+           LAF "%function%" STR_VAR file_res="%BASH_FOR_RES%" file_ext="%BASH_FOR_EXT%" file_dir="%base_dir%" arguments END
+       END
+    END
+    ACTION_CLEAR_ARRAY directories
+    GET_DIRECTORY_ARRAY directories "%base_dir%" "[a-z0-9-_]+"
+    ACTION_PHP_EACH directories AS int=>dir BEGIN
+       LAF recurse_through_files STR_VAR base_dir="%dir%" allowed_ext function arguments END
+    END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////    immutable version of HANDLE_CHARSETS
+////////////
+////////////    Assumes "scsroot" has been set to your mod directory, and "workspace" to your working
+////////////    directory
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION handle_charsets_immutably 
+       INT_VAR force_tra_rebuild=0
+       STR_VAR tra_base=lang
+               base_language=english
+               iconv_path=""
+       RET     scs_tra_loc
+BEGIN
+   // guess scsroot and workspace if not set
+   // do conversions (ee only)
+   ACTION_IF enhanced_edition BEGIN
+       OUTER_SPRINT scs_tra_loc "%ext_lang_loc%"
+       ACTION_IF (!FILE_EXISTS "%marker_loc%/dw#%scsroot%_languages_installed.mrk"  || force_tra_rebuild) BEGIN
+          COPY ".../stratagems-inline/blank" "%marker_loc%/dw#%scsroot%_languages_installed.mrk"
+          MKDIR "%scs_tra_loc%/%LANGUAGE%"
+          ACTION_BASH_FOR "%scsroot%/%tra_base%/%LANGUAGE%" ".*\.tra" BEGIN
+             COPY "%BASH_FOR_FILESPEC%" "%scs_tra_loc%/%LANGUAGE%"
+          END
+          ACTION_MATCH "%LANGUAGE%" WITH
+          "%base_language%" BEGIN END
+          DEFAULT
+            ACTION_BASH_FOR "%scsroot%/%tra_base%/%base_language%" ".*\.tra" BEGIN
+                COPY "%BASH_FOR_FILESPEC%" "%scs_tra_loc%/%base_language%"
+            END
+          END
+          // guess iconv path if not given
+          ACTION_IF "%iconv_path%" STRING_EQUAL_CASE "" BEGIN
+             OUTER_SPRINT iconv_path "%scsroot%/%tra_base%/iconv"
+          END
+          LAF HANDLE_CHARSETS INT_VAR infer_charsets = 1 STR_VAR iconv_path  tra_path = ~%scs_tra_loc%~  END
+       END
+   END ELSE BEGIN
+      // on non-EE, just set the tra loc
+      OUTER_SPRINT scs_tra_loc "%scsroot%/%tra_base%"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               find a unique filename
+/////////////
+/////////////               there is a version that ships with WEIDU that does this, but it glitched for me
+/////////////
+/////////////               this is limited in speed, don't use it to make thousands of files!
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION find_unique_filename
+      INT_VAR to_try=0
+      STR_VAR prefix="dw_"
+              extension=""
+      RET filename
+BEGIN
+   OUTER_SET suffix_length = 7 - STRING_LENGTH "%prefix%"
+   OUTER_SPRINT suffix "%to_try%"
+   OUTER_WHILE STRING_LENGTH "%suffix%" < suffix_length BEGIN
+      OUTER_SPRINT suffix "0%suffix%"
+   END
+   OUTER_SPRINT filename "%prefix%%suffix%"
+   ACTION_IF FILE_EXISTS_IN_GAME "%filename%.%extension%" BEGIN
+      OUTER_SET to_try +=1
+      LAF find_unique_filename INT_VAR to_try STR_VAR prefix extension RET filename END
+   END
 END

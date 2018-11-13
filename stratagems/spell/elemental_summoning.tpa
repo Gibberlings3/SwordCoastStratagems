@@ -1,0 +1,300 @@
+DEFINE_ACTION_FUNCTION elemental_summoning
+BEGIN
+
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+   // Removes elemental-battle from elemental-summoning spells.
+   //
+   // Installed over IWDification, also renames the IWD summoning spells
+   // "Lesser elemental" and builds a L6 Conjure Water Elemental spell.
+   //
+   // If we get our elementals from dw_iwdspells, this should already
+   // have happened, so we skip. This should happen automatically since
+   // we've dropped dw#elemental_summoning.mrk in the override 
+   //
+   // Avoids SCS function library, so as to be interoperable with IWDification
+   // in case Cam wants it.
+   // (And wow, (a) I pay a serious install-time overhead for SFO, but
+   // (b) I'd forgotten just how easy it is to introduce bugs in standard
+   // WEIDU.)
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+
+   ///////////////////////////////////////////////////////////////
+   // specify Cam's names for the icon (base) and elemental CRE
+   ///////////////////////////////////////////////////////////////
+
+   OUTER_SPRINT water_icon CDIA533
+   OUTER_SPRINT water_cre CDI8WATR
+
+   ///////////////////////////////////////////////////////////////
+   /// Check if we've got IWD spell system installed
+   /// iwd_arcane is SCS's variable. If it's not set at all,
+   /// presumably this mod is being run as part of IWDifiation, but
+   /// just in case we'll check.
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_IF !VARIABLE_IS_SET iwd_arcane BEGIN
+     ACTION_IF FILE_EXISTS_IN_GAME "%water_cre%.CRE" BEGIN
+         OUTER_SET iwd_arcane=1
+      END ELSE BEGIN
+         OUTER_SET iwd_arcane=0
+      END
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // specify name and description TRA refs for the spells
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_name_map BEGIN // Spell names. We don't need to rename the level-6 air/earth/fire spells
+      LESSER_EARTH=>32013
+      LESSER_AIR=>32012
+      LESSER_FIRE=>32014
+      LESSER_WATER=>32020
+      WATER=>32015
+   END
+   ACTION_IF iwd_arcane BEGIN
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_desc_map BEGIN // Spell descriptions. The Lesser ones just correct the spell name.
+      EARTH=>32000
+      AIR=>32001
+      FIRE=>32002
+      WATER=>32007
+      LESSER_EARTH=>32016
+      LESSER_AIR=>32017
+      LESSER_FIRE=>32018
+      LESSER_WATER=>32019
+     END
+   END ELSE BEGIN
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_desc_map BEGIN // Spell descriptions. (Note that on an IWDification install, the LESSER... ones here aren't used
+      EARTH=>32000
+      AIR=>32001
+      FIRE=>32002
+      LESSER_EARTH=>32003
+      LESSER_AIR=>32004
+      LESSER_FIRE=>32005
+     END
+   END
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY water_elem_names BEGIN // Names for the Water Elemental cre files ("Lesser Water Elemental", etc)
+      LESSER=>32008
+      STANDARD=>32009
+      GREATER=>32010
+      ELDER=>32011
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // specify SPL and scroll entries for the spells (can't trust SPELL.IDS here, it's overloaded by IWDification)
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_spell_map BEGIN
+      EARTH=>SPWI622
+      AIR=>SPWI621
+      FIRE=>SPWI620
+      LESSER_EARTH=>SPWI521
+      LESSER_AIR=>SPWI520
+      LESSER_FIRE=>SPWI516
+   END
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_scroll_map BEGIN
+      EARTH=>SCRL7Z
+      AIR=>SCRL7Y
+      FIRE=>SCRL7X
+      LESSER_EARTH=>SCRL7C
+      LESSER_AIR=>SCRL7B
+      LESSER_FIRE=>SCRL6X
+      LESSER_WATER=>CDIA533
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // remove elemental-summoning overlay from summoned creatures
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH creature IN elairsu2 elairsu3 elairsu4 elearsu1 elearsu2 elearsu3 elearsu4 elfirsu1 elfirsu2 elfirsu3 elfirsu4 BEGIN
+       ACTION_IF FILE_EXISTS_IN_GAME "%creature%.cre" BEGIN
+          COPY_EXISTING "%creature%.cre" override
+               REPLACE_TEXTUALLY "wizelsum" "" (8)
+               REPLACE_TEXTUALLY "wizelsu2" "" (8)
+          BUT_ONLY
+       END
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // change summoning effects so that allegiance matches summoner
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH effect IN speart1 speart2 speart3 splesear spfir1 spfir2 spfir3 splesfir spair1 spair2 spair3 splesair BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME "%effect%.eff" BEGIN
+         COPY_EXISTING "%effect%.eff" override
+              WRITE_LONG 0x20 0
+         BUT_ONLY
+      END
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // edit the L6 spells to change the descriptions and remove the mental-battle opcodes; on non-IWD, repeat with L5 ones
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH key IN EARTH AIR FIRE BEGIN
+        OUTER_SET strref=$elem_desc_map("%key%")
+        OUTER_SPRINT spell $elem_spell_map("%key%")
+        OUTER_SPRINT scroll $elem_scroll_map("%key%")
+        LAF remove_elemental_battle INT_VAR strref STR_VAR spell scroll END
+   END
+   ACTION_IF !iwd_arcane BEGIN
+     ACTION_FOR_EACH key IN LESSER_EARTH LESSER_AIR LESSER_FIRE BEGIN
+        OUTER_SET strref=$elem_desc_map("%key%")
+        OUTER_SPRINT spell $elem_spell_map("%key%")
+        OUTER_SPRINT scroll $elem_scroll_map("%key%")
+        LAF remove_elemental_battle INT_VAR strref STR_VAR spell scroll END
+     END
+   END
+
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+   //  Remainder only applies if we've got IWDification
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+
+
+   ACTION_IF iwd_arcane BEGIN
+
+      ///////////////////////////////////////////////////////////////
+      // find Conjure Water Elemental spell
+      ///////////////////////////////////////////////////////////////
+
+      OUTER_SET code=IDS_OF_SYMBOL ("spell" "WIZARD_CONJURE_WATER_ELEMENTAL")
+      OUTER_SET code=code - 2000
+      OUTER_SPRINT $elem_spell_map("LESSER_WATER") "SPWI%code%"
+
+      ///////////////////////////////////////////////////////////////
+      // rename the L5 spells back to Lesser
+      ///////////////////////////////////////////////////////////////
+
+      ACTION_FOR_EACH key IN LESSER_EARTH LESSER_AIR LESSER_FIRE LESSER_WATER BEGIN
+         OUTER_SPRINT spell $elem_spell_map("%key%")
+         OUTER_SPRINT scroll $elem_scroll_map("%key%")
+         OUTER_SET name=$elem_name_map("%key%")
+         OUTER_SET desc=$elem_desc_map("%key%")
+         COPY_EXISTING "%spell%.spl" override
+              SAY NAME1 (AT name)
+              SAY 0x50 (AT desc)
+         BUT_ONLY
+         COPY_EXISTING "%scroll%.itm" override
+              SAY NAME2 (AT name)
+              SAY DESC (AT desc)
+         BUT_ONLY
+      END
+
+      ///////////////////////////////////////////////////////////////
+      // remove the L5 overloaded non-LESSER IDS entries; give the
+      // water elemental its LESSER entry
+      ///////////////////////////////////////////////////////////////
+
+      COPY_EXISTING "spell.ids" override
+         REPLACE_TEXTUALLY "CONJURE_WATER_ELEMENTAL" "CONJURE_LESSER_WATER_ELEMENTAL"
+         REPLACE_TEXTUALLY "25[0-9][0-9].*CONJURE_[A-Z]+_ELEMENTAL" ""
+      BUT_ONLY
+
+      ///////////////////////////////////////////////////////////////
+      // clone air-elemental summoning to make a water version
+      // (space here to tweak the CRE files for originality)
+      ///////////////////////////////////////////////////////////////
+
+      // the spell
+
+      OUTER_SET name=$elem_name_map("WATER")
+      OUTER_SET desc=$elem_desc_map("WATER")
+
+      OUTER_SPRINT template $elem_spell_map("AIR")
+      COPY_EXISTING "%template%.spl" "override/dw#template.spl" // I dislike cluttering the override, but IWDification doesn't have a working directory
+
+      ADD_SPELL "override/dw#template.spl" 2 6 WIZARD_CONJURE_WATER_ELEMENTAL
+          SAY NAME1 (AT name)
+          SAY 0x50 (AT desc)
+          REPLACE_TEXTUALLY SPAIR1 DW#WAT1 (8)
+          REPLACE_TEXTUALLY SPAIR2 DW#WAT2 (8)
+          REPLACE_TEXTUALLY SPAIR3 DW#WAT3 (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621B "%water_icon%B" (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621C "%water_icon%C" (8)
+
+      // the scroll
+
+      OUTER_SPRINT scroll_old $elem_scroll_map("AIR")
+      COPY_EXISTING "%scroll_old%.ITM" "override/DW#CONWT.ITM"
+         SAY NAME2 (AT name)
+         SAY DESC (AT desc)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621A "%water_icon%A" (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621B "%water_icon%B" (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621C "%water_icon%C" (8)
+
+      ACTION_FOR_EACH store IN
+          25spell 25spell2 jayes ohbmhsm ohnmhsm type2 uddrow23 udtrap02
+      BEGIN
+           ACTION_IF FILE_EXISTS_IN_GAME "%store%.sto" BEGIN
+                     COPY_EXISTING "%store%.sto" override
+                          ADD_STORE_ITEM ~DW#CONWT~ AFTER  ~%scroll_old%~ #1 #0 #0 ~IDENTIFIED~ #1
+                     BUT_ONLY
+           END
+      END
+      
+      // the EFF files
+
+      COPY_EXISTING "SPAIR1.EFF" "override/DW#WAT1.EFF" WRITE_ASCIIE 0x30 DW#WATE2 (8)
+      COPY_EXISTING "SPAIR2.EFF" "override/DW#WAT2.EFF" WRITE_ASCIIE 0x30 DW#WATE3 (8)
+      COPY_EXISTING "SPAIR3.EFF" "override/DW#WAT3.EFF" WRITE_ASCIIE 0x30 DW#WATE4 (8)
+
+      // the CRE files
+
+      // get the CLASS and ANIMATION entries from the water elemental
+      
+      COPY_EXISTING "%water_cre%.cre" override
+            READ_LONG 0x28 anim
+            READ_BYTE 0x273 class
+      BUT_ONLY
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY air_elem BEGIN
+         STANDARD=>ELAIRSU2
+         GREATER=>ELAIRSU3
+         ELDER=>ELAIRSU4
+      END
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY water_elem BEGIN
+         STANDARD=>DW#WATE2
+         GREATER=>DW#WATE3
+         ELDER=>DW#WATE4
+      END
+      ACTION_PHP_EACH air_elem AS key=>oldcre BEGIN
+         OUTER_SPRINT newcre $water_elem("%key%")
+         OUTER_SET name=$water_elem_names("%key%")
+         COPY_EXISTING "%oldcre%.cre" "override/%newcre%.cre"
+            WRITE_LONG 0x28 anim
+            WRITE_BYTE 0x273 class
+            SAY NAME1 (AT name)
+            SAY NAME2 (AT name)
+         BUT_ONLY
+      END
+
+
+   END // end of IWD-only block
+
+
+END // end of main function
+
+      ///////////////////////////////////////////////////////////////
+      // helper function
+      ///////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION remove_elemental_battle
+   INT_VAR strref=0
+   STR_VAR scroll=""
+           spell=""
+BEGIN
+      COPY_EXISTING "%spell%.spl" override
+           PATCH_FOR_EACH opcode_to_delete IN 165 215 142 BEGIN
+              LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete END
+           END
+           SAY 0x50 (AT strref)
+      BUT_ONLY
+      COPY_EXISTING "%scroll%.itm" override
+           SAY 0x50 (AT strref)
+      BUT_ONLY
+
+END

@@ -1,0 +1,87 @@
+INCLUDE ~%scsroot%/ds/ds.tph~
+DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
+
+
+  LAF install STR_VAR file=dw#alac.spl location=resource END // this is adapted from (though non-identical to) WW's "wesalac" spell
+  
+  LAF check_label STR_VAR label=dw#detectablespells RET value END // don't install it twice! (It's idempotent, but wastes time)
+  ACTION_IF !value BEGIN
+        LAF make_label STR_VAR label=dw#detectablespells END
+        LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
+  END
+
+
+  ACTION_IF enhanced_edition BEGIN
+
+
+    ACTION_DEFINE_ASSOCIATIVE_ARRAY bdai_vars BEGIN
+       attack_mode=>BDAI_Attack_Mode
+       healing_var=>BDAI_Skill_Mode
+       disable_attacks=>BDAI_Disable_Attack
+       disable_melf=>BDAI_Disable_Special
+       disable_individual_buffs=>BDAI_Disable_Offensive
+       disable_group_buffs=>BDAI_Disable_Defensive
+       disable_item_generation=>BDAI_Disable_Items
+    END
+    ACTION_PHP_EACH bdai_vars AS var=>val BEGIN
+       OUTER_SPRINT "%var%" "%val%"
+    END
+    LAF ssl_to_bcs STR_VAR script=bddefai locbase=gameplay location=resource END
+
+    MAKE_PATCH
+      SCRIPT_USE_ITEMS_LABEL => 707
+      SCRIPT_USE_SPECIAL_ABILITIES_LABEL => 706
+      SCRIPT_USE_OFFENSIVE_SPELLS_LABEL => 704
+      SCRIPT_USE_DEFENSIVE_SPELLS_LABEL => 705
+      SCRIPT_FIND_TRAPS_LABEL => 700
+      SCRIPT_HIDE_IN_SHADOWS_LABEL => 701
+      SCRIPT_SING_BATTLESONG_LABEL => 702
+      SCRIPT_TURN_UNDEAD_LABEL => 703
+      SCRIPT_USE_ITEMS_DESCRIPTION => 717
+      SCRIPT_USE_SPECIAL_ABILITIES_DESCRIPTION => 716
+      SCRIPT_USE_OFFENSIVE_SPELLS_DESCRIPTION => 714
+      SCRIPT_USE_DEFENSIVE_SPELLS_DESCRIPTION => 715
+      SCRIPT_FIND_TRAPS_DESCRIPTION => 710
+      SCRIPT_HIDE_IN_SHADOWS_DESCRIPTION => 711
+      SCRIPT_SING_BATTLESONG_DESCRIPTION => 712
+      SCRIPT_TURN_UNDEAD_DESCRIPTION => 713
+      CHARACTER_SCRIPT_SMART_SCRIPT => 750
+      CHARACTER_SCRIPT_SMART_SCRIPT_DESCRIPTION => 751
+    END
+    
+    ACTION_IF iwd_arcane BEGIN
+       OUTER_SET $patch_data("USE_OFFENSIVE_SPELLS_DESCRIPTION")=734
+    END ELSE BEGIN
+       ACTION_IF demivrgvs BEGIN
+           OUTER_SET $patch_data("USE_OFFENSIVE_SPELLS_DESCRIPTION")=724
+       END
+    END
+
+    COPY_EXISTING "L_%EE_LANGUAGE%.lua" override
+       PHP_EACH patch_data AS key=>value BEGIN
+          SPRINT string (AT value)
+          REPLACE_TEXTUALLY ~%key% *=.*~ ~%key% = "%string%",~
+       END
+    BUT_ONLY
+    
+    COPY_EXISTING "PARTYAI.2da" override
+       COUNT_2DA_ROWS 2 rowcount
+       FOR (i=1;i<rowcount;i+=1) BEGIN
+          SET_2DA_ENTRY i 1 2 "BDDEFAI"
+       END
+    BUT_ONLY
+
+  END ELSE BEGIN
+
+    LAF ssl_to_bcs STR_VAR script=0dw#gen variables location=resource END
+    COPY_EXISTING ~0dw#gen.bcs~ ~scripts\0dw#gen.bs~
+
+    OUTER_SET namestrref=RESOLVE_STR_REF(@605)
+    OUTER_SET descstrref=RESOLVE_STR_REF(@606)
+
+    COPY_EXISTING ~SCRPDESC.2DA~ ~OVERRIDE~
+	INSERT_2DA_ROW 0 3 ~0dw#gen %namestrref% %descstrref%~
+    BUT_ONLY
+ END
+
+END

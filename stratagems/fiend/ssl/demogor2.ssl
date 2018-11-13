@@ -3,7 +3,7 @@
 //// Demogorgon's powers in Ascension:
 ////
 //// - Timestop 1/day
-//// - Summon the Infernal Host 1/day (1 balor, 1 marilith, 2 glabrezu?)
+//// - Summon the Infernal Host 1/day (1 balor, 1 marilith, 2 glabrezu, others based on difficulty)
 //// - Charm demons, no save, 1/4 seconds
 //// - Stoneskin, 1/10 seconds
 //// - Summon demons if none are present, 1/round, summons Marilith, Balor, 2x glabrezu, and sets MR to 90, adds 50 to hp
@@ -18,9 +18,8 @@
 //// - Harm, 1/3 rounds
 //// - Unholy Word, 1/5 rounds
 ////
-////	We replace the Harm with a Spellstrike and a Breach, on the same timescale. We lose the
-////	Timestop, as combined with instant casting it's just too lethal. We reduce the renewed summoning
-////	to once per two rounds. We allow gazes as a free attack.
+////	We replace the Harm with a Spellstrike and a Breach, on the same timescale. We restrict timestop to insane. We reduce the renewed summoning
+////	to core-plus, and tie duration to difficulty (3 rds core, 2 rds hard, 1 rd insane). We allow gazes as a free attack.
 //// 
 ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -177,6 +176,13 @@ THEN
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////
+///	Initial (including difficulty block)
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
+INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////////
 ///	Contingency
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -202,6 +208,7 @@ END
 
 IF TRIGGER
 	Target(Myself)
+	TriggerBlock(ILackWeaponProtection)
 	!CheckStatGT(Myself,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
 THEN DO
 	Action(SpellTimer,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS,proMW,36|150|50)
@@ -209,7 +216,7 @@ END
 
 IF TRIGGER
 	Target(Myself)
-	!CheckStatGT(Myself,0,STONESKINS)
+	TriggerBlock(StoneskinFailing)
 THEN DO
 	Action(SpellTimerRES,"melstone",stoneskin,12|150|50)
 END
@@ -219,7 +226,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	Global("DMWWDemogorgonTS","GLOBAL",1)
+        TriggerBlock(Insane)
 	See([PC])
 THEN DO
 	Action(SpellMyselfTimer,WIZARD_TIME_STOP,timestop,1000)
@@ -233,11 +240,38 @@ END
 
 IF TRIGGER
 	Target([PC])
-	Global("DMWWDemogorgonHost","GLOBAL",1)
+	TriggerBlock(EasyMinus)
+THEN DO
+	Action(SpellTimer,SUMMON_INFERNAL_HOST,host,1000)
+	DisplayStringHead(Myself,70999) // Now you will pay, foolish mortals!
+	SetGlobalTimer("reinforce","LOCALS",30)
+END
+
+IF TRIGGER
+	Target([PC])
+	TriggerBlock(Core)
+THEN DO
+	Action(SpellTimer,SUMMON_INFERNAL_HOST,host,1000)
+	DisplayStringHead(Myself,70999) // Now you will pay, foolish mortals!
+	SetGlobalTimer("reinforce","LOCALS",18)
+END
+
+IF TRIGGER
+	Target([PC])
+	TriggerBlock(Hard)
 THEN DO
 	Action(SpellTimer,SUMMON_INFERNAL_HOST,host,1000)
 	DisplayStringHead(Myself,70999) // Now you will pay, foolish mortals!
 	SetGlobalTimer("reinforce","LOCALS",12)
+END
+
+IF TRIGGER
+	Target([PC])
+	TriggerBlock(Insane)
+THEN DO
+	Action(SpellTimer,SUMMON_INFERNAL_HOST,host,1000)
+	DisplayStringHead(Myself,70999) // Now you will pay, foolish mortals!
+	SetGlobalTimer("reinforce","LOCALS",6)
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -246,6 +280,7 @@ END
 
 IF TRIGGER
 	Target([PC])
+	TriggerBlock(CorePlus)
 THEN DO
 	Action(SpellTimer,CLERIC_STORM_OF_VENGEANCE,vengeance,1000)
 END
@@ -282,11 +317,33 @@ END
 
 
 IF TRIGGER
+        TriggerBlock(Insane)
+        !GlobalTimerNotExpired("reinforce","LOCALS")
+	Detect(NearestEnemyOf(Myself))
+	!NumCreatureGT([ENEMY.0.DEMONIC],3)
+THEN DO
+		DisplayStringHead(Myself,70998) // Come, my minions!
+		Action(SpellMyselfTimer,DEMOGORGON_GATE,reinforce,6)
+END
+
+IF TRIGGER
+        TriggerBlock(Hard)
+        !GlobalTimerNotExpired("reinforce","LOCALS")
+	Detect(NearestEnemyOf(Myself))
+	!NumCreatureGT([ENEMY.0.DEMONIC],2)
+THEN DO
+		DisplayStringHead(Myself,70998) // Come, my minions!
+		Action(SpellMyselfTimer,DEMOGORGON_GATE,reinforce,12)
+END
+
+IF TRIGGER
+        TriggerBlock(Core)
+        !GlobalTimerNotExpired("reinforce","LOCALS")
 	Detect(NearestEnemyOf(Myself))
 	!NumCreatureGT([ENEMY.0.DEMONIC],1)
 THEN DO
 		DisplayStringHead(Myself,70998) // Come, my minions!
-		Action(SpellMyselfTimer,DEMOGORGON_GATE,reinforce,12)
+		Action(SpellMyselfTimer,DEMOGORGON_GATE,reinforce,18)
 END
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -302,7 +359,7 @@ IF TRIGGER
 	ConditionalTargetBlock(PCsPreferringWeak;CheckStatGT(scstarget,40,RESISTMAGIC))
 	TargetBlock(PCsPreferringWeak)
 	TargetBlock(Celestials)
-	TriggerBlock(SpellTurn|SIEvocation|Enemy|Helpless)
+	TriggerBlock(SpellDeflect|SIEvocation|Enemy|Helpless)
 	TriggerBlock(DirectDamageSafe)
 THEN DO
 	Action(SpellTimerGaze,CLERIC_IMPLOSION,implosion,180|150|50)
@@ -324,13 +381,7 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	TriggerBlock(SpellTurn|SIAbjuration|Enemy|Helpless)
-	OR(5)
-		CheckStatGT(scstarget,99,MAGICDAMAGERESISTANCE)
-		!CheckStatGT(scstarget,-10,SAVEVSSPELL) // a rough indicator of a potion of Magic Shielding
-		CheckStatGT(scstarget,0,CLERIC_CHAOTIC_COMMANDS)
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
-		CheckStatGT(scstarget,2,STONESKINS)
+	TriggerBlock(SpellDeflect|SIAbjuration|Enemy|Helpless|PriorityBreach|EasyPlus)
 	!GlobalTimerNotExpired("DMWW_breach","LOCALS")
 THEN DO
 	SetGlobalTimer("DMWW_breach","LOCALS",18)
@@ -340,13 +391,7 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	OR(5)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_TURNING)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_DEFLECTION)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_TRAP)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_IMMUNITY)
-		CheckStatGT(scstarget,0,MINORGLOBE)
-	TriggerBlock(Enemy|Helpless)
+	TriggerBlock(Enemy|Helpless|SpellProtectionTarget|EasyPlus)
 	!GlobalTimerNotExpired("DMWW_antimagic","LOCALS")
 THEN DO
 	SetGlobalTimer("DMWW_antimagic","LOCALS",18)
@@ -360,7 +405,7 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	TriggerBlock(ResistFire|Enemy)
+	TriggerBlock(ResistFire|Enemy|CorePlus)
 	!StateCheck(scstarget,STATE_MIRRORIMAGE)
 THEN DO
 	Combine()
@@ -373,13 +418,8 @@ END
 
 
 IF TRIGGER
-	!CheckStatGT(Myself,0,TRUE_SIGHT)
 	TargetBlock(EnemiesInOrder)
-	OR(2)
-		StateCheck(scstarget,STATE_MIRRORIMAGE)
-		Gender(scstarget,ILLUSIONARY)
-	!Allegiance(scstarget,ENEMY)
-	TriggerBlock(SIDivination)
+	TriggerBlock(TruesightAlreadyCast|IllusionTarget|Enemy|SIDivination)
 THEN DO
 	Action(SpellMyselfTimer,WIZARD_TRUE_SIGHT,truesight,30|150|150)
 END
@@ -432,14 +472,9 @@ END
 ////	Core combat block
 ///////////////////////////////////////////////////////////////////////////////
 
-
- //////////////////////////////////////////////////////////////////////////////
-////	Core combat block
-///////////////////////////////////////////////////////////////////////////////
-
-
 BEGIN LOOP(MyWeaponStrength||5)
 BEGIN LOOP(MyWeaponDamageType||Crushing)
+INCLUDE FILE(%scsroot%/genai/ssl/easy_melee.ssl)
 INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
 INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
 INCLUDE FILE(%scsroot%/fiend/ssl/chase.ssl)

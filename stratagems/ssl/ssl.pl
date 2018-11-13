@@ -45,9 +45,10 @@ sub process_user_input {
 # The variable list has form IsVampire=True&IsLich=False . Each occurrence of the entry before the = sign is replaced
 # by the respective entry after the = sign
 
-	@instructions=split(' ',$userinput);
+     #	@instructions=split(' ',$userinput);
 	%varhash=();
 	$libfiles=0;
+	$booleans=0;
 	$aretherefiles=0;
 	$suffix=".ssl";
 	foreach $1 (@instructions) {
@@ -56,10 +57,17 @@ sub process_user_input {
 			$suffix=".slb";
 			$libfiles=1;
 			$outputloc=0;
+			$booleans=0;
 		}
 		elsif ($1 eq "-o") {
                         $outputloc=1;
                         $libfiles=0;
+                        $booleans=0;
+                }
+		elsif ($1 eq "-b") {
+                        $outputloc=0;
+                        $libfiles=0;
+                        $booleans=1;
                 }
 		elsif ($1=~m/=/ eq "1") {
 			$therearevars="Yes";
@@ -73,12 +81,15 @@ sub process_user_input {
                      $outputroot=$1;
                      $outputoverride="yes";
                   }
-		else {
+                elsif ($booleans eq 1) {
+                        push @booleanlist,$1;
+                }
+                else {
 			$dotcheck=substr $1,-4,1;
 			if (length $1<4 or $dotcheck ne ".") { 		
 				$1=join('',$1,$suffix);
 			}
-                        if ($libfiles eq 0) {
+                        if ($libfiles eq 0 & $booleans eq 0) {
 				push @filelist,$1;
 				$aretherefiles=1;
 			}
@@ -141,7 +152,21 @@ foreach $1 (@librarylist) {
 		strip_spaces();
 		$checktarget=substr $1,0,6;
 		$checktrigger=substr $1,0,7;
-		if ($checktarget eq 'TARGET') {
+		$checktargetreplace=substr $1,0,14;
+		$checktriggerreplace=substr $1,0,15;
+		if ($checktargetreplace eq 'TARGET_REPLACE') {
+			$keyname=substr $scsline,15;
+			$targetlist{$keyname}=1;
+			$libtype="target";
+			@{ $targethash{$keyname} } = ();
+		}
+		elsif ($checktriggerreplace eq 'TRIGGER_REPLACE') {
+			$keyname=substr $scsline,16;
+			$triggerlist{$keyname}=1;
+			$libtype="trigger";
+			@{ $triggerhash{$keyname} } = ();
+		}
+		elsif ($checktarget eq 'TARGET') {
 			$keyname=substr $scsline,7;
 			$targetlist{$keyname}=1;
 			$libtype="target";
@@ -230,12 +255,57 @@ sub strip_spaces {
 
 sub extract_from_brackets {
 
-	$firstbracket=1+index $scsline,"(";
+        $firstbracket=1+index $scsline,"(";
 	$lastbracket=rindex $scsline,")";
 	$size=$lastbracket-$firstbracket;
 	$scsline=substr $scsline, $firstbracket,$size;
-	
+
 }
+
+##############################################################
+
+sub check_ssl_booleans {
+
+        $abort_print=0;
+        @temp=();
+        foreach $b_line (@output_trial) {
+            if ($abort_print eq 1) {}
+            elsif ($b_line=~m/!SSLBoolean/ eq "1") {
+                  $f_b=1 + index $b_line,"(";
+                  $l_b=rindex $b_line,")";
+                  $sz=$l_b-$f_b;
+                  $b_line = substr $b_line, $f_b, $sz;
+	          @bool_list=split('\|',$b_line);
+                  foreach $var (@bool_list) {
+                    foreach $possible (@booleanlist) {
+                       if ($var eq $possible) {
+                        $abort_print=1;
+                       }
+                    }
+                  }
+            }
+            elsif ($b_line=~m/SSLBoolean/ eq "1") {
+                  $abort_print = 1;
+                  $f_b=1 + index $b_line,"(";
+                  $l_b=rindex $b_line,")";
+                  $sz=$l_b-$f_b;
+                  $b_line = substr $b_line, $f_b, $sz;
+	          @bool_list=split('\|',$b_line);
+                  foreach $var (@bool_list) {
+                    foreach $possible (@booleanlist) {
+                       if ($var eq $possible) {
+                        $abort_print=0;
+                       }
+                    }
+                  }
+            }
+            else {
+              push @temp,$b_line;
+            }
+        }
+        @output_trial = @temp;
+}
+
 ###############################################################
 
 sub extract_targets {
@@ -293,6 +363,7 @@ sub process_line {
 			$combine="";
 			$combinetype="";
 			$ignorethisblock="No";
+			@outputhere=();
 		}
 		elsif ($scsline eq "IF") {
 			$location="bafblock";
@@ -381,7 +452,7 @@ sub process_line {
 			extract_from_brackets();
 			@temparray=split('&',$scsline);
 			push @target,@temparray;
-		}	
+		}
 		elsif ($scsline=~m/TriggerBlock/ eq "1") {
 			extract_from_brackets();
 			@triggerlist=split('\|',$scsline);
@@ -509,10 +580,14 @@ sub process_line {
 				push @bafblock,@bafactionarray;
 			}
 			push @bafblock,$scsline;
-			
+
 			if ($ignorethisblock eq "No") {
-				push @output, @bafblock;
+                              @output_trial = @bafblock;
+                              check_ssl_booleans;
+                              if ($abort_print eq 0) {
+				push @output, @output_trial;
 				push @output, "";
+			                           }
 			}
 		}
 		elsif ($scsline=~m/RESPONSE/ eq "1") {
@@ -662,7 +737,7 @@ sub process_block {
 	if ($ignorethisblock eq "Yes") {
 		return;
 	}
-
+        $actionsexist=0;
 	streamline_trigger();
 	if ($combine eq "Yes") {
 		get_combine_top();
@@ -706,8 +781,17 @@ sub process_block {
 		}
 	@actionargs=split (',',$actionsplit[0]);
 	make_action();
-	block_print();
+
+	if ($abort_print eq "0") {
+	     block_print();
+	     if ($abort_print eq "0") {
+	         $actionsexist=1;
+	     }
+	  }
 	}
+	if ($actionsexist eq 1) {
+              push @output, @outputhere;
+          }
 }
 ############################################################################
 sub make_action {
@@ -715,17 +799,20 @@ sub make_action {
 	@triggertop=();
 	@actiontop=();
 	@randomreplace=();
-	
+	$abort_print=0;
+
 	if ($definenamehash{$actionargs[0]} eq "1") {
 		@triggertop=@{ $definetrigger{$actionargs[0]} };
+		check_ssl_booleans();
 		@actiontop=@{ $defineaction{$actionargs[0]} };
+		check_ssl_booleans();
 		$statelabel=0;
 		if ($randomaction{$actionargs[0]} ne "") {	
 			$replacelabel=join ('',"scsargument",$randomaction{$actionargs[0]});
 			@randomreplace=@actionargs;
 			splice (@randomreplace,0,$randomaction{$actionargs[0]}-1);
 			@tempactiontop=@actiontop;
-			@actiontop=();	
+			@actiontop=();
 			$actionlabel=0;
 			foreach $replace (@randomreplace) {
 				foreach $tempstring (@tempactiontop) {
@@ -745,7 +832,7 @@ sub make_action {
 			$actionlabel=0;
 			foreach (@actiontop) {
 				$actiontop[$actionlabel]=~s/$replacelabel/$actionargs[$statelabel]/g;
-				$actionlabel=$actionlabel+1;
+                                $actionlabel=$actionlabel+1;
 			}
 			$statelabel=$statelabel+1;
 		}
@@ -847,6 +934,12 @@ sub sub_target {
 	$arg1=@_[0];
 	$arg2=@_[1];
 	$arg1=~s/scstarget/$arg2/g;
+	$statelabel=1;
+	foreach $replace (@actionargs) {
+			$replacelabel=join ('',"scsargument",$statelabel);   
+                        $arg1=~s/scsargument1/$actionargs[$statelabel]/g;
+			$statelabel=$statelabel+1;
+	}
 	return $arg1;
 }
 ###########################################################################################
@@ -857,37 +950,42 @@ sub block_print {
 	}
 	$conditioncounter=0;
 	foreach $3 (@target) {
-		push @output, "IF";
-		push @output, @defaulttrigger;
+                @output_trial=();
+		push @output_trial, "IF";
+		push @output_trial, @defaulttrigger;
 		foreach $4 (@triggertop) {
-			push @output, sub_target($4,$3);
+			push @output_trial, sub_target($4,$3);
 		}
 		if ($combine ne "Yes" and $3 ne "LastSeenBy(Myself)" and $3 ne "NODEFINEDTARGET") {
-			push @output, "See($3)";
+			push @output_trial, "See($3)";
 		}
 		if ($condition ne "") {
-			push @output, sub_target($condition,$3);
+			push @output_trial, sub_target($condition,$3);
 		}
 		foreach $4 (@trigger) {
-			push @output, sub_target($4,$3);
+			push @output_trial, sub_target($4,$3);
 		}
 		if ($targetcondition[$conditioncounter] ne "None" and $targetcondition[$conditioncounter] ne "") {
 			@condarray=split('&',$targetcondition[$conditioncounter]);
 			foreach $4 (@condarray) {
-				push @output, sub_target($4,$3);
+				push @output_trial, sub_target($4,$3);
 			}
 		}
 		if ($combine eq "Yes") {
-			push @output, "See($3)";
-			push @output, "False()";
+			push @output_trial, "See($3)";
+			push @output_trial, "False()";
 		}
-		push @output, "THEN";
+		push @output_trial, "THEN";
 		foreach $4 (@actiontop) { 
-			push @output, sub_target($4,$3);
+			push @output_trial, sub_target($4,$3);
 		}
-		push @output, "END";
-		push @output, "";
+		push @output_trial, "END";
+		push @output_trial, "";
 		$conditioncounter=$conditioncounter+1;
+		check_ssl_booleans;
+		if ($abort_print eq "0") {
+		    push @outputhere,@output_trial;
+		}
 		
 	}
 }
@@ -1013,8 +1111,9 @@ sub work_out_outer_loops {
 
 ###################################################################
 
-print "This is Stratagems Scripting Language\n";
-$userinput=shift;
+print "This is Stratagems Scripting Language...\n";
+# $userinput=shift;
+@instructions = @ARGV;
 process_user_input;
 read_library();
 foreach (@filelist) {
