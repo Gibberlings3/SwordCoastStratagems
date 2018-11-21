@@ -1,0 +1,395 @@
+DEFINE_ACTION_FUNCTION random_scrolls BEGIN
+
+
+    // make the rndtres entries and items; remove old part
+    LAF make_random_scrolls END
+    LAF make_rndtre_spells END
+    LAF nuke_extant_rndscr END
+    
+    // CRE files
+
+    COPY_EXISTING_REGEXP GLOB ".*\.cre" override
+       PATCH_IF INDEX_BUFFER ("RNDTRE")>=0 BEGIN // initial filter
+        // some items are hidden cruft; start by collecting list of actually-present arguments
+           CLEAR_ARRAY slot_arr
+           READ_LONG 0x2b8 slot_off
+           FOR (i=0;i<37;i+=1) BEGIN
+              READ_SHORT (slot_off+i*2) slot_num
+              SPRINT $slot_arr("%slot_num%") ""
+           END
+        // now get the item set
+           GET_OFFSET_ARRAY itm_array CRE_V10_ITEMS
+           SPRINT list ""
+           PHP_EACH itm_array AS ind=>offset BEGIN
+            PATCH_IF VARIABLE_IS_SET $slot_arr("%ind%") BEGIN
+              READ_ASCII offset resref
+              SPRINT list "%list% %resref%"
+            END
+           END
+           SET duration=0
+           WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+              LPF return_first_entry STR_VAR list RET entry list END
+              PATCH_MATCH "%entry%" WITH
+              "rndtre0.*" BEGIN
+                  LPF ADD_CRE_EFFECT INT_VAR opcode=326 target=1 timing=4 duration STR_VAR resource="%entry%" END
+                  SET duration +=1
+              END
+              DEFAULT END
+
+           END
+       END
+    BUT_ONLY
+
+    // ARE files
+
+    COPY_EXISTING_REGEXP GLOB ".*\.are" override
+       PATCH_IF INDEX_BUFFER ("RNDTRE")>=0 BEGIN // initial filter
+          GET_OFFSET_ARRAY itm_arr 0x78 2 0x76 2 0 0 0x14
+          PHP_EACH itm_arr AS ind=>offset BEGIN
+             READ_ASCII offset in
+             LPF rndtre_area_swap STR_VAR in RET out END
+             PATCH_IF "%in%" STRING_COMPARE "%out%" BEGIN
+                WRITE_ASCIIE offset "%out%"
+             END
+          END
+       END
+    BUT_ONLY
+
+
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///   Goes through all arcane spells with scrolls, organises them by level. Adds a row for each level to rndtres and
+///   creates a rndtres item for the row
+///
+///   levels are on a 0-8 convention, the items are dwrnscr%level%
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_random_scrolls BEGIN
+
+   ACTION_IF is_bg2 BEGIN
+      OUTER_SET level_max=7
+   END ELSE BEGIN
+      OUTER_SET level_max=3
+   END
+
+   ACTION_FOR_EACH spell IN
+       WIZARD_FIND_FAMILIAR
+   BEGIN
+      OUTER_SPRINT $spell_is_absent("%spell%") ""
+   END
+
+
+    OUTER_FOR (level=0;level<=level_max;level+=1) BEGIN
+       OUTER_SPRINT $scrolls_by_level("%level%") ""
+       OUTER_SET $scroll_list_length("%level%")=0
+    END
+    ACTION_PHP_EACH arcane_scroll_list AS spell=>file BEGIN
+        ACTION_IF !VARIABLE_IS_SET $spell_is_absent("%spell%") BEGIN
+            OUTER_SPRINT level_name  "%spell%_LEVEL"
+            OUTER_SET level = "%level_name%"
+            ACTION_IF level<=level_max BEGIN
+              OUTER_SET $scroll_list_length("%level%") +=1
+              ACTION_IF $scroll_list_length("%level%") >40 BEGIN
+                LAF warning STR_VAR warning="More than 40 spells at level %level%; skipping any new ones" END
+              END ELSE BEGIN
+                OUTER_SPRINT temp $scrolls_by_level("%level%")
+                OUTER_SPRINT $scrolls_by_level("%level%") "%temp% %file%"
+              END
+            END
+        END
+    END
+    
+    ACTION_IF !FILE_EXISTS_IN_GAME "rndtres.2da" BEGIN
+       COPY ".../stratagems-inline/rndtres.2da" override
+    END
+    COPY_EXISTING "rndtres.2da" override
+       FOR (level=0;level<=level_max;level+=1) BEGIN
+            SET length=$scroll_list_length("%level%")
+            SPRINT temp $scrolls_by_level("%level%")
+            SPRINT temp "dwrnscr%level% %temp%"
+            WHILE length<40 BEGIN
+               length +=1
+               SPRINT temp "%temp% *"
+            END
+            INSERT_2DA_ROW 0 41 "%temp%"
+            INNER_ACTION BEGIN
+               COPY_EXISTING "rndtre01.itm" "override/dwrnscr%level%.itm"
+            END
+       END
+       PRETTY_PRINT_2DA
+    BUT_ONLY
+
+END
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_rndtre_spells
+BEGIN
+   LAF make_spell STR_VAR spell=rndtre00 editstring="add_basic_ability=>null" END
+   ACTION_IF is_bg2 BEGIN
+      OUTER_SPRINT rndtre_type bg2
+   END ELSE BEGIN
+      OUTER_SPRINT rndtre_type bg1
+   END
+   OUTER_FOR (rndtre_num=1;rndtre_num<=5;rndtre_num+=1) BEGIN
+      COPY_EXISTING "rndtre00.spl" "override/rndtre0%rndtre_num%.spl"
+         LPF add_scroll_spell_effect INT_VAR rndtre_num STR_VAR rndtre_type END
+      //   WRITE_LONG 0x8 RESOLVE_STR_REF ("rndtre firing") // for debugging
+   END
+   ACTION_IF GAME_IS eet BEGIN
+      OUTER_SPRINT rndtre_type bg1
+      OUTER_FOR (ind=6;ind<=9;ind+=1) BEGIN
+         OUTER_SET rndtre_num = ind - 4
+         COPY_EXISTING "rndtre00.spl" "override/rntre0%ind%.spl"
+              LPF add_scroll_spell_effect INT_VAR rndtre_num STR_VAR rndtre_type END
+      END
+   END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  As a patch function, add effects to the current creature, taking as input the number of its rndtres
+///  and a statement as to whether we're BG1 or BG2
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION add_scroll_spell_effect
+   INT_VAR rndtre_num=0
+   STR_VAR rndtre_type=bg2
+BEGIN
+   PATCH_IF "%rndtre_type%" STRING_EQUAL_CASE bg1 BEGIN
+      PATCH_MATCH "%rndtre_num%" WITH
+      1 2 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=4 STR_VAR resource=dwrnscr0 END
+      END
+      3 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr1 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=15 probability2=1 STR_VAR resource=dwrnscr0 END
+      END
+      4 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr2 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=13 probability2=1 STR_VAR resource=dwrnscr1 END
+      END
+      5 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr3 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=13 probability2=1 STR_VAR resource=dwrnscr2 END
+      END
+      DEFAULT END
+   END ELSE BEGIN
+      PATCH_MATCH "%rndtre_num%" WITH
+      2 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr0 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=1 probability2=1 STR_VAR resource=dwrnscr1 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=2 probability2=2 STR_VAR resource=dwrnscr2 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=3 probability2=3 STR_VAR resource=dwrnscr3 END
+      END
+      3 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr5 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=1 probability2=1 STR_VAR resource=dwrnscr4 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=4 probability2=2 STR_VAR resource=dwrnscr3 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=7 probability2=5 STR_VAR resource=dwrnscr2 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=10 probability2=8 STR_VAR resource=dwrnscr1 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=13 probability2=11 STR_VAR resource=dwrnscr0 END
+      END
+      4 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=0 STR_VAR resource=dwrnscr6 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=6 probability2=1 STR_VAR resource=dwrnscr5 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=13 probability2=7 STR_VAR resource=dwrnscr4 END
+      END
+      5 BEGIN
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=5 probability2=0 STR_VAR resource=dwrnscr7 END
+          LPF ADD_SPELL_EFFECT INT_VAR target=2 timing=1 opcode=122 parameter1=1 probability1=12 probability2=6 STR_VAR resource=dwrnscr6 END
+      END
+      DEFAULT
+      END
+   END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  As a patch function, consider a string and swap it for a random scroll if appropriate
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION rndtre_area_swap
+  STR_VAR in=""
+  RET out
+BEGIN
+   SPRINT out "%in%"
+   PATCH_MATCH "%in%" WITH
+   "rndtre0.*" BEGIN
+      INNER_PATCH_SAVE number "%in%" BEGIN
+         DELETE_BYTES 0x0 7
+      END
+      PATCH_IF GAME_IS eet BEGIN
+         PATCH_IF number>5 BEGIN
+            SET number -= 4
+            SET rndtre_bg1=1
+         END ELSE BEGIN
+            SET rndtre_bg1=0
+         END
+      END ELSE
+      PATCH_IF GAME_IS bg2ee BEGIN
+         SET rndtre_bg1=0
+      END ELSE BEGIN
+         SET rndtre_bg1=1
+      END
+      PATCH_IF rndtre_bg1 BEGIN
+        PATCH_MATCH "%number%" WITH
+        1 2 BEGIN
+          PATCH_IF RANDOM (0 99) <=4 BEGIN
+             SPRINT out dwrnscr0
+          END
+        END
+        3 BEGIN
+          PATCH_MATCH RANDOM (0 99) WITH
+          0 BEGIN
+             SPRINT out dwrnscr1
+          END
+          1 2 3 4 5 6 7 8 9 10 11 12 13 14 BEGIN
+             SPRINT out dwrnscr0
+          END
+          DEFAULT
+          END
+        END
+        4 BEGIN
+          PATCH_MATCH RANDOM (0 99) WITH
+          0 BEGIN
+             SPRINT out dwrnscr2
+          END
+          1 2 3 4 5 6 7 8 9 10 11 12 13 14 BEGIN
+             SPRINT out dwrnscr1
+          END
+          DEFAULT
+          END
+
+        END
+        5 BEGIN
+          PATCH_MATCH RANDOM (0 99) WITH
+          0 BEGIN
+             SPRINT out dwrnscr3
+          END
+          1 2 3 4 5 6 7 8 9 10 11 12 13 14 BEGIN
+             SPRINT out dwrnscr2
+          END
+          DEFAULT
+          END
+        END
+        DEFAULT
+        END
+      END ELSE BEGIN
+         PATCH_MATCH "%number%" WITH
+         2 BEGIN
+             PATCH_MATCH RANDOM (0 99) WITH
+             0 BEGIN
+                SPRINT out dwrnscr0
+             END
+             1 BEGIN
+                SPRINT out dwrnscr1
+             END
+             2 BEGIN
+                SPRINT out dwrnscr2
+             END
+             3 BEGIN
+                SPRINT out dwrnscr3
+             END
+             DEFAULT
+             END
+         END
+         3 BEGIN
+             PATCH_MATCH RANDOM (0 99) WITH
+             0 BEGIN
+                SPRINT out dwrnscr5
+             END
+             1 BEGIN
+                SPRINT out dwrnscr4
+             END
+             2 3 4 BEGIN
+                SPRINT out dwrnscr3
+             END
+             5 6 7 BEGIN
+                SPRINT out dwrnscr2
+             END
+             8 9 10 BEGIN
+                SPRINT out dwrnscr1
+             END
+             11 12 13 BEGIN
+                SPRINT out dwrnscr0
+             END
+             DEFAULT
+             
+             END
+         END
+         4 BEGIN
+             PATCH_MATCH RANDOM (0 99) WITH
+             0 BEGIN
+                SPRINT out dwrnscr6
+             END
+             2 3 4 5 6 7 BEGIN
+                SPRINT out dwrnscr5
+             END
+             8 9 10 11 12 13 14 BEGIN
+                SPRINT out dwrnscr4
+             END
+             DEFAULT END
+         END
+         5 BEGIN
+             PATCH_MATCH RANDOM (0 99) WITH
+             0 1 2 3 4 5 BEGIN
+                SPRINT out dwrnscr7
+             END
+             6 7 8 9 10 11 12 BEGIN
+                SPRINT out dwrnscr6
+             END
+             DEFAULT 
+             END
+         END
+         DEFAULT
+         END
+      END
+   END
+   DEFAULT
+   END
+
+
+
+
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///  Remove the scroll entries from rndmag and rndscr
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION nuke_extant_rndscr 
+BEGIN
+   ACTION_IF GAME_IS eet BEGIN
+        COPY_EXISTING
+            rndtreas.2da override
+            rndmagic.2da override
+               REPLACE_TEXTUALLY rndscr01 025
+               REPLACE_TEXTUALLY rndscr02 050
+               REPLACE_TEXTUALLY rndscr03 100
+               REPLACE_TEXTUALLY rndscr04 005
+               REPLACE_TEXTUALLY rndscr05 030
+               REPLACE_TEXTUALLY rndscr06 070
+               REPLACE_TEXTUALLY rndscr07 100
+   END ELSE
+   ACTION_IF GAME_IS bg2ee BEGIN
+        COPY_EXISTING
+            rndtreas.2da override
+            rndmagic.2da override
+               REPLACE_TEXTUALLY rndscr01 025
+               REPLACE_TEXTUALLY rndscr02 050
+               REPLACE_TEXTUALLY rndscr03 100
+   END ELSE BEGIN // bgee
+        COPY_EXISTING
+            rndtreas.2da override
+            rndmagic.2da override
+               REPLACE_TEXTUALLY rndscr01 005
+               REPLACE_TEXTUALLY rndscr02 030
+               REPLACE_TEXTUALLY rndscr03 070
+               REPLACE_TEXTUALLY rndscr04 100
+   END
+
+END
+
+
