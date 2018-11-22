@@ -893,6 +893,56 @@ BEGIN
      END
 END
 
+DEFINE_PATCH_FUNCTION CRE_insert_script_second
+     STR_VAR
+         arguments=""
+         filename=""
+BEGIN
+     FOR (i=0x250;i<0x270;i=i + 8) BEGIN
+        READ_ASCII i ~test~
+        SET blank=0
+        PATCH_IF ~%test%~ STRING_EQUAL_CASE ~~ OR ~%test%~ STRING_EQUAL_CASE ~none~ BEGIN
+           SET blank=i
+           SET i=0x270
+        END
+     END
+     PATCH_IF blank=0 BEGIN // merge the first two scripts, but check both exist first!
+          READ_ASCII 0x250 top
+          READ_ASCII 0x258 bottom
+          INNER_ACTION BEGIN
+                ACTION_IF FILE_EXISTS_IN_GAME "%top%.bcs" BEGIN
+                   OUTER_SET top_exists=1
+                END ELSE BEGIN
+                   OUTER_SET top_exists=0
+                END
+                ACTION_IF FILE_EXISTS_IN_GAME "%bottom%.bcs" BEGIN
+                   OUTER_SET bottom_exists=1
+                END ELSE BEGIN
+                   OUTER_SET bottom_exists=0
+                END
+                ACTION_IF top_exists && bottom_exists BEGIN
+                   LAF find_unique_filename STR_VAR extension=bcs RET script=filename END
+                   LAF merge_scripts STR_VAR top bottom script END
+                END
+          END
+          PATCH_IF top_exists && bottom_exists BEGIN
+             WRITE_ASCIIE 0x258 "%script%" (8)
+             LPF warning STR_VAR warning="found space for script %arguments% in file %filename% by merging %top%.bcs and %bottom%.bcs into %script%.bcs" END
+          END ELSE BEGIN
+             PATCH_IF top_exists BEGIN // in which case, bottom doesn't exist
+                WRITE_ASCIIE 0x258 "%top%" (8)
+             END // if it doesn't exist, we just overwrite top
+          END
+          WRITE_ASCIIE 0x250 "%arguments%" (8)
+     END ELSE BEGIN
+           FOR (i=blank;i>0x250;i=i - 8) BEGIN
+              READ_ASCII i - 8 ~move~
+              WRITE_ASCIIE i ~%move%~ (8)
+           END
+           WRITE_ASCIIE 0x250 ~%arguments%~ (8)
+     END
+END
+
 DEFINE_PATCH_FUNCTION CRE_insert_script_above // legacy syntax
      STR_VAR
          arguments=""

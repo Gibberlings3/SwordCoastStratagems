@@ -38,7 +38,6 @@ BEGIN
      
      LAF make_level_setters END
      LAF NPCs_for_levelling END
-     LAF adjust_xp_scripts END
 
      
 
@@ -687,24 +686,25 @@ BEGIN
         OUTER_SET dualclass_id=0
     END
 
-    // get rid of any levelling content in the existing scripts
+    // get rid of any levelling content in the existing override script
 
     COPY_EXISTING "%creature%.cre" override
-        SET scriptcount=0
-        FOR (i=0x248;i<=0x268;i+=8) BEGIN
-           READ_ASCII i script_here
-           PATCH_IF "%script_here%" STRING_COMPARE "" && "%script_here%" STRING_COMPARE_CASE "none" BEGIN
-              SET scriptcount +=1
-           END
-           PATCH_IF FILE_EXISTS_IN_GAME "%script_here%.bcs" BEGIN
-              LPF log_this STR_VAR file="xp_adjusts.txt" input="%script_here%" repeat=no END
-           END
-        END
+        READ_ASCII 0x248 script_override
+        TO_UPPER script_override
     BUT_ONLY
 
-    // get levelling script name (and if necessary make it)
-
-    LAF make_levelling_script INT_VAR num_classes dualclass_id STR_VAR class RET script END
+    ACTION_IF FILE_EXISTS_IN_GAME "%script_override%.bcs" BEGIN
+      ACTION_IF !FILE_EXISTS "override/%script_override%.bcs" BEGIN
+         COPY_EXISTING "%script_override%.bcs"  override
+      END
+      ACTION_IF !FILE_CONTAINS "override/%script_override%.bcs" "dwaulb" BEGIN
+        // strip XP-increasing content
+        LAF edit_script STR_VAR script="%script_override%" editstring="patch=>delete_if_xp_boost" END
+        // get levelling script name (and if necessary make it)
+        LAF make_levelling_script INT_VAR num_classes dualclass_id STR_VAR class RET script END
+        EXTEND_TOP "%script_override%.bcs" "override/%script%.bcs"
+      END
+    END
 
     // creature patch
     LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id=MARKED_FOR_AUTOLEVEL RET stat_ind END
@@ -732,7 +732,6 @@ BEGIN
        move_silently=>0
        find_traps=>0
        pick_pockets=>0
-       insert_script_high=>"%script%"
     END
     ACTION_MATCH "%creature%" WITH
        "wilson.*" BEGIN     // Wilson the bear can't be customised
@@ -752,16 +751,6 @@ BEGIN
        LPF CRE_remove_spell_of_type INT_VAR skip_hidden=1 STR_VAR arguments=SPWI END
 END
 
-
-DEFINE_ACTION_FUNCTION adjust_xp_scripts BEGIN
-  ACTION_IF FILE_EXISTS "%data_loc%/xp_adjusts.txt" BEGIN
-    LAF read_in_list STR_VAR file="xp_adjusts.txt" locabs="%data_loc%" RET list END
-    OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
-       LAF return_first_entry STR_VAR list RET script=entry list END
-       LAF edit_script STR_VAR script editstring="patch=>delete_if_xp_boost" END
-    END
-  END
-END
 
 DEFINE_PATCH_FUNCTION delete_if_xp_boost
         STR_VAR trig_in=""
