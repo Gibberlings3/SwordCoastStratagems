@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               overarching clone                                                                                                      
+/////////////               overarching clone
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////                                                                  
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1379,22 +1379,13 @@ BEGIN
        // get some data from the spell
        ACTION_IF "%spell_loc%" STRING_EQUAL "" BEGIN
          COPY_EXISTING "%resref%.spl" override
-           LPF SPL_read_description1_string RET desc=value END
-           LPF SPL_read_name1_string RET name=value END
-           READ_LONG 0x64 offset_base
-           LPF SPL_read_ability_target STR_VAR offset_base RET target=value END
-           LPF SPL_read_ability_range STR_VAR offset_base RET range=value END
-           LPF SPL_read_spell_type_num RET type=value END
+           LPM scroll_of_spell_data_collection
          BUT_ONLY
        END ELSE BEGIN
          COPY "%spell_loc%/%resref%.spl" "%spell_loc%"
-           LPF SPL_read_description1_string RET desc=value END
-           LPF SPL_read_name1_string RET name=value END
-           READ_LONG 0x64 offset_base
-           LPF SPL_read_ability_target STR_VAR offset_base RET target=value END
-           LPF SPL_read_ability_range STR_VAR offset_base RET range=value END
-           LPF SPL_read_spell_type_num RET type=value END
+           LPM scroll_of_spell_data_collection
          BUT_ONLY
+
        END
        // get the template
        ACTION_IF type=1 BEGIN
@@ -1413,13 +1404,41 @@ BEGIN
           icon=>"%resref%A"
           price=>"%price%"
        END
+       ACTION_PHP_EACH unusable_flag AS flag=>discard BEGIN
+           OUTER_SET $patch_data("unusable_%flag%")=1
+       END
        ACTION_IF target=4 BEGIN
           OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_target=>4 ability_range=>%range% opcode=>148"
        END ELSE BEGIN
           OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_range=>%range% ability_target=>%target%"
        END
        LAF clone_item STR_VAR item="%template%=>%scrollname%" edits=patch_data END
-END
+END // end of main function
+
+DEFINE_PATCH_MACRO scroll_of_spell_data_collection // just broken out for readability, no attempt at encapsulation
+BEGIN
+           LPF SPL_read_description1_string RET desc=value END
+           LPF SPL_read_name1_string RET name=value END
+           READ_LONG 0x64 offset_base
+           LPF SPL_read_ability_target STR_VAR offset_base RET target=value END
+           LPF SPL_read_ability_range STR_VAR offset_base RET range=value END
+           LPF SPL_read_spell_type_num RET type=value END
+           PATCH_IF value=1 BEGIN
+                PATCH_FOR_EACH specialist IN abjurer conjurer diviner enchanter illusionist invoker necromancer transmuter generalist BEGIN
+                   LPF "SPL_read_unusable_%specialist%" RET value END
+                   PATCH_IF value BEGIN
+                      SPRINT $unusable_flag("%specialist%") ""
+                   END
+                END
+           END ELSE BEGIN
+                PATCH_FOR_EACH category IN chaotic_priest evil_priest good_priest GEneutral_priest lawful_priest LCneutral_priest cleric druid BEGIN
+                   LPF "SPL_read_unusable_%category%" RET value END
+                   PATCH_IF value BEGIN
+                      SPRINT $unusable_flag("%category%") ""
+                   END
+                END
+           END
+END // end of macro
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //  default function for scroll pricing
