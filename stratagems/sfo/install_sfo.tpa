@@ -15,28 +15,86 @@ ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
 
 
 
+   //////////////////////////////////////////////////////////////
+   /// set the default variables if they're not set already
+   //////////////////////////////////////////////////////////////
+
+   ACTION_IF !VARIABLE_IS_SET mod_root BEGIN
+      OUTER_SPRINT mod_root "%TP2_BASE_NAME%"
+      ACTION_TO_LOWER mod_root
+   END
+
+   ACTION_IF !VARIABLE_IS_SET external_loc BEGIN
+      OUTER_SPRINT external_loc weidu_external
+   END
+
+   ACTION_IF !VARIABLE_IS_SET tra_base BEGIN
+      OUTER_SPRINT tra_base lang
+   END
+
+   ACTION_IF !VARIABLE_IS_SET rel_iconv_path BEGIN
+      OUTER_SPRINT rel_iconv_path "lang/iconv"
+   END
+
+   ACTION_IF !VARIABLE_IS_SET base_language BEGIN
+      OUTER_SPRINT base_language english
+   END
+
+   //////////////////////////////////////////////////////////////
+   /// make the external folders
+   //////////////////////////////////////////////////////////////
+
+   MKDIR "%external_loc%"
+   MKDIR "%external_loc%/workspace"
+   MKDIR "%external_loc%/workspace/ssl_out"
+   MKDIR "%external_loc%/data/%mod_root%"
+   MKDIR "%external_loc%/markers"
+   MKDIR "%external_loc%/lang"
+
+   ACTION_IF !FILE_EXISTS "%external_loc%/readme.txt" BEGIN
+      COPY + "%mod_root%/lib/resource/weidu_external_readme.txt" "%external_loc%/readme.txt"
+   END
+
+   //////////////////////////////////////////////////////////////
+   /// Set variables for the external locations
+   //////////////////////////////////////////////////////////////
+
+   OUTER_SPRINT workspace "%external_loc%/workspace"
+   OUTER_SPRINT data_loc_root "%external_loc%/data"
+   OUTER_SPRINT data_loc "%external_loc%/data/%mod_root%"
+   OUTER_SPRINT marker_loc "%external_loc%/markers"
+   OUTER_SPRINT ext_lang_loc "%external_loc%/lang/%mod_root%"
+
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Set default values of control parameters
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
- ACTION_IF !VARIABLE_IS_SET scsroot BEGIN
+ ACTION_IF !VARIABLE_IS_SET scsroot BEGIN // legacy
       OUTER_SPRINT scsroot "%TP2_BASE_NAME%"
  END
- ACTION_IF !VARIABLE_IS_SET workspace BEGIN
-      OUTER_SPRINT workspace "stratagems_external/workspace"
+ ACTION_IF !VARIABLE_IS_SET ssl_loc BEGIN
+      OUTER_SPRINT ssl_loc "ssl"
  END
- ACTION_IF !VARIABLE_IS_SET inifile BEGIN
-      OUTER_SPRINT inifile "%scsroot%/%scsroot%.ini"
- END
- ACTION_IF !VARIABLE_IS_SET skip_tobex BEGIN
-    OUTER_SET skip_tobex=1
+ ACTION_IF !VARIABLE_IS_SET sfo_loc BEGIN
+      OUTER_SPRINT sfo_loc "sfo"
  END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Make the workspace directory if it doesn't already exist
+// Get the debug variable from ini (do this manually, ini reading functions aren't installed yet)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-MKDIR "%workspace%"
+OUTER_SET debug_variable=0
+ACTION_IF FILE_EXISTS "%mod_root%/%ini_file%" BEGIN
+COPY - "%mod_root%/%ini_file%" "%workspace%"
+   REPLACE_EVALUATE "debug_variable[ =]+\([0-9]+\)"
+   BEGIN
+       SET debug_variable=MATCH1
+   END
+   "doesn't matter, this is COPY -"
+BUT_ONLY
+END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Set the debug variable if it isn't already set; run silent if it's set to zero
@@ -69,28 +127,43 @@ OUTER_SPRINT ~arrow~ ~=>~
 <<<<<<<< .../stratagems-inline/blank
 >>>>>>>>
 
+OUTER_SPRINT former "0"
+ACTION_FOR_EACH val IN z y x w v u t s r q p o n m l k j i h g f e d c b a 9 8 7 6 5 4 3 2 1 0 BEGIN
+    OUTER_SPRINT $alphanumeric_next("%val%") "%former%"
+    ACTION_TO_UPPER val
+    ACTION_TO_UPPER former
+    OUTER_SPRINT $alphanumeric_next("%val%") "%former%"
+    OUTER_SPRINT former "%val%"
+END
+
 ///////////////////////////////////////////////////
 // check what install we're running on
 ///////////////////////////////////////////////////
 
-  ACTION_IF (GAME_IS ~tutu tutu_totsc bgt eet bgee~) BEGIN
-     INCLUDE ~%scsroot%/lib/crossplatform.tph~
-     OUTER_SET ~is_bg1~=1
-  END ELSE BEGIN
-     OUTER_SPRINT ~tutu_var~ ~~
-     OUTER_SET ~is_bg1~=0
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "checking for game type: press a key to continue"
+     ACTION_READLN blook
   END
 
-  ACTION_IF GAME_IS ~tutu tutu_totsc bgee~ BEGIN
-     OUTER_SET ~is_bg2~=0
-  END ELSE BEGIN
-     OUTER_SET ~is_bg2~=1
-  END
+  OUTER_SET enhanced_edition = ( GAME_IS ~bgee bg2ee eet iwdee~ ? 1 : 0)
+  OUTER_SET is_bg1 = ( GAME_IS ~bgee tutu tutu_totsc bgt eet~ ? 1 : 0)
+  OUTER_SET is_bg2 = ( GAME_IS ~tutu tutu_totsc bgee~ ? 0 : 1)
+  OUTER_SET is_iwd = ( GAME_IS iwdee ? 1 : 0)
+  OUTER_SET is_tutu = ( GAME_IS ~tutu tutu_totsc~ ? 1 : 0)
+  OUTER_SET is_eet = ( GAME_IS ~tutu tutu_totsc~ ? 1 : 0)
 
-  ACTION_IF GAME_IS ~bgee bg2ee eet~ BEGIN
-     OUTER_SET enhanced_edition=1
+  ACTION_IF !VARIABLE_IS_SET tutu_var BEGIN
+     ACTION_IF is_tutu BEGIN
+        OUTER_SPRINT tutu_var "_"
+     END ELSE BEGIN
+        OUTER_SPRINT tutu_var ""
+     END
+  END
+  
+  ACTION_IF GAME_IS "eet" BEGIN
+     OUTER_SPRINT eet_var "_"
   END ELSE BEGIN
-     OUTER_SET enhanced_edition=0
+     OUTER_SPRINT eet_var ""
   END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -102,6 +175,11 @@ OUTER_SPRINT ~arrow~ ~=>~
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // correct missing section in kensai clab file
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Fixing KENSAI: press a key to continue"
+     ACTION_READLN blook
+  END
 
 COPY_EXISTING clabfi04.2da override
    // diagnostic: can we read entry 40 from the second row with at least 10 entries?
@@ -119,9 +197,33 @@ BUT_ONLY
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "systematising ids files: press a key to continue"
+     ACTION_READLN blook
+  END
+
+ACTION_IF !FILE_EXISTS "override/soundoff.ids" BEGIN
+   COPY_EXISTING soundoff.ids override
+END
+
+ACTION_DEFINE_ASSOCIATIVE_ARRAY soundoff_ids_missing BEGIN
+   9=>BATTLE_CRY
+   10=>BATTLE_CRY2
+   11=>BATTLE_CRY3
+   12=>BATTLE_CRY4
+   13=>BATTLE_CRY5
+END
+
+ACTION_PHP_EACH soundoff_ids_missing AS code=>name BEGIN
+      ACTION_IF !FILE_CONTAINS_EVALUATED ("override/soundoff.ids" "%code%[ %TAB%]+%name%") BEGIN
+         APPEND "soundoff.ids" "%code% %name%"
+      END
+END
+
 ACTION_IF !FILE_EXISTS "override/spell.ids" BEGIN
        COPY_EXISTING spell.ids override
 END
+
 ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
    4611=>DRUID_SHAPESHIFT_BROWNBEAR
    4612=>DRUID_SHAPESHIFT_WOLF
@@ -130,6 +232,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
    4633=>AVENGER_SHAPESHIFT_BABYWYVERN
    4634=>AVENGER_SHAPESHIFT_FIRESALAMANDER
    2490=>WIZARD_POLYMORPH_NATURAL_FORM
+   2491=>DRUID_SHAPESHIFT_NATURAL_FORM
    2493=>WIZARD_POLYMORPH_FLIND
    2494=>WIZARD_POLYMORPH_OGRE
    2495=>WIZARD_POLYMORPH_SPIDER
@@ -148,30 +251,47 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
    4212=>PALADIN_PROTECTION_FROM_EVIL
    4721=>TALOS_STORMSHIELD
    4722=>TALOS_LIGHTNING_BOLT
-   4238=>SUN_SOUL_FLAMING_FISTS
-   4103=>BLACKGUARD_AURA_OF_DESPAIR
-   4935=>BLACKGUARD_SUMMON_FALLEN_DEVA
+   2921=>WIZARD_IMPROVED_ALACRITY
+   2222=>WIZARD_CHAOS_SHIELD
+   2723=>WIZARD_IMPROVED_CHAOS_SHIELD
+   1718=>CLERIC_SYMBOL_STUN
+   1719=>CLERIC_SYMBOL_DEATH
 
 END
+
 ACTION_PHP_EACH spell_ids_missing AS code=>name BEGIN
       ACTION_IF !FILE_CONTAINS_EVALUATED ("override/spell.ids" "%code%[ %TAB%]+%name%") BEGIN
          APPEND "spell.ids" "%code% %name%"
       END
 END
 
+ACTION_IF enhanced_edition BEGIN
+ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing_ee BEGIN
+   4238=>SUN_SOUL_FLAMING_FISTS
+   4103=>BLACKGUARD_AURA_OF_DESPAIR
+   4935=>BLACKGUARD_SUMMON_FALLEN_DEVA
+ END
+ ACTION_PHP_EACH spell_ids_missing_ee AS code=>name BEGIN
+      ACTION_IF !FILE_CONTAINS_EVALUATED ("override/spell.ids" "%code%[ %TAB%]+%name%") BEGIN
+         APPEND "spell.ids" "%code% %name%"
+      END
+ END
+
+ // don't sort it, because (a) sorting spell.ids takes nontrivial time, and (b) we'll do it in DS anyway
+
+END
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // some third-party mods unhelpfully map WIZARD_DISPEL_MAGIC to SPWI326; change this back
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Remapping DISPEL_MAGIC: press a key to continue"
+     ACTION_READLN blook
+  END
+
 ACTION_IF enhanced_edition BEGIN
   COPY_EXISTING spell.ids override
-    COUNT_2DA_ROWS 2 rowcount
-    FOR (i=1;i<rowcount;i+=1) BEGIN
-       READ_2DA_ENTRY i 1 2 ids
-       PATCH_IF "%ids%" STRING_EQUAL "WIZARD_DISPEL_MAGIC" BEGIN
-           SET_2DA_ENTRY i 0 2 2302
-       END
-    END
+          REPLACE_TEXTUALLY "23[0-9][0-9] +WIZARD_DISPEL_MAGIC" "2302 WIZARD_DISPEL_MAGIC"
   BUT_ONLY
 END
 
@@ -179,81 +299,127 @@ END
 // in case Fixpack hasn't already done it, disable the 0-byte items & broken areas (we do this here for the benefit of the count section)
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ACTION_FOR_EACH ~dodgyitem~ IN iplot01k iplot04g iplot04h iplot04i BEGIN
-   ACTION_IF !FILE_EXISTS ~override/%dodgyitem%.itm~ THEN BEGIN
-        DISABLE_FROM_KEY ~%dodgyitem%.itm~
-   END
-END
-
-ACTION_FOR_EACH ~dodgyarea~ IN xr2400 xr2600 BEGIN
-   ACTION_IF !FILE_EXISTS ~override/%dodgyarea%.are~ THEN BEGIN
-        DISABLE_FROM_KEY ~%dodgyarea%.are~
-   END
-END
-
-
-///////////////////////////////////////////////////
-// read in ini
-///////////////////////////////////////////////////
-
-  ACTION_IF FILE_EXISTS ~%inifile%~ BEGIN
-    COPY ~%inifile%~ ~%workspace%~
-     READ_2DA_ENTRIES_NOW ~scs_ini_array~ 1
-        FOR (i=0;i<~scs_ini_array~;i=i+1) BEGIN
-          READ_2DA_ENTRY_FORMER ~scs_ini_array~ ~i~ 0 ~key~
-          READ_2DA_ENTRY_FORMER ~scs_ini_array~ ~i~ 1 ~value~
-          TO_LOWER key
-          SPRINT $scs_ini_hash(~%key%~) ~%value%~
-        END
-    BUT_ONLY
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Disabling broken stuff: press a key to continue"
+     ACTION_READLN blook
   END
+
+
+ACTION_FOR_EACH bad IN "iplot01k.itm" "iplot04g.itm" "iplot04h.itm" "iplot04i.itm" "xr2400.are" "xr2600.are" BEGIN
+  ACTION_IF FILE_EXISTS_IN_GAME "%bad%" BEGIN
+   ACTION_TRY
+       COPY_EXISTING "%bad%" override
+            READ_BYTE 0x0 0
+       BUT_ONLY
+   WITH DEFAULT
+       DISABLE_FROM_KEY "%bad%"
+   END
+  END
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Determine status of auto-built functions
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ACTION_IF FILE_EXISTS "%scsroot%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
+   INCLUDE "%scsroot%/%sfo_loc%/SFO_autofunc.tpa"
+   OUTER_SET SFO_reserved_build_function_control=2
+END ELSE BEGIN
+   OUTER_SET SFO_reserved_build_function_control=1
+END
+
 
 ///////////////////////////////////////////////////
 // include core function library
 ///////////////////////////////////////////////////
 
-
-  ACTION_BASH_FOR ~%scsroot%/sfo/general~ ~lib_.*\.tpa~ BEGIN
-         INCLUDE ~%scsroot%/sfo/general/%BASH_FOR_RES%.tpa~
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "SFO setup done, starting core library install (general files): press a key to continue"
+     ACTION_READLN blook
+  END
+  ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/general~ ~lib_.*\.tpa~ BEGIN
+         ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
+            INCLUDE ~%scsroot%/%sfo_loc%/general/%BASH_FOR_RES%.tpa~
+         END
   END
 
 ///////////////////////////////////////////////////
 // include file-specific function library
 ///////////////////////////////////////////////////
 
-  ACTION_BASH_FOR ~%scsroot%/sfo/filetype~ ~lib_.*\.tpa~ BEGIN
-         INCLUDE ~%scsroot%/sfo/filetype/%BASH_FOR_RES%.tpa~
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Continuing core library install (filetype-specific files): press a key to continue"
+     ACTION_READLN blook
+  END
+  ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/filetype~ ~lib_.*\.tpa~ BEGIN
+         ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
+             INCLUDE ~%scsroot%/%sfo_loc%/filetype/%BASH_FOR_RES%.tpa~
+         END
   END
 
+
+
 ///////////////////////////////////////////////////
-// Get resources
+// read in ini
 ///////////////////////////////////////////////////
 
-  ACTION_IF !VARIABLE_IS_SET read_resources BEGIN
-     OUTER_SET read_resources=1
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Reading in INI: press a key to continue"
+     ACTION_READLN blook
   END
 
-  ACTION_IF read_resources BEGIN
-   ACTION_FOR_EACH macro IN spellcodes NPC_dialogs saving_throws hit_point_levels stats BEGIN
-     PRINT ~Reading in data: %macro%~
-     SILENT
-     LAUNCH_ACTION_MACRO ~read_in_%macro%~
-     VERBOSE
+
+   ACTION_IF VARIABLE_IS_SET ini_file BEGIN
+      OUTER_SPRINT ini_to_read "%mod_root%/%ini_file%"
+      LAM SFO_read_ini_file
    END
-  END
-  
+
+   ACTION_IF VARIABLE_IS_SET user_ini_file BEGIN
+      OUTER_SPRINT ini_to_read "%mod_root%/%user_ini_file%"
+      LAM SFO_read_ini_file
+   END
+ 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Initialise SSL variables
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
- OUTER_SPRINT sslvariables "UNUSED_PLACEHOLDER=true"
-LAF check_ini STR_VAR ini=library_override RET value END
-ACTION_IF "%value%" STRING_EQUAL_CASE none BEGIN
-   OUTER_SPRINT ssllibrary "%scsroot%/ssl/library"
-END ELSE BEGIN
-   OUTER_SPRINT ssllibrary "%scsroot%/ssl/%value%"
-END
+OUTER_SPRINT ~sslvariables~ ~%percentage%scsroot%percentage%=%scsroot%&%percentage%tutu_var%percentage%=%tutu_var%~
+OUTER_SPRINT ssllibrary ""
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Define swap code to move between EE and vanilla SSL
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  DEFINE_PATCH_FUNCTION ssl_ee_to_vanilla  BEGIN
+     // SPLSTATE to ToBeX extended stats
+     REPLACE_TEXTUALLY "!CheckSpellState(\([^,]*\),\([^)]*\))" "CheckStat(\1,0,\2)"
+     REPLACE_TEXTUALLY "CheckSpellState(\([^,]*\),\([^)]*\))" "CheckStatGT(\1,0,\2)"
+     // vanilla doesn't have RunAwayFromNoLeaveArea
+     REPLACE_TEXTUALLY RunAwayFromNoLeaveArea RunAwayFrom
+     REPLACE_TEXTUALLY NinthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY EighthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY SeventhFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY SixthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY FifthFarthestEnemyOf SecondNearestEnemyOf
+     REPLACE_TEXTUALLY FourthFarthestEnemyOf ThirdNearestEnemyOf
+     REPLACE_TEXTUALLY ThirdFarthestEnemyOf FourthNearestEnemyOf
+     REPLACE_TEXTUALLY SecondFarthestEnemyOf FifthNearestEnemyOf
+     REPLACE_TEXTUALLY FarthestEnemyOf SixthNearestEnemyOf
+     REPLACE_TEXTUALLY "NearestAllyOf(Myself)" "NearestMyGroupOfType([0.0])"
+     REPLACE_TEXTUALLY "NightmareModeOn()" "False()"
+
+
+  END
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "SFO installed: press a key to continue"
+     ACTION_READLN blook
+  END
+
+
 
 END
+VERBOSE
+
 
 

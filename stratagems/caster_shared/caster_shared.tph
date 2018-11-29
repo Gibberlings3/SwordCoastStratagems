@@ -1,3 +1,5 @@
+LAF include STR_VAR files="hla.tph" locbase=lib END
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -5,7 +7,7 @@
 DEFINE_ACTION_MACRO read_in_instant_prebuff_spells BEGIN
   ACTION_IF !VARIABLE_IS_SET prebuff_spells_read_in BEGIN
    OUTER_SET prebuff_spells_read_in=1
-   COPY ~%workspace%/instant_prebuff_spells.2da~ override
+   COPY ~%data_loc%/instant_prebuff_spells.2da~ override
          COUNT_2DA_ROWS 2 rowcount
          FOR(i=0;i<rowcount;i+=1) BEGIN
             READ_2DA_ENTRY i 0 2 macro_spell_ID
@@ -17,200 +19,20 @@ DEFINE_ACTION_MACRO read_in_instant_prebuff_spells BEGIN
 END
 
 DEFINE_ACTION_FUNCTION build_prebuff_spells BEGIN
-   LAUNCH_ACTION_MACRO read_in_spellcodes
-   LAF read_in_list STR_VAR file=~prebuff_bg1.2da~ RET list=list END
-   ACTION_IF is_bg2=1 BEGIN
-      LAF read_in_list STR_VAR file=~prebuff.2da~ RET list2=list END
-      OUTER_SPRINT list ~%list% %list2%~
-   END
+   LAUNCH_ACTION_MACRO read_in_spellcodes      
+   LAF read_in_list STR_VAR file=~prebuff.2da~ RET list END
    OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
          LAF return_first_entry STR_VAR list RET list spell_ID=entry END
+      //   PRINT "building prebuff spell, data %spell_ID%"
          LAF build_prebuff_spell STR_VAR spell_ID RET fullname newcode END
-         ACTION_IF !FILE_CONTAINS_EVALUATED  (~%workspace%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
+    //     PRINT "...done"
+         ACTION_IF !FILE_CONTAINS_EVALUATED  (~%data_loc%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
              LAF log_this STR_VAR file=instant_prebuff_spells.2da input=~%fullname%_PREBUFF %newcode%~ END
          END
    END
 END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION build_instant_spells  BEGIN
-   LAUNCH_ACTION_MACRO read_in_spellcodes
-   LAF read_in_list STR_VAR file=~instant_bg1.2da~ RET list=list END
-   ACTION_IF is_bg2=1 BEGIN
-      LAF read_in_list STR_VAR file=~instant.2da~ RET list2=list END
-      OUTER_SPRINT list ~%list% %list2%~
-   END
-   OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
-         LAF action_return_first_entry STR_VAR list RET list=list spell_ID=entry END
-         LAF build_instant_spell STR_VAR spell_ID RET fullname=fullname oldcode=spellcode newcode=newcode END
-        MAKE_PATCH
-            match=>"opcode=206 and resource=%oldcode%"
-            resource=>~%newcode%~
-        END
-         ACTION_IF !FILE_CONTAINS_EVALUATED (~%workspace%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
-          LAF log_this STR_VAR file=instant_prebuff_spells.2da input= ~%fullname%_INSTANT %newcode%~ END
-
-         ACTION_IF FILE_EXISTS ~%workspace%/immune_cre.2da~ BEGIN
-          COPY ~%workspace%/immune_cre.2da~ ~%workspace%~
-             COUNT_2DA_ROWS 2 rowcount
-             FOR (i=0;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 0 2 spell_code
-                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
-                   READ_2DA_ENTRY i 1 2 creature
-                   INNER_ACTION BEGIN
-                     LAF edit_creature STR_VAR creature editstring= ~clone_effect=>patch_data~ END
-                   END
-                END
-             END
-          BUT_ONLY
-         END
-         ACTION_IF FILE_EXISTS ~%workspace%/immune_spl.2da~ BEGIN
-          COPY ~%workspace%/immune_spl.2da~ ~%workspace%~
-             COUNT_2DA_ROWS 2 rowcount
-             FOR (i=0;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 0 2 spell_code
-                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
-                   READ_2DA_ENTRY i 1 2 spell
-                   INNER_ACTION BEGIN
-                     LAF edit_spell STR_VAR spell editstring= ~clone_effect=>patch_data~ END
-                   END
-                END
-             END
-          BUT_ONLY
-         END
-         ACTION_IF FILE_EXISTS ~%workspace%/immune_itm.2da~ BEGIN
-          COPY ~%workspace%/immune_itm.2da~ ~%workspace%~
-             COUNT_2DA_ROWS 2 rowcount
-             FOR (i=0;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 0 2 spell_code
-                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
-                   READ_2DA_ENTRY i 1 2 item
-                   INNER_ACTION BEGIN
-                     LAF edit_item STR_VAR item editstring=~clone_effect=>patch_data~ END
-                   END
-                END
-             END
-          BUT_ONLY
-         END
-         ACTION_IF FILE_EXISTS ~%workspace%/immune_eq_itm.2da~ BEGIN
-          COPY ~%workspace%/immune_eq_itm.2da~ ~%workspace%~
-             COUNT_2DA_ROWS 2 rowcount
-             FOR (i=0;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 0 2 spell_code
-                PATCH_IF ~%spell_code%~ STRING_EQUAL_CASE ~%oldcode%~ BEGIN
-                   READ_2DA_ENTRY i 1 2 item
-                   INNER_ACTION BEGIN
-                     LAF edit_item STR_VAR item editstring=~clone_effect_global=>patch_data~ END
-                   END
-                END
-             END
-          BUT_ONLY
-          END
-
-         END
-   END
-END
-
-/////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION CRE_log_immunity
-   STR_VAR offset_base=""
-           filename=""
-BEGIN
-   LPF CRE_read_effect_resource STR_VAR offset_base RET resource=value END
-   LPF log_this STR_VAR file=~immune_cre.2da~ input= ~%resource% %filename%~ repeat=no END
-END
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION ITM_log_immunity
-   STR_VAR offset_base=""
-           offset_secondary=""
-           filename=""
-BEGIN
-   LPF ITM_read_resource STR_VAR offset_base offset_secondary RET resource=value END
-   LPF log_this STR_VAR file=~immune_itm.2da~ input= ~%resource% %filename%~ repeat=no END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION ITM_log_eq_immunity
-   STR_VAR offset_base=""
-           offset_secondary=""
-           filename=""
-BEGIN
-   LPF ITM_read_resource STR_VAR offset_base offset_secondary RET resource=value END
-   LPF log_this STR_VAR file=~immune_eq_itm.2da~ input= ~%resource% %filename%~ repeat=no END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION SPL_log_immunity
-   STR_VAR offset_base=""
-           filename=""
-           offset_secondary=""
-BEGIN
-   LPF SPL_read_resource STR_VAR offset_base offset_secondary RET resource=value END
-   LPF log_this STR_VAR file=~immune_spl.2da~ input= ~%resource% %filename%~ repeat=no END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION collect_the_immune BEGIN
-
-   ACTION_IF !FILE_EXISTS ~%workspace%/immune_cre.2da~ BEGIN
-    // fast filter: does it *have* any effects?)
-      OUTER_SPRINT creature ~~
-      COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
-            PATCH_IF (LONG_AT 0x2c8>0 && BYTE_AT 0x33=1) BEGIN // this includes a sanity check for EFF v0
-              PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0) BEGIN
-                  PUSH creature ~%SOURCE_RES%~
-              END
-            END
-      BUT_ONLY
-      MAKE_PATCH
-         match=>"opcode=206"
-         log_immunity=>null
-      END
-      LAF edit_creature STR_VAR creature editstring=~patch_effect=>patch_data~ END
-   END
-   ACTION_IF !FILE_EXISTS ~%workspace%/immune_itm.2da~ BEGIN
-     // fast filter: does it contain "SPWI" or "SPIN"
-      OUTER_SPRINT item ~~
-      COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
-         PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0) BEGIN
-            PUSH item ~%SOURCE_RES%~
-         END
-      BUT_ONLY
-      MAKE_PATCH
-        patch_effect_inline=>~match=>"opcode=206"
-                              log_immunity=>null~
-        patch_effect_global_inline'=>~match=>"opcode=206"
-                                      log_eq_immunity=>null~
-      END
-     LAF edit_item STR_VAR item edits=patch_data END
-   END
-   ACTION_IF !FILE_EXISTS ~%workspace%/immune_spl.2da~ BEGIN
-
-   // no point doing the filter for spells: they pretty much all contain this phrase
-      MAKE_PATCH
-         match=>"opcode=206"
-         log_immunity=>null
-      END
-     LAF edit_all_spells STR_VAR editstring=~patch_effect=>patch_data~ END
-   END
-END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////   performs a swap of spells, stored in the master "spell" thread
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -252,76 +74,76 @@ BEGIN
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-////  read in spell choices (spelltype is priest or mage, modtype is core or demivrgvs)
+////  read in spell choices (spelltype is priest or mage, base_folder_spells_X is set in always and is iwd, demivrgvs, or vanilla)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
 
+ LOCAL_SPRINT folder ""
+ LOCAL_SPRINT kit ""
+ LOCAL_SPRINT data ""
+ LOCAL_SPRINT temp ""
+ LOCAL_SPRINT base_folder_spells ""
+ LOCAL_SET level=0
+ LOCAL_SET rowcount=0
+ LOCAL_SET j=0
+
+
  ACTION_IF !VARIABLE_IS_SET  ~macro_read_in_%type%_spell_choices~ BEGIN
-   OUTER_SET  ~macro_read_in_%type%_spell_choices~=1
-   ACTION_IF demivrgvs=1 BEGIN
-      OUTER_SPRINT list demivrgvs
+   ACTION_IF "%spelltype%" STRING_EQUAL_CASE priest BEGIN
+    OUTER_SPRINT base_folder_spells "%base_folder_spells_priest%"
    END ELSE BEGIN
-      OUTER_SPRINT list core
+    OUTER_SPRINT base_folder_spells "%base_folder_spells_mage%"
    END
-   ACTION_IF refinements=1 BEGIN
-      OUTER_SPRINT list ~%list% refinements~
-   END
-   OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
-     LAF action_return_first_entry STR_VAR list RET list=list folder=entry END
-     ACTION_BASH_FOR ~%scsroot%/%type%/spellchoices/%folder%~ ~.*\.2da~ BEGIN
-        COPY ~%BASH_FOR_FILESPEC%~ ~%workspace%~
-          SPRINT ~macro_kit~ ~%BASH_FOR_RES%~
-          TO_LOWER macro_kit
-          COUNT_2DA_COLS colcount
-          FOR (j=2;j<=colcount;j+=1) BEGIN
-             COUNT_2DA_ROWS j rowcount
-             FOR (i=0;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 0 j macro_level
-                TO_UPPER macro_level
-                READ_2DA_ENTRY i 1 j macro_data
-                FOR (k=2;k<j;k+=1) BEGIN
-                   READ_2DA_ENTRY i k j temp
-                   PUSH macro_data ~%temp%~
-                END
-                PATCH_MATCH ~%macro_level%~ WITH 1 2 3 4 5 6 7 8 9 H IO IR BEGIN
-                 SPRINT $spell_choices(~%type%~ ~%macro_kit%~ ~%macro_level%~) ~%macro_data%~
-                 PATCH_IF debug_variable=2 BEGIN
-                    PATCH_PRINT ~assigning spells %macro_data% to $spell_choices(%type% %macro_kit% %macro_level%)~
+
+   OUTER_SET  ~macro_read_in_%type%_spell_choices~=1
+   ACTION_BASH_FOR ~%scsroot%/%type%/spellchoices/vanilla~ ~.*\.2da~ BEGIN
+      ACTION_IF FILE_EXISTS ~%scsroot%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~ BEGIN
+         OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~
+      END ELSE BEGIN
+         OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
+      END
+      COPY ~%file_here%~ ~%workspace%~
+          SPRINT ~kit~ ~%BASH_FOR_RES%~
+          TO_LOWER kit
+          COUNT_2DA_ROWS 0 rowcount
+          FOR (j=1;j<rowcount;j+=1) BEGIN
+             READ_2DA_ENTRY j 0 0 level
+             LPF read_rest_of_line INT_VAR row=j col=1 RET data=list END
+             PATCH_MATCH ~%level%~ WITH 
+                 1 2 3 4 5 6 7 8 9 BEGIN
+                   SPRINT $spell_choices(~%type%~ ~%kit%~ ~%level%~) ~%data%~
+                   PATCH_IF debug_variable=2 BEGIN
+                       PATCH_PRINT ~assigning spells %data% to $spell_choices(%type% %kit% %level%)~
+                   END
                  END
-                END
-                DEFAULT END
+                 DEFAULT
              END
           END
         BUT_ONLY
-     END
-    END
-  END
+   END
+ END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////  read in spells per level
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION max_spell_level
+     STR_VAR file=""
+     RET level
+BEGIN
+   COPY_EXISTING ~%file%.2da~ ~override~
+         COUNT_2DA_COLS col_count
+   BUT_ONLY
+   OUTER_SET level=col_count - 1
+END
+
 DEFINE_ACTION_MACRO read_in_spells_per_level BEGIN
   ACTION_IF !VARIABLE_IS_SET macro_read_in_spells_per_level BEGIN
      OUTER_SET macro_read_in_spells_per_level=1
-     // BG2 Tweaks or Tweaks Anthology unnerfed bard spell table compatibility by AstroBryGuy
-     // Get number of columns in bard spell table to determine max. bard spell level
-     COPY_EXISTING ~mxsplbrd.2da~ ~override~
-        COUNT_2DA_COLS col_count
-     BUT_ONLY
-     OUTER_SET bard_spell_levels = col_count - 1 
-     PRINT "Max Bard Spell Level %bard_spell_levels%" // Display to user for sanity check
-     ACTION_DEFINE_ASSOCIATIVE_ARRAY macro_spell_2das BEGIN
-          MXSPLWIZ=>9
-          MXSPLDRU=>7
-          MXSPLPRS=>7
-          MXSPLWIS=>7
-//        MXSPLBRD=>6
-          MXSPLBRD=>~%bard_spell_levels%~ // Set max bard spell level according to 2da table
-     END
+
      ACTION_DEFINE_ASSOCIATIVE_ARRAY macro_spell_name_map BEGIN
           MXSPLWIZ=>mage
           MXSPLDRU=>druid
@@ -329,8 +151,8 @@ DEFINE_ACTION_MACRO read_in_spells_per_level BEGIN
           MXSPLWIS=>null
           MXSPLBRD=>bard
      END
-     ACTION_PHP_EACH macro_spell_2das AS macro_file=>macro_level_num BEGIN
-        OUTER_SPRINT macro_type $macro_spell_name_map(~%macro_file%~)
+     ACTION_PHP_EACH macro_spell_name_map AS macro_file=>macro_type BEGIN
+        LAF max_spell_level STR_VAR file=~%macro_file%~ RET macro_level_num=level END
         COPY_EXISTING ~%macro_file%.2da~ ~override~
              READ_2DA_ENTRIES_NOW macro_spell_data (macro_level_num + 1)
              // get spells per level
@@ -347,10 +169,8 @@ DEFINE_ACTION_MACRO read_in_spells_per_level BEGIN
              END
         BUT_ONLY
         OUTER_FOR (i=1;i<=macro_level_num;i+=1) BEGIN
-            ACTION_IF (VARIABLE_IS_SET $spell_level_to_caster_level(~%macro_type%~ ~%i%~)) BEGIN // if mxspl???.2da has an empty column (all zeroes), variable will not be set
               OUTER_SET temp=$spell_level_to_caster_level(~%macro_type%~ ~%i%~)
               OUTER_SET $caster_level_to_spell_level(~%macro_type%~ ~%temp%~)= ~%i%~
-            END
         END
         OUTER_SET current=1
         OUTER_FOR (i=1;i<=50;i+=1) BEGIN
@@ -373,7 +193,7 @@ DEFINE_ACTION_MACRO read_in_individual_overrides BEGIN
   ACTION_FOR_EACH game IN bg1 bg2 BEGIN
       ACTION_IF $is( ~%game%~)=1 BEGIN
          ACTION_IF ~%game%~ STRING_EQUAL_CASE ~bg1~ BEGIN OUTER_SPRINT macro_tutuvar ~%tutu_var%~ END ELSE BEGIN OUTER_SPRINT macro_tutuvar ~~ END
-         ACTION_FOR_EACH macro_type IN spellchoice kit level alignment BEGIN
+         ACTION_FOR_EACH macro_type IN spellchoice kit level alignment boolean variable BEGIN
           COPY ~%scsroot%/%type%/override/%game%/%macro_type%.2da~ ~%workspace%~
             COUNT_2DA_COLS colcount
             FOR (i=2;i<=colcount;i+=1) BEGIN
@@ -384,6 +204,9 @@ DEFINE_ACTION_MACRO read_in_individual_overrides BEGIN
                   FOR (k=2;k<i;k+=1) BEGIN
                       READ_2DA_ENTRY j k i temp
                       PUSH macro_data ~%temp%~
+                  END
+                  INNER_PATCH_SAVE macro_data "%macro_data%" BEGIN
+                     REPLACE_TEXTUALLY "|" " "
                   END
                   TO_UPPER macro_name
                   SPRINT macro_name ~%macro_tutuvar%%macro_name%~
@@ -408,14 +231,20 @@ DEFINE_PATCH_FUNCTION determine_number_of_spells
     INT_VAR level=1
             wisdom=10
     STR_VAR class=""
+            race=""
     RET av_0 av_1 av_2 av_3 av_4 av_5 av_6 av_7 av_8
 BEGIN
+   PATCH_IF "%race%" STRING_EQUAL_CASE beholder BEGIN
+      FOR (i=0;i<=8;i+=1) BEGIN
+         SET "av_%i%"=2
+      END
+   END ELSE BEGIN
       INNER_ACTION BEGIN
          LAUNCH_ACTION_MACRO read_in_spells_per_level
       END
       TO_LOWER class
       PATCH_MATCH ~%class%~ WITH
-      cleric fighter_cleric BEGIN
+      cleric fighter_cleric cleric_thief BEGIN
          SPRINT file MXSPLPRS
          SET wisdom_bonus=1
          SET spec_bonus=0
@@ -430,7 +259,7 @@ BEGIN
          SET wisdom_bonus=0
          SET spec_bonus=0
       END
-      fighter_mage mage_thief BEGIN
+      mind_flayer fighter_mage mage_thief vampire ogre_mage rakshasa mist no_class BEGIN // mist is HELLSLAY
          SPRINT file MXSPLWIZ
          SET wisdom_bonus=0
          SET spec_bonus=0
@@ -461,6 +290,7 @@ BEGIN
          END
          SET temp=$av(~%i%~)
       END
+   END
 
 
 END
@@ -469,7 +299,7 @@ END
 ////  add individual spell choices if appropriate
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION individual_choices 
+DEFINE_PATCH_FUNCTION individual_choices
   STR_VAR spells=""
           filename=""
           component="mage"
@@ -510,12 +340,23 @@ BEGIN
        END
        WHILE ~%spells%~ STRING_COMPARE_CASE ~~ BEGIN
           LPF return_first_entry STR_VAR list=~%spells%~ RET entry spells=list END
-          LPF deabbreviate_spellname STR_VAR input="%prefix%%entry%" RET entry=spellname END
-          PATCH_IF !VARIABLE_IS_SET ~%%entry%_LEVEL%~ BEGIN
-              LPF warning STR_VAR warning= ~No recorded level for spell %entry%~ END
-          END ELSE BEGIN
-             SET level= ~%%entry%_LEVEL%~
-             SET $ct(~%level%~)+=1
+          PATCH_MATCH "%entry%" WITH
+                "MS_.*" "SEQ_.*" "TRG_.*" "CCN_.*" "CNT_.*" ".*_PRECAST" BEGIN END
+          DEFAULT
+              PATCH_MATCH "%entry%" WITH
+                 "CLERIC_.*" "WIZARD_.*" BEGIN
+                     SPRINT input "%entry%"
+                 END
+                 DEFAULT
+                           SPRINT input "%prefix%%entry%"
+              END
+              LPF deabbreviate_spellname STR_VAR input RET entry=spellname END
+              PATCH_IF VARIABLE_IS_SET ~%%entry%_LEVEL%~ BEGIN
+                  SET level= ~%%entry%_LEVEL%~
+                  SET $ct("%level%") +=1
+              END ELSE BEGIN
+                  LPF warning STR_VAR warning= ~No recorded level for spell %entry%~ END
+              END
           END
        END
 END
@@ -548,7 +389,7 @@ END
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-////   check if HLAs function as innate (1=yes, no repeats; 2=yes, with repeats)
+////   check if HLAs function as innate (1=yes, 0=no)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION check_if_hlas_are_innate  // [legacy code, mostly]
@@ -561,28 +402,6 @@ BEGIN
               SET ~hla_innate~=1
            END
         BUT_ONLY
-        ACTION_IF ~hla_innate~=1 BEGIN
-           COPY_EXISTING ~luma0.2da~ ~override~
-                COUNT_2DA_ROWS 6 ~rowcount~
-                FOR (i=0;i<~rowcount~;i=i+1) BEGIN
-                   READ_2DA_ENTRY i 1 6 ~abilcheck~
-                   PATCH_IF ~%abilcheck%~ STRING_EQUAL_CASE ~GA_SPWI920~ BEGIN
-                       READ_2DA_ENTRY i 6 6 ~numcheck~
-                       PATCH_IF ~numcheck~>1 BEGIN
-                          SET ~hla_innate~=2
-                       END
-                       SET i=~rowcount~
-                   END
-                END
-           BUT_ONLY
-        END
-        
-        ACTION_IF ~hla_innate~=2 BEGIN
-           LAF action_check_ini STR_VAR ini=Force_No_HLA_Repeats RET value=value END
-           ACTION_IF value=1 BEGIN
-              OUTER_SET hla_innate=1
-           END
-        END
 END
 
 
@@ -604,25 +423,28 @@ BEGIN
      TO_UPPER filename
      PATCH_IF VARIABLE_IS_SET $override_level( ~%type%~ ~%filename%~) BEGIN
           SET level=$override_level(~%type%~ ~%filename%~)
-          LPF CRE_level_all STR_VAR arguments= ~%level%~ END
+          LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
           LPF CRE_enforce_saves STR_VAR arguments=at_worst END
           LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
           LPF CRE_enforce_hp STR_VAR arguments=at_worst END
      END ELSE BEGIN
        LPF CRE_read_level RET level=value END
        SET level= level=0?1:level
+       PATCH_IF debug_variable=2 BEGIN
+          PATCH_PRINT "level=%level%"
+       END
        SET should_cast=$caster_level_to_spell_level(~%castertype%~ ~%level%~)
        LPF CRE_find_highest_spell_level STR_VAR arguments=~%type%~ RET can_cast=value END
        PATCH_IF can_cast>should_cast BEGIN
           PATCH_IF VARIABLE_IS_SET $spell_level_to_caster_level(~%castertype%~ ~%can_cast%~) BEGIN // guard against misconfigured files with illegal spells, e.g. ppnalj2
             SET level=$spell_level_to_caster_level(~%castertype%~ ~%should_cast%~)
-            LPF CRE_level_all STR_VAR arguments=~%level%~ END
+            LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
             LPF CRE_enforce_saves STR_VAR arguments=at_worst END
             LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
             LPF CRE_enforce_hp STR_VAR arguments=at_worst END
           END
        END ELSE BEGIN
-             LPF CRE_level_all INT_VAR arguments=level END // covers multiclass casters
+            LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END // covers multiclass casters
        END
      END
     END ELSE BEGIN
@@ -632,7 +454,8 @@ BEGIN
     LPF check_ini STR_VAR ini= ~%type%_level_scale~ RET level_scale=value END
     PATCH_IF !(level_add = 0 && level_scale=100) BEGIN
         SET level=( level * level_scale / 100 ) + level_add
-        LPF CRE_level_all STR_VAR arguments= ~%level%~ END
+        SET level= level<1? 1: level
+        LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
     END
 
 END
@@ -641,7 +464,7 @@ END
 ////   setup the caster-enforce code
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION initialise_enforce_caster 
+DEFINE_PATCH_FUNCTION initialise_enforce_caster
       STR_VAR filename=""
               type=""
               arguments=""
@@ -653,8 +476,8 @@ DEFINE_PATCH_FUNCTION initialise_enforce_caster
           spells_are_bg1
           modify_level
           kitdata
-          prebuff
           script
+          detect_invisible
 
 BEGIN
    // parse argument
@@ -662,15 +485,13 @@ BEGIN
    SET modify_level=1
    SET game=2
    SET spells_are_bg1=~-1~
-   SET prebuff=0
    SET script=1
-   // parse arguments. Possible values are accept_level, assign_hla, game_is_bg1, spells_are_bg1, spells_are_not_bg1, prebuff=N, no_script
+   SET druidmage=0
+   SET detect_invisible=0
+   // parse arguments. Possible values are accept_level, assign_hla, game_is_bg1, spells_are_bg1, spells_are_not_bg1, prebuff=N, no_script, druid_mage, detect_invisible
    WHILE (~%arguments%~ STRING_COMPARE ~~ && ~%arguments%~ STRING_COMPARE_CASE null) BEGIN
       LPF return_first_entry STR_VAR list= ~%arguments%~ RET arguments=list entry=entry END
       PATCH_MATCH ~%entry%~ WITH
-        assign_hla BEGIN
-            SET hla=1
-        END
         accept_level BEGIN
             SET modify_level=0
         END
@@ -683,28 +504,39 @@ BEGIN
         spells_are_not_bg1 BEGIN
             SET spells_are_bg1=0
         END
-        ~prebuff=1~ BEGIN
-           SET prebuff=1
-        END
-        ~prebuff=2~ BEGIN
-           SET prebuff=2
-        END
-        ~prebuff=3~ BEGIN
-           SET prebuff=3
-        END
-        ~prebuff=4~ BEGIN
-           SET prebuff=4
-        END
-        ~prebuff=5~ BEGIN
-           SET prebuff=5
-        END
         no_script BEGIN
            SET script=0
+        END
+        druid_mage BEGIN
+           SET druidmage=1
+        END
+        detect_invisible BEGIN
+           SET detect_invisible=1
         END
         DEFAULT PATCH_PRINT ~warning:illegal argument for CRE_enforce~ END
    END
    // get data
-   LPF CRE_read_class RET class=value END
+   PATCH_IF druidmage BEGIN
+      SPRINT class druid_mage
+   END ELSE BEGIN
+      LPF CRE_read_class RET class=value END
+      PATCH_MATCH "%class%" WITH
+      INNOCENT BEGIN
+        PATCH_IF !enhanced_edition BEGIN
+         PATCH_MATCH "%type%" WITH
+         mage BEGIN
+             SPRINT class mage
+         END
+         priest BEGIN
+             SPRINT class cleric
+         END
+         DEFAULT
+         END
+        END
+      END
+      DEFAULT
+      END
+   END
    LPF CRE_read_race RET race=value END
    TO_UPPER filename
    // strip "_"
@@ -723,15 +555,6 @@ BEGIN
    END ELSE BEGIN
        LPF CRE_read_kit RET kitdata=value END
    END
-   // work out prebuff status
-   PATCH_IF prebuff=0 BEGIN
-     FOR(i=1;i<=5;i+=1) BEGIN
-      LPF check_label STR_VAR label= ~dw#%type%_%i%~ RET value=value END
-      PATCH_IF value BEGIN
-         SET prebuff=i
-      END
-     END
-   END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -740,6 +563,7 @@ END
 
 DEFINE_ACTION_FUNCTION ~cursed_wound~ BEGIN
   ACTION_IF !enhanced_edition BEGIN
+   WITH_TRA "%scs_tra_loc%/english/caster_shared.tra" "%scs_tra_loc%/%LANGUAGE%/caster_shared.tra" BEGIN
    ADD_SECTYPE CursedWound @16027
    OUTER_SET curse_string=RESOLVE_STR_REF (@16026)
    OUTER_SET curse_string2=RESOLVE_STR_REF (@16020)
@@ -780,6 +604,7 @@ DEFINE_ACTION_FUNCTION ~cursed_wound~ BEGIN
    END
 
    LAF edit_spell STR_VAR spell=~devaheal %CLERIC_REMOVE_CURSE% %WIZARD_REMOVE_CURSE% %CLERIC_HEAL% %HEAL_NO_VISUAL% %WISH_HEAL_PARTY% %FINAL_HEAL% %RESTORE_FULL_HEALTH% %GENIE_LIMITED_WISH_HEAL_ALL% tg#rc27~ edits=patch_data allow_missing=1 END
+   END
   END ELSE BEGIN
      LAF clone_spell STR_VAR spell="ohbcwoun=>dw#curse" END
   END
@@ -847,6 +672,13 @@ DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
         END
         LAF make_effect STR_VAR effect=ag#immun edits=patch_data END
 
+        // make the scripts for replacement
+        PRINT "scs_tra_loc is %scs_tra_loc%"
+        WITH_TRA "%scs_tra_loc%/english/mage.tra" "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/mage.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra" BEGIN
+          LAF ssl_to_bcs STR_VAR script=dw#copmg location="ssl/main" locbase=mage variables="IsCopy=True" booleans="NoSequencers DoNotPrebuff NoContingency"  END
+          LAF ssl_to_bcs STR_VAR script=dw#coppr location="ssl/main" locbase=priest variables="IsCopy=True" booleans="NoSequencers DoNotPrebuff NoContingency"  END
+          LAF ssl_to_bcs STR_VAR script=dw#coppr rename_to=dw#copdr location="ssl/main" locbase=priest variables="IsCopy=True&IsDruid=True" booleans="NoSequencers DoNotPrebuff NoContingency"  END
+        END
         // install the dw#oppos script itself, along with the actual clone spell
         
         ACTION_IF is_bg2 BEGIN
@@ -864,3 +696,625 @@ DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
     END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////
+/////  Contingency/trigger makers
+/////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Basic maker. Fourth spell is a contingency. Third spell can be blank. prefix is cnt, trg, seq, msq.
+// strref is the tlk code for "Spell Sequencer", etc. detect is the stats.ids or splstate.ids entry.
+//
+// Prototype used a SPLSTATE to detect if the sequencer has been triggered. On reflection this looks
+// pointless; we can do it with a variable, or just with casting.
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION make_spell_trigger
+          INT_VAR remover=0
+          STR_VAR
+             spell1="" 
+             spell2="" 
+             spell3="" 
+             spell4="" 
+             name="" 
+             prefix="" 
+             strref=0
+             icon=""
+             type=""   // I think this is obsolete
+          RET resref
+    BEGIN
+    // find the resref
+    LAF trigger_slot_finder STR_VAR prefix RET resref END
+    // get the spell codes
+    LAF resolve_trigger_spells STR_VAR spell1 spell2 spell3 spell4 RET splfile1 splfile2 splfile3 splfile4 END
+    // make the spell
+    ACTION_IF ("%spell3%" STRING_EQUAL_CASE "" OR "%spell3%" STRING_EQUAL_CASE "*") BEGIN
+      MAKE_PATCH
+       add_basic_ability=>null
+       add_effect_inline'4=>"target=>1 timing=>4 duration=>1440 opcode=>171 resource=>%resref%"
+       add_effect_inline'3=>"target=>1 opcode=>172 resource=>%resref%"
+       add_effect_inline'1=>"target=>2 opcode=>146 parameter2=>1 resource=>%splfile2%"
+       add_effect_inline'0=>"target=>2 opcode=>146 parameter2=>1 resource=>%splfile1%"
+       name1_string=>"%strref%"
+       patch_ability_inline=>"ability_icon=>%icon% ability_range=>60"
+      END
+    END ELSE BEGIN
+      MAKE_PATCH
+       add_basic_ability=>null
+       add_effect_inline'5=>"target=>1 timing=>4 duration=>1440 opcode=>171 resource=>%resref%"
+       add_effect_inline'4=>"target=>1 opcode=>172 resource=>%resref%"
+       add_effect_inline'2=>"target=>2 opcode=>146 parameter2=>1 resource=>%splfile3%"
+       add_effect_inline'1=>"target=>2 opcode=>146 parameter2=>1 resource=>%splfile2%"
+       add_effect_inline'0=>"target=>2 opcode=>146 parameter2=>1 resource=>%splfile1%"
+       name1_string=>"%strref%"
+       patch_ability_inline=>"ability_icon=>%icon% ability_range=>60"
+      END
+    END
+    // add contingency if appropriate
+    ACTION_IF ("%spell4%" STRING_COMPARE "" && "%spell4%" STRING_COMPARE "*") BEGIN
+       COPY_EXISTING "%splfile4%.spl" override
+            GET_STRREF (LONG_AT 0x8) spellname
+            GET_STRREF contingency_string contingency
+            SET strref=RESOLVE_STR_REF ("%contingency%: %spellname%")
+       BUT_ONLY
+       LAF return_detectable_string STR_VAR type=CONTINGENCY_TRIGGERED RET detection_string=string END
+       OUTER_SPRINT $patch_data(add_effect_inline'12) "%detection_string% timing=>0 duration=>2000"
+       OUTER_SPRINT $patch_data(add_effect_inline'11) "target=>1 opcode=>146 parameter2=>1 resource=>%splfile4%"
+       OUTER_SPRINT $patch_data(add_effect_inline'10) "target=>1 opcode=>139 parameter1=>%strref%"
+    END
+    LAF make_spell STR_VAR spell="%resref%" edits=patch_data END
+    // once made, build a remover
+    ACTION_IF remover BEGIN
+       MAKE_PATCH
+         delete_effect=>"opcode=146"
+         add_effect_inline=>~opcode=>101 duration=>1 target=>1 parameter2=>38 at_end=>1~
+         add_effect_inline'=>~opcode=>101 duration=>1 target=>1 parameter2=>60 at_end=>1~
+         add_effect_inline''=>~opcode=>101 duration=>1 target=>1 parameter2=>80 at_end=>1~
+         add_effect_inline'''=>~opcode=>189 duration=>1 target=>1 parameter1=>10 at_end=>1~
+      END
+      LAF clone_spell STR_VAR spell="%resref%=>%resref%B" edits=patch_data END
+    END
+    LAF log_this STR_VAR file="trigger_list.2da" input="%name% %resref%" END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION randomized_trigger STR_VAR trigger1="" trigger2="" trigger3="" trigger4="" trigger5="" trigger6="" name="" RET resref BEGIN
+   // find the resref
+   LAF trigger_slot_finder STR_VAR prefix=rtr RET resref END
+   OUTER_SET count=0
+   OUTER_SPRINT trigger_list ""
+   OUTER_FOR (i=1;i<=6;i+=1) BEGIN
+      ACTION_IF EVAL "%trigger%i%%" STRING_COMPARE "" BEGIN
+         OUTER_SET count +=1
+         OUTER_SPRINT trigger_here EVAL "%trigger%i%%"
+         ACTION_IF VARIABLE_IS_SET "%trigger_here%" BEGIN
+            OUTER_SPRINT splfile EVAL "%%trigger_here%%"
+         END ELSE BEGIN
+            OUTER_SPRINT splfile "%trigger_here%"
+         END
+         OUTER_SPRINT trigger_list "%trigger_list% %splfile%"
+      END
+   END
+   ACTION_MATCH "%count%" WITH
+   1 BEGIN
+       OUTER_SPRINT prob1_list "100"
+       OUTER_SPRINT prob2_list "0"
+   END
+   2 BEGIN
+       OUTER_SPRINT prob1_list "50 100"
+       OUTER_SPRINT prob2_list "0 51"
+   END
+   3 BEGIN
+       OUTER_SPRINT prob1_list "33 66 100"
+       OUTER_SPRINT prob2_list "0 34 67"
+   END
+   4 BEGIN
+       OUTER_SPRINT prob1_list "25 50 75 100"
+       OUTER_SPRINT prob2_list "0 26 51 76"
+   END
+   5 BEGIN
+       OUTER_SPRINT prob1_list "20 40 60 80 100"
+       OUTER_SPRINT prob2_list "0 21 41 61 81"
+   END
+   6 BEGIN
+       OUTER_SPRINT prob1_list "16 33 50 66 83 100"
+       OUTER_SPRINT prob2_list "0 17 34 51 67 84"
+   END
+   DEFAULT
+      LAF warning STR_VAR warning="something weird in randomized_trigger function" END
+   END
+   MAKE_PATCH
+      add_basic_ability=>null
+      ability_target=>2
+      add_effect_inline=>"number_to_add=>%count% opcode=>146 target=>2 parameter2=>1 resource=>~entry_index from [%trigger_list%]~ probability1=>~entry_index from [%prob1_list%]~ probability2=>~entry_index from [%prob2_list%]~"
+   END
+   LAF make_spell STR_VAR spell="%resref%" edits=patch_data END
+   LAF log_this STR_VAR file="trigger_list.2da" input="%name% %resref%" END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION trigger_slot_finder INT_VAR try_first=0 STR_VAR prefix="" RET resref BEGIN
+     ACTION_IF try_first>99 BEGIN
+        LAF warning STR_VAR warning="trigger_slot_finder, with prefix %prefix%, can't find a slot <100" END
+     END
+     ACTION_IF !FILE_EXISTS_IN_GAME "dw#%prefix%%try_first%.spl" BEGIN
+        OUTER_SPRINT resref "dw#%prefix%%try_first%"
+     END ELSE BEGIN
+        OUTER_SET try_first +=1
+        LAF trigger_slot_finder INT_VAR try_first STR_VAR prefix RET resref END
+     END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resolve_trigger_spells STR_VAR spell1="" spell2="" spell3="" spell4="" RET splfile1 splfile2 splfile3 splfile4 BEGIN
+    LAF get_spellcode STR_VAR input="%spell1%" RET splfile1=value END
+    LAF get_spellcode STR_VAR input="%spell2%" RET splfile2=value END
+    LAF get_spellcode STR_VAR input="%spell3%" RET splfile3=value END
+    LAF get_spellcode STR_VAR input="%spell4%" RET splfile4=value END
+    ACTION_FOR_EACH resref IN "%splfile1%" "%splfile2%" "%splfile3%" "%splfile4%" BEGIN
+       ACTION_MATCH "%resref%" WITH 
+       "" "*" BEGIN END
+       DEFAULT
+          ACTION_IF !FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+             LAF warning STR_VAR warning="resolve_trigger_spells can't resolve spell %resref%" END
+          END
+       END
+    END
+    
+END
+
+DEFINE_ACTION_MACRO read_in_trigger_names BEGIN
+   LOCAL_SET i=0
+   LOCAL_SET rowcount=0
+   COPY "%data_loc%/trigger_list.2da" "%workspace%"
+         COUNT_2DA_ROWS 2 rowcount
+         FOR (i=0;i<rowcount;i+=1) BEGIN
+            READ_2DA_ENTRY i 0 2 name
+            READ_2DA_ENTRY i 1 2 resref
+            SPRINT "%name%" "%resref%"
+         END
+   BUT_ONLY
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION determine_caster_script_name
+    INT_VAR already_tried=0
+    STR_VAR filename_to_try="" prefix=""
+    RET script
+BEGIN
+    PATCH_IF ("%filename_to_try%" STRING_COMPARE_CASE "" && !FILE_EXISTS_IN_GAME "%filename_to_try%.bcs") BEGIN
+       SPRINT script "%filename_to_try%"
+    END ELSE BEGIN
+       SPRINT filename_to_try "dw#%prefix%%already_tried%"
+       SET already_tried +=1
+       LPF determine_caster_script_name INT_VAR already_tried STR_VAR filename_to_try prefix RET script END
+    END
+END
+
+DEFINE_ACTION_FUNCTION determine_caster_script_name
+    INT_VAR already_tried=0
+    STR_VAR filename="" prefix=""
+    RET script
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF determine_caster_script_name INT_VAR already_tried STR_VAR filename prefix RET script END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Process a line of the build-sequencers table
+//
+// seq_type is from {minor_sequencer,sequencer,trigger,chain_contingency} and matches file name
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_sequencer
+         STR_VAR location=""
+                 locbase=""
+                 locabs=""
+                 seq_alloc="seq_alloc.2da"
+BEGIN
+     // preparatory
+     LAF build_sequencer_preparatory END
+     MAKE_PATCH
+        minor_sequencer=>spwi420b
+        sequencer=>spwi710b
+        trigger=>spwi809b
+        chain_contingency=>spwi908b
+     END
+     ACTION_PHP_EACH patch_data AS entry=>resref BEGIN
+        OUTER_SPRINT "%entry%_icon" "%resref%"
+     END
+     ACTION_IF !FILE_EXISTS "%data_loc%/%seq_alloc%" BEGIN
+        COPY ".../stratagems-inline/blank" "%data_loc%/%seq_alloc%"
+        APPEND_OUTER "%data_loc%/%seq_alloc%" "seq_type kit race category data"
+     END
+     LAF get_directory STR_VAR location locbase locabs RET directory END
+     ACTION_FOR_EACH seq_type IN minor_sequencer sequencer trigger chain_contingency BEGIN
+       ACTION_IF ("%seq_type%" STRING_EQUAL_CASE "minor_sequencer" || !disable_sequencers) BEGIN
+        ACTION_IF FILE_EXISTS "%directory%/%seq_type%.2da" BEGIN
+           COPY "%directory%/%seq_type%.2da" "%workspace%"
+                COUNT_2DA_COLS colcount
+                READ_2DA_ENTRIES_NOW sequencer_table colcount
+                PATCH_FOR_EACH var IN spell1 spell2 spell3 contingency require_mod exclude_mod BEGIN
+                   SPRINT "%var%" "*"
+                END
+                FOR (i=1;i<sequencer_table;i+=1) BEGIN
+                      SPRINT name "*"
+                      FOR (j=0;j<colcount;j+=1) BEGIN
+                          READ_2DA_ENTRY_FORMER sequencer_table 0 j var
+                          READ_2DA_ENTRY_FORMER sequencer_table i j val
+                          SPRINT "%var%" "%val%"
+                      END
+                      LPF build_sequencer_helper STR_VAR name spell1 spell2 spell3 contingency require_mod exclude_mod seq_type category RET name value END
+                      PATCH_IF value BEGIN
+                        PATCH_FOR_EACH kit_here IN conjurer enchanter invoker necromancer fighter_mage mage_thief bard cleric_mage druid_mage elder_orb BEGIN
+                           PATCH_IF (INDEX ("%kit_here%" "%kit%") >=0 || INDEX ("all" "%kit%") >=0 ) BEGIN
+                              PATCH_FOR_EACH race IN baseline vampire rakshasa lich BEGIN
+                                 LPF seq_helper_race STR_VAR race require_type exclude_type RET value END
+                                 PATCH_IF value BEGIN
+                                    PATCH_IF VARIABLE_IS_SET $seq_data("%seq_type%" "%kit_here%" "%race%" "%category%") BEGIN
+                                       SPRINT temp $seq_data("%seq_type%" "%kit_here%" "%race%" "%category%")
+                                       SPRINT $seq_data("%seq_type%" "%kit_here%" "%race%" "%category%") "%temp%|%name%"
+                                    END ELSE BEGIN
+                                       SPRINT $seq_data("%seq_type%" "%kit_here%" "%race%" "%category%") "%name%"
+                                    END
+                                 END
+                              END
+                           END
+                         END
+                      END
+                END
+           BUT_ONLY
+        END
+       END
+     END
+     ACTION_FOR_EACH seq_type IN minor_sequencer sequencer trigger chain_contingency BEGIN
+         ACTION_FOR_EACH kit IN conjurer invoker necromancer enchanter fighter_mage mage_thief bard cleric_mage druid_mage elder_orb BEGIN
+              ACTION_FOR_EACH race IN baseline lich rakshasa vampire BEGIN
+               ACTION_FOR_EACH category IN o d m d1 d2 dsp BEGIN
+                 ACTION_IF VARIABLE_IS_SET $seq_data("%seq_type%" "%kit%" "%race%" "%category%") BEGIN
+                    OUTER_SPRINT temp $seq_data("%seq_type%" "%kit%" "%race%" "%category%")
+                 END ELSE BEGIN
+                    OUTER_SPRINT temp "NULL"
+                 END
+                 APPEND_OUTER "%data_loc%/%seq_alloc%" "%seq_type% %kit% %race% %category% %temp%"
+               END
+              END
+         END
+     END
+END
+
+
+DEFINE_PATCH_FUNCTION build_sequencer_helper
+   STR_VAR spell1="*"
+           spell2="*"
+           spell3="*"
+           contingency="*"
+           require_mod="*"
+           exclude_mod="*"
+           require_type="*"
+           exclude_type="*"
+           seq_type=""
+           name="*"
+           category=""
+   RET name value
+BEGIN
+           // check if required at all
+           LPF seq_helper_mod STR_VAR require_mod exclude_mod RET value END
+           PATCH_IF value BEGIN
+              // name the sequencer
+              PATCH_IF "%name%" STRING_EQUAL_CASE "*" BEGIN
+                  LPF name_sequencer STR_VAR spell1 spell2 spell3 contingency RET name END
+              END
+              // get the prefix and string
+              SET strref="%%seq_type%_string%"
+              SPRINT icon "%%seq_type%_icon%"
+              PATCH_MATCH "%seq_type%" WITH
+                 minor_sequencer BEGIN
+                    SPRINT prefix ms
+                 END
+                 sequencer BEGIN
+                    SPRINT prefix sq
+                 END
+                 trigger BEGIN
+                    SPRINT prefix tg
+                 END
+                 chain_contingency BEGIN
+                    SPRINT prefix cc
+                 END
+                 DEFAULT
+                    SPRINT prefix xx
+                    LPF warning STR_VAR warning="Unidentified sequencer type %seq_type%"  END
+              END
+              SPRINT type "%seq_type%_TRIGGERED"
+              TO_UPPER type
+              PATCH_MATCH "%category%" WITH
+              o dsp BEGIN
+                 SET remover=1
+              END
+              DEFAULT
+                 SET remover=0
+              END
+              INNER_ACTION BEGIN
+                      LAF make_spell_trigger INT_VAR remover STR_VAR spell1 spell2 spell3 spell4="%contingency%" prefix strref name type icon END
+              END
+           END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Build sequencer preparation
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_sequencer_preparatory 
+BEGIN
+   ACTION_FOR_EACH copy IN dw#sfc1 dw#sfc2 BEGIN
+      COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" "override/%copy%.spl"
+          REPLACE_TEXTUALLY "%WIZARD_SUMMON_FIEND%" "%copy%"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Check the mod require/exclude variable for a sequencer
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION seq_helper_mod
+    STR_VAR require_mod=""
+            exclude_mod=""
+    RET value
+BEGIN
+    PATCH_IF "%require_mod%" STRING_EQUAL_CASE "*" BEGIN
+       LPF seq_helper_mod_core STR_VAR string="%exclude_mod%" RET temp=value END
+       SET value=!temp
+    END ELSE BEGIN
+       LPF seq_helper_mod_core STR_VAR string="%require_mod%" RET value END
+    END
+END
+
+DEFINE_PATCH_FUNCTION seq_helper_mod_core
+    STR_VAR string=""
+    RET value
+BEGIN
+   INNER_PATCH_SAVE list "%string%" BEGIN
+      REPLACE_TEXTUALLY "|" " "
+   END
+   SET value=0
+   WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+      LPF return_first_entry STR_VAR list RET entry list END
+      PATCH_MATCH "%entry%" WITH
+         iwd BEGIN
+            PATCH_IF (iwd_arcane && !demivrgvs) BEGIN
+               SET value=1
+            END
+         END
+         iwdee BEGIN
+            PATCH_IF (iwd_arcane && !demivrgvs && enhanced_edition) BEGIN
+               SET value=1
+            END
+         END
+         demivrgvs BEGIN
+            PATCH_IF demivrgvs BEGIN
+               SET value=1
+            END
+         END
+         "*" BEGIN
+         END
+         DEFAULT
+            LPF warning STR_VAR warning="unknown mod %entry% in sequencer table" END
+       END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Check the race require/exclude variable for a sequencer
+//
+// We assume nothing is both required and excluded!
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION seq_helper_race
+    STR_VAR require_type=""
+            exclude_type=""
+            race=""
+    RET value
+BEGIN
+    PATCH_IF "%require_type%" STRING_EQUAL_CASE "*" BEGIN
+        PATCH_MATCH "%race%" WITH
+        baseline BEGIN
+           SET value=1
+        END
+        DEFAULT
+           LPF seq_helper_race_core STR_VAR string="%exclude_type%" race RET temp=value END
+           SET value=!temp
+        END
+    END ELSE BEGIN
+        PATCH_MATCH "%race%" WITH
+        baseline BEGIN
+           SET value=0
+        END
+        DEFAULT
+           LPF seq_helper_race_core STR_VAR string="%require_type%" race RET value END
+        END
+    END
+END
+
+DEFINE_PATCH_FUNCTION seq_helper_race_core
+    STR_VAR string=""
+            race=""
+    RET value
+BEGIN
+   INNER_PATCH_SAVE list "%string%" BEGIN
+      REPLACE_TEXTUALLY "|" " "
+   END
+   LPF element_in_list STR_VAR element="%race%" list RET value END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Generate the name for a sequencer
+//
+// Conventions: alphabetical order, then replace "ENTRY_ENTRY" with "2x_ENTRY" and "ENTRY ENTRY ENTRY" with "3x_ENTRY"
+//
+// Add "CONTINGENCY_ENTRY" for contingency
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION name_sequencer_core
+   STR_VAR spell1=""
+           spell2=""
+           spell3=""
+   RET name
+BEGIN
+   SPRINT list "%spell1% %spell2% %spell3%"
+   INNER_PATCH_SAVE list "%list%" BEGIN
+      REPLACE_TEXTUALLY "*" ""
+   END
+   LPF quicksort STR_VAR list RET list END
+   LPF return_first_entry STR_VAR list RET entry1=entry list END
+   PATCH_IF "%list%" STRING_EQUAL_CASE "" BEGIN // 1 entry only
+      SPRINT name "%entry%"
+   END ELSE BEGIN
+      LPF return_first_entry STR_VAR list RET entry2=entry list END
+      PATCH_IF "%list%" STRING_EQUAL_CASE "" BEGIN // 2 entries only
+         PATCH_IF "%entry1%" STRING_EQUAL_CASE "%entry2%" BEGIN
+            SPRINT name "2X_%entry1%"
+         END ELSE BEGIN
+            SPRINT name "%entry1%_%entry2%"
+         END
+      END ELSE BEGIN
+          LPF return_first_entry STR_VAR list RET entry3=entry list END
+          PATCH_IF "%entry1%" STRING_EQUAL_CASE "%entry3%" BEGIN
+             SPRINT name "3X_%entry1%"
+          END ELSE
+          PATCH_IF "%entry1%" STRING_EQUAL_CASE "%entry2%" BEGIN
+             SPRINT name "2X_%entry1%_%entry3%"
+          END ELSE
+          PATCH_IF "%entry2%" STRING_EQUAL_CASE "%entry3%" BEGIN
+             SPRINT name "%entry1%_2X_%entry3%"
+          END ELSE BEGIN
+             SPRINT name "%entry1%_%entry2%_%entry3%"
+          END
+      END
+   END
+END
+
+DEFINE_PATCH_FUNCTION name_sequencer
+   STR_VAR spell1=""
+           spell2=""
+           spell3=""
+           contingency=""
+   RET name
+BEGIN
+   LPF name_sequencer_core STR_VAR spell1 spell2 spell3 RET name END
+   PATCH_MATCH "%contingency%" WITH
+   "*" "" BEGIN
+   END
+   DEFAULT
+      SPRINT name "%name%_CONTINGENCY_%contingency%"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+///
+/// Get spell-trigger data read in
+///
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_in_spell_trigger_data BEGIN
+     ACTION_IF !VARIABLE_IS_SET spell_trigger_data_read BEGIN
+        OUTER_SET spell_trigger_data_read=1
+        // allocations
+        COPY "%data_loc%/seq_alloc.2da" "%workspace%"
+           COUNT_2DA_COLS colcount
+           READ_2DA_ENTRIES_NOW sequencer_table colcount
+           FOR (i=1;i<sequencer_table;i+=1) BEGIN
+              FOR (j=0;j<colcount;j+=1) BEGIN
+                 READ_2DA_ENTRY_FORMER sequencer_table 0 j var
+                 READ_2DA_ENTRY_FORMER sequencer_table i j val
+                 SPRINT "%var%" "%val%"
+              END
+              INNER_PATCH_SAVE data "%data%" BEGIN
+                 REPLACE_TEXTUALLY "|" " "
+              END
+              SPRINT $seq_data("%seq_type%" "%kit%" "%race%" "%category%") "%data%"
+           END
+        BUT_ONLY
+        // names
+        COPY "%data_loc%/trigger_list.2da" "%workspace%"
+             READ_2DA_ENTRIES_NOW sequencer_table 2
+             FOR (i=0;i<sequencer_table;i+=1) BEGIN
+                READ_2DA_ENTRY_FORMER sequencer_table i 0 name
+                READ_2DA_ENTRY_FORMER sequencer_table i 1 resref
+                SPRINT "%name%" "%resref%"
+             END
+        BUT_ONLY
+     END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION "build_caster_label" BEGIN
+
+  ACTION_IF enhanced_edition BEGIN
+   LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id=DW_SCS_CASTER RET stat_ind END
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>328 mode=>1 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
+   END
+   LAF make_spell STR_VAR spell="dw#calab" edits=patch_data END
+  END ELSE BEGIN
+   LAF ds_resolve_stat INT_VAR ids=2 STR_VAR id=DW_SCS_CASTER RET stat_ind END
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>318 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
+   END
+   LAF make_spell STR_VAR spell="dw#calab" edits=patch_data END
+  END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION "build_detect_invisibility_label" BEGIN // currently just for SR
+
+  ACTION_IF enhanced_edition BEGIN
+   LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id=DETECT_INVISIBILITY RET stat_ind END
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>328 mode=>1 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
+   END
+   LAF make_spell STR_VAR spell="dw#caldi" edits=patch_data END
+  END ELSE BEGIN
+   LAF ds_resolve_stat INT_VAR ids=2 STR_VAR id=DW_DETECT_INVISIBILITY RET stat_ind END
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>318 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
+   END
+   LAF make_spell STR_VAR spell="dw#caldi" edits=patch_data END
+  END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   identify wands
+////
+////   For speed, and because false positives don't really matter, we just do a text search of the file
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION look_for_wands 
+     RET wands
+BEGIN
+     SPRINT wands ""
+     PATCH_IF INDEX_BUFFER ("wand")>=0 BEGIN
+          PATCH_FOR_EACH wand IN wand02 wand04 wand05 wand06 wand11 wand18 BEGIN
+               PATCH_IF INDEX_BUFFER ("%wand%")>=0 BEGIN
+                  SPRINT wands "%wands% %wand%"
+               END
+          END
+     END
+END

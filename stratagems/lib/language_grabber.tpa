@@ -1,0 +1,184 @@
+DEFINE_ACTION_FUNCTION grab_tra_scs BEGIN
+
+///////////////////////////////////////////////////
+//// This is the code used to grab SCS translations to break into subfiles
+////
+//// Not used in live SCS; here for reference
+/////////////////////////////////////////////////////////////////////////
+
+
+     // do the shared files
+     
+     ACTION_FOR_EACH tra_entries IN 1002 1003 1004 1005 1006 1007 1008 1009 1010 1011 1012 1014 1017 1018 1020 1021 1024 1028 1034 1035 1041 1042 1045 1052 1055 BEGIN
+          OUTER_SET force_ref=tra_entries+100000
+          LAF extract_from_tra INT_VAR relativise_tra_in=1 force_ref STR_VAR tra_entries language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH" tra_in_loc="%scsroot%/tra" tra_out="shared.tra" tra_out_loc="%workspace%/scs_lang" END
+     END
+
+     LAF extract_from_tra INT_VAR relativise_tra_in=1 force_ref=100200 STR_VAR tra_entries=21108 language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH" tra_in_loc="%scsroot%/tra" tra_out="shared.tra" tra_out_loc="%workspace%/scs_lang" END
+     LAF extract_from_tra INT_VAR relativise_tra_in=1 force_ref=100201 STR_VAR tra_entries=21109 language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH" tra_in_loc="%scsroot%/tra" tra_out="shared.tra" tra_out_loc="%workspace%/scs_lang" END
+
+
+
+     // get the strings used, after subbing out the shared potion and use-a-wand/scroll strings
+     GET_DIRECTORY_ARRAY topdirs "%scsroot%" ".*[a-z].*"
+     ACTION_PHP_EACH topdirs AS int=>dir BEGIN
+        OUTER_INNER_PATCH_SAVE log "%dir%" BEGIN
+           DELETE_BYTES 0x0 (STRING_LENGTH "%scsroot%" + 1)
+        END
+        LAF recurse_through_files STR_VAR base_dir="%dir%" allowed_ext="tpa tph ssl baf d" function=shared_strref_swap END
+        LAF recurse_through_files STR_VAR base_dir="%dir%" allowed_ext="tpa tph ssl baf d" function=strref_top_level arguments="%log%.txt" END
+     END
+     
+     LAF strref_top_level STR_VAR file_res=setup-stratagems file_ext=tp2 file_dir="%scsroot%" arguments="setup.txt" END
+
+     // make the tra files
+
+     ACTION_BASH_FOR "%workspace%/tra_records" ".*\.txt" BEGIN
+        LAF read_in_list STR_VAR file="%BASH_FOR_FILE%" locabs="%workspace%/tra_records" RET list_unstripped=list END
+        OUTER_SPRINT list ""
+        OUTER_WHILE "%list_unstripped%" STRING_COMPARE "" BEGIN
+           LAF return_first_entry STR_VAR list="%list_unstripped%" RET entry list_unstripped=list END
+           OUTER_SET entry -= 100000
+           OUTER_SPRINT list "%list% %entry%"
+        END
+        LAF quicksort_numerical STR_VAR list RET tra_entries=list END
+        LAF extract_from_tra INT_VAR relativise_tra_in=1 STR_VAR language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH" tra_in_loc="%scsroot%/tra" tra_out="%BASH_FOR_RES%.tra" tra_out_loc="%workspace%/scs_lang" tra_entries END
+     END
+
+     // hand-make those not caught automatically
+
+     MAKE_PATCH
+        shapeshift=>"13120 13121 13122 13123 13124 13125 13126 13127 13128 13129 13140 13141 13142 13143 13144 13145 13146 13147 13148 13149"
+        fine_arrows=>"20305 20306 20307 20308 20309 20310 20311 20312"
+        fine_weapons=>"401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434"
+        fiend_summoning=>"32100 32101 32102 32103"
+        bodhi=>"2400 2502 2503 2504 2505 2506 2507 2510"
+     END
+     ACTION_PHP_EACH patch_data AS traname=>tra_entries BEGIN
+        LAF extract_from_tra INT_VAR relativise_tra_in=1 STR_VAR language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH" tra_in_loc="%scsroot%/tra" tra_out="%traname%.tra" tra_out_loc="%workspace%/scs_lang" tra_entries END
+     END
+
+     // get player1.tra
+     
+     ACTION_FOR_EACH language IN UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE SPANISH BEGIN
+        ACTION_IF FILE_EXISTS "%scsroot%/tra/%language%/player1.tra" BEGIN
+           COPY "%scsroot%/tra/%language%/player1.tra" "%workspace%/scs_lang/%language%/player1.tra"
+        END
+     END
+
+
+END
+
+
+
+DEFINE_ACTION_FUNCTION heuristic_strref_check
+    STR_VAR file_res=""
+            file_ext=""
+            file_dir=""
+            arguments=""
+BEGIN
+     COPY "%file_dir%/%file_res%.%file_ext%" "%workspace%"
+         PATCH_IF INDEX_BUFFER ("say_[a-z0-9_]+ *= *> *[^0-9]") >=0 BEGIN
+             LPF log_this STR_VAR file="heuristic_strrefs.txt" log="%file_dir%/%file_res%.%file_ext%" END
+         END
+     BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION shared_strref_swap 
+BEGIN
+     COPY "%file_dir%/%file_res%.%file_ext%" "%file_dir%"
+            FOR (i=1000;i<=1100;i+=1) BEGIN
+               SET new_number=i+100000
+               REPLACE_TEXTUALLY "%atsymbol%%i%" "%atsymbol%%new_number%"
+            END
+            REPLACE_TEXTUALLY "%atsymbol%21108" "%atsymbol%100200"
+            REPLACE_TEXTUALLY "%atsymbol%21109" "%atsymbol%100201"
+     BUT_ONLY
+
+END
+
+
+
+
+
+
+
+
+
+
+DEFINE_ACTION_FUNCTION grab_tra_tweaks BEGIN
+
+///////////////////////////////////////////////////
+//// This is the code used to grab SCS translations for Tweaks migration
+////
+//// It's not called in live SCS but I'm leaving it here as a templated
+//// in case I do something similar later.
+/////////////////////////////////////////////////////////////////////////
+
+
+
+
+        // npc_separate uses 20700-20726
+
+        OUTER_SPRINT tra_entries ""
+        
+        OUTER_FOR (i=20700;i<=20726;i+=1) BEGIN
+           OUTER_SPRINT tra_entries "%tra_entries% %i%"
+        END
+
+        // wait_at_inns uses 20801-20804, 20810-20826, 20831-20838, 20840
+
+        OUTER_FOR (i=20801;i<=20804;i+=1) BEGIN
+           OUTER_SPRINT tra_entries "%tra_entries% %i%"
+        END
+        OUTER_FOR (i=20810;i<=20826;i+=1) BEGIN
+           OUTER_SPRINT tra_entries "%tra_entries% %i%"
+        END
+        OUTER_FOR (i=20831;i<=20838;i+=1) BEGIN
+           OUTER_SPRINT tra_entries "%tra_entries% %i%"
+        END
+        OUTER_SPRINT tra_entries "%tra_entries% 20840"
+
+
+        LAF extract_from_tra INT_VAR relativise_tra_in=1 STR_VAR language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE" tra_in_loc="%scsroot%/tra" tra_out="dw_components.tra" tra_out_loc="%workspace%/cd_lang" tra_entries END
+
+
+
+<<<<<<<< .../stratagems-inline/top.txt
+/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\
+/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\
+/////                                                  \\\\\
+///// Ex-SCS components                                \\\\\
+///// Automatically copied over from SCS TRA files     \\\\\
+/////                                                  \\\\\
+/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\
+/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\/////\\\\\
+>>>>>>>>
+
+       ACTION_FOR_EACH language IN UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE BEGIN
+          COPY "cdtweaks/languages/%language%/setup.tra" "%workspace%/cd_lang/%language%"
+             APPEND_FILE TEXT ".../stratagems-inline/top.txt"
+          BUT_ONLY
+       END
+
+       ACTION_DEFINE_ASSOCIATIVE_ARRAY setup_tra BEGIN
+             20007=>500000 // ankhegs
+             20011=>501000 // pair-sep
+             164=>502000 // no-chunk
+             51=>503000 // move Boo
+             20014=>504000 // yeslick axes
+             20071=>505000 // protect Shar-Teel
+             50=>506000 // mirror cloak
+             3335=>507001 // bard stronghold
+             3336=>507002 // cleric stronghold
+             3337=>507003 // druid stronghold
+             3338=>507004 // fighter stronghold
+             3339=>507005 // paladin stronghold
+             3340=>507006 // ranger stronghold
+             3340=>507007 // thief stronghold
+             3341=>507008 // wizard stronghold
+       END
+       ACTION_PHP_EACH setup_tra AS tra_entries=>force_ref BEGIN
+          LAF extract_from_tra INT_VAR relativise_tra_in=1 force_ref STR_VAR tra_entries language_list="UKISH FRENCH GERMAN POLISH ITALIAN RUSSIAN KOREAN SCHINESE" tra_in_loc="%scsroot%/tra" tra_out="setup.tra" tra_out_loc="%workspace%/cd_lang" END
+       END
+END

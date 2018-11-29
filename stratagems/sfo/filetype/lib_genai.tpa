@@ -7,16 +7,20 @@ DEFINE_ACTION_MACRO read_in_genai_item_data BEGIN
        OUTER_SET genai_items_read=1
        PRINT ~Reading in initial data about weapons~
        SILENT
-       COPY_EXISTING_REGEXP GLOB ~%tutu_var%.*\.itm~ ~override~
+       ACTION_TRY
+         COPY_EXISTING_REGEXP GLOB ~%tutu_var%.*\.itm~ ~override~
              SPRINT filename ~%SOURCE_RES%~
-             LPF identify_weapon_patch RET twohanded=twohanded type=type proftype=proftype enchantment=enchantment damagetype=damagetype END
+             LPF identify_weapon_patch RET twohanded type proftype enchantment damagetype END
              TO_UPPER filename
              SET $genai_twohanded(~%filename%~)=twohanded
              SET $genai_type(~%filename%~)=type
              SET $genai_proftype(~%filename%~)=proftype
              SET $genai_enchantment(~%filename%~)=enchantment
              SPRINT $genai_damagetype(~%filename%~) ~%damagetype%~
-       BUT_ONLY
+         BUT_ONLY
+         WITH DEFAULT
+            LAF warning STR_VAR warning="Item file %filename% appears malformed" END
+       END
    END
 END
 
@@ -101,14 +105,21 @@ BEGIN
            END
            // actually do the allocations
            LPF CRE_wipe_proficiencies END
-           PATCH_FOR_EACH profname IN onhandprof offhandprof rangedprof style BEGIN
-              SET profcode= ~%profname%~
+           PATCH_FOR_EACH profname IN onhandprof offhandprof rangedprof style BEGIN   SET profcode= ~%profname%~
+                 SET value= ~%profname%num~
+                 PATCH_IF value>0 BEGIN
+                    SET_BG2_PROFICIENCY "%profname%" value
+                 END
+
+          /*    SET profcode= ~%profname%~
               PATCH_IF profcode>0 BEGIN
                  SET value= ~%profname%num~
                  PATCH_IF value>0 BEGIN
                     LPF add_entry_inline STR_VAR arguments=~opcode=>233 parameter1=>%value% parameter2=>%profcode% target=>0~ type=effect file_ext=CRE END
                  END
               END
+              
+           */
            END
 END
 
@@ -208,6 +219,51 @@ BEGIN
        SET proftype=0
        SET twohanded=0
        INNER_ACTION BEGIN
+        ACTION_MATCH "%weaponfile%" WITH
+         // IWDEE random weapons
+         rndtre11 BEGIN
+            OUTER_SET twohanded=1
+            OUTER_SET proftype="-1"
+            OUTER_SET enchantment=0
+            OUTER_SPRINT damagetype slashing
+            OUTER_SET type=0
+         END
+         rndtre03 rndtre04 rndtre05 rndtre40 rndtre49 rndtre50 rndtre80 BEGIN // random melee weapons
+            OUTER_SET twohanded=0
+            OUTER_SET proftype="-1"
+            OUTER_SET enchantment=0
+            OUTER_SPRINT damagetype none
+            OUTER_SET type=0
+         END
+         rndtre41 rndtre42 BEGIN // random bow
+            OUTER_SET twohanded=0
+            OUTER_SET proftype="-1"
+            OUTER_SET enchantment=0
+            OUTER_SPRINT damagetype none
+            OUTER_SET type=2
+         END
+         rndtre58 BEGIN  // IWDEE random magic longbow
+           OUTER_INNER_PATCH "" BEGIN
+            LPF identify_weapon STR_VAR weaponfile=ulbow4a RET twohanded type proftype enchantment damagetype END
+           END
+         END
+         rndtre77 BEGIN  // IWDEE random staff
+           OUTER_INNER_PATCH "" BEGIN
+            LPF identify_weapon STR_VAR weaponfile=staf01 RET twohanded type proftype enchantment damagetype END
+           END
+         END
+         rndtre87 BEGIN  // IWDEE random crossbow
+           OUTER_INNER_PATCH "" BEGIN
+            LPF identify_weapon STR_VAR weaponfile=xbow01 RET twohanded type proftype enchantment damagetype END
+           END
+         END
+         rndtre88 BEGIN  // IWDEE random crossbow
+           OUTER_INNER_PATCH "" BEGIN
+            LPF identify_weapon STR_VAR weaponfile=xbow04 RET twohanded type proftype enchantment damagetype END
+           END
+         END
+         DEFAULT
+
 
          ACTION_IF FILE_EXISTS_IN_GAME ~%weaponfile%.itm~ BEGIN
           COPY_EXISTING ~%weaponfile%.itm~ ~override~
@@ -215,6 +271,7 @@ BEGIN
           BUT_ONLY
          END ELSE BEGIN
              LAF warning STR_VAR arguments= ~Tried to identify nonexistent weapon %weaponfile%.itm~ END
+         END
          END
        END
      END ELSE BEGIN
@@ -283,6 +340,7 @@ DEFINE_PATCH_FUNCTION identify_weapon_preferences    // goes through all carried
             has_ranged
             damagetype
             enchantment
+            no_weapon
 BEGIN
        SPRINT damagetype unknown
        SET enchantment=0
@@ -290,12 +348,17 @@ BEGIN
           SET ~%var%~ = 0
        END
        SET style=STAT_VALUE_PROFICIENCYSINGLEWEAPON
-       SET skip_me=1
+       SET no_weapon=1
+       SET skip_me=0
        SPRINT ~to_delete~ ~~
        // get the item assigned to each slot
        PATCH_FOR_EACH arguments IN weapon1 weapon2 weapon3 weapon4 BEGIN
           LPF CRE_read_item_in_slot STR_VAR arguments RET weaponfile=value END
           PATCH_IF ~%weaponfile%~ STRING_COMPARE_CASE ~~ BEGIN
+                PATCH_IF no_weapon BEGIN
+                   SET no_weapon=0
+                   SET skip_me=1
+                END
                 LPF identify_weapon STR_VAR weaponfile RET this_twohanded=twohanded type=type proftype=proftype damagetype_here=damagetype ench_here=enchantment END
                 PATCH_IF !(proftype=0) BEGIN
                    SET skip_me=0

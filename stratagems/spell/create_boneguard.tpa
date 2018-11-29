@@ -1,0 +1,147 @@
+/////////////////////////////////////////////////////
+//// Create Boneguard - clone from IWD MS 7
+///////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION create_boneguard BEGIN
+
+  ACTION_IF !VARIABLE_IS_SET "WIZARD_CREATE_BONEGUARD" BEGIN // does it exist already?
+
+    LAF definalise_hidespl END
+
+    CLEAR_IDS_MAP
+    LAF get_spellcode STR_VAR input=WIZARD_MONSTER_SUMMONING_7 RET spell=value END
+    COPY_EXISTING "%spell%.spl" "%workspace%/boneguard.spl"
+    MAKE_PATCH
+       say_name=>40400
+       say_description=>40401
+       enforce_school=>necromancy
+       patch_effect_inline=>"opcode=>177 resource=>dw#spbgd parameter2=>2 probability1=>50 dicenum=>0 dicesize=>0"
+       clone_effect_inline=>"number_to_add=>2 probability1=>100 probability2=>51"
+    END
+    LAF install_spell STR_VAR idsname=WIZARD_CREATE_BONEGUARD spell="boneguard" locabs="%workspace%" edits=patch_data RET WIZARD_CREATE_BONEGUARD=newname END
+    LAF collect_spell_icons STR_VAR location=resource resref=tg#bone spell=WIZARD_CREATE_BONEGUARD END
+    LAF patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%WIZARD_CREATE_BONEGUARD%c" condition=is_red action=col_swap END
+    LAF patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%WIZARD_CREATE_BONEGUARD%b" condition=is_dark_red action=col_swap_2 END
+
+
+    // at least pro tem, steal Protection from Undead scroll icon
+
+    COPY_EXISTING iscrl09.bam "override/%WIZARD_CREATE_BONEGUARD%A.bam"
+
+    // sort out scroll
+
+
+      OUTER_SPRINT scroll_new "dw#bgscr"
+
+    MAKE_PATCH
+       say_both_names=>40400
+       say_both_descriptions=>40401
+       patch_effect_inline=>"resource=>%WIZARD_CREATE_BONEGUARD%"
+       patch_ability_inline=>"ability_icon=>%WIZARD_CREATE_BONEGUARD%A"
+       icon=>"%WIZARD_CREATE_BONEGUARD%A"
+       unusable_invoker=>0
+       unusable_diviner=>0
+       unusable_illusionist=>1
+    END
+    LAF clone_item STR_VAR item="%WIZARD_MONSTER_SUMMONING_7_SCROLL%=>%scroll_new%" edits=patch_data END
+
+
+   OUTER_SPRINT shadow "%WIZARD_WAIL_OF_THE_BANSHEE_SCROLL%"
+   MAKE_PATCH
+      clone_item_inline=>"match=>~item_resource=%shadow%~ item_resource=>%scroll_new%"
+   END
+   COPY_EXISTING_REGEXP GLOB ".*\.sto" override
+           PATCH_IF INDEX_BUFFER ("%shadow%")>=0 BEGIN
+              LPF apply_patches STR_VAR edits=patch_data file_ext=STO END
+           END
+   BUT_ONLY
+
+    // make effect
+
+    MAKE_PATCH
+       duration=>2400
+       timing=>1
+       resource=>ms7bgrd
+       resource2=>spraised
+       target=>1
+       opcode=>67
+    END
+    LAF make_effect STR_VAR effect=dw#spbgd edits=patch_data END
+
+    // tweak monster file
+    ACTION_IF enhanced_edition BEGIN
+       OUTER_SPRINT script bdsum00
+    END ELSE BEGIN
+       OUTER_SPRINT script wtasight
+    END
+    MAKE_PATCH
+      delete_effect=>"opcode=233"
+      swap_script=>"gnsummm=>%script%"
+      xp_value=>0
+      allegiance=>controlled
+      strength=>21
+      dexterity=>16
+    END
+    LAF install_creature STR_VAR location=resource creature=ms7bgrd edits=patch_data END
+    
+
+
+  END
+
+END
+
+// IWDspells' greenifier functions
+
+DEFINE_ACTION_FUNCTION make_bams_green STR_VAR resref=""
+BEGIN
+
+   LAF patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%a %resref%c" condition=is_red action=col_swap END
+   LAF patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%b" condition=is_dark_red action=col_swap_2 END
+END
+
+
+DEFINE_PATCH_FUNCTION col_swap
+    INT_VAR red=0 green=0 blue=0
+    RET red green blue
+BEGIN
+    SET green_old=green
+    SET blue_old=blue
+    SET red_old=red
+
+    SET red = 35
+    SET green = red_old - 50
+    SET blue = blue_old - 20
+END
+
+DEFINE_PATCH_FUNCTION col_swap_2
+    INT_VAR red=0 green=0 blue=0
+    RET red green blue
+BEGIN
+    SET green_old=green
+    SET blue_old=blue
+    SET red_old=red
+
+    SET red = 50
+    SET green = red_old - 50
+    SET blue = 40
+END
+
+DEFINE_PATCH_FUNCTION is_red
+    STR_VAR red=0 green=0 blue=0
+    RET value
+BEGIN
+    SET value=1
+    PATCH_IF (red<160 || green>90) BEGIN
+       SET value=0
+    END
+END
+
+DEFINE_PATCH_FUNCTION is_dark_red
+    STR_VAR red=0 green=0 blue=0 
+    RET value
+BEGIN
+    SET value=1
+    PATCH_IF (red<60) BEGIN
+       SET value=0
+    END
+END

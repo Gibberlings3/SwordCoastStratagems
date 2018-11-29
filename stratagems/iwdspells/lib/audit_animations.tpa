@@ -1,0 +1,69 @@
+//////////////////////////////////////////////////////////
+/// Go through the INI and BAM files
+/// for BG2EE and see which (IWD) animations are missing
+//////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION audit_animations
+
+BEGIN
+      COPY_EXISTING_REGEXP ".*\.ini" "%workspace%"
+             LPF extract_ini_anim_data RET anim_id resref is_iwd_anim END
+             PATCH_IF is_iwd_anim BEGIN
+                INNER_ACTION BEGIN
+                   LAF look_for_animation STR_VAR resref RET value END
+                   ACTION_IF !value BEGIN
+                      OUTER_INNER_PATCH "" BEGIN
+                         LOOKUP_IDS_SYMBOL_OF_INT anim_name animate anim_id
+                      END
+                      LAF log_this STR_VAR file=missing_animations.2da input= ~%anim_id% %anim_name%~ END
+                   END
+                END
+             END
+      BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION extract_ini_anim_data
+   RET anim_id resref is_iwd_anim
+BEGIN
+   SET anim_id=0
+   SPRINT resref ""
+   SPRINT anim_type ""
+   REPLACE_TEXTUALLY "=" " "
+   READ_2DA_ENTRIES_NOW entry_array 2
+   FOR (i=0;i<entry_array;i+=1) BEGIN
+      READ_2DA_ENTRY_FORMER entry_array i 0 key
+      READ_2DA_ENTRY_FORMER entry_array i 1 value
+      PATCH_MATCH "%key%" WITH
+      animation_type BEGIN
+         SPRINT anim_id "0x%SOURCE_RES%"
+      END
+      resref BEGIN
+         SPRINT resref "%value%"
+      END
+      DEFAULT
+      END
+   END
+   PATCH_IF anim_id=0 BEGIN
+      SET is_iwd_anim=0
+   END ELSE BEGIN
+      PATCH_IF INDEX_BUFFER ("monster_icewind")>=0 BEGIN
+         SET is_iwd_anim=1
+      END ELSE BEGIN
+         SET is_iwd_anim=0
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION look_for_animation
+      STR_VAR resref=""
+    RET value
+BEGIN
+   OUTER_SPRINT resref "%resref%GH"
+   ACTION_IF FILE_EXISTS_IN_GAME "%resref%.bam" BEGIN
+        OUTER_SET value=1
+   END ELSE BEGIN
+        OUTER_SET value=0
+   END
+END

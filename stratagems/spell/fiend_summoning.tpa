@@ -1,0 +1,203 @@
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+////    Change fiend-summoning spells to be aligned to caster alignment (so that
+////    Cacofiend summons Bone Fiends and Summon Fiend summons Cornugons (for L casters)
+////    and Gate summons Balors (for C casters)
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_summoning BEGIN
+
+   LAF fiend_summons_cre END
+   LAF fiend_summons_spl END
+   ACTION_IF !enhanced_edition BEGIN
+      LAF fiend_summons_non_ee END
+   END
+   ACTION_IF demivrgvs BEGIN
+      LAF run STR_VAR file=friendly_fiends locbase=fiend tra=fiend END // we need the sophisticated AI and spells from the get-go
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Edit the spells - each casts an alignment-sensitive version, and we also build neutral versions
+/// that have a 50% chance of summoning tanarri or baatezu (and which can be swapped by aTweaks to
+/// call up genuine yugoloths)
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_summons_spl
+BEGIN
+
+
+<<<<<<<< .../stratagems-inline/fiend_spl_table
+         spell_main                 eff_l            eff_n          eff_c         desc
+         %WIZARD_CACOFIEND%         dw#hlbf          dw#sumya       spcaco        32103
+         %WIZARD_SUMMON_FIEND%      dw#hlco          dw#sumyn       spfiend       32102
+         %WIZARD_GATE%              spgate           dw#sumyu       dw#hlba       32100
+         %CLERIC_GATE%              spgate           dw#sumyu       dw#hlba       32101
+>>>>>>>>
+<<<<<<<< .../stratagems-inline/fiend_spl_table_sr
+         spell_main                 eff_l            eff_n          eff_c         desc
+         %WIZARD_SUMMON_FIEND%      dw#hlco          dw#sumyn       spfiend       32102
+         %WIZARD_GATE%              spgate           dw#sumyu       dw#hlba       32100
+>>>>>>>>
+    ACTION_IF demivrgvs BEGIN 
+       OUTER_SPRINT table fiend_spl_table_sr
+    END ELSE BEGIN
+       OUTER_SPRINT table fiend_spl_table
+    END
+    LAF process_table STR_VAR table inline=yes function=fiend_summons_spl_helper END
+
+   // restrict scroll range (SR zaps some of these scrolls, so don't assume they exist)
+   
+   ACTION_FOR_EACH scroll IN WIZARD_SUMMON_FIEND_SCROLL WIZARD_CACOFIEND_SCROLL WIZARD_GATE_SCROLL BEGIN
+      ACTION_IF VARIABLE_IS_SET "%scroll%" BEGIN
+         OUTER_SPRINT item EVAL "%%scroll%%"
+         LAF edit_item STR_VAR item editstring="patch_ability_inline=>~ability_target=>5~" END
+      END
+   END
+
+END
+
+DEFINE_ACTION_FUNCTION fiend_summons_spl_helper
+     STR_VAR spell_main=""
+             eff_l=""
+             eff_c=""
+             eff_n=""
+             desc=0
+BEGIN
+
+   // first clone for the neutral version - 50% chance of casting each
+   
+   MAKE_PATCH
+      patch_effect_inline=>~match=>opcode=177 probability1=>50 probability2=>0 resource=>%eff_l%~
+      clone_effect_inline=>~match=>opcode=177 probability1=>100 probability2=>51 resource=>%eff_c%~
+      name1_string=>"-1"
+   END
+   LAF clone_spell STR_VAR spell="%spell_main%=>%eff_n%" edits=patch_data END
+   
+   // on an EE install, also get the neutral version to enforce an alignment change
+
+   ACTION_IF enhanced_edition BEGIN
+
+         LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id=DW_SCS_CASTER RET stat_ind END
+         MAKE_PATCH
+              add_effect_inline=>~opcode=>318 duration=>1 target=>1 parameter2=>111 parameter1=>%stat_ind% resource=>%eff_n% at_end=>1~
+              add_effect_inline'=>~opcode=>57 timing=>9 duration=>0 parameter1=>0 parameter2=>19 target=>1 probability1=>50 probability2=>0 at_end=>1~
+              add_effect_inline''=>~opcode=>57 timing=>9 duration=>0 parameter1=>0 parameter2=>51 target=>1 probability1=>100 probability2=>51 at_end=>1~
+         END
+         LAF edit_spell STR_VAR spell="%eff_n%" edits=patch_data END
+   END
+
+   // make a casting effect for neutral version
+
+   LAF make_casting_effect INT_VAR target=1 STR_VAR effect=~%eff_n%~ spell=~%eff_n%~ END
+
+   // edit the main spell
+
+   MAKE_PATCH
+       patch_ability_inline=>~ability_target=>5~
+       clone_effect_inline=>~match=>opcode=177 number_to_add=>2~
+       patch_effect_inline=>~match=>opcode=177 parameter1=>"entry_index from [16 32 48]" parameter2=>8 resource=>"entry_index from [%eff_l% %eff_n% %eff_c%]"~
+       say_description=>~%desc%~
+   END
+   LAF edit_spell STR_VAR spell="%spell_main%" edits=patch_data END
+   
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// Actually make the summons
+/// (scripting is very basic here, only covering the analog of vanilla scripting for the new creatures)
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_summons_cre
+BEGIN
+
+   // summoned bone fiend
+
+   MAKE_PATCH
+      allegiance=>GOODBUTRED
+      gender=>SUMMONED_DEMON
+      dv=>dw#bfsum
+      script_override=>dw#llbnf
+      xp_value=>0
+   END
+   LAF clone_creature STR_VAR creature="gorbat5=>dw#bfsum" edits=patch_data END
+
+   // summoned cornugon
+   
+   MAKE_PATCH
+      allegiance=>GOODBUTRED
+      gender=>SUMMONED_DEMON
+      dv=>dw#cosum
+      xp_value=>0
+      script_override=>dw#llcor
+      script_default=>WTASIGHT
+   END
+   LAF clone_creature STR_VAR creature="gorbat3=>dw#cosum" edits=patch_data END
+
+   // summoned balor
+
+   MAKE_PATCH
+      allegiance=>GOODBUTRED
+      gender=>SUMMONED_DEMON
+      dv=>dw#cosum
+      xp_value=>0
+      script_override=>dw#llbal
+      script_class=>null
+      script_default=>WTASIGHT
+   END
+   LAF clone_creature STR_VAR creature="dembal01=>dw#basum" edits=patch_data END
+
+   LAF check_label STR_VAR label=dw#fiend RET value END
+   ACTION_IF !value BEGIN
+      LAF ssl_to_bcs STR_VAR script="dw#llbnf dw#llcor dw#llbal" location=ssl END
+   END
+
+   // eff
+
+   LAF clone_effect STR_VAR effect="spcaco=>dw#hlbf" editstring="resource=>dw#bfsum" END
+   LAF clone_effect STR_VAR effect="spgate=>dw#hlba" editstring="resource=>dw#basum" END
+   LAF clone_effect STR_VAR effect="spfiend=>dw#hlco" editstring="resource=>dw#cosum" END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/// edit summoned-demon scripts to handle alignment change (non-EE only)
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION fiend_summons_non_ee BEGIN
+
+    <<<<<<<< .../stratagems-inline/force_le.baf
+    IF
+      Alignment(LastSummonerOf(Myself),MASK_LCNEUTRAL)
+      !Global("forced_alignment","LOCALS",1)
+      Allegiance(LastSummonerOf(Myself),ENEMY)
+    THEN
+        RESPONSE #100
+            ChangeAlignment(LastSummonerOf(Myself),LAWFUL_EVIL)
+            SetGlobal("forced_alignment","LOCALS",1)
+            Continue()
+    END
+    >>>>>>>>
+    <<<<<<<< .../stratagems-inline/force_ce.baf
+    IF
+      Alignment(LastSummonerOf(Myself),MASK_LCNEUTRAL)
+      !Global("forced_alignment","LOCALS",1)
+      Allegiance(LastSummonerOf(Myself),ENEMY)
+    THEN
+        RESPONSE #100
+            ChangeAlignment(LastSummonerOf(Myself),CHAOTIC_EVIL)
+            SetGlobal("forced_alignment","LOCALS",1)
+            Continue()
+    END
+    >>>>>>>>
+    
+    LAF extend STR_VAR script="demnabsu demglasu dw#llbal " allow_missing=1 top=force_le inline=yes END
+    LAF extend STR_VAR script="dw#llbnf dw#llcor dempitsu dvpitsu dvglabre" allow_missing=1 top=force_ce inline=yes END
+
+
+END
+
+
+

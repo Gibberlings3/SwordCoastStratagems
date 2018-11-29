@@ -1,7 +1,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////               overarching clone
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////                                                                  
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION clone_spell
@@ -35,6 +35,8 @@ DEFINE_ACTION_FUNCTION edit_spell
            edits=""
            editstring=""
            location=""
+           locbase=""
+           locabs=""
     RET value
     BEGIN
       OUTER_SET value=0
@@ -60,6 +62,8 @@ DEFINE_ACTION_FUNCTION edit_spell
                           editstring
                           allow_missing
                           location
+                          locbase
+                          locabs
                   RET value_here=value
          END
          OUTER_SET SFO_RESERVED_object_index +=1 
@@ -87,14 +91,14 @@ DEFINE_ACTION_FUNCTION install_spell
     RET newname
     BEGIN
 
-     LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+     LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
 
 
          ACTION_IF (!("%spell%" STRING_CONTAINS_REGEXP " ") && "%idsname%" STRING_COMPARE "") BEGIN
             FAIL "You cannot use 'idsname' in install_spell unless 'spell' is a single entry, which '%spell%' isn't"
          END
          ACTION_IF "%idsname%" STRING_COMPARE "" BEGIN
-            LAF add_spell_to_ids STR_VAR idsname filename="%spell%" file_loc RET newname=newname END
+            LAF add_spell_to_ids STR_VAR idsname filename="%spell%" file_loc RET newname END
             OUTER_SPRINT spell "%spell% => %newname%"
          END ELSE BEGIN
             OUTER_SPRINT newname "%spell%"
@@ -146,10 +150,13 @@ DEFINE_ACTION_FUNCTION make_spell
            idsname=""
            edits=""
            editstring=""
+    RET    newname
     BEGIN
          ACTION_IF "%idsname%" STRING_COMPARE "" BEGIN
             LAF add_spell_to_ids INT_VAR level STR_VAR idsname type filename="%spell%" file_loc RET newname=newname END
             OUTER_SPRINT spell "%newname%"
+         END ELSE BEGIN
+            OUTER_SPRINT newname "%spell%"
          END
          ACTION_IF "%spell%" STRING_EQUAL_CASE "" BEGIN
             FAIL ~make_spell needs either an IDS name ("idsname") or a file name ("spell")~
@@ -257,6 +264,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY eff_fields BEGIN
    dicenum=> ~0x1c,LONG~
    dicesize=> ~0x20,LONG~
    savebonus=> ~0x28,LONG~
+   mode=> ~0x2c,LONG~
 END
 
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=eff_fields offset_base=~offset_base~ function_prefix=SPL secondary="yes" END
@@ -267,8 +275,11 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spl_bit_fields BEGIN
       outdoors_only=>~0x19,5~
       not_magical=>~0x19,6~
       contingency=>~0x19,7~
+      not_wild_dead=>~0x19,6~
+      not_wild_surge=>~0x19,7~
       not_in_combat=>~0x1a,0~
       bypass_II=>~0x1b,0~
+      castable_when_silenced=>~0x1b,1~
       unusable_chaotic_priest=>~0x1e,0~
       unusable_evil_priest=>~0x1e,1~
       unusable_good_priest=>~0x1e,2~
@@ -302,6 +313,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY eff_bit_fields BEGIN
       save_vs_petrification => ~0x24,4~
       save_vs_polymorph => ~0x24,4~
       bypass_mirror_image => ~0x27,0~
+      does_not_wake_sleeper => ~0x2d,2~
 END
 
 LAF build_flag_data_field_editors STR_VAR lookup_table=eff_bit_fields offset_base=~offset_base~ function_prefix=SPL  secondary="yes" END
@@ -415,14 +427,14 @@ BEGIN
    END
    divination 3 BEGIN
       SET out=3
-   END
+   END                  
    enchantment 4 BEGIN
       SET out=4
    END
    illusion 5 BEGIN
       SET out=5
    END
-   invocation 6 BEGIN
+   invocation evocation 6 BEGIN
       SET out=6
    END
    necromancy 7 BEGIN
@@ -461,6 +473,9 @@ BEGIN
    COPY - spell_school_data "%workspace%"
      COUNT_2DA_COLS colcount
      READ_2DA_ENTRIES_NOW spell_school_data colcount
+   END
+   PATCH_IF "%arguments%" STRING_EQUAL_CASE "" BEGIN
+      LPF SPL_read_school RET arguments=value END
    END
      FOR (i=1;i<spell_school_data;i+=1) BEGIN
         READ_2DA_ENTRY_FORMER spell_school_data i 0 name
@@ -594,7 +609,7 @@ BEGIN
     PATCH_IF VARIABLE_IS_SET  ~%%spellname%%~ BEGIN
     END ELSE
     PATCH_IF VARIABLE_IS_SET ~%percentage%WIZARD_%spellname%%percentage%~ AND VARIABLE_IS_SET  ~%percentage%CLERIC_%spellname%%percentage%~ BEGIN
-        PATCH_PRINT ~Spell %spellname% is ambiguous between WIZARD_%spellname% and CLERIC_%spellname%; assuming WIZARD~
+      //  PATCH_PRINT ~Spell %spellname% is ambiguous between WIZARD_%spellname% and CLERIC_%spellname%; assuming WIZARD~
         SPRINT ~spellname~ ~WIZARD_%spellname%~
     END ELSE
     PATCH_IF VARIABLE_IS_SET  ~%percentage%WIZARD_%spellname%%percentage%~ BEGIN
@@ -625,9 +640,14 @@ END
 DEFINE_PATCH_FUNCTION get_spellcode STR_VAR input="" RET value
 BEGIN
    LPF deabbreviate_spellname STR_VAR input RET spellname=spellname END
-   SPRINT value EVALUATE_BUFFER ~%%spellname%%~
-   INNER_PATCH_SAVE value ~%value%~ BEGIN
-      REPLACE_TEXTUALLY ~%percentage%~ ~~
+   PATCH_IF VARIABLE_IS_SET "%spellname%" BEGIN // first, see if the variable is set
+      SPRINT value EVALUATE_BUFFER ~%%spellname%%~
+   END ELSE
+   PATCH_IF IDS_OF_SYMBOL (spell "%spellname%")>=0 BEGIN // then, try spell.ids
+      SET idscode=IDS_OF_SYMBOL (spell "%spellname%")
+      LPF idscode_to_spell INT_VAR idscode RET value=resref END
+   END ELSE BEGIN // otherwise, just return the input
+      SPRINT value "%input%"
    END
 END
 
@@ -707,51 +727,61 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               make a silently-cast prebuffed spell
+/////////////               make a prebuffed spell
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 DEFINE_ACTION_FUNCTION ~build_prebuff_spell~
+      INT_VAR conceal=0
       STR_VAR spell_ID=""
       RET newcode fullname
 BEGIN
+     OUTER_SPRINT newcode UNALLOCATED
+     OUTER_SPRINT fullname UNALLOCATED
      ACTION_IF !VARIABLE_IS_SET  ~%%spell_ID%_PREBUFF%~ BEGIN
        OUTER_INNER_PATCH ~~ BEGIN
          LPF deabbreviate_spellname STR_VAR input =  ~%spell_ID%~ RET spell_ID=spellname END
        END
        OUTER_SPRINT fullname ~%spell_ID%~
        OUTER_SPRINT ~spellcode~ EVALUATE_BUFFER ~%%spell_ID%%~
-       OUTER_INNER_PATCH_SAVE ~newcode~ ~%spellcode%~ BEGIN
+       ACTION_IF FILE_EXISTS_IN_GAME "%spellcode%.spl" BEGIN
+        OUTER_INNER_PATCH_SAVE ~newcode~ ~%spellcode%~ BEGIN
           REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPWI~ ~dw#sw~
           REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPPR~ ~dw#sp~
           REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPIN~ ~dw#si~
-       END
-       ACTION_IF !FILE_EXISTS_IN_GAME ~%newcode%.spl~ BEGIN
+          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPCL~ ~dw#sc~
+        END
+        ACTION_IF !FILE_EXISTS_IN_GAME ~%newcode%.spl~ BEGIN
          COPY_EXISTING ~%spellcode%.spl~ ~override/%newcode%.spl~
-             LPF check_ini STR_VAR ini=Conceal_Prebuff_Spell_Names RET value=value END
-             PATCH_IF value=1 BEGIN
+             LPF check_ini STR_VAR ini=Conceal_Prebuff_Spell_Names RET value END
+             PATCH_IF (value=1 || conceal=1) BEGIN
                   WRITE_LONG 0x8 ~-1~
              END ELSE BEGIN
-               LPF check_ini STR_VAR ini=Run_Silent RET value=value END
-               PATCH_IF value=0 BEGIN
                   READ_STRREF 0x8 ~spellname~
-                  SPRINT ~addon~ @14300
+                  SPRINT ~addon~ "%SFO_reserved_previously_string%"
                   SPRINT ~newname~ ~%spellname%~^ ~%addon%~
                   SAY_EVALUATED 0x8 ~%newname%~
-               END
              END
              PATCH_MATCH "%spell_ID%" WITH
-             CLERIC_BLADE_BARRIER CLERIC_GLOBE_OF_BLADES CLERIC_AURA_OF_FLAMING_DEATH WIZARD_FIRE_SHIELD_RED WIZARD_FIRE_SHIELD_BLUE
+             CLERIC_BLADE_BARRIER CLERIC_GLOBE_OF_BLADES CLERIC_AURA_OF_FLAMING_DEATH WIZARD_FIRE_SHIELD_RED WIZARD_FIRE_SHIELD_BLUE NPC_BLADE_BARRIER CLERIC_CIRCLE_OF_BONES WIZARD_MESTILS_ACID_SHEATH
              BEGIN
-                  LPF delete_entry STR_VAR type=effect arguments="opcode=174" file_ext=SPL END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=174 END
+                //  LPF delete_entry STR_VAR type=effect arguments="opcode=174" file_ext=SPL END
              END
              DEFAULT
-                  LPF delete_entry STR_VAR type=effect arguments="opcode is_in [139 174 215 141 50]" file_ext=SPL END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=139 END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=174 END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=141 END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=215 END
+                  LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete=50 END
+
+              //    LPF delete_entry STR_VAR type=effect arguments="opcode is_in [139 174 215 141 50]" file_ext=SPL END
              END
        // BUT_ONLY - should happen anyway
-      END
+       END
      END
+   END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -797,8 +827,8 @@ DEFINE_PATCH_FUNCTION SPL_build BEGIN
   // name
    WRITE_LONG 0x8 ~-1~
    WRITE_LONG 0xc ~-1~
-   // spell type
-   WRITE_SHORT 0x1c 2
+   // spell type - default to INNATE
+   WRITE_SHORT 0x1c 4
    // primary
    WRITE_SHORT 0x25 9
    // level
@@ -883,6 +913,31 @@ DEFINE_PATCH_FUNCTION SPL_say_description
    STR_VAR arguments=""
 BEGIN
    LPF say_this_here INT_VAR offset=0x50 say= ~%arguments%~ END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             get the name
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION SPL_name
+       RET value
+BEGIN
+       READ_STRREF 0x8 value
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             get the description
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION SPL_description
+       RET value
+BEGIN
+       READ_STRREF 0x50 value
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1011,12 +1066,18 @@ END
 //////////////////////////////////////////////////////////////////////////
 //// Add spell to ids file (without copying it over), finding it a slot
 //// starting (optionally) from at least to_try; return its new name and code,
-//// and the next available slot
+//// and the next available slot.
+////
+//// If it's already there in the right category and level, 
+//// just return the existing result (and log a warning).
+////
+//// If it's there but in the wrong category and/or level, delete it first
 //////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION add_spell_to_ids
         INT_VAR to_try=0
                 level="-1"
+                type=0
         STR_VAR typename="unspecified"
                 filename=""
                 idsname=""
@@ -1026,12 +1087,32 @@ DEFINE_ACTION_FUNCTION add_spell_to_ids
                 to_try_next
 
 BEGIN
-   LAF find_spell_type STR_VAR typename filename idsname file_loc RET type=type END
-   LAF find_spell_level INT_VAR level STR_VAR filename file_loc RET level=level END
-   LAF find_spell_ids_slot INT_VAR to_try type level STR_VAR idsname RET newcode=slot to_try_next=to_try_next END
-   LAF idscode_to_spell INT_VAR idscode=newcode RET newname=resref END
-   ACTION_IF !FILE_CONTAINS_EVALUATED (spell.ids "%idsname%") BEGIN
-      APPEND spell.ids "%newcode% %idsname%"
+   LAF find_spell_type STR_VAR type typename filename idsname file_loc RET type END
+   ACTION_IF type<=2 BEGIN
+       LAF find_spell_level INT_VAR level STR_VAR filename file_loc RET level END
+   END
+   OUTER_SET current_num=IDS_OF_SYMBOL (spell "%idsname%")
+   ACTION_IF current_num<0 BEGIN
+      LAF find_spell_ids_slot INT_VAR to_try type level STR_VAR idsname RET newcode=slot to_try_next=to_try_next END
+      LAF idscode_to_spell INT_VAR idscode=newcode RET newname=resref END
+      APPEND spell.ids "%newcode% %idsname%" 
+      CLEAR_IDS_MAP
+   END ELSE BEGIN
+      OUTER_SET current_type = current_num / 1000
+      OUTER_SET current_level = (current_num - 1000 * current_type) / 100
+      ACTION_IF (type=current_type) && ((level=current_level)||type>2) BEGIN
+         OUTER_SET to_try_next=current_num
+         OUTER_SET newcode=current_num
+         LAF idscode_to_spell STR_VAR idscode="%newcode%" RET newname=resref END
+         LAF warning STR_VAR warning="No need to add spell %idsname% to spell.ids as it is already there at the right level" END
+      END ELSE BEGIN
+         COPY_EXISTING "spell.ids" override
+             REPLACE_TEXTUALLY "%current_num% +%idsname%" "%current_num% %idsname%_OLD"
+         BUT_ONLY
+         LAF warning STR_VAR warning="Deprecating older version of %idsname%" END
+         CLEAR_IDS_MAP
+         LAF add_spell_to_ids INT_VAR to_try level STR_VAR typename filename idsname file_loc RET newname newcode to_try_next END
+      END
    END
 END
 
@@ -1086,9 +1167,16 @@ BEGIN
              // try the current slot. If it's occupied, add one and try again
              ACTION_IF VARIABLE_IS_SET $ids_in_use( "%to_try%") BEGIN
                 LAF find_spell_ids_slot INT_VAR type level to_try=to_try + 1 STR_VAR idsname RET slot=slot to_try_next=to_try_next END
-             END ELSE BEGIN // if we get this far, slot is good
-                OUTER_SET slot=to_try
-                OUTER_SET to_try_next=slot+1
+             END ELSE BEGIN 
+                // slot appears empty, but make sure there's no undocumented spell (or spell resources) in it!
+                 LAF idscode_to_spell INT_VAR idscode=to_try RET resref END
+                 ACTION_IF (FILE_EXISTS_IN_GAME "%resref%.spl" || FILE_EXISTS_IN_GAME "%resref%B.BAM") BEGIN
+                    LAF find_spell_ids_slot INT_VAR type level to_try=to_try + 1 STR_VAR idsname RET slot=slot to_try_next=to_try_next END
+                 END ELSE BEGIN
+                    // if we get this far, slot is good
+                    OUTER_SET slot=to_try
+                    OUTER_SET to_try_next=slot+1
+                END
              END
            END
        END
@@ -1098,10 +1186,11 @@ END
 ///  Find the type of a spell (optional arguments are typename, idsname, filename, file_loc)
 ///
 ///  First, check typename, which can be priest (or cleric), wizard, innate, or class
-///  Failing that, look at the spell name. If it's SPPR, SPWI, SPIN or SPCL, we're
-///  done
+///  Failing that, check spell.ids.
 ///  Failing that, look at the first part of the idsname. If it's
 ///  WIZARD, CLERIC, DRUID, AVENGER, PALADIN [etc] we're done, If it's INNATE, likewise.
+///  Failing that, look at the spell name. If it's SPPR, SPWI, SPIN or SPCL, we're
+///  done.
 ///  Failing *that*, look inside the spell.
 ///  Failing *that*, guess "innate"!
 //////////////////////////////////////////////////////////////////////////////
@@ -1132,6 +1221,12 @@ BEGIN
          DEFAULT
            OUTER_SET type=0
          END
+       END
+       ACTION_IF type=0 & "%idsname%" STRING_COMPARE "" BEGIN
+          OUTER_SET ids_num=IDS_OF_SYMBOL (spell "%idsname%")
+          ACTION_IF (ids_num>=0) BEGIN
+             OUTER_SET type = ids_num / 1000
+          END
        END
        ACTION_IF type=0 & "%idsname%" STRING_COMPARE "" BEGIN
           LAF return_first_entry STR_VAR list="%idsname%" separator="_" RET entry=entry END
@@ -1198,7 +1293,7 @@ END
 ///  Find the level of a spell (optional arguments are level, filename, file_loc)
 //////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION find_spell_level 
+DEFINE_ACTION_FUNCTION find_spell_level
             INT_VAR level="-1"
             STR_VAR filename=""
                     file_loc=""
@@ -1215,4 +1310,422 @@ BEGIN
         END
    END
 END
+
+
+//////////////////////////////////////////////////////////////////////////////
+///  Return the spell.ids name of spell.spl, or "%spell%" if there isn't one
+//////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION return_spellname
+    STR_VAR resref=""
+    RET spellname
+BEGIN
+   ACTION_IF STRING_LENGTH "%resref%" =7 BEGIN // if not, it's not in standard form
+          OUTER_PATCH "%resref%" BEGIN
+             READ_ASCII 0x0 check (4)
+             PATCH_MATCH "%check%" WITH
+                 SPWI SPCL SPPR SPIN BEGIN
+                  READ_ASCII 0x4 check2 (3)
+                  PATCH_IF IS_AN_INT "%check2%" BEGIN
+                     LPF spell_to_idscode STR_VAR resref RET idscode END
+                     LOOKUP_IDS_SYMBOL_OF_INT spellname spell "%idscode%"
+                     PATCH_IF IS_AN_INT spellname BEGIN
+                        SPRINT spellname "%resref%"
+                     END
+                  END ELSE BEGIN 
+                     SPRINT spellname "%resref%"
+                  END
+                 END
+                 DEFAULT
+                     SPRINT spellname "%resref%"
+                 END
+          END
+   END ELSE BEGIN
+          OUTER_SPRINT spellname "%resref%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION return_spellname
+    STR_VAR resref=""
+    RET spellname
+BEGIN
+   INNER_ACTION BEGIN
+      LAF return_spellname STR_VAR resref RET spellname END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              scroll maker   
+/////////////
+/////////////              Needs to be supplied with a function that takes the spell resref as input and spits out a name, or else just with the name itself
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_scroll_of_spell
+    INT_VAR price="-1"
+    STR_VAR resref=""
+            scrollname=""
+            name_func=""
+            spell_loc=""
+            price_func="standard_scroll_price"
+    RET scrollname
+BEGIN
+       // find a name
+       ACTION_IF "%scrollname%" STRING_EQUAL "" BEGIN
+          LAF "%name_func%" STR_VAR arguments="%resref%" RET scrollname=value END
+       END
+       // find a price
+       ACTION_IF price<0 BEGIN
+          LAF "%price_func%" STR_VAR arguments="%resref%" RET price=value END
+       END
+       // get some data from the spell
+       ACTION_IF "%spell_loc%" STRING_EQUAL "" BEGIN
+         COPY_EXISTING "%resref%.spl" override
+           LPM scroll_of_spell_data_collection
+         BUT_ONLY
+       END ELSE BEGIN
+         COPY "%spell_loc%/%resref%.spl" "%spell_loc%"
+           LPM scroll_of_spell_data_collection
+         BUT_ONLY
+
+       END
+       // get the template
+       ACTION_IF type=1 BEGIN
+          OUTER_SPRINT template "SCRL1D" // this is Clairvoyance, which is in BG1, BG2, IWD
+       END ELSE BEGIN
+          OUTER_SPRINT template "SCRL56" // this is Cure Serious Wounds, ditto
+       END
+
+       // install the scroll
+       ACTION_CLEAR_ARRAY patch_data
+       ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+          name2_string=>"%name%"
+          description2_string=>"%desc%"
+          patch_effect_inline=>"resource=>%resref%"
+          patch_ability_inline'1=>"ability_icon=>%resref%A"
+          icon=>"%resref%A"
+          price=>"%price%"
+       END
+       ACTION_PHP_EACH unusable_flag AS flag=>discard BEGIN
+           OUTER_SET $patch_data("unusable_%flag%")=1
+       END
+       ACTION_IF target=4 BEGIN
+          OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_target=>4 ability_range=>%range% opcode=>148"
+       END ELSE BEGIN
+          OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_range=>%range% ability_target=>%target%"
+       END
+       LAF clone_item STR_VAR item="%template%=>%scrollname%" edits=patch_data END
+END // end of main function
+
+DEFINE_PATCH_MACRO scroll_of_spell_data_collection // just broken out for readability, no attempt at encapsulation
+BEGIN
+           LPF SPL_read_description1_string RET desc=value END
+           LPF SPL_read_name1_string RET name=value END
+           READ_LONG 0x64 offset_base
+           LPF SPL_read_ability_target STR_VAR offset_base RET target=value END
+           LPF SPL_read_ability_range STR_VAR offset_base RET range=value END
+           LPF SPL_read_spell_type_num RET type=value END
+           PATCH_IF value=1 BEGIN
+                PATCH_FOR_EACH specialist IN abjurer conjurer diviner enchanter illusionist invoker necromancer transmuter generalist BEGIN
+                   LPF "SPL_read_unusable_%specialist%" RET value END
+                   PATCH_IF value BEGIN
+                      SPRINT $unusable_flag("%specialist%") ""
+                   END
+                END
+           END ELSE BEGIN
+                PATCH_FOR_EACH category IN chaotic_priest evil_priest good_priest GEneutral_priest lawful_priest LCneutral_priest cleric druid BEGIN
+                   LPF "SPL_read_unusable_%category%" RET value END
+                   PATCH_IF value BEGIN
+                      SPRINT $unusable_flag("%category%") ""
+                   END
+                END
+           END
+END // end of macro
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//  default function for scroll pricing
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION standard_scroll_price 
+         STR_VAR arguments=""
+         RET value
+BEGIN
+       OUTER_INNER_PATCH "%arguments%" BEGIN
+          READ_ASCII 0x2 type (2)
+          READ_ASCII 0x4 level (1)
+       END
+       ACTION_IF "%type%" STRING_EQUAL PR BEGIN  // priest pricing
+             OUTER_SET value = level * 100
+       END ELSE BEGIN // wizard pricing
+             ACTION_MATCH "%level%" WITH
+                1 BEGIN
+                   OUTER_SET value=100
+                END
+                2 BEGIN
+                   OUTER_SET value=200
+                END
+                3 BEGIN
+                   OUTER_SET value=300
+                END
+                4 BEGIN
+                   OUTER_SET value=500
+                END
+                5 BEGIN
+                   OUTER_SET value=1000
+                END
+                6 BEGIN 
+                   OUTER_SET value=2000
+                END
+                7 BEGIN
+                   OUTER_SET value=3000
+                END
+                8 BEGIN 
+                   OUTER_SET value=5000
+                END
+                DEFAULT
+                   OUTER_SET value=10000
+                END
+       END
+
+
+
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             list wizard spells by level and school
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION list_wizard_spells BEGIN
+
+   // get hidespl [no, I don't know why ordinary 2da editing doesn't work here]
+   
+   COPY_EXISTING hidespl.2da override
+       FOR (i=101;i<1000;i+=1) BEGIN
+          PATCH_IF INDEX_BUFFER ("SPWI%i%")>=0 BEGIN
+               PATCH_PRINT "hiding SPWI%i%"
+               SPRINT $hidden("SPWI%i%") ""
+          END
+       END
+   BUT_ONLY
+
+
+   // get spells
+
+   COPY_EXISTING_REGEXP GLOB "SPWI[1-9][0-9]+.spl" override
+         SPRINT filename "%SOURCE_RES%"
+         TO_UPPER filename
+         PATCH_IF !VARIABLE_IS_SET $hidden("%filename%") BEGIN
+               LPF SPL_read_school RET school=value END
+               READ_LONG 0x34 level
+               PATCH_IF VARIABLE_IS_SET $spell_list("%level%" "%school%") BEGIN
+                  SPRINT temp $spell_list("%level%" "%school%" )
+                  SPRINT $spell_list("%level%" "%school%" ) "%temp% %filename%"
+               END ELSE BEGIN
+                  SPRINT $spell_list("%level%" "%school%" ) "%filename%"
+               END
+               READ_STRREF 0x8 name
+               INNER_ACTION BEGIN
+                  LAF return_spellname STR_VAR resref="%filename%" RET idsname=spellname END
+               END
+               SPRINT $spell_details("%filename%") "%name% (%idsname%)"
+         END
+   BUT_ONLY
+
+   // format and output list
+   OUTER_SPRINT file "wizard_spells_by_level.txt"
+   LAF log_this STR_VAR file input="WIZARD SPELLS BY SCHOOL AND LEVEL" END
+   OUTER_FOR (level=1;level<10;level+=1) BEGIN
+         LAF log_this STR_VAR file input="Level %level%" END
+         ACTION_FOR_EACH school IN abjuration alteration conjuration divination enchantment illusion invocation necromancy generalist BEGIN
+            LAF log_this STR_VAR file input="%school%" END
+            ACTION_IF VARIABLE_IS_SET $spell_list("%level%" "%school%") BEGIN
+              OUTER_SPRINT list $spell_list("%level%" "%school%")
+              OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+               LAF return_first_entry STR_VAR list RET entry list END
+               OUTER_SPRINT input $spell_details("%entry%")
+               LAF log_this STR_VAR file input END
+              END
+            END
+         END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             collect spell icons
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION collect_spell_icons
+    STR_VAR location=""
+            locbase=""
+            locabs=""
+            spell=""
+            resref=""
+BEGIN
+      LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
+      CLEAR_IDS_MAP
+      LAF get_spellcode STR_VAR input="%spell%" RET spell_resref=value END
+      ACTION_FOR_EACH letter IN a b c BEGIN
+         ACTION_IF FILE_EXISTS "%file_loc%/%resref%%letter%.bam" BEGIN
+            COPY "%file_loc%/%resref%%letter%.bam" "override/%spell_resref%%letter%.bam"
+         END
+      END
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+             icon=>"%spell_resref%c"
+             patch_ability_inline=>"ability_icon=>%spell_resref%b"
+      END
+      LAF edit_spell STR_VAR spell="%spell_resref%" edits=patch_data END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             make a repeating innate spell
+/////////////             input is either old=>new list (if overwrite=0) or spell list (if overwrite=1)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_innate_repeating_spell
+   INT_VAR cooldown=0
+           overwrite=0
+           allow_missing=0
+   STR_VAR arguments=""
+BEGIN
+   ACTION_IF "%arguments%" STRING_COMPARE "" BEGIN
+      ACTION_IF overwrite BEGIN
+           LAF return_first_entry STR_VAR list="%arguments%" RET template=entry arguments=list END
+      END ELSE BEGIN
+           LAF return_first_pair STR_VAR list="%arguments%" RET template=key idsname=value arguments=list END
+      END
+      LAF get_spellcode STR_VAR input="%template%" RET oldname=value END
+      ACTION_IF (FILE_EXISTS_IN_GAME "%oldname%.spl" || !allow_missing) BEGIN
+       ACTION_IF overwrite BEGIN
+         OUTER_SPRINT newname "%oldname%"
+       END ELSE BEGIN
+         LAF add_spell_to_ids INT_VAR level=1 type=3 STR_VAR idsname RET newname END
+       END
+       ACTION_CLEAR_ARRAY patch_data
+       OUTER_SET timing = cooldown >0 ? 4 : 1
+       ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+       level=>1
+       spell_type=>innate
+       patch_ability_inline=>"ability_icon_loc=>4"
+       add_effect_inline'=>"opcode=>171 target=>1 timing=>%timing% duration=>%cooldown% resource=>%newname%"
+       add_effect_inline=>"opcode=>172 target=>1 timing=>1  resource=>%newname%"
+       END
+       ACTION_IF overwrite BEGIN
+         LAF edit_spell STR_VAR spell="%newname%" edits=patch_data END
+       END ELSE BEGIN
+         LAF clone_spell STR_VAR spell="%oldname%=>%newname%" edits=patch_data END
+       END
+      END
+      LAF make_innate_repeating_spell INT_VAR cooldown overwrite allow_missing STR_VAR arguments END
+
+   END
+
+END
+
+////////////////////////////////////////////////////////////////
+// Remove any use of IS_FINAL from hidespl, so that new spells
+// can be safely added
+////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION definalise_hidespl BEGIN
+   LAF check_label STR_VAR label=dw#definalised_hidespl RET value END
+   ACTION_IF !value BEGIN
+        PRINT "Definalising hidespl"
+        SILENT
+        LAF make_label STR_VAR label=dw#definalised_hidespl END
+        // get the information from hidespl
+        COPY_EXISTING hidespl.2da override
+            READ_2DA_ENTRIES_NOW hidespl_array 4
+            FOR (i=0;i<hidespl_array;i+=1) BEGIN
+               READ_2DA_ENTRY_FORMER hidespl_array i 0 resref
+               TO_UPPER resref
+               READ_2DA_ENTRY_FORMER hidespl_array i 1 is_hidden
+               SET $is_hidden("%resref%")=is_hidden
+               READ_2DA_ENTRY_FORMER hidespl_array i 2 is_final
+               READ_2DA_ENTRY_FORMER hidespl_array i 3 is_removed
+               SET $is_removed("%resref%")=is_removed
+               PATCH_IF is_final BEGIN
+                  SET $final_entry("%resref%")=1
+               END
+            END
+        BUT_ONLY
+        // find and add the spells we need to add
+        ACTION_PHP_EACH final_entry AS key=>discard BEGIN
+           OUTER_INNER_PATCH "%key%" BEGIN
+              READ_ASCII 0x0 start (5)
+              READ_ASCII 0x5 number (2)
+           END
+           OUTER_FOR (n=number+1;n<100;n+=1) BEGIN
+              OUTER_SPRINT resref "%start%%n%"
+              ACTION_IF (FILE_EXISTS_IN_GAME "%resref%.spl" && !VARIABLE_IS_SET $is_hidden("%resref%")) BEGIN
+                    OUTER_SET $is_hidden("%resref%")=1
+                    OUTER_SET $is_removed("%resref%")=0
+              END
+           END
+        END
+        
+        // build the new hidespl
+        
+        <<<<<<<<  .../stratagems-inline/hidespl.2da
+2DA          V1.0
+0
+		IS_HIDDEN	IS_FINAL   IS_REMOVED        >>>>>>>>
+
+        COPY ".../stratagems-inline/hidespl.2da" override
+        
+        ACTION_FOR_EACH prefix IN SPIN SPWI SPPR BEGIN
+           OUTER_FOR (i=0;i<=9;i+=1) BEGIN
+              OUTER_FOR (j=0;j<=9;j+=1) BEGIN
+                 OUTER_FOR (k=0;k<=9;k+=1) BEGIN
+                    OUTER_SPRINT resref "%prefix%%i%%j%%k%"
+                    ACTION_IF VARIABLE_IS_SET $is_hidden("%resref%") BEGIN
+                       OUTER_SET is_hidden=$is_hidden("%resref%")
+                       OUTER_SET is_removed=$is_removed("%resref%")
+                       APPEND "hidespl.2da" "%resref% %is_hidden%           0          %is_removed%"
+                    END
+                 END
+              END
+           END
+        END
+        VERBOSE
+   END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             check if a spell is usable by a specialist mage
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION spell_is_unusable
+       STR_VAR resref=""
+               kit=""
+       RET value
+BEGIN
+     ACTION_TO_LOWER kit
+     ACTION_MATCH "%kit%" WITH
+     transmuter abjurer necromancer enchanter diviner conjurer invoker illusionist BEGIN
+       COPY_EXISTING "%resref%.spl" "%workspace%"
+           LPF "SPL_read_unusable_%kit%" RET value END
+       BUT_ONLY
+     END 
+     DEFAULT
+        OUTER_SET value=0
+     END
+END
+
+
+
 

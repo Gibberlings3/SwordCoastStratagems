@@ -1,0 +1,119 @@
+LAF include STR_VAR locbase=mage file=mage_shared.tph END
+LAF include STR_VAR locbase=priest file=priest_shared.tph END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+/////          Enforce being a mage
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION enforce_clericmage
+     STR_VAR filename=""
+             arguments=""
+BEGIN
+
+   // allocate mage spells
+
+   INNER_ACTION BEGIN
+      OUTER_SPRINT type mage
+      LAUNCH_ACTION_MACRO read_in_spells_per_level
+      LAUNCH_ACTION_MACRO read_in_spell_choices
+      LAUNCH_ACTION_MACRO read_in_individual_overrides
+      LAM read_in_spell_trigger_data
+   END
+   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment game spells_are_bg1 modify_level kitdata script_required=script END
+   INNER_ACTION BEGIN
+      ACTION_IF FILE_CONTAINS "%scsroot%/caster_shared/clericmage/druid_mages.2da" "%filename%" BEGIN
+         OUTER_SPRINT class druid_mage
+      END
+   END
+   LPF find_mage_type STR_VAR class race alignment kitdata filename RET class kit castertype spell_list spell_list_defensive END
+   LPF get_caster_level INT_VAR modify_level STR_VAR type=mage castertype filename RET mage_level=level END
+   SPRINT component_loc mage
+   LPF allocate_mage_spells INT_VAR level=mage_level spells_are_bg1 refinements STR_VAR class kit race filename spell_list spell_list_defensive RET spells_mage=spells chain_contingencies sequencers level_nine_max END
+
+   // allocate priest spells
+
+   INNER_ACTION BEGIN
+      OUTER_SPRINT type priest
+      LAUNCH_ACTION_MACRO read_in_spells_per_level
+      LAUNCH_ACTION_MACRO read_in_spell_choices
+      LAUNCH_ACTION_MACRO read_in_individual_overrides
+      LAM read_in_spell_trigger_data
+   END
+
+   LPF determine_stat STR_VAR stat=wisdom RET wisdom=value END
+   LPF find_priest_type STR_VAR class alignment kitdata filename RET class kit castertype fighter spell_list spell_list_defensive END
+   LPF get_caster_level INT_VAR modify_level STR_VAR type=priest castertype filename RET priest_level=level END
+   SPRINT component_loc priest
+   LPF allocate_priest_spells INT_VAR level=priest_level spells_are_bg1 fighter refinements wisdom STR_VAR class kit race filename spell_list spell_list_defensive RET spells_priest=spells level_seven_max END
+
+   // set level
+
+   LPF CRE_level1 INT_VAR arguments=priest_level END
+   LPF CRE_level2 INT_VAR arguments=mage_level END
+
+   // build script
+   LPF determine_caster_script_name STR_VAR filename prefix="cm" RET script END
+   SPRINT spells "%spells_priest% %spells_mage%"
+   LPF build_clericmage_script INT_VAR level=mage_level level_nine_max level_seven_max STR_VAR filename kit race script spells chain_contingencies sequencers END
+   LPF strip_scs_scripts END
+   LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+/////          Build a cleric/mage script
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_clericmage_script
+      INT_VAR level=1 level_nine_max=99 level_seven_max=99
+      STR_VAR filename="" script="" kit="" race="" filename="" spells="" chain_contingencies="" sequencers=""
+BEGIN
+     LAF define_difficulty STR_VAR type=mage RET difficulty_variable END
+     LAF define_difficulty STR_VAR type=mage_prep RET prep_difficulty_variable=difficulty_variable END
+     LOAD_TRA "%scs_tra_loc%/english/mage.tra" "%scs_tra_loc%/%LANGUAGE%/mage.tra"
+     LOAD_TRA "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra"
+
+     LAM read_in_instant_prebuff_spells
+     OUTER_SPRINT scriptname ~%script%~
+     OUTER_SPRINT variables_here "Placeholder=Placeholder%chain_contingencies%%sequencers%"
+     
+     OUTER_SET spell_level = $caster_level_to_spell_level("mage" "%level%")
+     OUTER_FOR (i=1;i<=spell_level;i+=1) BEGIN
+         OUTER_SPRINT variables_here ~%variables_here%&HasL%i%=True~
+     END
+     ACTION_TO_UPPER filename
+     ACTION_IF VARIABLE_IS_SET $override("boolean" "mage" "%filename%") BEGIN
+        OUTER_SPRINT booleans_extra $override("boolean" "mage" "%filename%")
+     END ELSE BEGIN
+        OUTER_SPRINT booleans_extra ""
+     END
+     ACTION_IF VARIABLE_IS_SET $override("variable" "mage" "%filename%") BEGIN
+        OUTER_SPRINT variables_extra $override("variable" "mage" "%filename%")
+        OUTER_SPRINT variables_extra "&%variables_extra%"
+     END ELSE BEGIN
+        OUTER_SPRINT variables_extra ""
+     END
+     ACTION_IF debug_variable=2 BEGIN
+        PRINT "variables:%variables_here%%variables_extra%"
+        PRINT "spells: %spells%"
+     END
+     ACTION_IF ( INDEX (ALACRITY "%spells%") >=0 | INDEX (WISH "%spells%") >=0) BEGIN
+        LAF ssl_to_baf STR_VAR variables="%variables_here%%variables_extra%" script=cleric_mage location=~clericmage/ssl~ locbase=caster_shared rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
+        COPY_EXISTING "%workspace%/ssl_out/cleric_mage.baf" "%workspace%/ssl_out/%scriptname%.baf"
+            REPLACE_TEXTUALLY ~/\*slowspell\*/~ ~OR(2)CheckStat(Myself,0,WIZARD_IMPROVED_ALACRITY)Global("alacritycompromise","LOCALS",1)~
+        COMPILE EVALUATE_BUFFER "%workspace%/ssl_out/%scriptname%.baf"
+     END ELSE BEGIN
+        LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script=cleric_mage location=~clericmage/ssl~ locbase=caster_shared rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
+     END
+END
+
+DEFINE_PATCH_FUNCTION build_clericmage_script
+     INT_VAR level=1 level_nine_max=99 level_seven_max=99
+     STR_VAR script="" kit="" race="" filename="" spells="" chain_contingencies="" sequencers=""
+BEGIN
+   INNER_ACTION BEGIN
+      LAF build_clericmage_script INT_VAR level level_nine_max level_seven_max STR_VAR script kit race filename spells chain_contingencies sequencers END
+   END
+END
+

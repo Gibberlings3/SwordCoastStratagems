@@ -1,0 +1,241 @@
+DEFINE_ACTION_FUNCTION elemental_summoning
+    RET scroll_new
+BEGIN
+    OUTER_SPRINT scroll_new ""
+    LAF make_label STR_VAR label=dw#elemental_summoning END
+
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+   // Removes elemental-battle from elemental-summoning spells.
+   //
+   // MODIFIED version of SCS one that works on dw_iwdspells conversion
+   ///////////////////////////////////////////////////////////////
+   ///////////////////////////////////////////////////////////////
+
+     // this is the filename for the water elemental CRE
+     
+     OUTER_SPRINT water_cre es8watr
+
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY elem_desc_map BEGIN  // TRA location of the descriptions of the L6 spells
+      EARTH=>3
+      AIR=>5
+      FIRE=>4
+      WATER=>6
+     END
+     
+     // this points to the "Conjure Lesser [x] Elemental" strings (we have to introduce water)
+     ACTION_IF GAME_IS "bg2ee eet" BEGIN
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY lesser_elem_name_map BEGIN
+        AIR=>24827
+        EARTH=>24829
+        FIRE=>24830
+      END
+     END ELSE BEGIN
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY lesser_elem_name_map BEGIN
+        AIR=>26540
+        EARTH=>26542
+        FIRE=>26530
+      END
+     END
+     OUTER_SET $lesser_elem_name_map("WATER")=RESOLVE_STR_REF (@7)
+     
+     // this points to the names for the various sorts of water elemental
+
+     COPY_EXISTING "%water_cre%.cre" "%workspace%"
+          SET $water_elem_names("STANDARD")=LONG_AT NAME1
+     BUT_ONLY
+     OUTER_SET $water_elem_names("GREATER")=73479
+     OUTER_SET $water_elem_names("ELDER")= RESOLVE_STR_REF (@8)
+     OUTER_SET $water_elem_names("LESSER")= RESOLVE_STR_REF (@9)
+     
+     // this is the "conjure water elemental" string
+     
+     COPY_EXISTING "%WIZARD_CONJURE_LESSER_WATER_ELEMENTAL%.spl" "%workspace%"
+           SET conjure_water_strref=LONG_AT NAME1
+     BUT_ONLY
+
+   ///////////////////////////////////////////////////////////////
+   // remove elemental-summoning overlay from summoned creatures
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH creature IN elairsu2 elairsu3 elairsu4 elearsu1 elearsu2 elearsu3 elearsu4 elfirsu1 elfirsu2 elfirsu3 elfirsu4 BEGIN
+       ACTION_IF FILE_EXISTS_IN_GAME "%creature%.cre" BEGIN
+          COPY_EXISTING "%creature%.cre" override
+               REPLACE_TEXTUALLY "wizelsum" "" (8)
+               REPLACE_TEXTUALLY "wizelsu2" "" (8)
+          BUT_ONLY
+       END
+   END
+
+   ///////////////////////////////////////////////////////////////
+   // change summoning effects so that allegiance matches summoner
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH effect IN speart1 speart2 speart3 splesear spfir1 spfir2 spfir3 splesfir spair1 spair2 spair3 splesair BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME "%effect%.eff" BEGIN
+         COPY_EXISTING "%effect%.eff" override
+              WRITE_LONG 0x20 0
+         BUT_ONLY
+      END
+   END
+   
+   ///////////////////////////////////////////////////////////////
+   // edit the L6 spells to change the descriptions and remove the mental-battle opcodes
+   ///////////////////////////////////////////////////////////////
+
+   ACTION_FOR_EACH key IN EARTH AIR FIRE BEGIN
+        OUTER_SET strref=$elem_desc_map("%key%")
+        OUTER_SPRINT spellname "WIZARD_CONJURE_%key%_ELEMENTAL"
+        OUTER_SPRINT scrollname "%spellname%_SCROLL"
+        OUTER_SPRINT spell EVAL "%%spellname%%"
+        OUTER_SPRINT scroll EVAL "%%scrollname%%"
+        LAF remove_elemental_battle INT_VAR strref STR_VAR spell scroll END
+   END
+   
+      ///////////////////////////////////////////////////////////////
+      // rename the L5 spells back to Lesser
+      ///////////////////////////////////////////////////////////////
+
+      ACTION_FOR_EACH key IN EARTH AIR FIRE WATER BEGIN
+         OUTER_SPRINT spellname "WIZARD_CONJURE_LESSER_%key%_ELEMENTAL"
+         OUTER_SPRINT scrollname "WIZARD_CONJURE_LESSER_%key%_ELEMENTAL_SCROLL"
+         OUTER_SPRINT spell EVAL "%%spellname%%"
+         OUTER_SPRINT scroll EVAL "%%scrollname%%"
+         OUTER_SET new_name_strref=$lesser_elem_name_map("%key%")
+         ACTION_GET_STRREF new_name_strref new_name
+         COPY_EXISTING "%spell%.spl" override
+               READ_STRREF NAME1 old_name
+               READ_STRREF 0x50 old_desc
+               INNER_PATCH_SAVE new_desc "%old_desc%" BEGIN
+                  REPLACE_TEXTUALLY "%old_name%" "%new_name%"
+               END
+               SET new_desc_strref=RESOLVE_STR_REF ("%new_desc%")
+               WRITE_LONG 0x50 new_desc_strref
+               WRITE_LONG NAME1 new_name_strref
+         BUT_ONLY
+         COPY_EXISTING "%scroll%.itm" override
+               WRITE_LONG DESC new_desc_strref
+               WRITE_LONG NAME2 new_name_strref
+         BUT_ONLY
+      END
+      
+      ///////////////////////////////////////////////////////////////
+      // clone air-elemental summoning to make a water version
+      // (space here to tweak the CRE files for originality)
+      ///////////////////////////////////////////////////////////////
+
+      // the spell
+
+      OUTER_SET name=conjure_water_strref
+      OUTER_SET desc=$elem_desc_map("WATER")
+      OUTER_SPRINT water_icon "%WIZARD_CONJURE_LESSER_WATER_ELEMENTAL%"
+
+      OUTER_SPRINT template "%WIZARD_CONJURE_AIR_ELEMENTAL%"
+      COPY_EXISTING "%template%.spl" "%workspace%"
+
+      ADD_SPELL "%workspace%/%template%.spl" 2 6 WIZARD_CONJURE_WATER_ELEMENTAL
+          WRITE_LONG NAME1 name
+          SAY 0x50 (AT desc)
+          REPLACE_TEXTUALLY SPAIR1 DW#WAT1 (8)
+          REPLACE_TEXTUALLY SPAIR2 DW#WAT2 (8)
+          REPLACE_TEXTUALLY SPAIR3 DW#WAT3 (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621B "%water_icon%B" (8)
+          REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621C "%water_icon%C" (8)
+
+      LAF idscode_to_spell STR_VAR idscode="%WIZARD_CONJURE_WATER_ELEMENTAL%" RET resref END
+      OUTER_INNER_PATCH_SAVE scroll_new "%resref%" BEGIN
+         WRITE_ASCII 0x0 CDIA
+      END
+
+      // the scroll (uses an install_iwd_spell_resources function)
+
+      OUTER_SPRINT scroll_old "%WIZARD_CONJURE_AIR_ELEMENTAL_SCROLL%" // only bother if it exists
+      ACTION_IF FILE_EXISTS_IN_GAME "%scroll_old%.itm" BEGIN
+       COPY_EXISTING "%scroll_old%.ITM" "override/%scroll_new%.ITM"
+         WRITE_LONG NAME2 name
+         SAY DESC (AT desc)
+         REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621A "%water_icon%A" (8)
+         REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621B "%water_icon%B" (8)
+         REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621C "%water_icon%C" (8)
+         REPLACE_TEXTUALLY CASE_INSENSITIVE SPWI621 "%resref%" (8)
+       BUT_ONLY
+
+       COPY_EXISTING_REGEXP GLOB ".*\.sto" override
+           PATCH_IF INDEX_BUFFER ("%scroll_old%")>=0 BEGIN
+               GET_OFFSET_ARRAY offset_array STO_V10_ITEMS_SOLD
+               PHP_EACH offset_array AS key=>offset_base BEGIN
+                    LPF STO_read_item_resource STR_VAR offset_base RET item_resref=value END
+                    PATCH_IF "%item_resref%" STRING_EQUAL_CASE "%scroll_old%" BEGIN
+                       LPF STO_read_item_num_in_stock STR_VAR offset_base RET number_in_stock=value END
+                    END
+               END
+               ADD_STORE_ITEM "%scroll_new%" AFTER "%scroll_old%" #1 #0 #0 "IDENTIFIED" (number_in_stock)
+           END
+       BUT_ONLY
+      END
+      // the EFF files
+
+      COPY_EXISTING "SPAIR1.EFF" "override/DW#WAT1.EFF" WRITE_ASCIIE 0x30 DW#WATE2 (8)
+      COPY_EXISTING "SPAIR2.EFF" "override/DW#WAT2.EFF" WRITE_ASCIIE 0x30 DW#WATE3 (8)
+      COPY_EXISTING "SPAIR3.EFF" "override/DW#WAT3.EFF" WRITE_ASCIIE 0x30 DW#WATE4 (8)
+
+      // the CRE files
+
+      // get the CLASS and ANIMATION entries from the water elemental; rename while we're at it
+      
+      COPY_EXISTING "%water_cre%.cre" override
+            READ_LONG 0x28 anim
+            READ_BYTE 0x273 class
+            SET temp=$water_elem_names("LESSER")
+            WRITE_LONG 0x8 temp
+            WRITE_LONG 0xc temp
+      BUT_ONLY
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY air_elem BEGIN
+         STANDARD=>ELAIRSU2
+         GREATER=>ELAIRSU3
+         ELDER=>ELAIRSU4
+      END
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY water_elem BEGIN
+         STANDARD=>DW#WATE2
+         GREATER=>DW#WATE3
+         ELDER=>DW#WATE4
+      END
+      ACTION_PHP_EACH air_elem AS key=>oldcre BEGIN
+         OUTER_SPRINT newcre $water_elem("%key%")
+         OUTER_SET name=$water_elem_names("%key%")
+         COPY_EXISTING "%oldcre%.cre" "override/%newcre%.cre"
+            WRITE_LONG 0x28 anim
+            WRITE_BYTE 0x273 class
+            WRITE_LONG NAME1 name
+            WRITE_LONG NAME2 name
+         BUT_ONLY
+      END
+
+
+END // end of main function
+
+      ///////////////////////////////////////////////////////////////
+      // helper functions
+      ///////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION remove_elemental_battle
+   INT_VAR strref=0
+   STR_VAR scroll=""
+           spell=""
+BEGIN
+      COPY_EXISTING "%spell%.spl" override
+           PATCH_FOR_EACH opcode_to_delete IN 165 215 142 BEGIN
+              LPF DELETE_SPELL_EFFECT INT_VAR opcode_to_delete END
+           END
+           SAY 0x50 (AT strref)
+      BUT_ONLY
+      ACTION_IF FILE_EXISTS_IN_GAME "%scroll%.itm" BEGIN // not present in BGEE
+        COPY_EXISTING "%scroll%.itm" override
+           SAY 0x50 (AT strref)
+        BUT_ONLY
+      END
+
+END
+
+

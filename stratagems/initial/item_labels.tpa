@@ -1,0 +1,187 @@
+DEFINE_ACTION_FUNCTION item_labels
+       INT_VAR omniscient=0
+BEGIN
+
+   INCLUDE ~%scsroot%/ds/ds.tph~
+
+   <<<<<<<< .../stratagems-inline/autolib.slb
+   >>>>>>>>
+   
+   COPY ~.../stratagems-inline/autolib.slb~ ~%workspace%~
+   OUTER_SET ids= enhanced_edition? 1 : 2
+
+   OUTER_SPRINT opcodelist ""
+   COPY ~%scsroot%/ssl/libdata.txt~ ~%scsroot%/ssl~
+       READ_2DA_ENTRIES_NOW stats_data 5
+       SET see_name_code=0
+       FOR (i=0;i<stats_data;i+=1) BEGIN
+          READ_2DA_ENTRY_FORMER stats_data i 0 parameter
+          READ_2DA_ENTRY_FORMER stats_data i 1 opcode
+          READ_2DA_ENTRY_FORMER stats_data i 2 trigger
+          READ_2DA_ENTRY_FORMER stats_data i 3 statname
+          READ_2DA_ENTRY_FORMER stats_data i 4 markername
+          PATCH_MATCH opcode WITH
+          101 BEGIN
+             SPRINT $101_stat(~%parameter%~) ~%statname%~
+             SPRINT opcodelist "%opcodelist% %parameter%"
+             PATCH_IF "%markername%" STRING_COMPARE "*" BEGIN
+                LPF warning STR_VAR warning="In item_labels, you've tried to give a bespoke name to a 101-type item. You can only do this with 206-types." END
+             END
+             LPF append_autolib INT_VAR omniscient STR_VAR trigger statname markername END
+             INNER_ACTION BEGIN
+                LAF ds_resolve_stat INT_VAR ids STR_VAR id="%statname%" END   // make sure they're all in SPLSTATE or STATS so scripts compile
+                LAF ds_resolve_stat INT_VAR ids STR_VAR id="%statname%_SEEN" END
+             END
+          END
+          206 BEGIN
+             TO_UPPER parameter
+             SPRINT $206_stat(~%parameter%~) ~%statname%~
+             SET see_name_code+=1
+             LPF append_autolib INT_VAR omniscient STR_VAR trigger statname markername END
+             INNER_ACTION BEGIN
+                LAF ds_resolve_stat INT_VAR ids STR_VAR id="%statname%" END   // make sure they're all in SPLSTATE or STATS so scripts compile
+                ACTION_IF "%markername%" STRING_COMPARE "*" BEGIN
+                    LAF ds_resolve_stat INT_VAR ids STR_VAR id="%markername%" END
+                END
+             END
+          END
+          DEFAULT
+             LPF warning STR_VAR warning=~Unrecognised opcode in %scsroot%/ssl/libdata.txt~ END
+          END
+       END
+   BUT_ONLY
+
+   <<<<<<<< .../stratagems-inline/item_stats.2da
+   >>>>>>>>
+   
+   COPY ~.../stratagems-inline/item_stats.2da~ ~%workspace%~
+
+   COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override
+//   COPY_EXISTING "amul17.itm" override
+       LPF ITM_read_droppable RET value END
+       PATCH_IF value BEGIN
+        GET_OFFSET_ARRAY fx_eq_array ITM_V10_GEN_EFFECTS
+        PHP_EACH fx_eq_array AS int=>offset BEGIN
+             LPF add_ds_item_entry INT_VAR offset STR_VAR type=g filename="%SOURCE_RES%" END
+        END
+        GET_OFFSET_ARRAY ab_array ITM_V10_HEADERS
+        PHP_EACH ab_array AS int=>offset_base BEGIN
+           GET_OFFSET_ARRAY2 fx_array offset_base ITM_V10_HEAD_EFFECTS
+           PHP_EACH fx_array AS int2=>offset BEGIN
+               LPF add_ds_item_entry INT_VAR offset STR_VAR type=a filename="%SOURCE_RES%" END
+           END
+        END
+       END
+   BUT_ONLY
+
+
+   LAF detectable_spells INT_VAR clone_only_once=1 fix_khelben=0 fix_old_ds=0 STR_VAR path=~%workspace%~ table = ~item_stats.2da~ END
+   ACTION_IF enhanced_edition BEGIN
+     MAKE_PATCH
+        match=>"opcode is_in [%opcodelist%]"
+        parameter2=>"opcode in ds_item"
+        parameter1=>1
+        opcode=>328
+        target=>2
+        timing=>0
+        duration=>144
+        mode=>1
+     END
+   END ELSE BEGIN
+     MAKE_PATCH
+        match=>"opcode is_in [%opcodelist%]"
+        parameter2a=>"opcode in ds_item"
+        parameter2b=>1
+        parameter1=>1
+        opcode=>318
+        target=>2
+        timing=>0
+        duration=>144
+     END
+   END
+   OUTER_SPRINT spell ""
+   COPY - "%scsroot%/ds/see_protection_spells.2da" "%workspace%"
+      COUNT_2DA_ROWS 1 rowcount
+      FOR (i=0;i<rowcount;i+=1) BEGIN
+         READ_2DA_ENTRY i 0 1 this_spell
+         SPRINT spell "%spell% %this_spell%"
+      END
+
+   LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell editstring="clone_effect=>patch_data" END
+
+
+END
+
+
+
+DEFINE_PATCH_FUNCTION ds_item 
+   STR_VAR arguments=""
+   RET value
+BEGIN
+   SPRINT idbase $101_stat("%arguments%")
+   SET ids= enhanced_edition? 1 : 2
+   INNER_ACTION BEGIN
+      LAF ds_resolve_stat INT_VAR ids STR_VAR id="%idbase%_SEEN" RET value=stat_ind END
+   END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION append_autolib
+       INT_VAR omniscient=0 see_name_code=0
+       STR_VAR trigger=""
+               statname=""
+               markername=""
+BEGIN
+       INNER_ACTION BEGIN
+          APPEND_OUTER ~%workspace%/autolib.slb~ ~TRIGGER=%trigger%~
+          ACTION_IF omniscient BEGIN
+             APPEND_OUTER ~%workspace%/autolib.slb~ ~!CheckSpellState(scstarget,%statname%)~
+          END ELSE BEGIN
+             ACTION_IF "%markername%" STRING_EQUAL "*" BEGIN
+                OUTER_SPRINT markername "%statname%_SEEN"
+             END
+             APPEND_OUTER ~%workspace%/autolib.slb~ ~OR(2)!CheckSpellState(scstarget,%markername%)!CheckSpellState(scstarget,%statname%)~
+          END
+       END
+END
+
+DEFINE_PATCH_FUNCTION add_ds_item_entry 
+    INT_VAR offset=0
+    STR_VAR type=g
+            filename=""
+BEGIN
+           SET opcode=SHORT_AT offset
+           PATCH_IF opcode=101 BEGIN
+                    READ_LONG 0x8+offset parameter2
+                    PATCH_IF VARIABLE_IS_SET $101_stat(~%parameter2%~) BEGIN
+                       SPRINT temp $101_stat(~%parameter2%~)
+                       INNER_ACTION BEGIN
+                          OUTER_SPRINT to_add ~%SOURCE_RES%.itm     318     1     %temp%  101   n    %type%~
+                          APPEND_OUTER ~%workspace%/item_stats.2da~ ~%to_add%~ UNLESS ~%to_add%~
+                       END
+                    END
+                /*    
+                    PATCH_IF parameter2=211 BEGIN // imprisonment immunity
+                       LPF log_this STR_VAR file=pro_imprison_list.txt input="%filename%" repeat=no END
+                    END
+                */
+            END
+            PATCH_IF opcode=206 BEGIN
+                    READ_ASCII 0x14+offset resource
+                    TO_UPPER resource
+                    PATCH_IF VARIABLE_IS_SET $206_stat(~%resource%~) BEGIN
+                       SPRINT temp $206_stat(~%resource%~)
+                       INNER_ACTION BEGIN
+                          OUTER_SPRINT to_add ~%SOURCE_RES%.itm     318     1     %temp%  206   n    %type%~
+                          APPEND_OUTER ~%workspace%/item_stats.2da~ ~%to_add%~ UNLESS ~%to_add%~
+                       END
+                    END
+                 /*
+                    PATCH_IF "%resource%" STRING_EQUAL_CASE "%WIZARD_MAZE%" BEGIN
+                        LPF log_this STR_VAR file=pro_maze_list.txt input="%filename%" repeat=no END
+                    END
+                 */   
+              END
+
+END

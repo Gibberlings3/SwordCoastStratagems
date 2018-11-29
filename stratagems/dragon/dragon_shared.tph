@@ -35,32 +35,90 @@ DEFINE_PATCH_FUNCTION dragon_general BEGIN
  PATCH_IF value=0 BEGIN
    PATCH_MAKE_PATCH
       immunity_to_opcode=>~74 13 55 211 19~//immunity to blindness/slay/death/imprisonment/Mind Flayer
-      immunity_to_string=>~1474 32089~ // blindness, devour brain
+      immunity_to_string=>~1474 32089 14674~ // blindness, devour brain
       immunity_to_spell=>~%DRAGON_WING_BUFFET% %WIZARD_IMPRISONMENT%~
    END
    LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
  END
  PATCH_MAKE_PATCH
       class=>"if enhanced_edition then no_change else FIGHTER_MAGE_CLERIC"
-      delete_opcodes=>~189~ // casting time speedup
-      make_casting_innate=>dw#dragon_innate
       strip_scs_scripts=>null
  END
  LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
 END
 
-//////////////////////////////////////////////////////////////////
-////   Extra hp for dragons
-//////////////////////////////////////////////////////////////////
+//////////////////
+// sequencers  and other shared resources
+//////////////////
 
-DEFINE_PATCH_FUNCTION dragon_staying_power BEGIN
-   LPF check_label STR_VAR label=dw#dragon_hp RET value END
-   PATCH_IF value BEGIN
-      LPF CRE_read_hp_current RET hp=value END
-      LPF check_ini STR_VAR ini=dragon_staying_power RET value END
-      SET arguments=(hp*value) / 100
-      LPF CRE_hitpoints STR_VAR arguments END
+DEFINE_ACTION_FUNCTION dragon_resources_shared BEGIN
 
+   LAF check_label STR_VAR label=dw#dragon_resources RET value END
+   ACTION_IF !value BEGIN
+
+    ////////////////
+    // difficulty
+    ////////////////
+
+    LAF innate_casting_effects END
+    LAF check_ini STR_VAR ini=dragon_staying_power RET mult=value END
+    LAF hitpoint_boost_effects INT_VAR mult STR_VAR spell=dw#drahp END
+
+   /////////////////
+   // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
+   // (may also be built by Anadramatis)
+   /////////////////
+
+   LAF clone_spell STR_VAR spell=~%WIZARD_SPELL_IMMUNITY_ABJURATION%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION%=>dw#0d592~
+                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
    END
 
+      // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
+      // (may also be built by Anadramatis)
+
+      LAF clone_spell STR_VAR spell=~%WIZARD_SPELL_IMMUNITY_ABJURATION%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION%=>dw#0d592~
+                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
+      END
+
+
+       LAF make_label STR_VAR label=dw#dragon_resources END
+       LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
+
+       MAKE_PATCH
+          minor_sequencer=>spwi420b
+          sequencer=>spwi710b
+          trigger=>spwi809b
+       END
+       ACTION_PHP_EACH patch_data AS entry=>resref BEGIN
+           OUTER_SPRINT "%entry%_icon" "%resref%"
+       END
+
+       LAF process_table STR_VAR table=dragon_triggers.2da locbase=dragon function=build_dragon_trigger END
+
+       // innate spells need to properly be innate
+       MAKE_PATCH
+            level=>1
+            spell_type=>innate
+            patch_ability_inline=>"ability_icon_loc=>4"
+       END
+       LAF edit_spell STR_VAR spell="PROTECTION_MAGIC_WEAPON_NOEFF DRAGON_LOWER_ELECTRICAL DRAGON_LOWER_FIRE BLACK_DRAGON_PLANT BLACK_DRAGON_INSECT DRAGON_SILENCE DRAGON_STONE_SKIN" edits=patch_data END
+   END
 END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// helper function for building triggers
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION build_dragon_trigger
+     STR_VAR name=""
+             type=""
+             spell1=""
+             spell2=""
+             spell3=""
+BEGIN
+     OUTER_SET strref=EVALUATE_BUFFER "%%type%_string%"
+     OUTER_SPRINT icon EVALUATE_BUFFER "%%type%_icon%"
+     LAF make_spell_trigger STR_VAR name strref icon spell1 spell2 spell3 prefix=dt END
+END
+

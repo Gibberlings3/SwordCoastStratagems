@@ -1,0 +1,150 @@
+DEFINE_ACTION_FUNCTION divine_spells_postproduction STR_VAR tra="" BEGIN
+
+          ACTION_IF "%tra%" STRING_EQUAL_CASE "" BEGIN
+              LAF no_chant_spell_failure END
+              LAF remove_cause_wounds_alignment_restrictions END
+          END ELSE BEGIN
+              WITH_TRA "%tra%" BEGIN
+                 LAF no_chant_spell_failure END
+                 LAF remove_cause_wounds_alignment_restrictions END
+              END
+          END
+
+          LAF include STR_VAR file=summoned_monsters.tpa location="%iwdspells_lib%" END
+          LAF summoned_monsters_divine END
+          LAF patch_cures_into_stores END
+          LAF pc_spells END
+          LAF clearair_divine END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION no_chant_spell_failure BEGIN
+   // remove spell-failure effect from CHANT
+   
+   MAKE_PATCH
+      delete_effect=>"opcode=145"
+      say_description=>1
+   END
+   LAF edit_spell STR_VAR spell=CLERIC_CHANT edits=patch_data END
+   
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION remap_symbol_pain_pro BEGIN
+
+   LAF edit_spell STR_VAR spell=CLERIC_SYMBOL_OF_PAIN editstring="patch_ability_inline=>~projectile=>225~" END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION patch_cures_into_stores BEGIN
+
+   // patch Cure Moderate Wounds into temples
+   // (while we're at it, do Cure Medium Wounds, which gets left out quite often)
+   
+   OUTER_SET desc=$strref_map(19397)
+   APPEND ~speldesc.2da~ ~%CLERIC_CURE_MODERATE_WOUNDS% %desc%~
+   OUTER_SPRINT has_light ""
+   OUTER_SPRINT no_medium ""
+   COPY_EXISTING_REGEXP GLOB ".*\.sto" "%workspace%"
+         PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_LIGHT_WOUNDS%")>=0 BEGIN
+            SPRINT has_light "%has_light% %SOURCE_RES%"
+            PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_MEDIUM_WOUNDS%")<0 BEGIN
+               SPRINT no_medium "%no_medium% %SOURCE_RES%"
+            END
+         END
+   BUT_ONLY
+
+   MAKE_PATCH
+      match=>"item_resource=SPPR103"
+      item_resource=>"%CLERIC_CURE_MEDIUM_WOUNDS%"
+      cure_price=>"3*cure_price"
+   END
+   ACTION_IF "%no_medium%" STRING_COMPARE_CASE "" BEGIN
+      LAF edit_store STR_VAR store="%no_medium%" editstring="clone_cure=>patch_data" END
+   END
+
+   MAKE_PATCH
+      match=>"item_resource=SPPR103"
+      item_resource=>"%CLERIC_CURE_MODERATE_WOUNDS%"
+      cure_price=>"2*cure_price"
+   END
+   ACTION_IF "%no_medium%" STRING_COMPARE_CASE "" BEGIN
+      LAF edit_store STR_VAR store="%has_light%" editstring="clone_cure=>patch_data" END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// update joinable characters' divine spellbooks
+
+DEFINE_ACTION_FUNCTION pc_spells BEGIN
+
+    LAM read_in_PCs
+    LAM read_in_hidespl
+
+    // main part
+    COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+          SPRINT filename ~%SOURCE_RES%~
+          LPF CRE_is_PC RET value END
+          PATCH_IF value BEGIN
+             LPF CRE_add_all_priest_spells END
+          END
+    BUT_ONLY
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// update CLEARAIR.2DA to include Cloud of Pestilence
+
+DEFINE_ACTION_FUNCTION clearair_divine BEGIN
+
+   COPY_EXISTING "%CLERIC_CLOUD_OF_PESTILENCE%.spl" "%override%"
+        READ_LONG 0x64 ab_off
+        READ_SHORT (0x26+ab_off) proj
+   BUT_ONLY
+   OUTER_SET proj -= 1
+   APPEND "clearair.2da" "cloud_of_pest %proj%"
+   COPY_EXISTING "clearair.2da" override PRETTY_PRINT_2DA
+
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// remove alignment restrictions from Cause Wounds
+
+DEFINE_ACTION_FUNCTION remove_cause_wounds_alignment_restrictions
+BEGIN
+ LAF check_ini STR_VAR ini=keep_cause_wounds_alignment_restrictions RET value END
+ ACTION_IF !value BEGIN
+   MAKE_PATCH
+      CAUSE_LIGHT_WOUNDS=>2
+      CAUSE_MODERATE_WOUNDS=>3
+      CAUSE_MEDIUM_WOUNDS=>4
+      CAUSE_SERIOUS_WOUNDS=>5
+      CAUSE_CRITICAL_WOUNDS=>6
+      MASS_CAUSE_LIGHT_WOUNDS=>7
+   END
+   ACTION_PHP_EACH patch_data AS spell=>strref BEGIN
+      OUTER_SPRINT spellname EVAL "%CLERIC_%spell%%"
+      OUTER_SPRINT scrollname EVAL "%CLERIC_%spell%_SCROLL%"
+      OUTER_SPRINT oldstring (AT strref)
+      COPY_EXISTING "%spellname%.spl" override
+         LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=substitute_string arguments="~%oldstring%~=>null" END
+         LPF SPL_unusable_good_priest STR_VAR arguments=0 END
+         LPF SPL_unusable_GEneutral_priest STR_VAR arguments=0 END
+      BUT_ONLY
+      ACTION_IF FILE_EXISTS_IN_GAME "%scrollname%.itm" BEGIN
+        COPY_EXISTING "%scrollname%.itm" override
+         LPF patch_text_entry INT_VAR loc=0x54 STR_VAR function=substitute_string arguments="~%oldstring%~=>null" END
+         LPF ITM_unusable_good_priest STR_VAR arguments=0 END
+         LPF ITM_unusable_GEneutral_priest STR_VAR arguments=0 END
+        BUT_ONLY
+      END
+   END
+ END
+END

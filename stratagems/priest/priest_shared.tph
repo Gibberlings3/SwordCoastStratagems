@@ -1,5 +1,5 @@
-LAF include STR_VAR locbase=priest files="defensive_spells_druid.tph defensive_spells_cleric.tph spell_swaps.tph" END
 LAF include STR_VAR locbase=caster_shared file=caster_shared.tph END
+LAF include STR_VAR locbase=priest file=spell_swaps.tph END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 /////          Enforce being a priest
@@ -11,19 +11,29 @@ DEFINE_PATCH_FUNCTION enforce_priest
 BEGIN
    INNER_ACTION BEGIN
       OUTER_SPRINT type priest
+      OUTER_SPRINT component_loc priest
       LAUNCH_ACTION_MACRO read_in_spells_per_level
       LAUNCH_ACTION_MACRO read_in_spell_choices
       LAUNCH_ACTION_MACRO read_in_individual_overrides
+      ACTION_IF !VARIABLE_IS_SET priest_tra_loaded BEGIN
+           LOAD_TRA "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra"
+      END
+
    END
    LPF determine_stat STR_VAR stat=wisdom RET wisdom=value END
-   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment hla game spells_are_bg1 modify_level kitdata prebuff END
-   LPF find_priest_type STR_VAR class alignment kitdata filename RET scriptbase kit castertype fighter END
+   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment game spells_are_bg1 modify_level kitdata script_required=script END
+   LPF find_priest_type STR_VAR class alignment kitdata filename RET class kit castertype fighter spell_list spell_list_defensive END
    LPF get_caster_level INT_VAR modify_level STR_VAR type=priest castertype filename RET level END
-   LPF allocate_priest_spells INT_VAR level spells_are_bg1 hla fighter refinements wisdom STR_VAR kit race filename END
-   LPF determine_priest_script INT_VAR game level STR_VAR scriptbase castertype race RET script END
-   LPF build_priest_script INT_VAR prebuff STR_VAR script END
+   LPF allocate_priest_spells INT_VAR level spells_are_bg1 fighter refinements wisdom STR_VAR class kit race filename spell_list spell_list_defensive RET spells level_seven_max spell_turn_list END
+   LPF check_ini STR_VAR ini=no_swift_shapeshift RET no_swift_shapeshift=value END
+   LPF determine_caster_script_name STR_VAR filename prefix="pr" RET script END
+   LPF minimum_healing_level INT_VAR level RET minimum_healing_level END
+   LPF build_priest_script INT_VAR level level_seven_max no_swift_shapeshift minimum_healing_level STR_VAR filename kit race script spells castertype spell_turn_list END
    LPF strip_scs_scripts END
    LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
+   PATCH_IF !no_swift_shapeshift BEGIN
+      LPF swift_shapeshift_npc INT_VAR level STR_VAR kit class spells END
+   END
 END
 
 
@@ -37,19 +47,30 @@ DEFINE_PATCH_FUNCTION find_priest_type
        STR_VAR class=""
                kitdata=""
                alignment=""
-       RET scriptbase kit castertype fighter
+               filename=""
+       RET castertype
+           class
+           kit
+           spell_list
+           spell_list_defensive
+           fighter
 BEGIN
       PATCH_MATCH ~%class%~ WITH
-      DRUID FIGHTER_DRUID BEGIN
+      DRUID FIGHTER_DRUID DRUID_MAGE BEGIN
+         SPRINT spell_list_defensive druid
          SPRINT castertype druid
          TO_LOWER kitdata
          PATCH_MATCH ~%kitdata%~ WITH
-         avenger BEGIN
-            SPRINT scriptbase dra
+         avenger beastfriend BEGIN
+            SPRINT spell_list avenger
             SPRINT kit avenger
          END
+         shapeshifter BEGIN
+            SPRINT spell_list druid
+            SPRINT kit shapeshifter
+         END
          DEFAULT
-            SPRINT scriptbase dru
+            SPRINT spell_list druid
             SPRINT kit druid
          END
          PATCH_IF ~%class%~ STRING_EQUAL_CASE FIGHTER_DRUID BEGIN
@@ -60,17 +81,18 @@ BEGIN
       END
       DEFAULT
          SPRINT castertype cleric
+         SPRINT spell_list_defensive cleric
          PATCH_MATCH ~%alignment%~ WITH
          LAWFUL_EVIL NEUTRAL_EVIL CHAOTIC_EVIL BEGIN
-             SPRINT scriptbase ecl
+             SPRINT spell_list cleric_evil
              SPRINT kit cleric_evil
          END
          LAWFUL_GOOD NEUTRAL_GOOD CHAOTIC_GOOD BEGIN
-             SPRINT scriptbase gcl
+             SPRINT spell_list cleric_good
              SPRINT kit cleric_good
          END
          DEFAULT
-             SPRINT scriptbase gcl
+             SPRINT spell_list cleric_neutral
              SPRINT kit cleric_neutral
          END
          PATCH_IF ~%class%~ STRING_EQUAL_CASE FIGHTER_CLERIC BEGIN
@@ -79,202 +101,133 @@ BEGIN
             SET fighter=0
          END
       END
+      PATCH_MATCH "%class%" WITH
+      cleric_mage cleric_thief innocent flaming_fist BEGIN
+         SPRINT class cleric
+      END
+      druid_mage BEGIN
+         SPRINT class druid
+      END
+      DEFAULT
+      END
 END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-/////          Get priest prebuff variables
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION get_priest_prebuff_variables
-  INT_VAR prebuff=1
-  STR_VAR game=bg2
-  RET variables
-BEGIN
-   ACTION_MATCH prebuff WITH
-      1 BEGIN
-               OUTER_SPRINT ~variables~ ~optiontwosub1=!Global(\"DMWWDisableBuffing\",\"GLOBAL\",1)~
-               OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=~
-               OUTER_SPRINT ~variables~ ~%variables%&IsOptionOne=True~
-      END
-      2 BEGIN
-               OUTER_SPRINT ~variables~ ~optiontwosub1=!Global(\"DMWWDisableBuffing\",\"GLOBAL\",1)!GlobalTimerExpired(\"optiontwotimer\",\"LOCALS\")~
-               OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=GlobalTimerExpired(\"optiontwotimer\",\"LOCALS\")~
-               OUTER_SPRINT ~variables~ ~%variables%&IsOptionTwo=True~
-
-      END
-      3 BEGIN
-               OUTER_SPRINT ~variables~ ~optiontwosub1=~
-               OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=~
-               OUTER_SPRINT ~variables~ ~%variables%&IsOptionThree=True~
-      END
-      4 BEGIN
-               ACTION_IF ~%game%~ STRING_EQUAL_CASE bg1 BEGIN
-                 OUTER_SPRINT ~variables~ ~optiontwosub1=!Global(\"DMWWDisableBuffing\",\"GLOBAL\",1)~
-                 OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=~
-                 OUTER_SPRINT ~variables~ ~%variables%&IsOptionOne=True~
-               END ELSE BEGIN
-                 OUTER_SPRINT ~variables~ ~optiontwosub1=!Global(\"DMWWDisableBuffing\",\"GLOBAL\",1)!GlobalTimerExpired(\"optiontwotimer\",\"LOCALS\")~
-                 OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=GlobalTimerExpired(\"optiontwotimer\",\"LOCALS\")~
-                 OUTER_SPRINT ~variables~ ~%variables%&IsOptionTwo=True~
-               END
-      END
-      5 BEGIN
-               OUTER_SPRINT ~variables~ ~optiontwosub1=!Global(\"Priest_Prep_Override\",\"GLOBAL\",1)OR(2)DifficultyGT(NORMAL)Global(\"Priest_Prep_Override\",\"GLOBAL\",2)~
-               OUTER_SPRINT ~variables~ ~%variables%&optiontwosub2=~
-               OUTER_SPRINT ~variables~ ~%variables%&IsOptionTwo=True~
-      END
-   DEFAULT
-      LAF warning STR_VAR warning= ~%prebuff% is not a recognised prebuffing option~ END
-   END
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
-/////          Work out which priest script is required
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION determine_priest_script
-    INT_VAR level=0
-            game=2
-    STR_VAR castertype=""
-            scriptbase=""
-    RET script
-BEGIN
-   SET spell_level=$caster_level_to_spell_level(~%castertype%~ ~%level%~)
-   SPRINT script ~dw#%game%%scriptbase%%spell_level%~
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-/////          Build a priest script (if needed)
+/////          Build a priest script
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION build_priest_script
-      INT_VAR prebuff=1
-      STR_VAR script=""
+      INT_VAR prebuff=1 level_seven_max=99 no_swift_shapeshift=0 minimum_healing_level=1
+      STR_VAR filename="" script="" kit="" race="" filename="" spells="" castertype="" spell_turn_list=""
 BEGIN
-      ACTION_IF FILE_EXISTS_IN_GAME ~%script%.bcs~ BEGIN
-         OUTER_SET needed=0
-      END ELSE BEGIN
-         OUTER_SET needed=1
-      END
-      ACTION_IF needed BEGIN
-         LAF parse_priest_script_name STR_VAR script RET variables base directory END
-
-         LAF get_priest_prebuff_variables INT_VAR prebuff STR_VAR game= ~%base%~ RET prebuff_variables=variables END
-         OUTER_SPRINT variables ~%variables%&%prebuff_variables%~
-         OUTER_SPRINT scriptname ~%script%~
-         ACTION_IF debug_variable=2 BEGIN
-            LAF warning STR_VAR warning=~Trying to compile priest base script %base% with variables %variables%~ END
-         END
-         
-         LAF check_label STR_VAR label=dw#shapeshift RET value=value END
-         ACTION_IF value BEGIN
-            OUTER_SPRINT variables ~%variables%&ImprovedShapeshift=True~
-         END
-
-
-         LAF ssl_to_bcs STR_VAR variables script=~%base%~ location=~ssl/%directory%/main~ locbase=priest rename_to=~%scriptname%~ END
-      END
+     ACTION_IF !VARIABLE_IS_SET difficulty_variable BEGIN
+               LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
+               LAF define_difficulty STR_VAR type=priest_prep RET prep_difficulty_variable=difficulty_variable END
+     END
+     LAM read_in_instant_prebuff_spells
+     LAF find_priest_script_base INT_VAR level STR_VAR kit race castertype RET base variables END
+     OUTER_SPRINT scriptname "%script%"
+     ACTION_IF debug_variable=2 BEGIN
+        LAF warning STR_VAR warning= ~Trying to compile priest base script %base% with variables %variables%~ END
+     END
+     OUTER_SPRINT variables_here "%variables%"
+     ACTION_TO_UPPER filename
+     ACTION_IF VARIABLE_IS_SET $override("boolean" "priest" "%filename%") BEGIN
+        OUTER_SPRINT booleans_extra $override("boolean" "priest" "%filename%")
+     END ELSE BEGIN
+        OUTER_SPRINT booleans_extra ""
+     END
+     ACTION_IF VARIABLE_IS_SET $override("variable" "priest" "%filename%") BEGIN
+        OUTER_SPRINT variables_extra $override("variable" "priest" "%filename%")
+        OUTER_SPRINT variables_extra "&%variables_extra%"
+     END ELSE BEGIN
+        OUTER_SPRINT variables_extra ""
+     END
+     ACTION_IF !no_swift_shapeshift BEGIN
+        OUTER_SPRINT variables_extra "%variables_extra%&ImprovedShapeshift=True"
+     END
+     ACTION_IF debug_variable=2 BEGIN
+        PRINT "variables:%variables_here%%variables_extra%"
+        PRINT "spells: %spells%"
+     END
+     OUTER_WHILE "%spell_turn_list%" STRING_COMPARE "" BEGIN
+        LAF return_first_entry STR_VAR list="%spell_turn_list%" RET entry spell_turn_list=list END
+        OUTER_SET "%entry%_SPELLTURN"=1
+     END
+     LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script="%base%" location=~ssl/main~ locbase=priest rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
 END
 
 DEFINE_PATCH_FUNCTION build_priest_script
-     INT_VAR prebuff=1
-     STR_VAR script=""
+     INT_VAR level=1 level_seven_max=99 no_swift_shapeshift=0 minimum_healing_level=0
+     STR_VAR script="" kit="" race="" filename="" spells="" castertype=""  spell_turn_list=""
 BEGIN
    INNER_ACTION BEGIN
-      LAF build_priest_script INT_VAR prebuff STR_VAR script END
+      LAF build_priest_script INT_VAR level level_seven_max no_swift_shapeshift STR_VAR script kit race filename spells castertype spell_turn_list END
    END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
-/////          Parse a script to work out which variables it requires
+/////          Find the base details for a script
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION parse_priest_script_name
-      STR_VAR script=""
-      RET variables directory base
+DEFINE_PATCH_FUNCTION find_priest_script_base
+      INT_VAR level=1
+      STR_VAR kit=""
+              race=""
+              castertype=""
+      RET base
+          variables
 BEGIN
-   OUTER_INNER_PATCH ~~ BEGIN
-      LPF parse_priest_script_name STR_VAR script RET variables directory base END
+      SET warning=0
+      PATCH_MATCH "%kit%" WITH
+         cleric_evil cleric_good cleric_neutral BEGIN
+                SPRINT base dw#priest
+                SPRINT priesttype standard_priest
+                SPRINT variables "%variables%&priest_melee_choice=standard_priest"
+         END
+         druid shapeshifter BEGIN
+                SPRINT base dw#priest
+                SPRINT priesttype standard_priest
+                SPRINT variables "%variables%&IsDruid=True&priest_melee_choice=standard_priest"
+         END
+         avenger BEGIN
+                SPRINT base dw#priest
+                SPRINT priesttype standard_priest
+                SPRINT variables "%variables%&IsDruid=True&IsAvenger=True&priest_melee_choice=avenger"
+         END
+     DEFAULT
+                SET warning=1
+                SPRINT base "dw#priest"
+                SPRINT priesttype standard_priest
+     END
+     SPRINT variables "%variables%&ssl_priest_type=%priesttype%"
+     PATCH_IF "%castertype%" STRING_EQUAL_CASE druid BEGIN
+         SET spell_level = $caster_level_to_spell_level("druid" "%level%")
+     END ELSE BEGIN
+         SET spell_level = $caster_level_to_spell_level("cleric" "%level%")
+     END
+     FOR (i=1;i<=spell_level;i+=1) BEGIN
+         SPRINT variables ~%variables%&HasL%i%=True~
+     END
+     PATCH_IF warning=1 BEGIN
+         LPF warning STR_VAR warning=~Script for kit %kit%, race %race% was not correctly identified~ END
+     END
+END
+
+DEFINE_ACTION_FUNCTION find_priest_script_base
+      INT_VAR level=1
+      STR_VAR kit=""
+              race=""
+              castertype=""
+      RET base
+          variables
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF find_priest_script_base INT_VAR level STR_VAR kit race castertype RET base variables END
    END
 END
 
-
-
-DEFINE_PATCH_FUNCTION parse_priest_script_name
-      STR_VAR script=""
-      RET variables directory  base
-BEGIN
-      TO_UPPER script
-      SPRINT variables ~~
-      SET lawful=0
-      SET warning=0
-      INNER_PATCH ~%script%~ BEGIN
-         READ_ASCII 0x3 char3 (1)
-         PATCH_MATCH ~%char3%~ WITH
-            1 BEGIN
-               SPRINT directory bg1
-            END
-            2 BEGIN
-               SPRINT directory bg2
-            END
-            DEFAULT
-               SET warning=1
-            END
-         READ_ASCII 0x4 kit (3)
-         PATCH_MATCH ~%kit%~ WITH
-            ECL BEGIN
-                SPRINT variables ~IsEvil=True&IsCleric=True&IsDruid=False&scsmeleechoice=standard_priest~
-                SPRINT base dw#priest
-            END
-            GCL BEGIN
-                SPRINT variables ~IsEvil=False&IsCleric=True&IsDruid=False&scsmeleechoice=standard_priest~
-                SPRINT base dw#priest
-            END
-            DRU BEGIN
-                SPRINT variables ~IsEvil=False&IsDruid=True&IsCleric=False&scsmeleechoice=standard_priest~
-                SPRINT base dw#priest
-                LPF check_label STR_VAR label="dw#shapeshift" RET value END
-                PATCH_IF value BEGIN
-                   SPRINT variables ~%variables%&ImprovedShapeshift=True%~
-                END
-            END
-            DRA BEGIN
-                PATCH_IF FILE_EXISTS_IN_GAME ~dw#shbrp.itm~ BEGIN
-                   SPRINT variables ~IsEvil=False&IsDruid=True&IsCleric=False&IsAvenger=True&scsmeleechoice=avenger~
-                END ELSE BEGIN
-                   SPRINT variables ~IsEvil=False&IsDruid=True&IsCleric=False&IsAvenger=True&scsmeleechoice=standard_priest~
-                END
-                SPRINT base dw#priest
-                LPF check_label STR_VAR label="dw#shapeshift" RET value END
-                PATCH_IF value BEGIN
-                   SPRINT variables ~%variables%&ImprovedShapeshift=True%~
-                END
-            END
-            TAL BEGIN
-                SPRINT variables ~IsEvil=True&IsCleric=True&IsDruid=False&scsmeleechoice=standard_priest&IsTalosar=True~
-                SPRINT base dw#priest
-            END
-            DEFAULT
-               SET warning=1
-            END
-
-
-         READ_ASCII 0x7 level_char (1)
-         PATCH_MATCH ~%level_char%~ WITH
-            1 2 3 4 5 6 7 BEGIN
-               SET level=level_char
-            END
-            DEFAULT
-               SET warning=1
-            END
-      END
-      FOR (i=1;i<=level;i+=1) BEGIN
-         SPRINT variables ~%variables%&HasL%i%=True~
-      END
-      PATCH_IF warning=1 BEGIN
-         LPF warning STR_VAR warning= ~Script %script% was not correctly identified~ END
-      END
-END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -284,22 +237,20 @@ END
 DEFINE_PATCH_FUNCTION allocate_priest_spells
       INT_VAR level=0
               spells_are_bg1="-1"
-              hla=0
               refinements=0
               fighter=0
               wisdom=10
-      STR_VAR kit=""
+      STR_VAR class=""
+              kit=""
               race=""
               filename=""
+              spell_list=""
+              spell_list_defensive=""
       RET     spells
+              level_seven_max
+              spell_turn_list
 BEGIN
       //// initialise
-      LPF CRE_remove_spells STR_VAR arguments=priest END
-      LPF CRE_remove_spells STR_VAR arguments=~CLERIC_SYMBOL_STUN CLERIC_SYMBOL_DEATH CLERIC_SYMBOL_FEAR~ END
-
-      PATCH_IF debug_variable>0 BEGIN
-         PATCH_PRINT ~Trying to determine spells~
-      END
       PATCH_IF ~spells_are_bg1~= ~-1~ BEGIN
          INNER_ACTION BEGIN
             ACTION_IF FILE_EXISTS ~override/dw#standardise_nobg2.mrk~ BEGIN
@@ -309,155 +260,215 @@ BEGIN
             END
          END
       END
-      PATCH_IF hla=0 BEGIN
-         LPF check_hla_status STR_VAR filename RET hla=value END
-      END
-      PATCH_IF !VARIABLE_IS_SET hla_innate BEGIN
-         PATCH_IF debug_variable>0 BEGIN
-              PATCH_PRINT ~Allocating HLAs~
-         END
-         INNER_ACTION BEGIN
-            LAF check_if_hlas_are_innate RET hla_innate=hla_innate END
-         END
-      END
+
       INNER_ACTION BEGIN
          OUTER_SPRINT spelltype priest
          LAUNCH_ACTION_MACRO read_in_spell_choices
       END
       TO_LOWER kit
       TO_LOWER race
+      /// wipe existing spells
 
-      // Innate HLAs
-      PATCH_IF (hla=1 && hla_innate>0) BEGIN
-         // determine # of innates
-        PATCH_IF (~%kit%~ STRING_EQUAL_CASE ~druid~) OR (~%kit%~ STRING_EQUAL_CASE ~avenger~) BEGIN
-          PATCH_IF ~refinements~=1 BEGIN
-           SET ~num_hla_innate~=level - 15 // blessing of nature
-           SET wisdom=wisdom + 1
-           LPF CRE_wisdom STR_VAR arguments= ~%wisdom%~ END
-           PATCH_FOR_EACH resistance IN cold electricity fire BEGIN
-              LPF ~CRE_read_resist_%resistance%~ RET value=value END
-              SET arguments=value+10
-              LPF ~CRE_resist_%resistance%~ STR_VAR arguments END
-           END
-          END ELSE BEGIN
-           SET ~num_hla_innate~= level - 14
-          END
-        END ELSE BEGIN
-          PATCH_IF ~refinements~=1 BEGIN
-           SET ~num_hla_innate~=level - 22  // enlightenment (benefit is extra spell levels, handled below)
-           SET enlightened=1
-          END ELSE BEGIN
-           SET ~num_hla_innate~=level - 21
-          END
-        END
+      LPF CRE_remove_spells STR_VAR arguments=priest END
+      LPF CRE_remove_spells STR_VAR arguments="WIZARD_NPC_SYMBOL_STUN WIZARD_NPC_SYMBOL_FEAR WIZARD_NPC_SYMBOL_DEATH" END
 
-        PATCH_IF num_hla_innate>0 BEGIN
-          SPRINT innate_spells ~~
-          PATCH_IF hla_innate=1 BEGIN // no repeats
-           SPRINT list $spell_choices_priest(~%kit%~ IO)
-           WHILE (~%list%~ STRING_COMPARE ~~ & num_hla_innate>0) BEGIN
-              LPF return_first_entry STR_VAR list RET entry=entry list=list END
-              PUSH innate_spells ~%entry%~ 
-              SET num_hla_innate = num_hla_innate - 1
-           END
-          END ELSE BEGIN
-             FOR (i=0;i<num_hla_innate;i+=1) BEGIN
-                PUSH innate_spells PLACEHOLDER
+      // assign HLAs
+      // force_level is for the benefit of cleric/mages
+      PATCH_IF !disable_hlas BEGIN
+         LPF grant_hlas INT_VAR spellcaster=1 force_level=level STR_VAR class kit resref="%filename%" RET hla_list=hla END
+      END// basic defensive choices
+
+      PATCH_IF !VARIABLE_IS_SET "defensive_file_loaded_%spell_list_defensive%" BEGIN
+          INNER_ACTION BEGIN
+             ACTION_IF FILE_EXISTS "%scsroot%/priest/spellchoices_defensive/%base_folder_spells_priest%/%spell_list_defensive%.tph" BEGIN
+                LAF include STR_VAR file="spellchoices_defensive/%base_folder_spells_priest%/%spell_list_defensive%.tph" END
+             END ELSE BEGIN
+                LAF include STR_VAR file="spellchoices_defensive/vanilla/%spell_list_defensive%.tph" END
              END
-             SPRINT swap_in $spell_choices_priest(~%kit%~ IR)
-             LPF substitute_spells STR_VAR spells= ~%innate_spells%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
           END
-          WHILE ~%innate_spells%~ STRING_COMPARE ~~ BEGIN
-             LPF return_first_entry STR_VAR list= ~%innate_spells%~ RET arguments=entry innate_spells=list END
-             LPF CRE_add_spells STR_VAR arguments= ~CLERIC_%arguments%~ END
-          END
-        END
-
       END
+      LPF "defensive_spells_%spell_list_defensive%" INT_VAR level fighter RET spells END
 
-      // basic defensive adjustments
-        PATCH_IF debug_variable>0 BEGIN
-              PATCH_PRINT ~Making defensive adjustments~
-         END
-      PATCH_MATCH ~%kit%~ WITH
-      druid avenger BEGIN
-         SPRINT class druid
-         LPF defensive_spells_druid INT_VAR level hla hla_innate refinements STR_VAR kit RET spells END
-      END
-      DEFAULT
-         SPRINT class cleric
-         LPF defensive_spells_cleric INT_VAR level hla hla_innate refinements STR_VAR kit RET spells END
-      END
-      
-      // fine-tune basic defensive adjustments
+      // fine-tune spells
 
-      LPF individual_choices STR_VAR spells filename component=mage RET spells=spells END
-
-      PATCH_IF spells_are_bg1=1 BEGIN
+      LPF individual_choices STR_VAR spells filename component=priest RET spells END
+  /*  not using either atm
+      LPF priest_spell_swap_race_preparatory STR_VAR spells race RET spells END
+      LPF priest_spell_swap_specific_preparatory STR_VAR spells race RET spells END
+  */
+      PATCH_IF spells_are_bg1 BEGIN
          LPF priest_spell_swap_bg1_preparatory STR_VAR spells RET spells END
       END
-
-      PATCH_IF debug_variable>0 BEGIN
-              PATCH_PRINT ~Allocating remaining spells~
-      END
+      
       // work out remaining spell slots and allocate spells to them
-      LPF determine_number_of_spells INT_VAR level wisdom STR_VAR class RET av_0=av_0 av_1=av_1 av_2=av_2 av_3=av_3 av_4=av_4 av_5=av_5 av_6=av_6 av_7=av_7 av_8=av_8 END
-      LPF count_spell_levels STR_VAR spells prefix=~CLERIC_~ RET ct_0=ct_0 ct_1=ct_1 ct_2=ct_2 ct_3=ct_3 ct_4=ct_4 ct_5=ct_5 ct_6=ct_6 ct_7=ct_7 ct_8=ct_8 END
+
+      LPF determine_number_of_spells INT_VAR level wisdom STR_VAR class RET av_0 av_1 av_2 av_3 av_4 av_5 av_6 END
+
+      FOR (i=6;i>=0;i -= 1) BEGIN
+         PATCH_IF $av("%i%")>0 BEGIN
+            SET lev_max=i
+            SET i="-1"
+         END
+      END
+      SET spell_turn_max = lev_max - 2
+
+      SET level_seven_max="%av_6%"
+      LPF count_spell_levels STR_VAR spells prefix=~CLERIC_~ RET ct_0 ct_1 ct_2 ct_3 ct_4 ct_5 ct_6 END
       FOR (i=0;i<7;i+=1) BEGIN
         SET $av(~%i%~)=$av(~%i%~) - $ct(~%i%~)
-        SET temp=$av(~%i%~)
       END
-      PATCH_IF VARIABLE_IS_SET ~enlightened~ BEGIN
-         PATCH_IF level>22 BEGIN
-         SET av_5=av_5+1
-         END
-         PATCH_IF level>23 BEGIN
-         SET av_6=av_6+1
-      END
-      END 
       FOR(i=0;i<7;i+=1) BEGIN
          SET spell_level=i+1
-         PATCH_IF (spell_level=7 && hla=1 && hla_innate=0) BEGIN
-            SPRINT ~%spell_level%~ H
-         END
          SET spell_num=$av(~%i%~)
+         PATCH_IF debug_variable=2 BEGIN
+           SPRINT ct_here $ct("%i%")
+           PATCH_PRINT ~Spells at level %i%=%spell_num%; number already cast is %ct_here%~
+         END
          PATCH_IF spell_num < 0 BEGIN
-            LPF patch_log_this STR_VAR file=illegal_priest_spells.txt input= ~%SOURCE_RES% at level %spell_level%~ END
+            LPF log_this STR_VAR file=illegal_priest_spells.txt input= ~%SOURCE_RES% at level %spell_level%~ END
          END
          SPRINT ~spells_here~ ~~
          PATCH_IF spell_num>0 BEGIN
             FOR (j=0;j<spell_num;j+=1) BEGIN
                PUSH spells_here PLACEHOLDER
             END
-            SPRINT swap_in $spell_choices_priest(~%kit%~ ~%spell_level%~)
+            SPRINT swap_in $spell_choices_priest(~%spell_list%~ ~%spell_level%~)
             LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
             PUSH spells ~%spells_here%~
          END
       END
 
+
       // fine-tune remaining spells
 
-      LPF priest_spell_swap_level INT_VAR level STR_VAR kit spells RET spells=spells END
+      LPF priest_spell_swap_misc STR_VAR spells filename RET spells END
+      LPF priest_spell_swap_alignment STR_VAR spells filename RET spells END
       PATCH_IF spells_are_bg1=1 BEGIN
-         LPF priest_spell_swap_bg1 STR_VAR spells RET spells=spells END
+         LPF priest_spell_swap_bg1 STR_VAR spells RET spells END
       END
+
 
       // install the spells
 
-      SPRINT ~spells_expanded~ ~~
+            SPRINT spells_add ""
+      SPRINT spells_list ""
       WHILE ~%spells%~ STRING_COMPARE_CASE ~~ BEGIN
-         LPF return_first_entry STR_VAR list= ~%spells%~ RET spells=list entry=entry END
+         LPF return_first_entry STR_VAR list= ~%spells%~ RET spells=list entry END
          PATCH_MATCH "%entry%" WITH
-         BLADE_BARRIER BEGIN
-             PUSH spells_expanded NPC_BLADE_BARRIER
-         END
+            ".*_PRECAST" BEGIN
+               SPRINT entry "CLERIC_%entry%"
+               PUSH spells_list "%entry%"
+            END
+            "CLERIC_.*" "WIZARD_.*" BEGIN
+                PUSH spells_add "%entry%"
+                PUSH spells_list "%entry%"
+            END
          DEFAULT
-             PUSH spells_expanded ~CLERIC_%entry%~
+            SPRINT entry "CLERIC_%entry%"
+            SET level=EVAL "%%entry%_LEVEL%"
+            PATCH_IF level>spell_turn_max BEGIN
+               PUSH spell_turn_list "%entry%"
+            END
+            PUSH spells_add "%entry%"
+            PUSH spells_list "%entry%"
          END
       END
+      LPF CRE_add_spells STR_VAR arguments=~%spells_add%~ END
+      SPRINT spells "%spells_list% %hla_list%"
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+///   Swift shapeshifting
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION swift_shapeshift_npc
+     INT_VAR level=0
+     STR_VAR kit="" class="" spells=""
+BEGIN
+   SET found_form=0
+   PATCH_IF INDEX ("ELEMENTAL_TRANSFORMATION_EARTH" "%spells%")>=0 BEGIN
+          LPF minimal_priest_weapon END
+          LPF CRE_add_items STR_VAR arguments="dw#shnea(WEAPON2,NOTEQUIP)" END
+          LPF CRE_remove_spells STR_VAR arguments="CLERIC_ELEMENTAL_TRANSFORMATION_EARTH" END
+          SET found_form=1
+   END
+   PATCH_IF INDEX ("ELEMENTAL_TRANSFORMATION_FIRE" "%spells%")>=0 BEGIN
+          LPF minimal_priest_weapon END
+          LPF CRE_add_items STR_VAR arguments="dw#shnfi(WEAPON2,NOTEQUIP)" END
+          LPF CRE_remove_spells STR_VAR arguments="CLERIC_ELEMENTAL_TRANSFORMATION_FIRE" END
+          SET found_form=1
+   END
+   PATCH_IF (!found_form && "%class%" STRING_EQUAL_CASE druid) BEGIN
+       PATCH_MATCH "%kit%" WITH
+           shapeshifter BEGIN
+               LPF minimal_priest_weapon END
+               PATCH_IF level>=13 BEGIN
+                     LPF CRE_add_items STR_VAR arguments="dw#shnw3(WEAPON2,NOTEQUIP)" END
+                     LPF CRE_remove_spells STR_VAR arguments="SHAPESHIFTER_SHAPESHIFT_WEREWOLF SHAPESHIFTER_SHAPESHIFT_GREATERWEREWOLF" END
+               END ELSE BEGIN
+                  PATCH_IF level>=7 BEGIN
+                       LPF CRE_add_items STR_VAR arguments="dw#shnw2(WEAPON2,NOTEQUIP)" END
+                  END ELSE BEGIN
+                       LPF CRE_add_items STR_VAR arguments="dw#shnw1(WEAPON2,NOTEQUIP)" END
+                  END
+                  LPF CRE_remove_spells STR_VAR arguments="SHAPESHIFTER_SHAPESHIFT_WEREWOLF" END
+               END
+           END
+           avenger BEGIN
+               PATCH_IF level>=7 BEGIN
+                   LPF minimal_priest_weapon END
+                   LPF CRE_add_items STR_VAR arguments="dw#shnsa(WEAPON2,NOTEQUIP) dw#shnsp(WEAPON3,NOTEQUIP)" END
+                   LPF CRE_remove_spells STR_VAR arguments="DRUID_SHAPESHIFT_BROWNBEAR DRUID_SHAPESHIFT_BLACKBEAR DRUID_SHAPESHIFT_WOLF AVENGER_SHAPESHIFT_SWORDSPIDER AVENGER_SHAPESHIFT_BABYWYVERN AVENGER_SHAPESHIFT_FIRESALAMANDER" END
+               END
+           END
+           DEFAULT
+                PATCH_IF level>=7 BEGIN
+                   LPF minimal_priest_weapon END
+                   LPF CRE_add_items STR_VAR arguments="dw#shnbr(WEAPON2,NOTEQUIP)" END
+                   LPF CRE_remove_spells STR_VAR arguments="DRUID_SHAPESHIFT_BROWNBEAR DRUID_SHAPESHIFT_BLACKBEAR DRUID_SHAPESHIFT_WOLF" END
+                END
+       END
+   END
+END
 
 
-      LPF CRE_add_spells STR_VAR arguments= ~%spells_expanded%~ END
+DEFINE_PATCH_FUNCTION minimal_priest_weapon BEGIN // anyone who has no weapon and gets a shapeshifting token will glitch and cast spells without shapeshifting back to human form
+
+       LPF identify_weapon_preferences STR_VAR filename RET onhandprof has_ranged skip_me END
+       PATCH_IF (!onhandprof && !skip_me) BEGIN
+             LPF CRE_add_items STR_VAR arguments="%tutu_var%staf01(WEAPON1)" END
+       END
+
+END
+
+DEFINE_PATCH_FUNCTION minimum_healing_level 
+   INT_VAR level=0
+   RET minimum_healing_level
+BEGIN
+   PATCH_MATCH level WITH
+   1 2 3  BEGIN
+       minimum_healing_level=1
+   END
+   4 5 BEGIN
+       minimum_healing_level=2
+   END
+   6 7 BEGIN
+     minimum_healing_level=3
+   END
+   8 BEGIN
+     minimum_healing_level=4
+   END
+   9 10 11 12 13 14 BEGIN
+      minimum_healing_level=level - 5
+   END
+   15 16 17  BEGIN
+      minimum_healing_level=level - 6
+   END
+   18 19 20 BEGIN
+      minimum_healing_level = level - 7
+   END
+   DEFAULT
+      minimum_healing_level= level - 8
+   END
 
 END

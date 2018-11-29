@@ -3,14 +3,28 @@ DEFINE_PATCH_FUNCTION strip_scs_scripts
 BEGIN
   PATCH_IF "%arguments%" STRING_COMPARE_CASE no_change BEGIN
    FOR (i=0x248;i<0x270;i+=8) BEGIN
+      READ_ASCII i checkfull
       READ_ASCII i check4 (4)
       TO_LOWER check4
+      READ_ASCII i check5 (5)
+      TO_LOWER check5
       PATCH_MATCH ~%check4%~ WITH  // caster
          dw#2 dw#1 dw1r dw2r dw3r dw1m dw2m dw3m BEGIN
             WRITE_ASCII i ~~ (8)
          END
          DEFAULT
+            PATCH_MATCH "%check5%" WITH
+               dw#mg dw#pr BEGIN
+                   WRITE_ASCII i ~~ (8)
+               END
+               DEFAULT
+               END
          END
+      PATCH_MATCH "%checkfull%" WITH wtasight wdasight wtarsgt wdarsgt _tasight _dasight _wtarsgt _wdarsgt BEGIN
+         WRITE_ASCII i ~~ (8)
+      END
+      DEFAULT
+      END
    END
  END
 END
@@ -55,14 +69,33 @@ BEGIN
       DEFAULT SET value=0 END
 END
 
+DEFINE_PATCH_FUNCTION is_bg1_char 
+      STR_VAR filename=""
+      RET value
+BEGIN
+      PATCH_MATCH "%is_bg1%%is_bg2%" WITH
+           01 BEGIN
+               SET value=0
+           END
+           10 BEGIN
+               SET value=1
+           END
+           11 BEGIN
+               LPF is_bg1_char_core STR_VAR filename RET value END
+           END
+           DEFAULT
+              PATCH_FAIL "Running is_bg1_char on %filename%, but game isn't bg1 *or* bg2(!?)"
+      END
 
-DEFINE_PATCH_FUNCTION is_bg1_char
+END
+
+
+DEFINE_PATCH_FUNCTION is_bg1_char_core // used only on BGT and EET installs
       STR_VAR filename=""
       RET value
 BEGIN
       TO_UPPER filename
       PATCH_MATCH ~%filename%~ WITH
-
 AASIM    ACHEN    ADDY 	AGNASI        AJANTI	AJANTI4   AJANTI6  ALAI      ALANBL	ALATOS    ALBERT  ALDETH      ALEXAN  ALGERN    ALORA   ALORA6
 ALVANH  ALYTH     AMARAN  AMBMAEVR    AMBSTHF0 AMBTHIF2 AMNIS    AMNIS3      AMNIS4   AMNISE   AMNISE2  AMSLEEP    ANDARS   ANDOUT   ANDRIS   ANGELO
 AOLN     ARDROU   ARKANI   ARKANI3    ARKION   ARKUSH   ARLIN    ASHEN       ASHIRU   ATTSLIM  AVARICE  AVARICEM   BAERIN   BANDCAP  BANDCR   BANDIC
@@ -132,37 +165,24 @@ TIBER    TICK     TIPIAN   TORLO      TORLOB   TOURIST1 TOURIST2 TOURIST3    TRA
 ULCAST   ULF      ULRAUN   UNSHEY     VAIL     VARCI    VAX      VAYYA       VENKT    VICONI   VICONI4  VICONI61   VITIARE  VIVIEN   VOIEAS   VOINOR
 VOISOU   VOIWES   VOLETA   VOLO       VOLTIN   WAITER   WASLEEP  WATCH       WATCH2   WATCH3   WATCH6   WATCH9     WATCHM   WATCHN   WATCHN2  WENRIC
 WHEBER   WHELP    WILCO    WILF       WILLIAM1 WINSKI   WINSKI2  WINTHR2     WIRTHI   WIVEN    WUDEI    XAN4       XAN6     XZAR2    XZAR4    XZAR6
-YAGO     YESLIC   YESLIC5  ZAL        ZARGAL   ZEELA    ZEKAR    ZEKE        ZHALIM   ZHURLO   ZORDRA   CALAHA_    CARBOS_  FTOWN2_  FTOWN3_  FTOWN4_
+YAGO     YESLIC   YESLIC5  ZAL        ZARGAL   ZEELA    ZEKAR    ZEKE        ZHALIM   ZHURLO   ZORDRA
+         BEGIN
+              SET value=1
+         END
+         DEFAULT
+                SET value=0
+      END
+      PATCH_IF GAME_IS eet BEGIN
+         PATCH_MATCH "%filename%" WITH 
+BISHOP KING KNIGHT PAWN QUEEN ROOK FLAM6 CALAHA_    CARBOS_  FTOWN2_  FTOWN3_  FTOWN4_
 IGIBBER_ IMOEN6_  KNIGHT1_ MTOWN2_    MTOWN3_  MTOWN4_  MTOWN5_  NEB_        QUAYLE_  ROGER_   SENDAI_  SHANK_     SHOP01_  SHOP02_  SHOP03_  SHOP04_
 SHOP05_  SHOP06_  SHOP07_  SHOP08_    SKELWA_  STALKE_  TARNOR_  TOWNCR_     VICONI6_ WILLIA_  WILLIAM_ XAN_       XZAR_
-
-BEGIN
-   SET value=1
-END
-DEFAULT
-   SET value=0
-END
-
-PATCH_IF (value = 0) AND (GAME_IS ~eet~) BEGIN
-  PATCH_MATCH ~%filename%~ WITH BISHOP KING KNIGHT PAWN QUEEN ROOK FLAM6 BEGIN
-    SET value=1
-  END
-  DEFAULT
-    SET value=0
-  END
-END
-
-//commented out, not sure if it should be added for BG:EE game too or if it uses different implementation elsewhere
-/*PATCH_IF (value = 0) AND (GAME_IS ~bgee~) BEGIN
-  PATCH_MATCH ~%filename%~ WITH CALAHA CARBOS FTOWN2 FTOWN3 FTOWN4_ IGIBBER IMOEN6 KNIGHT1 MTOWN2 MTOWN3 MTOWN4 MTOWN5 NEB QUAYLE ROGER SENDAI SHANK SHOP01 SHOP02 SHOP03 SHOP04 SHOP05 SHOP06 SHOP07 SHOP08 SKELWA STALKE TARNOR TOWNCR VICONI6 WILLIA WILLIAM XAN XZAR BISHOP KING KNIGHT PAWN QUEEN ROOK FLAM6 SKELWA02 SKELWA03
- BEGIN
-    SET value=1
-  END
-  DEFAULT
-    SET value=0
-  END
-END*/
-
+              BEGIN
+                   SET value=1
+              END
+              DEFAULT
+          END
+      END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -179,7 +199,7 @@ BEGIN
     LAF check_ini STR_VAR ini=Enable_Easy_Option RET value END
     ACTION_IF value BEGIN
 
-       LAF clone_creature STR_VAR creature=~%creature%=>%hardname%~ edits editstring="%editstring% strip_script=>dw#swpup insert_script_high=>dw#swpdn" END
+       LAF clone_creature STR_VAR creature=~%creature%=>%hardname%~ edits editstring="%editstring% strip_script=>dw#swpdn insert_script_high=>dw#swpdn" END
        LAF edit_creature STR_VAR creature edits=~~ editstring=~strip_script=>dw#swpup insert_script_high=>dw#swpup~ END
 
     END ELSE BEGIN
@@ -205,4 +225,300 @@ BEGIN
       SET value=RANDOM (lower higher)
    END
 END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////   markers, to put a temporary Splstate on the target
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_marker_spell
+    INT_VAR duration=0
+    STR_VAR marker_name=""
+            splstate=""
+BEGIN
+   ACTION_IF enhanced_edition BEGIN
+     LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate%" RET code=stat_ind END
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+        parameter2=>"%code%"
+        parameter1=>1
+        opcode=>328
+        target=>2
+        timing=>0
+        duration=>"%duration%"
+        mode=>1
+     END
+   END ELSE BEGIN
+     LAF ds_resolve_stat INT_VAR ids=2 STR_VAR id="%splstate%" RET code=stat_ind END
+     ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+        parameter2a=>"%code%"
+        parameter2b=>1
+        parameter1=>1
+        opcode=>318
+        target=>2
+        timing=>0
+        duration=>"%duration%"
+     END
+   END
+   LAF make_spell STR_VAR spell="%marker_name%" editstring="add_basic_ability=>null add_effect=>patch_data" END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION return_detectable_string STR_VAR type="" RET string BEGIN
+   OUTER_SET ids=enhanced_edition? 1: 2
+   LAF ds_resolve_stat INT_VAR ids STR_VAR id="%type%" RET stat_ind END
+   ACTION_IF enhanced_edition BEGIN
+      OUTER_SPRINT string "opcode=>328 parameter1=>1 parameter2=>%stat_ind% mode=>1 target=>2"
+   END ELSE BEGIN
+      OUTER_SPRINT string "opcode=>318 parameter1=>1 parameter2a=>%stat_ind% parameter2b=>1 target=>2"
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+// duplicate of version in ds.tph
+
+DEFINE_ACTION_FUNCTION ds_resolve_stat INT_VAR ids=2 index=0 delete=0 STR_VAR id="" RET stat_ind BEGIN
+
+OUTER_SPRINT ids_file stats OUTER_SET min_new=401
+
+ACTION_IF ids=0 BEGIN OUTER_SPRINT ids_file extstate OUTER_SET min_new=0 END
+ACTION_IF ids=1 BEGIN OUTER_SPRINT ids_file splstate OUTER_SET min_new=0 END
+
+COPY_EXISTING ~%ids_file%.ids~ override
+  stat_ind=0
+  found=0
+
+  READ_2DA_ENTRIES_NOW stats 2
+  FOR (row=0;row<stats;row+=1) BEGIN
+    READ_2DA_ENTRY_FORMER stats row 0 ind
+    READ_2DA_ENTRY_FORMER stats row 1 str
+    SET $stat("%row%") = ind
+    PATCH_IF index BEGIN
+      PATCH_IF ind=index BEGIN
+        REMOVE_2DA_ROW row 2
+        found=1
+        PATCH_IF delete=0 BEGIN
+          INSERT_2DA_ROW row 2 ~%index% %id%~
+        END
+        row=stats
+      END
+    END ELSE BEGIN
+      PATCH_IF ~%str%~ STRING_EQUAL_CASE ~%id%~ BEGIN
+        stat_ind=ind
+        found=1
+     /* row=stats */ // don't stop looking, the same ID may be assigned to a greater index, which takes priority when compiling
+      END
+    END
+  END
+
+  PATCH_IF found=0 BEGIN
+    stat_ind=min_new
+    PHP_EACH stat AS row => ind BEGIN
+      PATCH_IF found=0 && (row+1 < stats) BEGIN // not at the end of file
+        next_row = row+1
+        next_ind = EVAL $stat("%next_row%")
+        PATCH_IF index BEGIN
+          PATCH_IF index<next_ind && index>ind BEGIN
+            INSERT_2DA_ROW next_row 2 ~%index% %id%~
+            found=1
+          END
+        END ELSE BEGIN
+          PATCH_IF stat_ind<next_ind BEGIN
+            PATCH_IF ind<stat_ind BEGIN
+              INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+              found=1
+            END ELSE BEGIN
+              stat_ind+=1
+              PATCH_IF stat_ind<next_ind BEGIN
+                INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
+                found=1
+              END
+            END
+          END
+        END
+      END ELSE BEGIN // at the end of file
+        PATCH_IF found=0 BEGIN
+          PATCH_IF index BEGIN
+            INSERT_2DA_ROW stats 2 ~%index% %id%~
+          END ELSE BEGIN
+            PATCH_IF stat_ind>ind BEGIN
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END ELSE BEGIN
+              stat_ind+=1
+              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
+            END
+          END
+        END
+      END
+    END // PHP_EACH
+  END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+// make spells that grant/remove instant uninterruptible casting
+//
+// we do this via sectype for backwards-compatibility
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION innate_casting_effects BEGIN
+
+   LAF check_label STR_VAR label=dw#innate_casting RET value END
+   ACTION_IF !value BEGIN
+      LAF make_label STR_VAR label=dw#innate_casting END
+
+      ADD_SECTYPE Innate_Casting ""
+
+
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         secondary=>~%Innate_Casting%~
+         add_basic_ability=>null
+         add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_Casting%"~
+         add_effect_inline=>~opcode=>101 timing=>1 target=>1 parameter2=>38 at_end=>1~
+         add_effect_inline'=>~opcode=>101 timing=>1 target=>1 parameter2=>60 at_end=>1~
+         add_effect_inline''=>~opcode=>101 timing=>1 target=>1 parameter2=>80 at_end=>1~
+         add_effect_inline'''=>~opcode=>189 timing=>1 target=>1 parameter1=>10 at_end=>1~
+      END
+      LAF make_spell STR_VAR spell=dw#innat edits=patch_data END
+
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         add_basic_ability=>null
+         add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_Casting%"~
+      END
+      LAF make_spell STR_VAR spell=dw#inrem edits=patch_data END
+
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+// make spells that grant/remove instant see-invisible
+//
+// we do this via sectype for backwards-compatibility
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION innate_see_invisible_effects BEGIN
+
+   LAF check_label STR_VAR label=dw#innate_see_invisible RET value END
+   ACTION_IF !value BEGIN
+      LAF make_label STR_VAR label=dw#innate_see_invisible END
+
+      ADD_SECTYPE Innate_See_Invisible ""
+
+
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         secondary=>~%Innate_See_Invisible%~
+         add_basic_ability=>null
+         add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_See_Invisible%"~
+         add_effect_inline=>~opcode=>101 timing=>1 target=>1 parameter2=>38 at_end=>1~
+      END
+      LAF make_spell STR_VAR spell=dw#sinat edits=patch_data END
+
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         add_basic_ability=>null
+         add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_See_Invisible%"~
+      END
+      LAF make_spell STR_VAR spell=dw#sirem edits=patch_data END
+
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+// make spells that modify hitpoints
+//
+// we do this via sectype for backwards-compatibility
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION hitpoint_boost_effects
+        INT_VAR mult=100
+                remove_only=0
+        STR_VAR spell=""
+        RET sectype
+BEGIN
+      ADD_SECTYPE Hitpoint_Bonus ""
+      OUTER_SPRINT sectype "%Hitpoint_Bonus%"
+      ACTION_IF !remove_only BEGIN
+       ACTION_CLEAR_ARRAY patch_data
+       ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         secondary=>~%Hitpoint_Bonus%~
+         add_basic_ability=>null
+         add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Hitpoint_Bonus%"~
+         add_effect_inline'=>~opcode=>18 timing=>0 duration=>60 target=>1 parameter1=>%mult% parameter2=>2 at_end=>1~
+       END
+       LAF make_spell STR_VAR spell edits=patch_data END
+      END
+      ACTION_IF !FILE_EXISTS_IN_GAME "dw#hprem.spl" BEGIN
+        ACTION_CLEAR_ARRAY patch_data
+        ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+           add_basic_ability=>null
+           add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Hitpoint_Bonus%"~
+        END
+        LAF make_spell STR_VAR spell=dw#hprem edits=patch_data END
+      END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+// make spells that modify resistance
+//
+// we do this via sectype for backwards-compatibility
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resistance_boost_effects
+        INT_VAR bonus=50
+        STR_VAR spell=""
+BEGIN
+
+      ADD_SECTYPE Resistance_Bonus ""
+
+
+      ACTION_CLEAR_ARRAY patch_data
+      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+         secondary=>~%Resistance_Bonus%~
+         add_basic_ability=>null
+         add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Resistance_Bonus%"~
+         add_effect_inline'1=>~opcode=>86 timing=>0 duration=>999999 target=>1 parameter1=>%bonus% parameter2=>1 at_end=>1~
+         add_effect_inline'2=>~opcode=>87 timing=>0 duration=>999999 target=>1 parameter1=>%bonus% parameter2=>1 at_end=>1~
+         add_effect_inline'3=>~opcode=>88 timing=>0 duration=>999999 target=>1 parameter1=>%bonus% parameter2=>1 at_end=>1~
+         add_effect_inline'4=>~opcode=>89 timing=>0 duration=>999999 target=>1 parameter1=>%bonus% parameter2=>1 at_end=>1~
+      END
+      LAF make_spell STR_VAR spell edits=patch_data END
+      ACTION_IF !FILE_EXISTS_IN_GAME "dw#rerem.spl" BEGIN
+        ACTION_CLEAR_ARRAY patch_data
+        ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+           add_basic_ability=>null
+           add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Resistance_Bonus%"~
+        END
+        LAF make_spell STR_VAR spell=dw#rerem edits=patch_data END
+      END
+
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+// Update difficulty widget; set difficulty variable
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION define_difficulty 
+    STR_VAR type=""
+    RET difficulty_variable
+BEGIN
+    // read the table to get out the actual difficulty variable
+    LAF read_table_entry_external INT_VAR colnum=1 STR_VAR file="difficulty_controls.2da" locbase=lib row="%type%" RET difficulty_variable=value END
+    // check to see if it's been installed in the dlg file already
+    LAF check_label STR_VAR label="dw#%type%_difficulty" RET value END
+    ACTION_IF !value BEGIN
+      // if not, install it, and make a marker to say so
+      LAF make_label STR_VAR label="dw#%type%_difficulty" END
+      LAF swap_text STR_VAR files="dw#diffi.dlg" swaps=~Global("DW_%type%_disable","GLOBAL",99)=>null~ END
+    END
+END
+
+
 

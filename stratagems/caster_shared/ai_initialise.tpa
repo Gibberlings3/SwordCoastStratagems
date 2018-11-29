@@ -1,0 +1,108 @@
+INCLUDE ~%scsroot%/ds/ds.tph~
+LAF include STR_VAR file=caster_shared.tph END
+DEFINE_ACTION_FUNCTION ai_initialise BEGIN
+
+    // make sure this is in the ids
+
+    LAF return_detectable_string STR_VAR type=CONTINGENCY_TRIGGERED RET detection_string=string END
+
+    // install SCS-AI bits of DS
+
+    LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table = "%scsroot%/ds/ds_scs_ai.2da" END  // additional SCS entries
+
+    // we also do a few hot-generated entries
+    
+    OUTER_SPRINT chant_base "%CLERIC_CHANT%"
+    OUTER_SPRINT rwotf_base "%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%"
+
+    <<<<<<<< .../stratagems-inline/extra_ds.2da
+    %chant_base%D.SPL   328        1          BUFF_ENHANCEMENT                                 142          n            A
+    %rwotf_base%A.SPL   328        1          BUFF_ENHANCEMENT                                 142          n            A
+    %rwotf_base%A.SPL   328        1          ALLIED_RIGHTEOUS_WRATH_OF_THE_FAITHFUL           142          n            A
+    %rwotf_base%B.SPL   328        1          ITEM_CHARM                                       142          n            A
+    %rwotf_base%B.SPL   328        1          ITEM_HOLD                                        142          n            A
+    >>>>>>>>
+
+    
+    COPY ".../stratagems-inline/extra_ds.2da" "%workspace%" EVALUATE_BUFFER
+    LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table = "%workspace%/extra_ds.2da" END
+
+    // don't remove short-duration blindness
+    OUTER_SET ids= enhanced_edition? 1 : 2
+    LAF ds_resolve_stat INT_VAR ids STR_VAR id=DO_NOT_CURE_BLINDNESS RET parameter2=stat_ind END
+    ACTION_IF enhanced_edition BEGIN
+       OUTER_SET opcode=328
+       OUTER_SET mode=1
+    END ELSE BEGIN
+       OUTER_SET opcode=328
+       OUTER_SET mode=1
+    END
+    MAKE_PATCH
+       opcode=>"%opcode%"
+       target=>2
+       duration=>6
+       parameter2=>"%parameter2%"
+       mode=>"%mode%"
+       save_vs_spells=>1
+    END
+    LAF edit_spell STR_VAR spell=CLERIC_HOLY_SMITE editstring="add_effect=>patch_data" END // technically we should check aligmnent on non-SR installs, but life is too short, it's a very niche edge-case
+
+    ACTION_IF demivrgvs BEGIN
+       OUTER_SPRINT $patch_data("savebonus") "-4"
+       LAF edit_spell STR_VAR spell=SPPR609E editstring="add_effect=>patch_data" END // this is the payload for False Dawn
+    END
+
+
+    OUTER_SET ids= enhanced_edition? 1 : 2
+    LAF ds_resolve_stat INT_VAR ids STR_VAR id=TURNING_TO_STONE RET parameter2=stat_ind END
+    ACTION_IF demivrgvs BEGIN
+     OUTER_SET ids = enhanced_edition? 1 : 2
+     LAF ds_resolve_stat INT_VAR ids STR_VAR id=TURNING_TO_STONE RET parameter2=stat_ind END
+     LAF ds_resolve_stat INT_VAR ids STR_VAR id=DO_NOT_TARGET_SPELLS RET parameter2_dnt=stat_ind END
+     COPY_EXISTING "%WIZARD_FLESH_TO_STONE%.spl" override
+        PATCH_IF enhanced_edition BEGIN
+           LPF ADD_CRE_EFFECT INT_VAR opcode=328 duration=7 parameter2 special=1 END
+           LPF ADD_CRE_EFFECT INT_VAR opcode=328 duration=7 parameter2=parameter2_dnt special=1 END
+        END ELSE BEGIN
+           LPF ADD_CRE_EFFECT INT_VAR opcode=318 duration=7 parameter1=1 parameter2 END
+           LPF ADD_CRE_EFFECT INT_VAR opcode=318 duration=7 parameter1=1 parameter2=parameter2_dnt END
+        END
+     BUT_ONLY
+    END
+
+    /// make animations disappear under invisibility (EE only)
+
+    ACTION_IF enhanced_edition BEGIN
+      LAF include STR_VAR file=invisibility_animations.tpa locbase=spell END
+      LAF invisibility_animations END
+    END
+
+    /// build prebuff spells
+
+    LAF build_prebuff_spells END
+
+    /// make curse spell
+      ACTION_IF is_bg2 BEGIN
+         LAF cursed_wound END
+      END
+      
+    // build spells to label casters
+
+    LAF build_caster_label END  
+    ACTION_IF demivrgvs BEGIN
+       LAF build_detect_invisibility_label END
+    END
+
+    // build marker spells
+
+    // the ITEM_xx_SEEN are used to mark creatures as having already been targetted by the effect
+
+    ACTION_FOR_EACH splstate IN ITEM_MM_SEEN ITEM_PSIONIC_SEEN ITEM_ANTIWEB_SEEN BEGIN
+       LAF build_marker_spell INT_VAR duration=144 STR_VAR splstate marker_name=EVAL "%%splstate%%" END
+    END
+    
+    // build the difficulty widget
+
+    LAF run STR_VAR file=difficulty_controls locbase=lib tra=difficulty END
+
+END

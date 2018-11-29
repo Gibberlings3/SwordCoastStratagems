@@ -1,36 +1,13 @@
-/*
-This is the DS library from RR v4.93, with one edit: I've added the following bit so that
-detectable_weapon_enchantment is a synonym of the ds_detectable_weapon_enchantment function.
-This is easier than tracking down all the places SCS calls it. 
-*/
-
-DEFINE_ACTION_FUNCTION detectable_weapon_enchantment BEGIN
-  LAF ds_detectable_weapon_enchantment END
-END
-
-DEFINE_ACTION_FUNCTION resolve_stat BEGIN
-  LAF ds_resolve_stat END
-END
-
-DEFINE_ACTION_MACRO fix_khelben BEGIN
-  LAM ds_fix_khelben
-END
-
-DEFINE_ACTION_MACRO reorder_stats_ids BEGIN
-  LAM ds_sort_stats_ids
-END
-
-DEFINE_ACTION_MACRO fix_old_scripts BEGIN
-  LAM ds_fix_old_scripts
-END
-
-DEFINE_ACTION_MACRO fix_scripts BEGIN
-  LAM ds_fix_scripts
-END
-
-DEFINE_ACTION_MACRO fix_old_ds BEGIN
-  LAM ds_fix_old_ds
-END
+// Detectable Spells v3.95_dw
+//
+//  January 2017
+//  David, editing Ardanis version
+//
+//  Changes:
+//  - Now incorporate flexible handling of TOBEX stats using BGEE splstate baseline
+//  - if filename has no .spl suffix, try looking it up in SPELL.ids (and skip if not found)
+// - added function to apply it directly to an individual spell
+// - uses SFO 'sort_ids' to sort stats.ids, rather than native ds_sort_stats_ids. (sort_ids preserves duplicates, inter alia helpful with CDTweaks proficiencies)
 
 // Detectable Spells v3.95
 // February 3rd, 2016 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
@@ -463,6 +440,7 @@ DEFINE_ACTION_FUNCTION detectable_spells
     fix_khelben = 1
     fix_old_ds = 1
     install_ds = 1
+    flexible_extended_stats = 1
   STR_VAR
     path = ~~
     table = ~...inlined/ds/ag#detectable_spells_v4.2da~
@@ -550,7 +528,9 @@ ACTION_IF append_stats = 1 BEGIN
 
   COPY_EXISTING stats.ids override
     INSERT_FILE SOURCE_SIZE ~...inlined/ds/stats.2da~
-  LAM ds_sort_stats_ids
+
+ LAF sort_ids STR_VAR ids=stats END // DW edit to use SFO version - it's quicker, and more importantly, it retains duplicates (inter alia needed for
+ // LAM ds_sort_stats_ids
 END
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -558,7 +538,7 @@ END
 // fix the bug in G3's DS
 ACTION_IF fix_khelben = 1 BEGIN
   ACTION_IF NOT FILE_EXISTS_IN_GAME ~cddetect.spl~ BEGIN
-    COPY_EXISTING ~misc01.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
+    COPY_EXISTING ~dw#marker_file.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
     LAM ds_fix_khelben
   END
 END
@@ -568,7 +548,7 @@ END
 // fix old Ascension DS
 ACTION_IF fix_old_ds = 1 BEGIN
   ACTION_IF NOT FILE_EXISTS_IN_GAME ~dw#DScleanout.mrk~ BEGIN
-    COPY_EXISTING ~misc01.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
+    COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
     LAM ds_fix_old_scripts
     LAM ds_fix_old_ds
   END
@@ -597,6 +577,7 @@ END ELSE BEGIN
 END
 
 LAF detectable_spells_setup END
+
 
 ACTION_IF ~%path%~ STR_CMP ~~ BEGIN
   OUTER_SPRINT table ~%path%/%table%~
@@ -634,6 +615,32 @@ COPY - ~%table%~ ~override~
     READ_2DA_ENTRY_FORMER ds_table r 5 tick
     READ_2DA_ENTRY_FORMER ds_table r 6 type
 
+    PATCH_IF INDEX ("\." "%file%") <0 BEGIN // possibly a spell.ids entry
+       SET ids_num=IDS_OF_SYMBOL (spell "%file%")
+       PATCH_IF ids_num>=1000 BEGIN
+        INNER_PATCH "%ids_num%" BEGIN
+          READ_ASCII 0x0 digit (1)
+          READ_ASCII 0x1 rest (3)
+          PATCH_MATCH "%digit%" WITH
+          1 BEGIN
+              SPRINT file "SPPR%rest%.spl"
+          END
+          2 BEGIN
+              SPRINT file "SPWI%rest%.spl"
+          END
+          3 BEGIN
+              SPRINT file "SPIN%rest%.spl"
+          END
+          4 BEGIN
+              SPRINT file "SPCL%rest%.spl"
+          END
+          DEFAULT
+          END
+        END
+       END
+    END
+
+
     PATCH_IF FILE_EXISTS_IN_GAME EVAL ~%file%~ BEGIN
       abort=0
       ids=2
@@ -647,12 +654,30 @@ COPY - ~%table%~ ~override~
       END
       
       // check the platform
-      PATCH_IF new_op=318 BEGIN // only add #318 opcode if it's ToBEx
-        abort = (engine_is_tobex = 0) ? 1 : 0
+      PATCH_IF !flexible_extended_stats BEGIN
+         // old version insists on 318/328
+         PATCH_IF new_op=318 BEGIN // only add #318 opcode if it's ToBEx
+             abort = (engine_is_tobex = 0) ? 1 : 0
+         END
+         PATCH_IF new_op=328 BEGIN // only add #328 opcode if it's EE+
+               abort = (engine_is_sod = 0) ? 1 : 0
+         END
+      END ELSE BEGIN
+      // new version is fine either way
+
+        PATCH_IF (new_op=318 || new_op=328) BEGIN
+          PATCH_IF engine_is_sod BEGIN
+             SET new_op=328
+          END ELSE
+          PATCH_IF engine_is_tobex BEGIN
+             SET new_op=318
+          END ELSE BEGIN
+             SET abort=1
+          END
+         END
+      
       END
-      PATCH_IF new_op=328 BEGIN // only add #328 opcode if it's EE+
-        abort = (engine_is_sod = 0) ? 1 : 0
-      END
+
       PATCH_IF new_op=328 && abort=0 BEGIN // SoD
         // skipping EXTSTATE.IDS, since it's short and is already almost full
       //  ids = (p1 = 0) ? 0 : 1 // 0 = extstate.ids, 1 = splstate.ids, 2 = stats.ids
@@ -1053,8 +1078,9 @@ END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////
+/// duplicated in stratagems_shared
 
-DEFINE_ACTION_FUNCTION ds_resolve_stat INT_VAR ids=2 index=0 delete=0 RET stat_ind BEGIN
+DEFINE_ACTION_FUNCTION ds_resolve_stat INT_VAR ids=2 index=0 delete=0 STR_VAR id="" RET stat_ind BEGIN
 
 OUTER_SPRINT ids_file stats OUTER_SET min_new=401
 
@@ -1169,7 +1195,7 @@ COPY - ~...inlined/ds/ag#old_ds_swap.2da~ override
 
 // Ascension
 ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixasc~) && (FILE_EXISTS_IN_GAME ~finbodhi.bcs~) THEN BEGIN
-  COPY_EXISTING ~misc01.itm~ ~override/dw#fixasc~
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixasc~
 ACTION_FOR_EACH file IN
 finabaz
 finaluf
@@ -1198,7 +1224,7 @@ END
 
 // Kelsey
 ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixkelsey~) && (FILE_EXISTS_IN_GAME ~j#ceara.bcs~) THEN BEGIN
-  COPY_EXISTING ~misc01.itm~ ~override/dw#fixkelsey~
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixkelsey~
 ACTION_FOR_EACH file IN
 j#ceara
 j#clinn
@@ -1213,7 +1239,7 @@ END
 
 // Kiara-Zaiya
 ACTION_IF !(FILE_EXISTS_IN_GAME ~ag#fixkiara~) && (FILE_EXISTS_IN_GAME ~amafight.bcs~) THEN BEGIN
-  COPY_EXISTING ~misc01.itm~ ~override/ag#fixkiara~
+  COPY_EXISTING ~dw#marker_file.itm~ ~override/ag#fixkiara~
 ACTION_FOR_EACH file IN
 kzjao
 kzwuje
@@ -1394,7 +1420,7 @@ END // end of macro
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Since SCS occupies one of DS slots for weapons, I see no reason not to include it
-  
+
 DEFINE_ACTION_FUNCTION ds_detectable_weapon_enchantment BEGIN
 
 LAF ds_resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END
@@ -1667,6 +1693,18 @@ END // end of function
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION ds_individual_spell
+      STR_VAR file="" new_op="" p1="" p2="" clone_op="" tick="" type=""
+BEGIN
+
+<<<<<<<< .../inlined/ds/dw#individual.2da
+%file% %new_op% %p1% %p2% %clone_op% %tick% %type%
+>>>>>>>>
+
+    COPY ".../inlined/ds/dw#individual.2da" "%workspace%/dw#individual.2da" EVALUATE_BUFFER
+    LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table="%workspace%/dw#individual.2da" END
+
+END
 
 
 

@@ -1,0 +1,398 @@
+DEFINE_ACTION_FUNCTION get_iwd_spell_resources INT_VAR CMW_string=0 STR_VAR file="" resref_list="" smtables_list="" proj_list="" location="" locbase="" locabs=""  BEGIN
+
+
+      // generate list of IWD resources not in BG2
+      
+      LAF spell_comparison END
+
+      // read in that list
+
+      COPY "%data_loc%/spells_not_in_bg2.txt" "%workspace%"
+          READ_2DA_ENTRIES_NOW not_in_bg2_arr 2
+          FOR (i=0;i<not_in_bg2_arr;i+=1) BEGIN
+             READ_2DA_ENTRY_FORMER not_in_bg2_arr i 0 key
+             READ_2DA_ENTRY_FORMER not_in_bg2_arr i 1 value
+             SPRINT $not_in_bg2("%key%") "%value%"
+          END
+      BUT_ONLY
+
+      // load in not-copy list
+      
+      COPY "%scsroot%/%iwdspells_data%/do_not_copy.2da" "%workspace%"
+          READ_2DA_ENTRIES_NOW do_not_copy_arr 1
+          FOR (i=0;i<do_not_copy_arr;i+=1) BEGIN
+             READ_2DA_ENTRY_FORMER do_not_copy_arr i 0 resref
+             TO_UPPER resref
+             SPRINT $do_not_copy("%resref%") ""
+          END
+      BUT_ONLY
+
+      // load in rename list
+      
+      COPY "%scsroot%/%iwdspells_data%/file_renames.2da" "%workspace%"
+            READ_2DA_ENTRIES_NOW subst_arr 3
+            FOR (i=0;i<subst_arr;i+=1) BEGIN
+               READ_2DA_ENTRY_FORMER subst_arr i 0 resref_old
+               READ_2DA_ENTRY_FORMER subst_arr i 1 resref_new
+               READ_2DA_ENTRY_FORMER subst_arr i 2 resref_ext
+               TO_UPPER resref_old
+               TO_UPPER resref_ext
+               SPRINT $file_renames("%resref_old%" "%resref_ext%") "%resref_new%"
+            END
+      BUT_ONLY
+
+      LAM read_in_spellcodes
+
+      // read in any IDS changes
+
+      LAF read_in_assoc_array STR_VAR file="ids_remaps.2da" location="%iwdspells_data%" RET list END
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+       LAF return_first_pair STR_VAR list RET ids_old=key ids_new=value list END
+       OUTER_SPRINT "%ids_new%" "%%ids_old%%"
+       OUTER_SPRINT scroll_string "%ids_old%_SCROLL"
+       ACTION_IF VARIABLE_IS_SET EVAL "%scroll_string%" BEGIN
+          OUTER_SPRINT "%ids_new%_SCROLL" "%%scroll_string%%"
+       END
+      END
+
+     // Multiple Force Missile projectile turns up multiple times on the list; need to be in order, I think
+      OUTER_FOR (i=437;i<=446;i+=1) BEGIN
+          LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="mfmiss2 %i%" repeat=no END
+      END
+      
+      // Read in list of iterate overrides
+      
+      LAF read_in_assoc_array STR_VAR file="force_iterate_start.2da" location="%iwdspells_data%" RET list END
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+       LAF return_first_pair STR_VAR list RET key value list END
+       OUTER_SPRINT $iterate_override("%key%") "%value%"
+      END
+
+      // make files we need
+
+      ACTION_IF !FILE_EXISTS "%data_loc%/strings_used.txt" BEGIN
+         COPY ".../stratagems-inline/blank" "%data_loc%/strings_used.txt"
+      END
+      COPY ".../stratagems-inline/blank" "%resource_loc%/%resref_list%"
+      COPY ".../stratagems-inline/blank" "%resource_loc%/%proj_list%"
+      COPY ".../stratagems-inline/blank" "%resource_loc%/%smtables_list%"
+
+      <<<<<<<< .../stratagems-inline/spells_used.2da
+      resref   spellname    parent   parent_ext
+      >>>>>>>>
+      ACTION_IF !FILE_EXISTS "%resource_loc%/spells_used.2da" BEGIN
+         COPY  ".../stratagems-inline/spells_used.2da" "%resource_loc%"
+      END
+
+      // quick ad hoc recording of strings needed
+      
+      ACTION_IF CMW_string BEGIN
+         LAF log_this STR_VAR file=strings_used.txt input="119397" END // Cure Moderate Wounds temple string - includes the +100000
+      END
+
+      // main install
+
+      LAF read_in_list STR_VAR file location locbase locabs RET list END
+      LAF return_first_entry STR_VAR list RET list END // discard first entry
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+            LAF return_first_entry STR_VAR list RET spell=entry list END
+            PRINT "Processing %spell%"
+            LAF deabbreviate_spellname STR_VAR input="%spell%" RET spellname END
+            MKDIR "%resource_loc%/%spellname%"
+           LAF get_spellcode STR_VAR input="%spell%" RET resref=value END
+            OUTER_SPRINT SFO_reserved_spell_here "%resref%"
+            LAF log_this STR_VAR locabs="%resource_loc%"  file="%resref_list%" input="%spellname% %resref%" END
+            ACTION_IF VARIABLE_IS_SET $iterate_override("%spellname%") BEGIN
+                  OUTER_SPRINT file $iterate_override("%spellname%")
+                  OUTER_INNER_PATCH_SAVE file_resref "%file%" BEGIN
+                     READ_ASCII (BUFFER_LENGTH - 3) ext (3)
+                     DELETE_BYTES (BUFFER_LENGTH - 4) 4
+                  END
+                  COPY_EXISTING "%file%" "%resource_loc%/%spellname%"
+                      LPF apply_to_strrefs STR_VAR arguments=log_strref filename="%file_resref%" file_ext="%ext%" END
+                  OUTER_SPRINT to_check "%file%"
+            END ELSE BEGIN
+                  COPY_EXISTING "%resref%.spl" "%resource_loc%/%spellname%"
+                      LPF apply_to_strrefs STR_VAR arguments=log_strref filename="%resref%" file_ext="spl" END
+                  OUTER_SPRINT to_check "%resref%.spl"
+            END
+            ACTION_IF FILE_EXISTS_IN_GAME "%resref%A.BAM" BEGIN
+                  COPY_EXISTING "%resref%A.BAM" "%resource_loc%/%spellname%"
+            END
+            LAF iter_resource INT_VAR skip_payload_on_ignore=1 STR_VAR to_check func=iterfunc_get_resources ignore_func=ignore_wrapper immunity_func=iterfunc_log_immunities END
+
+      END // end of copy routine
+
+      PRINT "Finished main resource collection, doing residual tasks"
+      // manual edits go here
+
+      // get animations/sounds for beetles
+
+      MKDIR "%resource_loc%/beetle/bam"
+      COPY_EXISTING_REGEXP "mbbm.*\.bam" "%resource_loc%/beetle/bam"
+      MKDIR "%resource_loc%/beetle/wav"
+      COPY_EXISTING_REGEXP "bomba.*\.wav" "%resource_loc%/beetle/wav"
+
+      // get entries for SMTABLES
+
+      ACTION_IF FILE_EXISTS "%data_loc%/smtable_entries.2da" BEGIN
+         COPY "%data_loc%/smtable_entries.2da" "%resource_loc%/%smtables_list%"
+      END
+
+
+END
+
+DEFINE_PATCH_FUNCTION log_strref STR_VAR offset=0 filename="" file_ext="" BEGIN
+        READ_LONG offset strref
+        SET strref=strref+100000 // slightly hacky way to ensure no strref is a substring of another
+        LPF log_this STR_VAR file="strings_used.txt" input="%strref%" repeat="no" END
+END
+
+DEFINE_ACTION_FUNCTION iterfunc_log_immunities STR_VAR resref="" resref_ext="" source=""  source_ext=""
+// we only care about spells, only if they're in the spell.ids, and only if they're not in BG(2)EE
+BEGIN
+    ACTION_IF "%resref_ext%" STRING_EQUAL_CASE SPL BEGIN
+       ACTION_MATCH "%resref%" WITH
+                 "SPIN[0-9]+" "SPWI[0-9]+" "SPPR[0-9]+" BEGIN
+                              ACTION_TO_UPPER resref
+                              ACTION_IF VARIABLE_IS_SET $not_in_bg2("%resref%") BEGIN
+                                 OUTER_SPRINT idsname $not_in_bg2("%resref%")
+                                 ACTION_IF "%source_ext%" STRING_EQUAL_CASE "SPL" BEGIN
+                                     LAF return_spellname STR_VAR resref="%source%" RET source=spellname END
+                                 END
+                                 LAF log_this STR_VAR file="spells_used.2da" locabs="%resource_loc%" input="%resref% %idsname% %source% %source_ext%" repeat=no END
+                              END
+                 END
+       
+                 DEFAULT
+       END
+
+
+    END
+END
+
+DEFINE_ACTION_FUNCTION iterfunc_get_resources  // slight violation of encapsulation: we assume access to "%spellname%"
+                   STR_VAR resref=""
+                           ext=""
+                           parent=""
+                   RET output
+                   BEGIN
+                      OUTER_SPRINT output ""
+                      OUTER_SET copy=1
+                      ACTION_MATCH "%ext%" WITH
+                      pro BEGIN
+                          // log this projectile
+                          OUTER_SET pronum=IDS_OF_SYMBOL (projectl "%resref%")
+                          LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="%resref% %pronum%" END
+                      END
+                      wav BEGIN
+                         OUTER_PATCH "%resref%" BEGIN
+                            READ_ASCII 0x0 start (4)
+                         END
+                         ACTION_MATCH "%start%" WITH
+                         EFF_ AFT_ TRA_ BEGIN
+                             OUTER_SET copy=0
+                         END
+                         DEFAULT END
+                      END
+                      DEFAULT END
+                      ACTION_IF copy BEGIN
+                          // check if this needs renaming
+                          ACTION_TO_UPPER resref
+                          ACTION_TO_UPPER ext
+                          ACTION_IF VARIABLE_IS_SET $file_renames("%resref%" "%ext%") BEGIN
+                             OUTER_SPRINT resref_new $file_renames("%resref%" "%ext%")
+                             OUTER_SPRINT copy_name "%resref_new%.%ext%"
+                             COPY "%resource_loc%/%spellname%/%parent%" "%resource_loc%/%spellname%"
+                                REPLACE_TEXTUALLY CASE_INSENSITIVE "%resref%" "%resref_new%" (8)
+                          END ELSE BEGIN
+                             OUTER_SPRINT copy_name "%resref%.%ext%"
+                          END
+                          ACTION_IF FILE_EXISTS_IN_GAME "%resref%.%ext%" BEGIN
+                               ACTION_MATCH "%ext%" WITH
+                               BCS BEGIN
+                                 COPY_EXISTING "%resref%.%ext%" "%resource_loc%/%spellname%/%resref%.BAF"
+                                 DECOMPILE_BCS_TO_BAF
+                               END
+                               DEFAULT
+                                  COPY_EXISTING "%resref%.%ext%" "%resource_loc%/%spellname%/%copy_name%"
+                                     LPF apply_to_strrefs STR_VAR arguments=log_strref filename="%resref%" file_ext="%ext%" END
+                               END
+                          END ELSE BEGIN
+                               LAF warning STR_VAR warning="%resref%.%ext% missing (used by %parent%; relevant to %spellname%)" END
+                          END
+                      END
+END
+
+
+DEFINE_ACTION_FUNCTION process_tra_entries
+     INT_VAR make_lookup=1
+     STR_VAR tra="" lookup=""
+BEGIN
+      OUTER_SPRINT traloc "%resource_loc%/tra/%tra%"
+      ACTION_IF !FILE_EXISTS "%traloc%" BEGIN
+         COPY ".../stratagems-inline/blank" "%traloc%"
+      END
+      ACTION_IF make_lookup BEGIN
+        OUTER_SPRINT lookuploc "%resource_loc%/%lookup%"
+        ACTION_IF !FILE_EXISTS "%lookuploc%" BEGIN
+           COPY ".../stratagems-inline/blank" "%lookuploc%"
+        END
+      END
+      LAF read_in_list STR_VAR file=strings_used.txt locabs="%data_loc%" RET list END
+      OUTER_SET tra_ind=1
+      OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+         LAF return_first_entry STR_VAR list RET strref=entry list END
+         OUTER_SET strref=strref - 100000 // reverse the transformation in log_strref
+         ACTION_IF !VARIABLE_IS_SET $processed("%strref%") BEGIN
+            ACTION_GET_STRREF strref temp
+            OUTER_SPRINT $tra_output("%strref%") "%atsymbol%%tra_ind%=~%temp%~"
+            OUTER_SPRINT $tra_map("%strref%") "%tra_ind%"
+            OUTER_SET tra_ind +=1
+            OUTER_SET $processed("%strref%")=1
+         END
+      END
+      COPY_EXISTING "%traloc%" "%traloc%"
+         PHP_EACH tra_output AS null=>line BEGIN
+            INSERT_2DA_ROW 0 0 "%line%"
+         END
+      BUT_ONLY
+      ACTION_IF make_lookup BEGIN
+       COPY_EXISTING "%lookuploc%" "%lookuploc%"
+         PHP_EACH tra_map AS strref=>tra_ind BEGIN
+            INSERT_2DA_ROW 0 0 "%strref% %tra_ind%"
+         END
+       BUT_ONLY
+      END
+END
+
+DEFINE_ACTION_FUNCTION process_tra_entries_all
+BEGIN
+  ACTION_IF get_all_languages BEGIN
+   ACTION_FOR_EACH language IN cs_CZ de_DE en_US es_ES fr_FR it_IT ko_KR pl_PL ru_RU tr_TR BEGIN // current list of IWD languages
+     ACTION_IF !("%language%" STRING_EQUAL_CASE "%EE_LANGUAGE%") BEGIN // do your current language last, so WEIDU doesn't save your change
+       MKDIR "%resource_loc%/tra/%language%"
+       COPY ".../stratagems-inline/blank" "%resource_loc%/tra/%language%/iwdspells.tra"
+       AT_NOW "setup-%scsroot% %scsroot%\%iwdspells_lib%\process_strref.tp2 --no-auto-tp2 --use-lang %language% --force-install 1000 --yes"
+     END
+   END
+   AT_NOW "setup-%scsroot% --no-auto-tp2 --use-lang %EE_LANGUAGE% --yes"
+  END
+  LAF include STR_VAR file=get_iwd_spell_resources.tpa location="%iwdspells_lib%" END
+  LAF process_tra_entries STR_VAR tra="%EE_LANGUAGE%/iwdspells.tra" lookup="iwd_strref.txt" END
+
+END
+
+// Ignore any SPIN/SPWI/SPPR - EXCEPT if it's the spell itself (we violate encapsulation here)
+
+DEFINE_ACTION_FUNCTION ignore_wrapper
+     STR_VAR resref=""
+             ext=""
+             parent=""
+     RET value
+BEGIN
+   // check the list
+   OUTER_SPRINT file "%resref%.%ext%"
+   ACTION_TO_UPPER file
+   ACTION_IF VARIABLE_IS_SET $do_not_copy("%file%") BEGIN
+      OUTER_SET value=1
+   END ELSE BEGIN
+      LAF ignore_spell_entries STR_VAR resref ext parent RET value END
+   END
+END
+
+
+DEFINE_ACTION_FUNCTION ignore_spell_entries
+     STR_VAR resref=""
+             ext=""
+             parent=""
+     RET value
+BEGIN
+               OUTER_SET value=0
+               ACTION_IF ("%ext%" STRING_EQUAL_CASE "spl" && "%resref%" STRING_COMPARE_CASE "%SFO_reserved_spell_here%") BEGIN
+                      // hardcoded list of BG2 resources we don't care about
+                      ACTION_MATCH "%resref%" WITH
+                      SPRA301 "SPWM.*" "SPWISH.*"
+                       BEGIN
+                           OUTER_SET value=1
+                      END
+                      DEFAULT
+                          ACTION_MATCH "%resref%" WITH
+                          "SPIN[0-9]+" "SPWI[0-9]+" "SPPR[0-9]+" BEGIN
+                              OUTER_SET value=1
+                              ACTION_TO_UPPER resref
+                              ACTION_IF VARIABLE_IS_SET $not_in_bg2("%resref%") BEGIN
+                                 OUTER_SPRINT idsname $not_in_bg2("%resref%")
+                                 OUTER_INNER_PATCH_SAVE parent_resref "%parent%" BEGIN
+                                     READ_ASCII (BUFFER_LENGTH - 3) ext (3)
+                                     DELETE_BYTES (BUFFER_LENGTH - 4) 4
+                                 END
+                                 ACTION_IF "%ext%" STRING_EQUAL_CASE SPL BEGIN
+                                    LAF return_spellname STR_VAR resref="%parent_resref%" RET spellname END
+                                    OUTER_SPRINT parent_resref "%spellname%"
+                                 END
+                                 LAF log_this STR_VAR file="spells_used.2da" locabs="%resource_loc%" input="%resref% %idsname% %parent_resref% %ext%" repeat=no END
+                              END
+                          END
+                          DEFAULT 
+                              OUTER_SET value=0
+                          END
+                     END
+               END
+END
+
+// macro to work out which resources aren't in BG(2)EE and which might have different names
+
+DEFINE_ACTION_FUNCTION spell_comparison
+BEGIN
+ ACTION_IF !FILE_EXISTS "%data_loc%/spells_not_in_bg2.txt" BEGIN
+   COPY_EXISTING "spell.ids" "%workspace%"
+         READ_2DA_ENTRIES_NOW iwdspl_array 2
+         FOR (i=1;i<iwdspl_array;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER iwdspl_array i 0 idscode
+            READ_2DA_ENTRY_FORMER iwdspl_array i 1 idsname
+            SET $iwd_ids_array("%idsname%")=idscode
+         END
+   BUT_ONLY
+   COPY "%scsroot%/%iwdspells_data%/bg2ee_spell.ids" "%workspace%"
+         READ_2DA_ENTRIES_NOW bg2spl_array 2
+         FOR (i=1;i<bg2spl_array;i+=1) BEGIN
+            READ_2DA_ENTRY_FORMER bg2spl_array i 0 idscode
+            READ_2DA_ENTRY_FORMER bg2spl_array i 1 idsname
+            SET $bg2_ids_array("%idsname%")=idscode
+         END
+   BUT_ONLY
+   ACTION_PHP_EACH iwd_ids_array AS spell=>idscode BEGIN
+      ACTION_IF !VARIABLE_IS_SET $bg2_ids_array("%spell%") BEGIN
+         LAF idscode_to_spell INT_VAR idscode RET resref END
+         ACTION_TO_UPPER resref
+         LAF log_this STR_VAR file="spells_not_in_bg2.txt" input="%resref% %spell%" END
+      END ELSE BEGIN
+         OUTER_SET idscode_bg2 = $bg2_ids_array("%spell%")
+         ACTION_IF !idscode=idscode_bg2 BEGIN
+            LAF log_this STR_VAR file="spell_ids_mismatch.txt" input="%spell%" END // as there aren't any mismatches as of 2.5, we don't actually do anything with this data
+         END
+      END
+   END
+  END
+END
+
+// icon collector 
+
+DEFINE_ACTION_FUNCTION get_iwd_icons BEGIN
+        MKDIR "%resource_loc%/icon"
+        COPY_EXISTING "statdesc.2da" "%resource_loc%/icon"
+                COUNT_2DA_ROWS 3 rowcount
+                FOR (i=0;i<rowcount;i+=1) BEGIN
+                   READ_2DA_ENTRY i 0 3 number
+                   PATCH_IF (number >= 164 && number <=187) BEGIN
+                      READ_2DA_ENTRY i 1 3 strref
+                      SET strref += 100000
+                      LPF log_this STR_VAR file="strings_used.txt" input="%strref%" END
+                   END
+                END
+     //   BUT_ONLY  // always copy!
+        ACTION_FOR_EACH file IN "states.bam" "states2.bam"  BEGIN
+           COPY_EXISTING "%file%" "%resource_loc%/icon"
+        END
+END

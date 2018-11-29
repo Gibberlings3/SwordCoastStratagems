@@ -1,4 +1,4 @@
-IF
+IF TRIGGER
 	Allegiance(Myself,ENEMY)
 	Delay(6)
 	!GlobalTimerNotExpired("castspell","LOCALS")
@@ -7,16 +7,12 @@ IF
 		NumCreatureVsPartyLT([ENEMY.0.DEMONIC],0)
 	!Global("gated","LOCALS",1)
 	!Range(NearestEnemyOf(Myself),10)
-	OR(2)
-		NumInPartyAliveGT(2)
-		DifficultyGT(EASY)
-THEN
-	RESPONSE #100
+	TriggerBlock(CorePlus)
+THEN DO
+                Action(Literal|100|100)
 		SetGlobalTimer("castspell","LOCALS",6)
 		SetGlobal("gated","LOCALS",1)
 		SpellNoDecRES("GATE1",Myself) // Gate
-	RESPONSE #100
-		Continue()
 END
 
 IF
@@ -47,27 +43,6 @@ THEN
 		DestroySelf()
 END
 
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Succubus combat script
-//////////////////////////////////////////////////////////////////////////////////////
-
-BEGIN_ACTION_DEFINITION
-	Name(AttackVictim)
-	TRIGGER
-		ActionListEmpty()
-		!GlobalTimerNotExpired("seekvictim","LOCALS")
-	ACTION
-		RESPONSE #scsprob1
-		SetGlobalTimer("seekvictim","LOCALS",30)
-		AttackReevaluate(scstarget,180)
-END
-
-
-INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions.ssl)
-
-INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
-
 //////////////////////////////////////////////////////////////////////////////////////////
 ///	Ascension control block
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -77,189 +52,7 @@ INCLUDE FILE(%scsroot%/ascension/ssl/asc_control.ssl)
 
 
 //////////////////////////////////////////////////////////////////////////////////////
-///	Minor Spell Turning at start
+///	Core script
 //////////////////////////////////////////////////////////////////////////////////////
 
-IF
-	See(NearestEnemyOf(Myself))
-	!GlobalTimerNotExpired("spellturning","LOCALS")
-	!AreaCheck("ar3004") // dead magic
-THEN
-	RESPONSE #100
-		SetGlobalTimer("spellturning","LOCALS",1000)
-		ApplySpell(Myself,WIZARD_MINOR_SPELL_TURNING)
-		Continue()
-END
-
-/////////////////////////////////////////////////////////////////////////////////////////
-///	Kill Baatezu
-/////////////////////////////////////////////////////////////////////////////////////////
-
-BEGIN LOOP(scsdemon||LAWFUL_EVIL)
-	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
-END LOOP
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Consider moving to a more interesting location in the battle
-//////////////////////////////////////////////////////////////////////////////////////
-
-INCLUDE FILE(%scsroot%/fiend/ssl/sucjump.ssl)
-
-//////////////////////////////////////////////////////////////////////////////////////
-///	Flee and heal if injured
-//////////////////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	!GlobalTimerNotExpired("ethereal","LOCALS")
-	HPPercentLT(Myself,50)
-	See(NearestEnemyOf(Myself))
-	!StateCheck(Myself,STATE_INVISIBLE)
-THEN DO
-	SetGlobalTimer("ethereal","LOCALS",18)
-	Action(SpellNoDecMyself,SUCCUBUS_ETHEREAL)
-	ApplySpell(Myself,WIZARD_SPELL_IMMUNITY_DIVINATION)
-END
-
-IF TRIGGER
-	HPPercentLT(Myself,90)
-	StateCheck(Myself,STATE_INVISIBLE)
-	Range(NearestEnemyOf(Myself),20)
-THEN DO
-	Action(Literal)
-	RunAwayFrom(NearestEnemyOf(Myself),60)
-END
-
-IF TRIGGER
-	HPPercentLT(Myself,90)
-	StateCheck(Myself,STATE_INVISIBLE)
-THEN DO
-	Action(SpellNoDecMyself,CLERIC_CURE_CRITICAL_WOUNDS)
-END
-
-IF
-	StateCheck(Myself,STATE_INVISIBLE)
-THEN
-	RESPONSE #100
-		RandomWalkContinuous()
-END
-
-///////////////////////////////////////////////////////////////////////////////
-////	Seduce weak-willed
-///////////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	Target([PC.0.0.0.0.MALE])
-	Target(SecondNearest([PC.0.0.0.0.MALE]))
-	Target(ThirdNearest([PC.0.0.0.0.MALE]))
-	Target(FourthNearest([PC.0.0.0.0.MALE]))
-	TriggerBlock(Enemy|Disabled|Charm|MR)
-THEN DO
-	Action(SpellNoDec,SUCCUBUS_CHARM_MALE)
-END
-
-IF TRIGGER
-	Target([PC.0.0.0.0.FEMALE])
-	Target(SecondNearest([PC.0.0.0.0.FEMALE]))
-	Target(ThirdNearest([PC.0.0.0.0.FEMALE]))
-	Target(FourthNearest([PC.0.0.0.0.FEMALE]))
-	TriggerBlock(Enemy|Disabled|Charm|MR)
-THEN DO
-	Action(SpellNoDec,SUCCUBUS_CHARM_FEMALE)
-END
-
-//////////////////////////////////////////////////////////////////////////////
-///	Combat
-//////////////////////////////////////////////////////////////////////////////
-
-
-//////////////////////////////////////////////////////////////////////////////
-///	Combat
-//////////////////////////////////////////////////////////////////////////////
-
-
-//////////////////////////////////////////////////////////////////////////////
-////	Core combat block
-///////////////////////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////////////////////
-///	Basic succubus attack strategy:
-///
-///	(1) Look for someone close who's vulnerable to level drain
-///	(2) If you can't find one, and you can find someone further away who's
-///	vulnerable to level drain, spend 1 round trying to get to them. Don't try
-///	this again for 5 rounds.
-///	(3) Kill near enemies
-///     (4) Finish off charmed creatures
-///	(5) Segue to the standard Move and Chase scripts
-///////////////////////////////////////////////////////////////////////////////////
-
-
-///////////////////////////////////////////////////////////////////////
-////	(1)
-///////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	Target(WorstAC)
-	TargetBlock(PCsPreferringWeak)
-	TargetBlock(CloseEnemies)
-	TriggerBlock(Enemy|Disabled|Plus2Safe|LevelDrain)
-	InWeaponRange(scstarget)
-THEN DO
-	Action(AttackIfEmpty)
-END
-
-
-///////////////////////////////////////////////////////////////////////
-////	(2a)
-///////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-        Global("victimroute","LOCALS",0)
-	Target(WorstAC)
-	TargetBlock(PCsPreferringWeak)
-	TriggerBlock(Enemy|Disabled|Plus2Safe|LevelDrain)
-THEN DO
-	Action(AttackVictim)
-END
-
-///////////////////////////////////////////////////////////////////////
-////	(3)
-///////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-        Global("secondary","LOCALS",0)
-	Target(WorstAC)
-	TargetBlock(PCsPreferringWeak)
-	TriggerBlock(Enemy|Disabled|Plus2Safe)
-	InWeaponRange(scstarget)
-THEN DO
-	Action(AttackIfEmpty)
-END
-
-///////////////////////////////////////////////////////////////////////
-////  (4) Finish off charmed creatures
-///////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-   Allegiance(Myself,ENEMY)
-   !See(NearestEnemyOf(Myself))
-   TargetBlock(PlayersInRandomOrder)
-THEN DO
-     Action(Attack)
-END
-
-
-
-
-///////////////////////////////////////////////////////////////////////
-////	(5)
-///////////////////////////////////////////////////////////////////////
-
-
-BEGIN LOOP(MyWeaponStrength||2)
-BEGIN LOOP(MyWeaponDamageType||Null)
-INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
-INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
-END LOOP
-END LOOP
-
+INCLUDE FILE(%scsroot%/fiend/ssl/demsuc.ssl)

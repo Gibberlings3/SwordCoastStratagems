@@ -23,7 +23,7 @@ INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
 IF TRIGGER // note we don't get here unless in a fight
 	Target(Myself)
 THEN DO
-	Action(Sequencer,WIZARD_DISPEL_MAGIC,WIZARD_HASTE,SPELL_DEFLECTION_NO_VISUAL)
+	Action(Sequencer,FIRKRAAG_SEQUENCER)
 	ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
 	SetGlobalTimer("dragonbreath","LOCALS",1)
 	SetGlobalTimer("redefend","LOCALS",3)
@@ -51,9 +51,9 @@ END
 ////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	TargetBlock(PCsInOrder)
+	TargetBlock(PCsInReverseOrder)
 THEN DO
-	Action(SpellInnate,DRAGON_LOWER_FIRE)
+	Action(Spell,DRAGON_LOWER_FIRE)
 END
 
 
@@ -62,9 +62,16 @@ END
 //////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	TargetBlock(PCsInOrder)
-	TargetBlock(EnemiesInOrder)
-	!Range(scstarget,10)
+	TargetBlock(PCsInReverseOrder)
+	TargetBlock(EnemiesInReverseOrder)
+	TriggerBlock(AoEFire)
+	!CheckStatGT(scstarget,65,RESISTFIRE)
+THEN DO
+	Action(DragonBreath2,RED_DRAGON_BREATH,RED_DRAGON_HIT,"dragonbreath",red05)
+END
+
+IF TRIGGER
+	TargetBlock(EnemiesInReverseOrder)
 	!CheckStatGT(scstarget,65,RESISTFIRE)
 THEN DO
 	Action(DragonBreath2,RED_DRAGON_BREATH,RED_DRAGON_HIT,"dragonbreath",red05)
@@ -75,39 +82,12 @@ END
 //////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	TargetBlock(PCsInOrder)
-	TargetBlock(EnemiesInOrder)
-	!Range(scstarget,10)
+	TargetBlock(PCsInReverseOrder)
+	TargetBlock(EnemiesInReverseOrder)
 THEN DO
 	Action(DragonBreath2,RED_DRAGON_BREATH,RED_DRAGON_HIT,"dragonbreath",red05)
 END
 
-IF
-	!GlobalTimerNotExpired("dragonbreath","LOCALS")
-	!GlobalTimerNotExpired("castspell","LOCALS")
-	!GlobalTimerNotExpired("trytorun","LOCALS")
-	OR(5)
-		!CheckStatGT(NearestEnemyOf(Myself),65,RESISTFIRE)
-		!CheckStatGT(SecondNearestEnemyOf(Myself),65,RESISTFIRE)
-		!CheckStatGT(ThirdNearestEnemyOf(Myself),65,RESISTFIRE)
-		!CheckStatGT(FourthNearestEnemyOf(Myself),65,RESISTFIRE)
-		!CheckStatGT(FifthNearestEnemyOf(Myself),65,RESISTFIRE)
-THEN
-	RESPONSE #100
-                SetGlobalTimer("trytorun","LOCALS",6)
-		RunAwayFrom(NearestEnemyOf(Myself),30)
-END
-
-//////////////////////////////////////////////////////////////////////////
-///     If you really can't find a distant target, breathe at close range
-//////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	TargetBlock(PCsInOrder)
-	TargetBlock(EnemiesInOrder)
-THEN DO
-	Action(DragonBreath2,RED_DRAGON_BREATH,RED_DRAGON_HIT,"dragonbreath",red05)
-END
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -133,11 +113,11 @@ END
 /////////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	CheckStat(Myself,0,STONESKINS)
+        TriggerBlock(StoneskinFailing)
 	GlobalTimerExpired("redefend","LOCALS")
 	Target(Myself)
 THEN DO
-	Action(SpellInnate,DRAGON_STONE_SKIN|100|100)
+	Action(Spell,DRAGON_STONE_SKIN|100|100)
 END
 
 /////////////////////////////////////////////////////////////////////////////
@@ -146,11 +126,15 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	TriggerBlock(SpellTurn|Enemy|Helpless)
-	OR(3)
-		CheckStatGT(scstarget,50,RESISTFIRE) // we're assuming that anything this high probably comes from a spell
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
-		CheckStatGT(scstarget,2,STONESKINS)
+	TriggerBlock(SpellDeflect|Enemy|Helpless)
+	CheckStatGT(scstarget,50,RESISTFIRE)
+THEN DO
+	Action(Spell,WIZARD_BREACH|200|100)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellDeflect|Enemy|Helpless|PriorityBreach)
 THEN DO
 	Action(Spell,WIZARD_BREACH|200|100)
 END
@@ -164,7 +148,7 @@ IF TRIGGER
 	TriggerBlock(MR100|Silence)
 	!StateCheck(scstarget,STATE_SILENCED)
 THEN DO
-	Action(SpellInnate,DRAGON_SILENCE|150|50)
+	Action(Spell,DRAGON_SILENCE|150|50)
 END
 
 /////////////////////////////////////////////////////////////////////////////
@@ -190,18 +174,6 @@ THEN DO
 	Action(Spell,WIZARD_MAGIC_MISSILE)
 END
 
-/////////////////////////////////////////////////////////////////////////
-////   Flame Arrows [NB: not relevant on current spell choice]
-/////////////////////////////////////////////////////////////////////////
-
-IF TRIGGER
-	ConditionalTargetBlock(PCsPreferringWeak;HPPercentLT(scstarget,40))
-	TargetBlock(PCsPreferringWeak)
-	TriggerBlock(MR|ResistFire|Enemy|ArrowSafe|SpellTurn|Stoneskin|MinorGlobe|MirrorImage|Helpless|SIConjuration)
-THEN DO
-	Combine()
-	Action(Spell,WIZARD_FLAME_ARROW|150|50)
-END
 
 ///////////////////////////////////////////////////////////////////////////
 ////	Slow
@@ -237,11 +209,10 @@ END
 IF TRIGGER
 	ConditionalTargetBlock(PCSpellcasters;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(PCSpellcasters)
-	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy)
-	!HasItem("clck26",Myself)
+	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy|DirectDamageSafe)
 THEN DO
 	Combine()
-	Action(MinorSequencer,WIZARD_MAGIC_MISSILE,WIZARD_MAGIC_MISSILE)
+	Action(Sequencer,DRAGON_MAGIC_MISSILE_SEQUENCER)
 	Action(Spell,WIZARD_MELF_ACID_ARROW)
 END
 
@@ -252,9 +223,7 @@ END
 IF TRIGGER
 	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
 	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
-	TargetBlock(EnemiesInOrderShort)
-	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
-	!HasItem("clck26",Myself)
+	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy|DirectDamageSafe)
 THEN DO
 	Combine()
 	Action(Spell,WIZARD_MAGIC_MISSILE)
@@ -262,13 +231,12 @@ END
 
 IF TRIGGER
 	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
-	TargetBlock(EnemiesInOrderShort)
-	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn)
-	!HasItem("clck26",Myself)
+	TriggerBlock(MR100|SIConjuration|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|DirectDamageSafe)
 THEN DO
 	Combine()
 	Action(Spell,WIZARD_MELF_ACID_ARROW)
 END
+
 
 //////////////////////////////////////////////////////////////////////////////////
 /////	Melee phase

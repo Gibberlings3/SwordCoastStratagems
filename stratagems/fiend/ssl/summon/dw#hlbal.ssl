@@ -1,0 +1,214 @@
+VARIABLE(IsSummoned=True)
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Work around death animation bug
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	Die()
+		OR(2)
+			AreaCheck("ar6200")
+			AreaCheck("ar2900")
+THEN
+	RESPONSE #100
+		ReallyForceSpellDeadRES("baldead",Myself)
+END
+
+IF
+	Die()
+	IgnoreBlock(EnhancedEdition)
+THEN
+	RESPONSE #100
+		DestroySelf()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Balor combat script
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/fiend_definitions_summoned.ssl)
+INCLUDE FILE(%scsroot%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Begin stoneskinned
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	!GlobalTimerNotExpired("stoneskin","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobalTimer("stoneskin","LOCALS",36)
+		ApplySpell(Myself,WIZARD_STONE_SKIN)
+		Continue()
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Kill Baatezu
+/////////////////////////////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scsdemon||LAWFUL_EVIL)
+	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
+END LOOP
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider moving to a more interesting location in the battle
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%scsroot%/fiend/ssl/jump.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+VARIABLE(FirstDispel=True)
+INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
+
+///////////////////////////////////////////////////////////////////////////////////////
+///	Breach enemy defenses
+///////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellDeflect|Enemy|Helpless|EasyPlus)
+	TriggerBlock(PriorityBreach)
+THEN DO
+	Combine()
+	Action(Spell,BALOR_BREACH|150|150)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(SpellDeflect|Enemy|Helpless|EasyPlus)
+	TriggerBlock(BreachTarget|AvoidDispel)
+THEN DO
+	Combine()
+	Action(SpellNoDec,BALOR_BREACH|150|150)
+END
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Blow someone up (ToB: Hard+; SoA: Insane)
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(Insane)
+	!GlobalGT("chapter","GLOBAL",7)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(SpellDeflect|Enemy|Helpless)
+THEN DO
+	Action(Spell,CLERIC_IMPLOSION|100|100)
+END
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(HardPlus)
+	GlobalGT("chapter","GLOBAL",7)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(SpellDeflect|Enemy|Helpless)
+THEN DO
+	Action(Spell,CLERIC_IMPLOSION|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Telekinesis - get rid of nearby warrior types
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy|Disabled|CorePlus)
+	OR(4)
+		Class(scstarget,FIGHTER_ALL)
+		Class(scstarget,PALADIN_ALL)
+		Class(scstarget,RANGER_ALL)
+		Class(scstarget,MONK)
+	CheckStatGT(scstarget,-10,SAVEVSSPELL)
+THEN DO
+	Combine()
+	Action(SpellNoDecRES,"dw#batel"|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Use offensive magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////
+///   Symbol: Stun
+//////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(Stun|MR|SIConjuration|Enemy|Helpless|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_NPC_SYMBOL_STUN|100|100)
+END
+
+///////////////////////////////
+////	Symbol: Death
+///////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(Slay|MR|SIConjuration|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_NPC_SYMBOL_DEATH|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////
+////	Domination
+//////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsPreferringStrong)
+	TriggerBlock(MR|Charm|SIEnchantment|SpellTurn|Enemy|Helpless)
+THEN DO
+	Combine()
+	Action(Spell,INNATE_FIEND_DOMINATION)
+END
+
+
+//////////////////////////////////////////////////////////////////////////////
+///	Combat
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////
+////	At least *consider* chewing on stunned victims
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	Target([ANYONE])
+	StateCheck(scstarget,STATE_STUNNED)
+	TriggerBlock(Enemy|Plus5Safe)
+THEN DO
+	Action(Attack|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  !Allegiance(Myself,ENEMY)
+  TargetBlock(EnemiesInOrderShort)
+  TriggerBlock(Plus4Safe)
+THEN DO
+   Action(Literal)
+   AttackOneRound(scstarget)
+END
+
+
+BEGIN LOOP(MyWeaponStrength||5)
+BEGIN LOOP(MyWeaponDamageType||Crushing)
+INCLUDE FILE(%scsroot%/genai/ssl/easy_melee.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%scsroot%/genai/ssl/move.ssl)
+END LOOP
+END LOOP
+

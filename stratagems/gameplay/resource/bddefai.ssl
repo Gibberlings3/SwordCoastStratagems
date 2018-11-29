@@ -1,0 +1,727 @@
+///////////////////////////////////////////////////////////////////
+///// test block to check variables do what I think they do
+///////////////////////////////////////////////////////////////////
+
+BEGIN LOOP(scs_bdai_var||Attack_Mode;Disable_Items;Disable_Defensive;Disable_Special;Disable_Items;Disable_Offensive;Disable_Attack;Skill_Mode)
+BEGIN LOOP(scs_bdai_val||0;1;2;3;4)
+
+IF
+  RequireBlock(Testing)
+  Global("BDAI_TEST","GLOBAL",1)
+  Global("BDAI_scs_bdai_var","LOCALS",scs_bdai_val)
+THEN
+    RESPONSE #100
+      SetGlobal("BDAI_TEST","GLOBAL",0)
+      DisplayString(Myself,%scs_bdai_varscs_bdai_val%)
+      Continue()
+END
+
+END LOOP
+END LOOP
+
+///////////////////////////////////////////////////////////////////
+///// combat block
+/////
+///// parameters:
+///// - melee anyway if an active hostile enemy is in melee weapon
+///// range
+///// - melee/range-attack non-inactive targets, if set to
+///// - melee/range-attack all targets, if set to
+/////
+///// but don't waste magic ammo
+///////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+	Name(AttackUnlessHelpless)
+	TRIGGER
+		ActionListEmpty()
+	        !StateCheck(Myself,STATE_INVISIBLE)
+	        !CheckStatGT(Myself,0,SANCTUARY)
+	        !ModalState(TURNUNDEAD)
+         	!HasItem("eneblade",Myself)
+	        !HasItem("melfmet",Myself)
+	        See(scstarget)
+	        Allegiance(scstarget,ENEMY)
+	        !InParty(scstarget)
+	        InParty(Myself)
+	        !StateCheck(scstarget,STATE_REALLY_DEAD)
+	        !StateCheck(scstarget,STATE_IMMOBILE)
+	        !CheckStat(scstarget,1,HELD)
+                WeaponEffectiveVs(scstarget,MAINHAND)
+                WeaponCanDamage(scstarget,MAINHAND)
+	ACTION
+		RESPONSE #scsprob1
+		Attack(scstarget)
+END
+
+BEGIN_ACTION_DEFINITION
+	Name(Attack)
+	TRIGGER
+                ActionListEmpty()
+	        !StateCheck(Myself,STATE_INVISIBLE)
+	        !CheckStatGT(Myself,0,SANCTUARY)
+	        !ModalState(TURNUNDEAD)
+         	!HasItem("eneblade",Myself)
+	        !HasItem("melfmet",Myself)
+	        See(scstarget)
+	        Allegiance(scstarget,ENEMY)
+	        !InParty(scstarget)
+	        InParty(Myself)
+	        !StateCheck(scstarget,STATE_REALLY_DEAD)
+                WeaponEffectiveVs(scstarget,MAINHAND)
+                WeaponCanDamage(scstarget,MAINHAND)
+	ACTION
+		RESPONSE #scsprob1
+		Attack(scstarget)
+END
+
+IF
+!Global("DW_attack_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_attack_init","LOCALS",1)
+             SetGlobal("%disable_attacks%","LOCALS",0)
+             Continue()
+END
+
+IF
+!Global("DW_mode_init","LOCALS",1)
+IsWeaponRanged(Myself)
+THEN
+    RESPONSE #100
+             SetGlobal("DW_mode_init","LOCALS",1)
+             SetGlobal("%attack_mode%","LOCALS",2)
+             Continue()
+END
+
+IF
+!Global("DW_mode_init","LOCALS",1)
+!IsWeaponRanged(Myself)
+THEN
+    RESPONSE #100
+             SetGlobal("DW_mode_init","LOCALS",1)
+             SetGlobal("%attack_mode%","LOCALS",1)
+             Continue()
+END
+
+
+IF
+	Global("%attack_mode%","LOCALS",1)
+	!Global("%disable_attacks%","LOCALS",1)
+	ActionListEmpty()
+	InParty(Myself)
+	IsWeaponRanged(Myself)
+THEN
+	RESPONSE #100
+		EquipMostDamagingMelee()
+		Continue()
+END
+
+IF
+	Global("%attack_mode%","LOCALS",2)
+	!Global("%disable_attacks%","LOCALS",1)
+	ActionListEmpty()
+	InParty(Myself)
+	IsWeaponRanged(Myself)
+	Range(NearestEnemyOf(Myself),4)
+THEN
+	RESPONSE #100
+		EquipMostDamagingMelee()
+		Continue()
+END
+
+IF
+	Global("%attack_mode%","LOCALS",2)
+	!Global("%disable_attacks%","LOCALS",1)
+	ActionListEmpty()
+	InParty(Myself)
+	!IsWeaponRanged(Myself)
+	CanEquipRanged()
+	!Range(NearestEnemyOf(Myself),4)
+THEN
+	RESPONSE #100
+		EquipRanged()
+		Continue()
+END
+
+IF TRIGGER
+   Target(LastAttackerOf(Myself))
+   Target(NearestEnemyOf(Myself))
+   Target(SecondNearestEnemyOf(Myself))
+   Target(ThirdNearestEnemyOf(Myself))
+   Target(FourthNearestEnemyOf(Myself))
+   Target(FifthNearestEnemyOf(Myself))
+   Target(SixthNearestEnemyOf(Myself))
+   OR(2)
+	!Global("%disable_attacks%","LOCALS",1)
+	Range(scstarget,5)
+THEN DO
+     Action(AttackUnlessHelpless)
+END
+
+IF TRIGGER
+	!Global("%disable_attacks%","LOCALS",1)
+   Target(NearestEnemyOf(Myself))
+   Target(SecondNearestEnemyOf(Myself))
+   Target(ThirdNearestEnemyOf(Myself))
+THEN DO
+     Action(Attack)
+END
+
+///////////////////////////////////////////////////////////////////
+// Define core "buff" actions
+///////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+       Name(Buff)
+       TRIGGER
+        ActionListEmpty()
+        CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!CheckStatGT(Myself,0,SPELLFAILUREscsargument2)
+	HaveSpell(scsargument1)
+	See(scstarget)
+	ACTION
+		RESPONSE #scsprob1
+		SetGlobalTimer("SpellsBad","GLOBAL",3) // Cowled wizards
+		ApplySpellRES("dw#alac",Myself)
+		Spell(scstarget,scsargument1)
+END
+
+BEGIN_ACTION_DEFINITION
+       Name(BuffInnate)
+       TRIGGER
+          ActionListEmpty()
+          CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	HaveSpell(scsargument1)
+	See(scstarget)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#alac",Myself)
+		Spell(scstarget,scsargument1)
+END
+
+
+BEGIN_ACTION_DEFINITION
+       Name(BuffRES)
+       TRIGGER
+          ActionListEmpty()
+          CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!CheckStatGT(Myself,0,SPELLFAILUREscsargument2)
+	HaveSpellRES(scsargument1)
+	See(scstarget)
+	ACTION
+		RESPONSE #scsprob1
+		ApplySpellRES("dw#alac",Myself)
+		SpellRES(scsargument1,scstarget)
+END
+
+///////////////////////////////////////////////////////////////////
+///// healing spell block
+///////////////////////////////////////////////////////////////////
+
+IF
+  Global("DW_healing_init","LOCALS",0)
+THEN
+    RESPONSE #100
+             SetGlobal("DW_healing_init","LOCALS",1)
+             SetGlobal("%healing_var%","LOCALS",2)
+             Continue()
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,90)
+    LevelGT(Myself,4)
+THEN DO
+     Action(BuffInnate,INNATE_CURE_LIGHT_WOUNDS)
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,90)
+    LevelGT(Myself,4)
+THEN DO
+     Action(Buff,CLERIC_CURE_LIGHT_WOUNDS,PRIEST)
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    RequireBlock(IsIWDDivine)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,85)
+    LevelGT(Myself,6)
+THEN DO
+     Action(Buff,CLERIC_CURE_MODERATE_WOUNDS,PRIEST)
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,80)
+    LevelGT(Myself,8)
+THEN DO
+     Action(Buff,CLERIC_CURE_MEDIUM_WOUNDS,PRIEST)
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,75)
+    LevelGT(Myself,10)
+THEN DO
+     Action(Buff,CLERIC_CURE_SERIOUS_WOUNDS,PRIEST)
+END
+
+IF TRIGGER
+    GlobalGT("%healing_var%","LOCALS",1)
+    TargetBlock(PCsInOrder)
+    HPPercentLT(scstarget,70)
+    LevelGT(Myself,13)
+THEN DO
+     Action(Buff,CLERIC_CURE_CRITICAL_WOUNDS,PRIEST)
+END
+
+///////////////////////////////////////////////////////////////////
+///// healing items block
+/////
+///// parameters:
+///// - 0/1: no healing
+///// - 2: goodberries
+///// - 3: CLW potions
+///// - 4: CMW potions
+///////////////////////////////////////////////////////////////////
+
+BEGIN_ACTION_DEFINITION
+   Name(Potion)
+   TRIGGER
+	ActionListEmpty()
+	CombatCounter(0)
+	GlobalGT("%healing_var%","LOCALS",scsargument2)
+	!Detect(NearestEnemyOf(Myself))
+	HasItem(scsargument1,Myself)
+   ACTION
+         RESPONSE #scsprob1
+             UseItem(scsargument1,Myself)
+END
+
+IF TRIGGER
+   HPPercentLT(Myself,100)
+THEN DO
+     Action(Potion,"gberry7",1)
+     Action(Potion,"gberry6",1)
+     Action(Potion,"gberry5",1)
+     Action(Potion,"gberry4",1)
+     Action(Potion,"gberry3",1)
+     Action(Potion,"gberry2",1)
+     Action(Potion,"gberry",1)
+END
+
+
+IF TRIGGER
+   HPPercentLT(Myself,90)
+THEN DO
+     Action(Potion,"potn08",2)
+END
+
+IF TRIGGER
+   HPPercentLT(Myself,70)
+THEN DO
+     Action(Potion,"potn52",3)
+END
+
+///////////////////////////////////////////////////////////////////
+///// individual buffing
+///////////////////////////////////////////////////////////////////
+
+IF
+!Global("DW_ind_buff_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_ind_buff_init","LOCALS",1)
+             SetGlobal("%disable_individual_buffs%","LOCALS",0)
+             Continue()
+END
+
+IF TRIGGER
+   !Global("%disable_individual_buffs%","LOCALS",1)
+   Target(Myself)
+   CheckStat(Myself,0,STONESKINS)
+   TriggerBlock(SorcererBuffing)
+THEN DO
+     Action(Buff,WIZARD_STONE_SKIN,MAGE)
+END
+
+IF TRIGGER
+   !Global("%disable_individual_buffs%","LOCALS",1)
+   Target(Myself)
+   CheckStat(Myself,0,STONESKINS)
+   TriggerBlock(ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_IRONSKIN,PRIEST)
+END
+
+IF TRIGGER
+   !Global("%disable_individual_buffs%","LOCALS",1)
+   Target(Myself)
+   !CheckStat(Myself,3,SCRIPTINGSTATE5)
+   TriggerBlock(SorcererBuffing)
+THEN DO
+     Action(Buff,WIZARD_ARMOR,MAGE)
+END
+
+IF TRIGGER
+   !Global("%disable_individual_buffs%","LOCALS",1)
+   RequireBlock(IsIWDArcane|Demivrgvs)
+   Target(Myself)
+   !CheckSpellState(Myself,CHAOTIC_COMMANDS)
+   TriggerBlock(SorcererBuffing)
+THEN DO
+     Action(Buff,WIZARD_MIND_BLANK,MAGE)
+END
+
+IF TRIGGER
+   !Global("%disable_individual_buffs%","LOCALS",1)
+   RequireBlock(IsIWDDivine)
+   Target(Myself)
+   CheckSpellState(Myself,SPELL_SHIELD)
+   TriggerBlock(ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_IMPERVIOUS_SANCTITY_OF_MIND,PRIEST)
+END
+
+///////////////////////////////////////////////////////////////////
+///// group buffing
+///////////////////////////////////////////////////////////////////
+
+IF
+!Global("DW_group_buff_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_group_buff_init","LOCALS",1)
+             SetGlobal("%disable_group_buffs%","LOCALS",0)
+             Continue()
+END
+
+/// Paladin protection from evil
+
+IF
+        !Global("%disable_group_buffs%","LOCALS",1)
+	ActionListEmpty()
+	CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!Global("ProEvilPaladin","LOCALS",1)
+	!CheckStatGT(Myself,0,SPELLFAILUREPRIEST)
+	HaveSpell(PALADIN_PROTECTION_FROM_EVIL)
+THEN
+	RESPONSE #100
+		SetGlobal("ProEvilPaladin","LOCALS",1)
+		SetGlobalTimer("ProEvilPaladinTimer","LOCALS",60)
+END
+
+IF
+        !Global("%disable_group_buffs%","LOCALS",1)
+	Global("ProEvilPaladin","LOCALS",1)
+	OR(2)
+		!HaveSpell(PALADIN_PROTECTION_FROM_EVIL)
+		GlobalTimerExpired("ProEvilPaladinTimer","LOCALS")
+THEN
+	RESPONSE #100
+		SetGlobal("ProEvilPaladin","LOCALS",0)
+END
+
+IF TRIGGER
+   !Global("%disable_group_buffs%","LOCALS",1)
+   TargetBlock(PlayersInOrder)
+   Global("ProEvilPaladin","LOCALS",1)
+   !CheckStat(scstarget,1,PROTECTION_FROM_EVIL)
+THEN DO
+     Action(Buff,PALADIN_PROTECTION_FROM_EVIL,PRIEST)
+END
+
+
+//// Cleric chaotic commands
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+	ActionListEmpty()
+	CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!Global("ChaoticCommands","LOCALS",1)
+	!CheckStatGT(Myself,0,SPELLFAILUREPRIEST)
+	HaveSpell(CLERIC_CHAOTIC_COMMANDS)
+        TriggerBlock(ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("ChaoticCommands","LOCALS",1)
+		SetGlobalTimer("ChaoticCommandsTimer","LOCALS",60)
+END
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+	Global("ChaoticCommands","LOCALS",1)
+	OR(2)
+		!HaveSpell(CLERIC_CHAOTIC_COMMANDS)
+		GlobalTimerExpired("ChaoticCommandsTimer","LOCALS")
+        TriggerBlock(ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("ChaoticCommands","LOCALS",0)
+END
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+   TargetBlock(PlayersInOrder)
+   Global("ChaoticCommands","LOCALS",1)
+   TriggerBlock(ChaoticCommands|ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_CHAOTIC_COMMANDS,PRIEST)
+END
+
+/// cleric death ward
+
+IF  TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+	ActionListEmpty()
+	CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!Global("DeathWard","LOCALS",1)
+	!CheckStatGT(Myself,0,SPELLFAILUREPRIEST)
+	HaveSpell(CLERIC_DEATH_WARD)
+        TriggerBlock(ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("DeathWard","LOCALS",1)
+		SetGlobalTimer("DeathWardTimer","LOCALS",60)
+END
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+	Global("DeathWard","LOCALS",1)
+	OR(2)
+		!HaveSpell(CLERIC_DEATH_WARD)
+		GlobalTimerExpired("DeathWardTimer","LOCALS")
+        TriggerBlock(ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("DeathWard","LOCALS",0)
+END
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+   TargetBlock(PlayersInOrder)
+   Global("DeathWard","LOCALS",1)
+   TriggerBlock(DeathWard)
+   TriggerBlock(ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_DEATH_WARD,PRIEST)
+END
+
+// protection from fire, lightning, magic energy
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+	ActionListEmpty()
+	CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!Global("ProFire","LOCALS",1)
+	OR(2)
+		HaveSpell(CLERIC_PROTECTION_FROM_FIRE)
+		HaveSpell(CLERIC_PROTECTION_FROM_LIGHTNING)
+	!CheckStatGT(Myself,0,SPELLFAILUREPRIEST)
+        TriggerBlock(ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("ProFire","LOCALS",1)
+		SetGlobalTimer("ProFireTimer","LOCALS",60)
+END
+
+IF TRIGGER
+        IgnoreBlock(IsBG1Only)
+        !Global("%disable_group_buffs%","LOCALS",1)
+	ActionListEmpty()
+	CombatCounter(0)
+	!Detect(NearestEnemyOf(Myself))
+	!Global("ProFire","LOCALS",1)
+	HaveSpell(WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
+	!CheckStatGT(Myself,0,SPELLFAILUREMAGE)
+        TriggerBlock(SorcererBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("ProFire","LOCALS",1)
+		SetGlobalTimer("ProFireTimer","LOCALS",60)
+END
+
+IF TRIGGER
+        !Global("%disable_group_buffs%","LOCALS",1)
+        Global("ProFire","LOCALS",1)
+	OR(2)
+		!HaveSpell(CLERIC_PROTECTION_FROM_FIRE)
+		GlobalTimerExpired("ProFireTimer","LOCALS")
+	OR(2)
+		!HaveSpell(CLERIC_PROTECTION_FROM_LIGHTNING)
+		GlobalTimerExpired("ProFireTimer","LOCALS")
+	OR(2)
+		!HaveSpell(WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
+		GlobalTimerExpired("ProFireTimer","LOCALS")
+        TriggerBlock(SorcererBuffing|ShamanBuffing)
+THEN DO
+                Action(Literal)
+		SetGlobal("ProFire","LOCALS",0)
+END
+
+IF TRIGGER
+   !Global("%disable_group_buffs%","LOCALS",1)
+   IgnoreBlock(IsBG1Only)
+   TargetBlock(PlayersInOrder)
+   Global("ProFire","LOCALS",1)
+   CheckStatLT(scstarget,80,MAGICDAMAGERESISTANCE)
+   TriggerBlock(DirectDamageSafe)
+        TriggerBlock(SorcererBuffing)
+THEN DO
+     Action(Buff,WIZARD_PROTECTION_FROM_MAGIC_ENERGY,MAGE)
+END
+
+IF TRIGGER
+   !Global("%disable_group_buffs%","LOCALS",1)
+   IgnoreBlock(IsBG1Only)
+   TargetBlock(PlayersInOrder)
+   Global("ProFire","LOCALS",1)
+   CheckStatLT(scstarget,80,RESISTFIRE)
+        TriggerBlock(ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_PROTECTION_FROM_FIRE,PRIEST)
+END
+
+IF TRIGGER
+   !Global("%disable_group_buffs%","LOCALS",1)
+   IgnoreBlock(IsBG1Only)
+   TargetBlock(PlayersInOrder)
+   Global("ProFire","LOCALS",1)
+   CheckStatLT(scstarget,80,RESISTELECTRICITY)
+        TriggerBlock(ShamanBuffing)
+THEN DO
+     Action(Buff,CLERIC_PROTECTION_FROM_LIGHTNING,PRIEST)
+END
+
+///////////////////////////////////////////////////////////////////
+///// melf
+///////////////////////////////////////////////////////////////////
+
+IF
+   OR(4)
+   Class(Myself,FIGHTER_MAGE)
+   Class(Myself,FIGHTER_MAGE_THIEF)
+   Class(Myself,BARD)
+   Class(Myself,SORCERER)
+!Global("DW_melf_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_melf_init","LOCALS",1)
+             SetGlobal("%melf_disable_var%","LOCALS",1)
+             Continue()
+END
+
+IF
+   !Class(Myself,FIGHTER_MAGE)
+   !Class(Myself,FIGHTER_MAGE_THIEF)
+   !Class(Myself,BARD)
+   !Class(Myself,SORCERER)
+   !Global("DW_melf_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_melf_init","LOCALS",1)
+             SetGlobal("%melf_disable_var%","LOCALS",0)
+             Continue()
+END
+
+IF TRIGGER
+   Global("DW_melf_init","LOCALS",1)
+   Global("%melf_disable_var%","LOCALS",0)
+   Target(Myself)
+   !HasItem("eneblade",Myself)
+   !HasItem("melfmet",Myself)
+   TriggerBlock(SorcererBuffing)
+THEN DO
+   Action(Buff,WIZARD_MELF_METEOR,MAGE)
+END
+
+///////////////////////////////////////////////////////////////////
+///// item generation
+///////////////////////////////////////////////////////////////////
+
+IF
+!Global("DW_item_init","LOCALS",1)
+
+THEN
+    RESPONSE #100
+             SetGlobal("DW_item_init","LOCALS",1)
+             SetGlobal("%disable_item_generation%","LOCALS",0)
+             Continue()
+END
+
+BEGIN_ACTION_DEFINITION
+   Name(TimedItem)
+   TRIGGER
+        !GlobalTimerNotExpired("DMWWscsargument1timer","LOCALS")
+	ActionListEmpty()
+	CombatCounter(0)
+   !Global("%disable_item_generation%","LOCALS",1)
+	!Detect(NearestEnemyOf(Myself))
+	HasItem("scsargument1",Myself)
+   ACTION
+         RESPONSE #scsprob1
+             SetGlobalTimer("DMWWscsargument1timer","LOCALS",2000)
+             UseItem("scsargument1",Myself)
+END
+
+IF TRIGGER
+   !Global("%disable_item_generation%","LOCALS",1)
+   !InventoryFull(Myself)
+   Target(Myself)
+THEN DO
+     Action(Buff,CLERIC_GOOD_BERRIES,PRIEST)
+END
+
+IF TRIGGER
+   !Global("%disable_item_generation%","LOCALS",1)
+   IgnoreBlock(IsBG1Only)
+   Target(Myself)
+   NumItemsLT("bolt07",Myself,80)
+THEN DO
+   Action(BuffInnate,JAN_AMMO)
+END
+
+IF TRIGGER
+   !Global("%disable_item_generation%","LOCALS",1)
+   IgnoreBlock(IsBG1Only)
+   Target(Myself)
+   !HasItem("brdflute",Myself)
+   !InventoryFull(Myself)
+THEN DO
+   Action(BuffRES,"spcl921",MAGE)
+END
+
+IF TRIGGER
+   !Global("%disable_item_generation%","LOCALS",1)
+THEN DO
+     Action(TimedItem,clck25)
+     Action(TimedItem,belt09)
+     Action(TimedItem,boot12)
+   //  Action(TimedItem,slng08)  this doesn't work, because there's no real way to select ability #2
+   //  Action(TimedItem,slng09)
+END
+
+
+
+
+

@@ -6,6 +6,10 @@
 ///// routines should be called initially with the starting resources in this list.
 /////
 ///// The variable $iter_has_checked("%resource%") is set if we've already checked it.
+/////
+///// For opcodes, we don't iterate through resources in 206 (etc) as they're not really required
+///// by the spell and may not exist. But we do allow a function "immunity_func" to be called on
+///// the resource name (e.g., to log it).
 
 DEFINE_PATCH_FUNCTION check_adder
      STR_VAR to_check=""
@@ -24,20 +28,59 @@ DEFINE_PATCH_FUNCTION iter_opcode
             param2=0
     STR_VAR to_check=""
             resref=""
-
+            source=""
+            source_ext=""
+            immunity_func=""
     RET to_check
 BEGIN
- PATCH_IF GAME_IS ~bg2 tob tutu tutu_totsc bgee bg2ee eet~ BEGIN
+ PATCH_IF GAME_IS ~bg2 tob tutu tutu_totsc bgee bg2ee iwdee eet~ BEGIN
    PATCH_MATCH "%opcode%" WITH
        67 135 151 BEGIN SPRINT to_check "%to_check% %resref%.cre"
        END
        82 BEGIN SPRINT to_check "%to_check% %to_check% %resref%.bcs" END
        111 122 143 255 BEGIN SPRINT to_check "%to_check% %resref%.itm" END
-       146 147 148 171 BEGIN SPRINT to_check "%to_check% %resref%.spl" END
-       177 272 BEGIN SPRINT to_check "%to_check% %resref%.eff" END
+       146 147 148 171 232 251 326 335 340 341 361 366 BEGIN SPRINT to_check "%to_check% %resref%.spl" END
+       172 206 BEGIN
+         INNER_ACTION BEGIN
+          ACTION_IF "%immunity_func%" STRING_COMPARE_CASE "" BEGIN
+             LAF "%immunity_func%" STR_VAR resref resref_ext="SPL" source source_ext END
+          END
+         END
+       END
+       318 321 324 BEGIN
+          INNER_ACTION BEGIN
+            ACTION_IF "%immunity_func%" STRING_COMPARE_CASE "" BEGIN
+             ACTION_IF FILE_EXISTS_IN_GAME "%resref%.itm" BEGIN
+                LAF "%immunity_func%" STR_VAR resref resref_ext="ITM" source source_ext END
+             END ELSE BEGIN
+                LAF "%immunity_func%" STR_VAR resref resref_ext="SPL" source source_ext END
+             END
+            END
+          END
+       END
+       177 272 248 249 283 BEGIN SPRINT to_check "%to_check% %resref%.eff" END
        174 BEGIN SPRINT to_check "%to_check% %resref%.wav" END
        215 BEGIN SPRINT to_check "%to_check% %resref%.vvc" END
        311 BEGIN LPF iter_wish STR_VAR to_check RET to_check=to_check END END
+       331 BEGIN
+            INNER_ACTION BEGIN
+               COPY_EXISTING smtables.2da override
+                    READ_2DA_ENTRY (param2 + 1) 1 2 monsum_table
+               BUT_ONLY
+            END
+            SPRINT to_check "%to_check% %monsum_table%.2da"
+            LPF log_this STR_VAR file=smtable_entries.2da input="%param2% %monsum_table%" repeat=no END
+       END
+       214 BEGIN // select spell
+          SPRINT to_check "%to_check% %resref%.sda"
+       END
+       333 BEGIN
+            PATCH_IF "%resref%" STRING_EQUAL "" BEGIN
+               SPRINT to_check "%to_check% %source%b.spl"
+            END ELSE BEGIN
+               SPRINT to_check "%to_check% %resref%.spl"
+            END
+       END
        192 BEGIN LPF iter_fam STR_VAR to_check RET to_check=to_check END END
        127 BEGIN
           PATCH_IF "%resref%" STRING_COMPARE "" BEGIN
@@ -113,11 +156,33 @@ DEFINE_PATCH_FUNCTION iter_2da // checks 2da files used by monster summoning
     STR_VAR to_check=""
     RET to_check
 BEGIN
-    COUNT_2DA_ROWS 2 rowcount
-    FOR (i=1;i<rowcount;i+=1) BEGIN
+    COUNT_2DA_COLS colcount
+    PATCH_IF colcount=4 BEGIN
+      COUNT_2DA_ROWS 4 rowcount
+      FOR (i=0;i<rowcount;i+=1) BEGIN
+         READ_2DA_ENTRY i 1 4 cre
+         READ_2DA_ENTRY i 2 4 vvc1
+         READ_2DA_ENTRY i 3 4 vvc2
+         SPRINT to_check "%to_check% %cre%.cre %vvc1%.vvc %vvc2%.vvc"
+      END
+    END ELSE BEGIN
+      COUNT_2DA_ROWS 2 rowcount
+      FOR (i=1;i<rowcount;i+=1) BEGIN
        READ_2DA_ENTRY i 1 2 entry
        SPRINT to_check "%to_check% %entry%.cre"
+      END
     END
+END
+
+DEFINE_PATCH_FUNCTION iter_sda // checks 2da files used by spell-selection
+    STR_VAR to_check=""
+    RET to_check
+BEGIN
+      COUNT_2DA_ROWS 3 rowcount
+      FOR (i=0;i<rowcount;i+=1) BEGIN
+       READ_2DA_ENTRY i 1 3 entry
+       SPRINT to_check "%to_check% %entry%.spl"
+      END
 END
 
 DEFINE_PATCH_FUNCTION iter_are //
@@ -202,30 +267,97 @@ BEGIN
 END
 
 
-DEFINE_PATCH_FUNCTION iter_spl  // just check all the opcodes and the BAMs
+DEFINE_PATCH_FUNCTION iter_spl  // just check all the opcodes and the BAMs, and the projectile
     STR_VAR to_check=""
+            immunity_func=""
     RET to_check
 BEGIN
+       SPRINT source "%SOURCE_RES%"
        READ_ASCII 0x3a value
        LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
        GET_OFFSET_ARRAY ab_array 0x64 4 0x68 2 0 0 0x28
        PHP_EACH ab_array AS int=>ab_off BEGIN
           READ_ASCII (ab_off+0x4) value
           LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
+          READ_SHORT (ab_off + 0x26) proj
+          PATCH_IF proj>1 BEGIN
+            SET proj -=1
+            LOOKUP_IDS_SYMBOL_OF_INT value projectl proj
+            PATCH_IF !IS_AN_INT value BEGIN
+               LPF check_adder STR_VAR to_check value suffix=pro RET to_check END
+            END
+          END
           GET_OFFSET_ARRAY2 eff_array ab_off ITM_V10_HEAD_EFFECTS
           PHP_EACH eff_array AS int2=>offset BEGIN
               READ_SHORT offset opcode
               READ_ASCII (offset+0x14) resref
               READ_LONG (offset+0x8) param2
-              LPF iter_opcode INT_VAR opcode param2 STR_VAR resref to_check RET to_check=to_check END
+              LPF iter_opcode INT_VAR opcode param2 STR_VAR immunity_func source source_ext=SPL resref to_check RET to_check=to_check END
           END
        END
+       GET_OFFSET_ARRAY gen_eff_array SPL_V10_GEN_EFFECTS 
+       PHP_EACH gen_eff_array AS int=>offset BEGIN
+              READ_SHORT offset opcode
+              READ_ASCII (offset+0x14) resref
+              READ_LONG (offset+0x8) param2
+              LPF iter_opcode INT_VAR opcode param2 STR_VAR immunity_func source source_ext=SPL resref to_check RET to_check=to_check END
+       END
+END
+
+DEFINE_PATCH_FUNCTION iter_pro //  check the BAM, WAV and VVC files, and any secondary projectile
+    STR_VAR to_check=""
+    RET to_check
+BEGIN
+    PATCH_FOR_EACH wav_off IN 0x10 0x18 BEGIN
+       READ_ASCII wav_off value
+       LPF check_adder STR_VAR to_check value suffix=wav RET to_check END
+    END
+    PATCH_IF BUFFER_LENGTH >0x100 BEGIN // projectile data
+       PATCH_FOR_EACH bam_off IN 0x104 0x10c 0x136 0x13e 0x146 BEGIN
+          READ_ASCII bam_off value
+          LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
+       END
+    END
+    PATCH_IF BUFFER_LENGTH >0x200 BEGIN // area effect data
+        PATCH_FOR_EACH wav_off IN 0x208 0x238 BEGIN
+           READ_ASCII wav_off value
+           LPF check_adder STR_VAR to_check value suffix=wav RET to_check END
+        END
+        PATCH_FOR_EACH anim_off IN 0x21c 0x228 0x230 0x238 BEGIN
+           READ_ASCII anim_off value
+           INNER_ACTION BEGIN
+              ACTION_IF FILE_EXISTS_IN_GAME "%value%.vvc" BEGIN
+                 OUTER_SPRINT suffix vvc
+              END ELSE BEGIN
+                 OUTER_SPRINT suffix bam
+              END
+           END
+           LPF check_adder STR_VAR to_check value suffix RET to_check END
+        END
+        PATCH_FOR_EACH proj_off IN 0x214 0x21a BEGIN
+         READ_SHORT proj_off proj
+         SET proj -=1
+         PATCH_MATCH "%proj%" WITH
+         0 1 79 BEGIN END
+         DEFAULT
+          LOOKUP_IDS_SYMBOL_OF_INT value projectl proj
+          PATCH_IF !IS_AN_INT value BEGIN
+            LPF check_adder STR_VAR to_check value suffix=pro RET to_check END
+          END
+         END
+        END
+    END
+
+
+
 END
 
 DEFINE_PATCH_FUNCTION iter_itm  // just check all the opcodes, the BAMs, and whether it's a bag
     STR_VAR to_check=""
+            immunity_func=""
     RET to_check
 BEGIN
+       SPRINT source "%SOURCE_RES%"
        PATCH_FOR_EACH bam_off IN 0x3a 0x44 0x58 BEGIN
           READ_ASCII bam_off value
           LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
@@ -239,18 +371,26 @@ BEGIN
        PHP_EACH geneff_array AS int=>offset BEGIN
               READ_SHORT offset opcode
               READ_ASCII (offset+0x14) resref
-              LPF iter_opcode INT_VAR opcode STR_VAR resref to_check RET to_check=to_check END
+              LPF iter_opcode INT_VAR opcode STR_VAR immunity_func source source_ext=ITM resref to_check RET to_check=to_check END
        END
        GET_OFFSET_ARRAY ab_array 0x64 4 0x68 2 0 0 0x38
        PHP_EACH ab_array AS int=>ab_off BEGIN
           READ_ASCII (ab_off+0x4) value
+          READ_SHORT (ab_off + 0x36) proj
+          PATCH_IF proj>1 BEGIN
+            SET proj -=1
+            LOOKUP_IDS_SYMBOL_OF_INT value projectl proj
+            PATCH_IF !IS_AN_INT value BEGIN
+               LPF check_adder STR_VAR to_check value suffix=pro RET to_check END
+            END
+          END
           LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
           GET_OFFSET_ARRAY2 eff_array ab_off ITM_V10_HEAD_EFFECTS
           PHP_EACH eff_array AS int2=>offset BEGIN
               READ_SHORT offset opcode
               READ_LONG (offset+0x8) param2
               READ_ASCII (offset+0x14) resref
-              LPF iter_opcode INT_VAR opcode param2 STR_VAR resref to_check RET to_check=to_check END
+              LPF iter_opcode INT_VAR opcode param2 STR_VAR immunity_func source source_ext=ITM resref to_check RET to_check=to_check END
           END
        END
 END
@@ -305,12 +445,13 @@ END
 
 DEFINE_PATCH_FUNCTION iter_eff
     STR_VAR to_check=""
+            immunity_func=""
     RET to_check
 BEGIN
     READ_LONG 0x10 opcode
     READ_LONG 0x20 param2
     READ_ASCII 0x30 resref
-    LPF iter_opcode INT_VAR opcode param2 STR_VAR resref to_check RET to_check=to_check END
+    LPF iter_opcode INT_VAR opcode param2 STR_VAR immunity_func resref to_check RET to_check=to_check END
 END
 
 DEFINE_PATCH_FUNCTION iter_cre
@@ -510,7 +651,7 @@ BEGIN
       LPF check_adder STR_VAR to_check value suffix=wav RET to_check END
    END
    PATCH_FOR_EACH bam_off IN 0x8 BEGIN
-      READ_ASCII snd_off value
+      READ_ASCII bam_off value
       LPF check_adder STR_VAR to_check value suffix=bam RET to_check END
    END
 END
@@ -526,9 +667,11 @@ END
 
 DEFINE_ACTION_FUNCTION iter_resource
     INT_VAR include_spells=0
+            skip_payload_on_ignore=0
     STR_VAR to_check=""
             func=""
-            ignore=""
+            ignore_func=""
+            immunity_func=""
     RET output
 BEGIN
     ACTION_IF include_spells BEGIN
@@ -538,12 +681,6 @@ BEGIN
     OUTER_SET counter=0
     OUTER_SET hundreds=0
     OUTER_SPRINT output ""
-    // note what's to be ignored
-    OUTER_WHILE "%ignore%" STRING_COMPARE "" BEGIN
-       LAF return_first_entry STR_VAR list="%ignore%" RET entry ignore=list END
-       ACTION_TO_LOWER entry
-       OUTER_SPRINT $to_be_ignored("%entry%") ""
-    END
 
     // read in a list of random item resources
     ACTION_IF GAME_IS "iwd totlm how" BEGIN
@@ -567,8 +704,11 @@ BEGIN
         END ELSE BEGIN
             // analyse
             OUTER_SPRINT $already_checked("%entry%") ""
-            OUTER_INNER_PATCH "%entry%" BEGIN
+            OUTER_INNER_PATCH_SAVE entry "%entry%" BEGIN
                     READ_ASCII (BUFFER_LENGTH - 3) ext (3)
+                    PATCH_IF "%ext%" STRING_EQUAL_CASE "sda" BEGIN
+                       WRITE_ASCII (BUFFER_LENGTH - 3) "2da"
+                    END
             END
             // iterative part
             OUTER_SPRINT to_check_here ""
@@ -591,7 +731,7 @@ BEGIN
                       bam wav BEGIN END
                       DEFAULT
                          COPY_EXISTING "%entry%" "%workspace%"
-                           LPF "iter_%ext%" STR_VAR to_check="%to_check_here%" RET to_check_here=to_check END
+                           LPF "iter_%ext%" STR_VAR immunity_func to_check="%to_check_here%" RET to_check_here=to_check END
                          BUT_ONLY
                       END
             END
@@ -602,12 +742,19 @@ BEGIN
                     READ_ASCII (BUFFER_LENGTH - 3) ext (3)
                     DELETE_BYTES (BUFFER_LENGTH - 4) 4
                END
-               ACTION_IF !VARIABLE_IS_SET "parent_child_%entry%_%entry_here%" BEGIN
-                  LAF "%func%" STR_VAR output resref ext parent="%entry%" RET output END
-                  OUTER_SPRINT "parent_child_%entry%_%entry_here%" ""
+               ACTION_IF "%ignore_func%" STRING_COMPARE_CASE "" BEGIN
+                      LAF "%ignore_func%" STR_VAR resref ext parent="%entry%" RET ignore_entry=value END
+               END ELSE BEGIN
+                      OUTER_SET ignore_entry=0
                END
-               ACTION_IF !VARIABLE_IS_SET $to_be_ignored("%ext%") BEGIN
-                  OUTER_SPRINT "to_check" "%to_check% %entry_here%"
+               ACTION_IF !ignore_entry BEGIN
+                     OUTER_SPRINT "to_check" "%to_check% %entry_here%"
+               END
+               ACTION_IF !VARIABLE_IS_SET "parent_child_%entry%_%entry_here%" BEGIN
+                  ACTION_IF (!skip_payload_on_ignore || !ignore_entry) BEGIN
+                     LAF "%func%" STR_VAR output resref ext parent="%entry%" RET output END
+                     OUTER_SPRINT "parent_child_%entry%_%entry_here%" ""
+                  END
                END
             END
         END
@@ -626,9 +773,9 @@ BEGIN
       COUNT_2DA_ROWS 2 rowcount
       FOR (i=0;i<rowcount;i+=1) BEGIN
           READ_2DA_ENTRY i 0 2 idscode
-          PATCH_IF IS_AN_INT idscode BEGIN
-              LPF idscode_to_spell INT_VAR idscode RET resref END
-              SPRINT list "%list% %resref%.spl"
+          PATCH_IF !~%idscode%~ STRING_EQUAL_CASE IDS BEGIN
+             LPF idscode_to_spell INT_VAR idscode RET resref END
+             SPRINT list "%list% %resref%.spl"
           END
       END
    BUT_ONLY
@@ -665,6 +812,9 @@ DEFINE_ACTION_FUNCTION iterfunc_missing_file
            output=""
    RET     output
 BEGIN
+   ACTION_IF "%ext%" STRING_EQUAL_CASE sda BEGIN
+         OUTER_SPRINT ext 2da
+   END
    ACTION_IF !FILE_EXISTS_IN_GAME "%resref%.%ext%" BEGIN
       OUTER_SET report=1
 
@@ -681,6 +831,11 @@ BEGIN
                  OUTER_SET report=0
          END
          DEFAULT
+         END
+      END
+      ACTION_IF "%ext%" STRING_EQUAL vvc BEGIN
+         ACTION_IF FILE_EXISTS_IN_GAME "%resref%.bam" BEGIN
+            OUTER_SET report=0
          END
       END
       ACTION_IF report BEGIN

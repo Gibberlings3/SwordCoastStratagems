@@ -6,61 +6,116 @@
 
 ACTION_IF !VARIABLE_IS_SET ~initialise~ BEGIN
 
+  CLEAR_EVERYTHING            // occasionally, e.g. after installing IWD spells, we call this again. Make sure we get a fresh start.
+  SILENT
+  OUTER_SPRINT scsroot "stratagems"
+  OUTER_SPRINT ini_file "stratagems.ini"
+  OUTER_SPRINT user_ini_file "stratagems_user.ini"
   OUTER_SET initialise=1
 
+
 ////////////////////////////////////////////////////////
-//// load language files for Enhanced Edition
+//// general variables, macros and functions
 ////////////////////////////////////////////////////////
 
-  ACTION_IF GAME_IS ~bgee bg2ee eet~ BEGIN
-    LOAD_TRA ~%scsroot%/tra/ee/english/english.tra~
-    LOAD_TRA ~%scsroot%/tra/ee/%LANGUAGE%/%LANGUAGE%.tra~
-	OUTER_SPRINT eetra ~ee/~
-  END ELSE BEGIN
-	OUTER_SPRINT eetra ~~  
+   INCLUDE ~%scsroot%/sfo/install_sfo.tpa~
+
+   SILENT
+////////////////////////////////////////////////////////
+//// Make sure basic marker file exists
+////////////////////////////////////////////////////////
+
+  ACTION_IF !FILE_EXISTS "override/dw#marker_file.itm" BEGIN
+     COPY "%scsroot%/lib/resource/misc02.itm" "override/dw#marker_file.itm"
   END
 
 
 ////////////////////////////////////////////////////////
-//// detect third-party mods (needs to be at top because SFO takes notice)
+//// sort out languages (doing it a slightly nonstandard way to keep 
+//// the main mod directory immutable)
 ////////////////////////////////////////////////////////
+
+ LAF check_ini STR_VAR ini=force_tra_rebuild RET value END
+ OUTER_SET force_tra_rebuild=value
+ LAF handle_charsets_immutably INT_VAR force_tra_rebuild RET scs_tra_loc END
+
+ LOAD_TRA "%scs_tra_loc%/english/setup.tra" "%scs_tra_loc%/english/shared.tra" "%scs_tra_loc%/%LANGUAGE%/setup.tra" "%scs_tra_loc%/%LANGUAGE%/shared.tra"
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// install ToB Extender(Windows only)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ACTION_IF (!enhanced_edition && !FILE_EXISTS "tobex_ini/tobextweak.ini") BEGIN
+
+    OUTER_SPRINT ~TOBEX_MOD_DIRECTORY~ ~%scsroot%~
+    LOAD_TRA ~%scsroot%/tobex_redist/tobex.tra~
+    INCLUDE ~%scsroot%/tobex_redist/tobex.tpa~
+    SILENT
+
+END
+
+////////////////////////////////////////////////////////
+//// detect my and third-party mods
+////////////////////////////////////////////////////////
+
+        // Detect Ascension
+
+        ACTION_IF FILE_EXISTS_IN_GAME "fingrom.cre" BEGIN
+           OUTER_SET ascension=1
+        END ELSE BEGIN
+           OUTER_SET ascension=0
+        END
 
         // Detect Spell Revisions
 
         ACTION_IF FILE_EXISTS_IN_GAME ~dvimhere.mrk~ THEN BEGIN
-           OUTER_SET ~demivrgvs~=1
-//            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Demivrgvs=True~
-           APPEND ~SPELL.IDS~ ~1116 CLERIC_SUNSCORCH~ UNLESS ~1116 CLERIC_SUNSCORCH~
-//            OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_sr~
+           OUTER_SET demivrgvs=1
         END ELSE BEGIN
            OUTER_SET ~demivrgvs~=0
-//            OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notsr~
-        END
-
-        ACTION_IF FILE_EXISTS_IN_GAME ~dvsrv4here.mrk~ THEN BEGIN
-           OUTER_SET ~demivrgvs_v4~=1
-        END ELSE BEGIN
-           OUTER_SET ~demivrgvs_v4~=0
         END
 
         // detect Item Revisions
         
-        ACTION_IF MOD_IS_INSTALLED ~item_rev.tp2~ ~0~ THEN BEGIN
+        ACTION_IF MOD_IS_INSTALLED "item_rev.tp2" 0 BEGIN
            OUTER_SET item_revisions=1
-//            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~ItemRevisions=True~
-//            OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_ir~
         END ELSE BEGIN
            OUTER_SET item_revisions=0
-//            OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notir~
         END
 
         // detect Refinements HLAs
 
-        ACTION_IF FILE_EXISTS_IN_GAME ~tg#come.spl~ THEN BEGIN
+        ACTION_IF FILE_EXISTS_IN_GAME ~tg#come.spl~ BEGIN
            OUTER_SET ~refinements~=1
-//            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Refinements=True~
         END ELSE BEGIN
            OUTER_SET ~refinements~=0
+        END
+        
+        // detect Talents of Faerun HLAs [TD]
+        
+        OUTER_SET talents_of_faerun_hlas=0
+
+        // detect IWD spellsystem
+        
+        LAF check_label STR_VAR label=dw#iwdspells_arcane RET dw_iwd_arcane=value END
+        ACTION_IF ( (MOD_IS_INSTALLED "iwdification.tp2" 30) || dw_iwd_arcane ) BEGIN
+            OUTER_SET iwd_arcane=1
+        END ELSE BEGIN
+            OUTER_SET iwd_arcane=0
+        END
+        LAF check_label STR_VAR label=dw#iwdspells_divine RET dw_iwd_divine=value END
+        ACTION_IF ( (MOD_IS_INSTALLED "iwdification.tp2" 40) || dw_iwd_divine ) BEGIN
+            OUTER_SET iwd_divine=1
+        END ELSE BEGIN
+            OUTER_SET iwd_divine=0
+        END
+
+        // detect Rogue Rebalancing poisoned weapons
+        
+        ACTION_IF FILE_EXISTS_IN_GAME "fl#tas02.spl" BEGIN
+           OUTER_SET rr_poison=1
+        END ELSE BEGIN
+           OUTER_SET rr_poison=0
         END
 
         // detect Infinity Animations
@@ -70,46 +125,119 @@ ACTION_IF !VARIABLE_IS_SET ~initialise~ BEGIN
         END ELSE BEGIN
            OUTER_SET ~infinity_animations~=0
         END
-		
-////////////////////////////////////////////////////////
-//// general variables, macros and functions
-////////////////////////////////////////////////////////
 
-  INCLUDE ~%scsroot%/sfo/install_sfo.tpa~
-
-////////////////////////////////////////////////////////
-//// third-party mods SSL variables and libaries
-////////////////////////////////////////////////////////
-
-        // Spell Revisions
-
-        ACTION_IF FILE_EXISTS_IN_GAME ~dvimhere.mrk~ THEN BEGIN
-           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Demivrgvs=True~
-           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_sr~
-        END ELSE BEGIN
-           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notsr~
-        END
-
-        // Item Revisions
+        // set relevant base folders
         
-        ACTION_IF MOD_IS_INSTALLED ~item_rev.tp2~ ~0~ THEN BEGIN
-           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~ItemRevisions=True~
-           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_ir~
+        ACTION_IF demivrgvs BEGIN
+           OUTER_SPRINT base_folder_spells_mage demivrgvs
+           OUTER_SPRINT base_folder_spells_priest demivrgvs
         END ELSE BEGIN
-           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notir~
+          ACTION_IF iwd_arcane BEGIN
+           OUTER_SPRINT base_folder_spells_mage iwd
+          END ELSE BEGIN
+           OUTER_SPRINT base_folder_spells_mage vanilla
+          END
+          ACTION_IF iwd_divine BEGIN
+           OUTER_SPRINT base_folder_spells_priest iwd
+          END ELSE BEGIN
+           OUTER_SPRINT base_folder_spells_priest vanilla
+          END
         END
 
-        // Refinements
+        ACTION_IF talents_of_faerun_hlas BEGIN
+             OUTER_SPRINT base_folder_hlas tof
+        END ELSE
+        ACTION_IF refinements BEGIN
+             OUTER_SPRINT base_folder_hlas refinements
+        END ELSE BEGIN
+             OUTER_SPRINT base_folder_hlas vanilla
+        END
 
-        ACTION_IF FILE_EXISTS_IN_GAME ~tg#come.spl~ THEN BEGIN
-            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Refinements=True~
-        END 
-		
+
+///////////////////////////////////////////////////
+// Add Spell_Rev spell.ids entries
+///////////////////////////////////////////////////
+
+    ACTION_IF demivrgvs BEGIN
+             LAF check_label STR_VAR label=dw#spell_rev_ids RET value END
+             ACTION_IF !value BEGIN
+                LAF run STR_VAR file=spell_rev_ids locbase=lib END // will make a label automatically
+                CLEAR_IDS_MAP
+                LAF sort_ids STR_VAR ids=spell END
+             END
+   END
+
+///////////////////////////////////////////////////
+// Get resources (need to do AFTER SR/Refinements detected)
+///////////////////////////////////////////////////
+
+  ACTION_IF !VARIABLE_IS_SET read_resources BEGIN
+     OUTER_SET read_resources=1
+  END
+
+  ACTION_IF debug_variable=3 BEGIN
+     PRINT "Beginning resource collection: press a key to continue"
+     ACTION_READLN blook
+  END
+  
+  // Construct HLA table if it doesn't exist
+
+    MKDIR "%data_loc_root%/dw_shared"
+    ACTION_IF !FILE_EXISTS "%data_loc_root%/dw_shared/dw#hla_feat.2da" BEGIN
+       LAF include STR_VAR file=initialise_hla_feat.tph locbase=lib END
+       SILENT
+       LAF initialise_hla_feat END
+    END
+
+
+
+  ACTION_IF read_resources BEGIN
+   ACTION_FOR_EACH macro IN spellcodes saving_throws hit_point_levels stats PCs thac0 BEGIN
+     ACTION_IF debug_variable=3 BEGIN
+         PRINT "Launching the read_in_%macro% macro: press a key to continue"
+         ACTION_READLN blook
+     END
+     PRINT ~Reading in data: %macro%~
+     SILENT
+     LAUNCH_ACTION_MACRO ~read_in_%macro%~
+   END
+  END
+
+     ACTION_IF debug_variable=3 BEGIN
+         PRINT "All macros read in: press a key to continue"
+         ACTION_READLN blook
+     END
+
+
+  // markers to detect certain spells
+
+  OUTER_SPRINT ITEM_MM_SEEN dw#mmsee
+  OUTER_SPRINT ITEM_PSIONIC_SEEN dw#pssee
+  OUTER_SPRINT ITEM_ANTIWEB_SEEN dw#wbsee
+  OUTER_SPRINT IMPRISONMENT_MARKER dw#mkimp
+  OUTER_SPRINT MAZE_MARKER dw#mkmaz
+
+
+
 ////////////////////////////////////////////////////////
 //// stratagems-specific macros and functions
 ////////////////////////////////////////////////////////
 
+     ACTION_IF debug_variable=3 BEGIN
+         PRINT "Starting install of shared functions: press a key to continue"
+         ACTION_READLN blook
+     END
   INCLUDE ~%scsroot%/lib/stratagems_shared.tph~
+  INCLUDE "%scsroot%/lib/kit_hardcode.tpa"
+  ACTION_IF enhanced_edition BEGIN
+     LAF build_kit_spell_enforcer STR_VAR kit="ARCHER ASSASIN BERSERKER BARBARIAN KENSAI SWASHBUCKLER WIZARDSLAYER BLACKGUARD" END
+  END ELSE BEGIN
+     LAF build_kit_spell_enforcer STR_VAR kit="ARCHER ASSASIN BERSERKER BARBARIAN KENSAI SWASHBUCKLER WIZARDSLAYER" END
+  END
+     ACTION_IF debug_variable=3 BEGIN
+         PRINT "Stratagems_shared now installed: press a key to continue"
+         ACTION_READLN blook
+     END
 
 ////////////////////////////////////////////////////////
 //// make sure dir.ids is present
@@ -122,53 +250,19 @@ ACTION_IF !VARIABLE_IS_SET ~initialise~ BEGIN
 ////////////////////////////////////////////////////////
 
 OUTER_SPRINT $SFO_do_not_parse_arguments("enforce_mage") ""
+OUTER_SPRINT $SFO_do_not_parse_arguments("enforce_clericmage") ""
 OUTER_SPRINT $SFO_do_not_parse_arguments("enforce_priest") ""
 OUTER_SPRINT $SFO_do_not_parse_arguments("enforce_charclass") ""
 OUTER_SPRINT $SFO_do_not_parse_arguments("genai") ""
 OUTER_SPRINT $SFO_do_not_parse_arguments("fiend_general") ""
-////////////////////////////////////////////////////
-//  get ToBEx status
-////////////////////////////////////////////////////
-
-  ACTION_IF !(ENGINE_IS ~tob~ && FILE_EXISTS ~bgmain.exe~) BEGIN
-     OUTER_SET ~skip_tobex~=1
-  END ELSE BEGIN
-     LAF action_check_ini STR_VAR ini=~Disable_ToBEx~ RET skip_tobex=value END
-  END
-
-  ACTION_IF !(ENGINE_IS ~tob~ && FILE_EXISTS ~bgmain.exe~) BEGIN
-     OUTER_SET ~skip_hacks~=1
-  END ELSE BEGIN
-     LAF action_check_ini STR_VAR ini=~Disable_Hacks_If_ToBEx_Skipped~ RET skip_hacks=value END
-  END
-
-  ACTION_IF enhanced_edition=1 BEGIN
-     OUTER_SET skip_tobex=1
-     OUTER_SET skip_hacks=1
-  END
 
 ///////////////////////////////////////////////////////////////
-///	Array to identify PCs
+///     Crossplatform content
 ///////////////////////////////////////////////////////////////
 
-  COPY_EXISTING - ~pdialog.2da~ ~.../scs-inline/pdialog.2da~
-	COUNT_2DA_ROWS 3 ~rowcount~
-	FOR (i=0;i<~%rowcount%~;i=i+1) BEGIN
-		READ_2DA_ENTRY ~%i%~ 0 3 ~entry~
-		TO_LOWER ~entry~
-		SPRINT $script_name_pdialog( ~%entry%~) ~~
-	END
-	//: add candlekeep training group names
-	SPRINT $script_name_pdialog(~arkanis~) ~~
-	SPRINT $script_name_pdialog(~canderous~) ~~
-	SPRINT $script_name_pdialog(~deder~) ~~
-	SPRINT $script_name_pdialog(~mordaine~) ~~
-	SPRINT $script_name_pdialog(~osprey~) ~~
-	// SoD Joinable NPCs whose DVs do not match their PDIALOG.2DA entries
-	SPRINT $script_name_pdialog(~glint~) ~~
-	SPRINT $script_name_pdialog(~mkhiin~) ~~
-	SPRINT $script_name_pdialog(~voghiln~) ~~
-  BUT_ONLY_IF_IT_CHANGES
+   OUTER_SPRINT component_loc lib
+   INCLUDE ~%scsroot%/%component_loc%/crossplatform.tpa~
+
 
 ///////////////////////////////////////////////////////////////
 ///	Possibly-missing IDS entries
@@ -195,53 +289,89 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("fiend_general") ""
 // String localisation
 ///////////////////////////////////////////////////
 
-ACTION_IF GAME_IS ~bgee~ BEGIN
+ACTION_IF GAME_IS "bgee" BEGIN
    OUTER_SPRINT trigger_string 25101
    OUTER_SPRINT minor_sequencer_string 26469
    OUTER_SPRINT sequencer_string 24618
    OUTER_SPRINT contingency_string 26577
+   OUTER_SPRINT chain_contingency_string "-1"
 END ELSE BEGIN
    OUTER_SPRINT trigger_string 26243
    OUTER_SPRINT minor_sequencer_string 5013
    OUTER_SPRINT sequencer_string 25951
    OUTER_SPRINT contingency_string 25942
+   OUTER_SPRINT chain_contingency_string 26328
 END
 
-OUTER_SET SFO_unusable_string_tra_ref=16053
-OUTER_SET SFO_usable_string_tra_ref=16054
+OUTER_SET SFO_unusable_string_tra_ref=100400
+OUTER_SET SFO_usable_string_tra_ref=100401
 
+ ACTION_IF !("%LANGUAGE%" STRING_EQUAL_CASE "EMPTY_LANGUAGE") BEGIN
+   OUTER_SPRINT SFO_reserved_previously_string @100300 // " (cast previously)"
+ END
 
-///////////////////////////////////////////////////
-// Initialise SSL variables
-///////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+//// Disable HLAs and sequencers/triggers on BG1-only install
+////////////////////////////////////////////////////////
 
-  OUTER_SPRINT ~sslvariables~ ~%sslvariables%&%percentage%scsroot%percentage%=%scsroot%&%percentage%tutu_var%percentage%=%tutu_var%~
+ACTION_IF !is_bg2 BEGIN
+   OUTER_SET disable_hlas=1
+   OUTER_SET disable_sequencers=1
+END ELSE BEGIN
+   OUTER_SET disable_hlas=0
+   OUTER_SET disable_sequencers=0
+END
+
+///////////////////////////////////////////////////////////////
+// Set SSL library files and SSL variables
+///////////////////////////////////////////////////////////////
+
+   OUTER_SPRINT ssllibrary "%scsroot%/ssl/library %scsroot%/ssl/difficulty"
+
+   ACTION_IF ascension BEGIN
+      OUTER_SPRINT sslvariables "%sslvariables%&IsAscension=True"
+   END
+
+   ACTION_IF enhanced_edition BEGIN
+        OUTER_SPRINT sslvariables ~%sslvariables%&EnhancedEdition=True~
+        OUTER_SPRINT ssllibrary "%ssllibrary% %scsroot%/ssl/library_ee %scsroot%/ssl/libwpn_ee"
+   END ELSE BEGIN
+        OUTER_SPRINT ssllibrary "%ssllibrary% %scsroot%/ssl/libwpn_vanilla"
+   END
+   
+   ACTION_IF iwd_arcane BEGIN
+        OUTER_SPRINT sslvariables "%sslvariables%"^"&"^"IsIWDArcane=True"
+   END
+   ACTION_IF iwd_divine BEGIN
+        OUTER_SPRINT sslvariables "%sslvariables%"^"&"^"IsIWDDivine=True"
+   END
+
+   ACTION_IF demivrgvs BEGIN
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Demivrgvs=True~
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_sr~
+   END
+   ACTION_IF item_revisions BEGIN
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~ItemRevisions=True~
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_ir~
+   END ELSE BEGIN
+           OUTER_SPRINT ssllibrary ~%ssllibrary% %scsroot%/ssl/library_notir~
+   END
+
+   ACTION_IF refinements BEGIN
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Refinements=True~
+   END
+
   ACTION_IF GAME_IS bgt BEGIN
      OUTER_SPRINT sslvariables ~%sslvariables%&IsTrilogy=True~
   END
-  ACTION_IF enhanced_edition BEGIN
-     OUTER_SPRINT sslvariables ~%sslvariables%&EnhancedEdition=True~
+  
+  ACTION_IF rr_poison BEGIN
+           OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~RogueRebalancingPoison=True~
   END
-  LAF check_ini STR_VAR ini=Enable_Easy_Option RET value END
-  ACTION_IF value BEGIN
-     OUTER_SPRINT sslvariables ~%sslvariables%&EasyOptionAvailable=True&EasyMinusLine=TriggerBlock(EasyMinus)&CoreMinusLine=TriggerBlock(CoreMinus)&CorePlusLine=TriggerBlock(CorePlus)&HardPlusLine=TriggerBlock(HardPlus)~
-  END ELSE BEGIN
-     OUTER_SPRINT sslvariables ~%sslvariables%&EasyMinusLine=&CoreMinusLine=&CorePlusLine=&HardPlusLine=~
-  END
-  LAF check_ini STR_VAR ini=Run_Silent RET value END
-  ACTION_IF value BEGIN
-     OUTER_SPRINT sslvariables ~%sslvariables%&RunningSilent=&RunningNoisy=UNUSED&StringsAreDisabled=True~
-  END ELSE BEGIN
-     OUTER_SPRINT sslvariables ~%sslvariables%&RunningSilent=UNUSED&RunningNoisy=&StringsAreDisabled=False~
-  END
+
   ACTION_IF !is_bg2 BEGIN
      OUTER_SPRINT sslvariables ~%sslvariables%&PlusUnknownSafe=PlusNullSafe&MultipleDamageTypeSafe=NullSafe&IsBG1Only=True~
   END
-
-
-///////////////////////////////////////////////////////////////
-///	Third-party compatibility
-///////////////////////////////////////////////////////////////
 
         // check for safe version of imprisonment
 
@@ -250,69 +380,39 @@ OUTER_SET SFO_usable_string_tra_ref=16054
         END
 
 
-	OUTER_SET ~galactygon_swarm~=0
-        OUTER_SET ~galactygon_armor~=0
-        OUTER_SET ~galactygon_color~=0
-        OUTER_SET ~galactygon_web~=0
-        OUTER_SET ~galactygon_mentaldomination~=0
-        OUTER_SET ~galactygon_flamestrike~=0
-        OUTER_SET ~galactygon_shillelagh~=0
-        OUTER_SET ~galactygon_alicorn~=0
-        OUTER_SET ~galactygon_static~=0
+  // check for external library (must be last)
 
+  LAF check_ini STR_VAR ini=library_override RET value END
+  ACTION_IF ("%value%" STRING_COMPARE_CASE none && "%value%" STRING_COMPARE_CASE "0") BEGIN
+      OUTER_SPRINT list "%value%"
+      OUTER_WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+         LAF return_first_entry STR_VAR list separator="|" RET entry list END
+         OUTER_SPRINT ssllibrary "%ssllibrary% %data_loc%/%entry%.slb"
+      END
+  END
 
-        ACTION_IF FILE_EXISTS_IN_GAME ~LCPACKB5.xxx~ THEN BEGIN
-           ACTION_IF FILE_EXISTS_IN_GAME ~LC_SWARM.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_swarm~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Swarm=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~SPWI117F.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_armor~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Armor=True~
-                     OUTER_SET ~galactygon_color~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Color=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~LC_WEBA1.VVC~ THEN BEGIN
-                     OUTER_SET ~galactygon_web~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Web=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~LCMENDOM.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_mentaldomination~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_MentalDomination=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~LCFLSRIN.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_flamestrike~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_FlameStrike=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~SPPR120A.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_shillelagh~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Shillelagh=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~FBLADE1.SPL~ THEN BEGIN
-                     OUTER_SET ~galactygon_alicorn~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Alicorn=True~
-           END
-           ACTION_IF FILE_EXISTS_IN_GAME ~LC_RECI1.VVC~ THEN BEGIN
-                     OUTER_SET ~galactygon_static~=1
-                     OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&~^~Galactygon_Static=True~
-           END
-        END
 
 ////////////////////////////////////////////////////////
-//// 	Check if Free Action protects from Stun
+//// 	Check if Free Action protects from Stun (hardcoded, painfully slow otherwise)
 ////////////////////////////////////////////////////////
 
-
+      ACTION_IF debug_variable=3 BEGIN
+         PRINT "Checking for Free Action/Stun: press a key to continue"
+         ACTION_READLN blook
+     END
    LAF check_label STR_VAR label="dw#freeaction_stun" RET stun=value END
    LAF check_label STR_VAR label="dw#freeaction_nostun" RET nostun=value END
    ACTION_IF !(stun || nostun) BEGIN
-      ACTION_DEFINE_ASSOCIATIVE_ARRAY free_action_patch BEGIN
-         match=>"opcode=101 and parameter2=45"
-      END
-      LAF edit_spell INT_VAR stop_after_match=1 STR_VAR spell=CLERIC_FREE_ACTION editstring="patch_effect=>free_action_patch" RET value END
-      ACTION_IF value BEGIN
+     COPY_EXISTING "sppr403.spl" override
+        GET_OFFSET_ARRAY2 fx_array (LONG_AT 0x64) SPL_V10_HEAD_EFFECTS
+        PHP_EACH fx_array AS null=>fx_off BEGIN
+               PATCH_IF ((SHORT_AT fx_off)=101 && (SHORT_AT (fx_off+0x8))=45) BEGIN
+                  SET stun=1
+               END
+        END
+     BUT_ONLY
+     ACTION_IF stun BEGIN
          LAF make_label STR_VAR label="dw#freeaction_stun" END
-         OUTER_SET stun=1
       END ELSE BEGIN
          LAF make_label STR_VAR label="dw#freeaction_nostun" END
       END
@@ -321,7 +421,26 @@ OUTER_SET SFO_usable_string_tra_ref=16054
        OUTER_SPRINT ssllibrary "%ssllibrary% %scsroot%/ssl/library_freeactionstun"
    END
 
+///////////////////////////////////////////////////
+// load in HLAs (it gets done a zillion times, may as well do it once up-front)
+///////////////////////////////////////////////////
 
+ACTION_IF !disable_hlas BEGIN
+   LAF include STR_VAR file=hla.tph locbase=lib END
+   LAM read_in_hla_choices
+END
+
+
+/////////////////////////////////////////////////////////
+///  Create testing item
+////////////////////////////////////////////////////////
+
+ACTION_IF !FILE_EXISTS_IN_GAME ~dw#kilsw.itm~ BEGIN
+   LAF include STR_VAR file=killsword.tph  END
+   LAF killsword END
+END
+
+VERBOSE
 END   // end of do-once part
 
 ////////////////////////////////////////////////////////
@@ -330,7 +449,7 @@ END   // end of do-once part
 ////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////
 
-  LAF check_ini STR_VAR ini=God_Does_Not_Play_Dice RET value=value END
+  LAF check_ini STR_VAR ini=God_Does_Not_Play_Dice RET value END
   
   ACTION_IF value BEGIN
      RANDOM_SEED 3
@@ -342,9 +461,14 @@ END   // end of do-once part
 // detect whether Truesight cures blindness
 ///////////////////////////////////////////////////
 
-    ACTION_IF FILE_EXISTS_IN_GAME ~dw#truesight_blindness.mrk~ OR FILE_EXISTS_IN_GAME ~dvimhere.mrk~ BEGIN
+    ACTION_IF (FILE_EXISTS_IN_GAME ~dw#truesight_blindness.mrk~ || demivrgvs ) BEGIN
            OUTER_SPRINT ~sslvariables~ ~%sslvariables%~^~&TruesightCuresBlindness=True~
     END
+    
+     ACTION_IF debug_variable=3 BEGIN
+         FAIL "SCS setup complete; exiting, since this is just speedtest code"
+     END
+
     
 
 

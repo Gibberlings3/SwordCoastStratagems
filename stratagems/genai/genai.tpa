@@ -1,17 +1,44 @@
-DEFINE_ACTION_FUNCTION genai BEGIN
+DEFINE_ACTION_FUNCTION genai STR_VAR version=0
+// version coding is for testing only, and disables sections
+// 1: edits before only
+// 2: main loop only
+// 3: edits after only
+BEGIN
 
+     LAF define_difficulty STR_VAR type=genai RET difficulty_variable END
+
+     ACTION_IF !IS_AN_INT version BEGIN
+        OUTER_SET version=0
+     END
      LAF include STR_VAR file=~genai_shared.tph deployment.tph~ END
-   LAM read_in_genai_item_data
-   LAM read_in_clab_spelldata
-   LAM read_in_proficiency_progression
-   LAM read_in_proficiencies
-   LAM read_in_hla_preferences
-   LAM read_in_hla_prerequisites
+
+  //   LAM read_in_genai_item_data    // not at all clear this helps
+     LAM read_in_clab_spelldata
+     LAM read_in_proficiency_progression
+     LAM read_in_proficiencies
+
+     ACTION_IF !disable_hlas BEGIN
+        LAM read_in_hla_choices
+     END
+
+   ACTION_IF (version=0 || version=1) BEGIN
+
      LAF genai_polymorph END
      LAF pc_summons END
      LAF edit_creatures_before END
      LAF kits_levels END
+     ACTION_IF is_bg2 BEGIN
+        LAF mark_hla_always END
+     END
+     
+  END
+
+
+  ACTION_IF (version=0 || version=2) BEGIN
      LAF apply_genai_changes END
+  END
+  
+  ACTION_IF (version=0 || version=3) BEGIN
      LAF edit_creatures_after END
      ACTION_IF is_bg1 BEGIN
         LAF check_ini STR_VAR ini=no_deployment_change RET value END
@@ -19,6 +46,7 @@ DEFINE_ACTION_FUNCTION genai BEGIN
            LAF deployment END
         END
      END
+  END
 
 
 END
@@ -163,6 +191,10 @@ DEFINE_ACTION_FUNCTION edit_creatures_before BEGIN
 
         LAF edit_creature STR_VAR creature="%tutu_scripth%obelite" editstring="class=>FIGHTER dexterity=>15" END
 
+        // A couple of stray innocents need wtrunsgt, not wtasight
+        
+        LAF edit_creature STR_VAR creature="waiter wareho" tv=1 editstring="strip_script=>%tutu_scriptw%tasight insert_script_low=>wtrunsgt" END
+
     END // end of BG1 part
 
     ACTION_IF is_bg2 BEGIN
@@ -261,10 +293,16 @@ DEFINE_ACTION_FUNCTION edit_creatures_before BEGIN
         LAF edit_creature STR_VAR creature=~palkni03~ editstring=~class=>GNOLL~ END
         LAF edit_creature STR_VAR creature=~palkni05~ editstring=~class=>WYVERN~ END
         LAF edit_creature STR_VAR creature=gorsta07 editstring=~class=>THIEF~ END
+        
+        // ascension-only class correction (at least on EE, the orc archer animation doesn't play nice with the fighter class
+
+        ACTION_IF FILE_EXISTS_IN_GAME "yagaft.bcs" BEGIN // tougher Yaga-Shura
+           LAF edit_creature STR_VAR creature=yssold02 editstring=~class=>ORC~ END
+        END
 
         // stat corrections
         
-        LAF edit_creature STR_VAR creature=pwarden editstring=~thac0=>3 attacks=>2~ END
+        LAF edit_creature STR_VAR creature=pwarden editstring=~thac0=>3~ END
 
         // redundant scripts
 
@@ -398,6 +436,35 @@ DEFINE_ACTION_FUNCTION edit_creatures_before BEGIN
         
         LAF edit_creature STR_VAR creature=sevdru01 editstring="kit=>none" END
 
+        // The Priest of Cyric in the North Forest is dual-wielding and also has a sling, which causes crashes
+        
+        LAF edit_creature STR_VAR creature=ar18prie editstring="remove_items=>slng01" END
+
+        // the top floor of the guarded compound needs to be sealed, as there are reports of glitches when people run back and forth
+        
+        OUTER_INNER_PATCH ~~ BEGIN SET doorstring=RESOLVE_STR_REF (@217) END
+
+        MAKE_PATCH
+            match=>"trigger_name=Tran0906a"
+            trigger_name=>DMWWFakeExita
+            trigger_info=>~%doorstring%~
+            trigger_type=>1
+        END
+
+        LAF edit_area STR_VAR area=ar0907 editstring=~clone_trigger=>patch_data~ END
+        OUTER_SPRINT $patch_data(~match~) "trigger_name=Tran0906b"
+        LAF edit_area STR_VAR area=ar0907 editstring=~clone_trigger=>patch_data~ END
+        LAF extend_area_script STR_VAR area=ar0907 bottom=ar0907 location=baf END
+
+        // the traps in the Prison Plane need to be PC-only, as NPCs are apparently setting them off inappropriately
+        
+        COPY_EXISTING ~gt006.bcs~ ~override\dw#gt006.bcs~
+        LAF swap_text STR_VAR files="dw#gt006.bcs" swaps="ANYONE=>GOODCUTOFF" END
+        LAF swap_text STR_VAR files="ar0517.are" swaps="gt006 => dw#gt006" END
+
+
+
+
      END // end of BG2 part
 
 END
@@ -413,10 +480,10 @@ DEFINE_ACTION_FUNCTION kits_levels BEGIN
         ACTION_IF  ~%is_%game%%~=1 BEGIN
 
            // kits
-           LAF action_check_ini STR_VAR ini=genai_does_not_adjust_kits RET value=value END
+           LAF check_ini STR_VAR ini=genai_does_not_adjust_kits RET value END
            ACTION_IF value=0 BEGIN
             ACTION_BASH_FOR ~%scsroot%/%component_loc%/kit_override/%game%~ ~.*\.2da~ BEGIN
-              ACTION_IF IDS_OF_SYMBOL (kit "%BASH_FOR_RES%")>=0 BEGIN
+              ACTION_IF (IDS_OF_SYMBOL (kit "%BASH_FOR_RES%")>=0 || "%BASH_FOR_RES%" STRING_EQUAL_CASE "none") BEGIN
                 LAF edit_creature STR_VAR file=~kit_override/%game%/%BASH_FOR_RES%.2da~
                                          editstring=~kit=>%BASH_FOR_RES%~
                 END
@@ -431,7 +498,7 @@ DEFINE_ACTION_FUNCTION kits_levels BEGIN
            
            // levels
 
-           LAF action_check_ini STR_VAR ini=genai_does_not_adjust_levels RET value=value END
+           LAF check_ini STR_VAR ini=genai_does_not_adjust_levels RET value=value END
            ACTION_IF value=0 BEGIN
              LAF read_in_assoc_array STR_VAR location=level_override file=~%game%.2da~ RET list=list END
              OUTER_WHILE ~%list%~ STRING_COMPARE ~~ BEGIN
@@ -462,7 +529,7 @@ DEFINE_ACTION_FUNCTION apply_genai_changes BEGIN
    ACTION_IF value BEGIN
       OUTER_SPRINT genai_set "scripts kit hla conditional"
    END ELSE BEGIN
-      OUTER_SPRINT genai_set "all conditional"
+          OUTER_SPRINT genai_set "all conditional"
    END
    OUTER_SET counter=0
    OUTER_SET counter2=0
@@ -474,9 +541,6 @@ DEFINE_ACTION_FUNCTION apply_genai_changes BEGIN
   COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
       PATCH_SILENT
       LPF FJ_CRE_VALIDITY END
-      PATCH_IF GAME_IS ~bg2ee eet~ BEGIN
-         LPF FJ_CRE_EFF_V2 END //work around the fact that as of v235 of WEIDU, FJ_CRE_VALIDITY doesn't work on BGIIEE
-      END
       SPRINT filename ~%SOURCE_RES%~
       LPF CRE_is_PC STR_VAR filename RET is_pc=value END
       LPF gets_skipped_for_genai STR_VAR filename RET is_skipped=value END
@@ -484,7 +548,7 @@ DEFINE_ACTION_FUNCTION apply_genai_changes BEGIN
       PATCH_IF (!is_dead && !is_pc && !is_skipped) BEGIN
          PATCH_PRINT "Applying kit/proficiency/script features to %filename%"
          PATCH_TRY
-               LPF genai STR_VAR filename file_ext=CRE arguments="all conditional fix_thac0" END
+               LPF genai STR_VAR filename file_ext=CRE arguments="%genai_set%" END
          WITH DEFAULT
                PATCH_WARN "Failed to apply general-AI patch to %filename% (error message %ERROR_MESSAGE%)"
                LPF warning STR_VAR warning="Failed to apply general-AI patch to %filename% (error message %ERROR_MESSAGE%)"  END
@@ -514,6 +578,15 @@ BEGIN
             SET value=1
          END
       END
+      FOR (offset=0x248;offset<=0x268;offset+=8) BEGIN
+        READ_ASCII offset script
+        PATCH_MATCH "%script%" WITH
+        wyvern ettercap _wyvern _ttercap BEGIN
+           SET value=1
+        END
+        DEFAULT END
+      END
+
 END
 
 
@@ -588,3 +661,16 @@ BEGIN
       LAF edit_spell STR_VAR spell=~SPCL611 SPCL613 SPWI496 SPWI497 SPWI498~ editstring=~patch_effect=>patch_data~ allow_missing=1 END
 
 END
+
+////////////////////////////////////////////////////////////////////////////////////
+///    This marks creatures who use HLAs on core difficulty (default is hard+)
+////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION mark_hla_always BEGIN
+
+      LAF clone_item STR_VAR item=~dw#marker_file=>dw#mkhla~ editstring=~droppable=>0~ END
+      LAF read_in_list STR_VAR file=hla_always.2da location=hla_choices RET list END
+      LAF edit_creature STR_VAR creature="%list%" editstring="add_items=>dw#mkhla" END
+
+END
+

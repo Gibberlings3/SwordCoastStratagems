@@ -4,13 +4,12 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR script="" variables="" location="" locbase="" locabs="" rename_to="" inline="" BEGIN
+DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR script="" variables="" booleans="" location="" locbase="" locabs="" rename_to="" inline="" BEGIN
  ACTION_IF !FILE_EXISTS "%workspace%/autolib.slb" BEGIN
      COPY ~.../stratagems-inline/blank~ ~%workspace%\autolib.slb~
  END
 
-
-     LAF action_check_ini STR_VAR ini=disable_ssl RET disable_ssl=value END
+     LAF check_ini STR_VAR ini=disable_ssl RET disable_ssl=value END
      ACTION_IF ~%script%~ STRING_EQUAL_CASE ~~ BEGIN
         LAF warning STR_VAR warning="Warning: SSL compilation called with no script" END
      END
@@ -27,45 +26,47 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
                OUTER_SPRINT sslvariables ~%variables%~
              END
           END
+          ACTION_IF "%booleans%" STRING_COMPARE_CASE "" BEGIN
+             OUTER_SPRINT booleanstring "-b %booleans%"
+          END ELSE BEGIN
+             OUTER_SPRINT booleanstring ""
+          END
           ACTION_IF ~%inline%~ STRING_EQUAL yes BEGIN
              COPY ~.../stratagems-inline/%script%.ssl~ ~%workspace%~
              OUTER_SPRINT full_loc ~%workspace%~
           END ELSE BEGIN
 
-             ACTION_IF ~%sslvariables%~ STRING_COMPARE_CASE ~~ BEGIN
-               OUTER_SPRINT ~sslvariables~ ~%sslvariables%&ssl_loc=%scsroot%\%location%~
-             END ELSE BEGIN
-               OUTER_SPRINT sslvariables ~%percentage%ssl_loc%percentage%=%scsroot%\%location%~
-             END
-             
              // sanity check
              ACTION_IF FILE_EXISTS ~%scsroot%\%location%\%script%.ssl~ BEGIN
                 OUTER_SPRINT full_loc ~%scsroot%\%location%~
              END ELSE BEGIN
                 LAF get_directory STR_VAR location locabs locbase RET full_loc=directory END
                 ACTION_IF !FILE_EXISTS ~%full_loc%\%script%.ssl~ BEGIN
-                   FAIL ~SCS install error: the SSL file %script%.ssl cannot be found at %scsroot%\%location% or %scsroot%\%component_loc%\%location%~
+                   FAIL ~SCS install error: the SSL file %script%.ssl cannot be found at %full_loc%~
                 END
              END
 
           END
           ACTION_IF debug_variable=2 BEGIN
-             LAF warning STR_VAR warning= ~SSL call with variables %sslvariables%~ END
+             LAF warning STR_VAR warning= ~SSL call with variables %sslvariables%, library %ssllibrary%, booleans %booleanstring%~ END
+             PRINT ~~~~~actual SSL string is ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~ ~~~~~
           END
-          ACTION_IF skip_tobex=0 BEGIN
-             OUTER_SPRINT libwpn libwpn_tobex
-          END ELSE BEGIN
-             OUTER_SPRINT libwpn libwpn_notobex
-          END
-
-
-
+          
           ACTION_IF ~%WEIDU_OS%~ STRING_COMPARE_CASE ~WIN32~ THEN BEGIN
-		AT_NOW ~chmod 755 %scsroot%/ssl/ssl.pl~
-		AT_NOW ~/usr/bin/perl %scsroot%/ssl/ssl.pl "%full_loc%\%script% %sslvariables% -o %workspace%/ssl_out -l %ssllibrary% %scsroot%/ssl/%libwpn% %workspace%/autolib"~ EXACT
-	  END ELSE BEGIN
-		AT_NOW ~%scsroot%\ssl\ssl.exe "%full_loc%\%script% %sslvariables% -o %workspace%/ssl_out -l %ssllibrary% %scsroot%\ssl\%libwpn% %workspace%\autolib"~
+                OUTER_INNER_PATCH_SAVE scsargs "%full_loc%/%script%" BEGIN
+                     REPLACE_TEXTUALLY "\" "/"
+                END
+		AT_NOW ~chmod 755 %scsroot%/%ssl_loc%/ssl.pl~
+                AT_NOW ~/usr/bin/perl %scsroot%/%ssl_loc%/ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%/autolib %booleanstring%~ EXACT	  
+          END ELSE BEGIN
+		AT_NOW ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
 	  END
+	  COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out~ EVALUATE_BUFFER
+	     PATCH_IF  !enhanced_edition BEGIN
+                LPF ssl_ee_to_vanilla END
+             END
+             LPF implement_line_if END
+          BUT_ONLY
 	  ACTION_IF skip_bcs=0 BEGIN
 	   ACTION_IF ~%rename_to%~ STRING_COMPARE_CASE ~~ BEGIN
 	     COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out\%rename_to%.baf~
@@ -80,7 +81,7 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
 END
 
 DEFINE_ACTION_FUNCTION ~ssl_to_bcs~
-         STR_VAR script="" location="" locbase="" locabs="" variables="" rename_to="" inline=""
+         STR_VAR script="" location="" locbase="" locabs="" variables="" booleans="" rename_to="" inline=""
 BEGIN
          // "location" should in normal circumstances be relativised to local_loc, but SSL permits
          // it to be relative to scsroot (for legacy reasons)
@@ -89,34 +90,61 @@ BEGIN
                LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
          END
          OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
-               LAF action_return_first_entry STR_VAR list=~%script%~ RET script=list script_to_call=entry END
-               LAF compile_ssl_to_bcs_core STR_VAR script=~%script_to_call%~ location locbase locabs variables rename_to inline END
+               LAF return_first_entry STR_VAR list=~%script%~ RET script=list script_to_call=entry END
+               LAF compile_ssl_to_bcs_core STR_VAR script=~%script_to_call%~ location locbase locabs variables booleans rename_to inline END
          END
 
 END
 
 DEFINE_ACTION_FUNCTION ~ssl_to_baf~
-         STR_VAR script="" location="" locbase="" locabs="" variables="" inline=""
+         STR_VAR script="" location="" locbase="" locabs="" variables="" inline=""  booleans=""
 BEGIN
          ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
                LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
          END
          OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
-               LAF action_return_first_entry STR_VAR list= ~%script%~ RET script=list script_to_call=entry END
-               LAF compile_ssl_to_bcs_core INT_VAR skip_bcs=1 STR_VAR script=  ~%script_to_call%~ location locbase locabs variables inline  END
+               LAF return_first_entry STR_VAR list= ~%script%~ RET script=list script_to_call=entry END
+               LAF compile_ssl_to_bcs_core INT_VAR skip_bcs=1 STR_VAR script=  ~%script_to_call%~ location locbase locabs variables booleans inline  END
          END
 
 END
 
 
-DEFINE_ACTION_FUNCTION ~COMPILE_SSL_TO_BCS~         STR_VAR script="" location="" variables="" rename_to="" inline="" BEGIN   // legacy name
-        LAF ssl_to_bcs STR_VAR script location variables rename_to inline END
+DEFINE_ACTION_FUNCTION ~COMPILE_SSL_TO_BCS~         STR_VAR script="" location="" variables="" rename_to="" inline="" booleans="" BEGIN   // legacy name
+        LAF ssl_to_bcs STR_VAR script location variables rename_to inline booleans END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION implement_line_if BEGIN
+   REPLACE_EVALUATE "LineIf<\([^>]*\)> *<\([^>]*\)>"
+   BEGIN
+      PATCH_IF IS_AN_INT MATCH2 BEGIN
+         PATCH_IF MATCH2 BEGIN
+            SPRINT output "%MATCH1%"
+         END ELSE BEGIN
+            SPRINT output ""
+         END
+      END ELSE BEGIN
+         SPRINT output ""
+      END
+   END
+   "%output%"
 END
 
 
+DEFINE_ACTION_FUNCTION compile_ssl_output // largely for debugging
+   STR_VAR script="" 
+BEGIN
+	  COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out~ EVALUATE_BUFFER
+	     PATCH_IF  !enhanced_edition BEGIN
+                LPF ssl_ee_to_vanilla END
+             END
+             LPF implement_line_if END
+          BUT_ONLY
+          COMPILE EVALUATE_BUFFER ~%workspace%\ssl_out\%script%.baf~
 
 
-
+END
 
 
 
@@ -146,7 +174,7 @@ BEGIN
        ACTION_IF ~%inline%~ STRING_EQUAL_CASE yes BEGIN
         OUTER_SPRINT file_loc ~.../stratagems-inline~
        END ELSE BEGIN
-          LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+          LAF get_directory STR_VAR location locbase RET file_loc=directory END
        END
        OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
            LAF return_first_entry STR_VAR list= ~%file%~ RET entry file=list END
@@ -243,7 +271,7 @@ BEGIN
            ACTION_IF ~%inline%~ STRING_EQUAL_CASE yes BEGIN
                OUTER_SPRINT file_loc ~.../stratagems-inline~
            END ELSE BEGIN
-               LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+               LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
            END
        END
        OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
@@ -281,9 +309,9 @@ BEGIN
               OUTER_SPRINT file ~%files%~
           END
        END
-       LAF action_get_directory STR_VAR location locbase RET file_loc=directory END
+       LAF get_directory STR_VAR location locbase RET file_loc=directory END
        OUTER_WHILE ~%file%~ STRING_COMPARE ~~ BEGIN
-          LAF action_return_first_pair STR_VAR list= ~%file%~ RET oldscript=key newscript=value file=list END
+          LAF return_first_pair STR_VAR list= ~%file%~ RET oldscript=key newscript=value file=list END
           COPY ~%file_loc%\%oldscript%.baf~ ~%workspace%\%newscript%.baf~
           COMPILE EVALUATE_BUFFER ~%workspace%\%newscript%.baf~
        END
@@ -304,7 +332,7 @@ DEFINE_ACTION_FUNCTION clone_extend
                inline="no"
 BEGIN
        ACTION_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
-          LAF action_return_first_pair STR_VAR list= ~%arguments%~ RET source=key script=value arguments=list END
+          LAF return_first_pair STR_VAR list= ~%arguments%~ RET source=key script=value arguments=list END
           COPY_EXISTING ~%source%.bcs~ ~override/%script%.bcs~
           ACTION_IF ~%top%~ STRING_EQUAL_CASE ~no~ BEGIN
                LAF extend STR_VAR files= ~%script%~ location locbase inline bottom= ~%script%~ END
@@ -315,6 +343,26 @@ BEGIN
        END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               merge two scripts
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION merge_scripts
+   STR_VAR top=""
+           bottom=""
+           script=""
+BEGIN
+   COPY_EXISTING "%bottom%.bcs" "%workspace%/%bottom%.baf"
+      DECOMPILE_BCS_TO_BAF
+   COPY_EXISTING "%top%.bcs" "override/%script%.bcs"
+      DECOMPILE_BCS_TO_BAF
+      APPEND_FILE TEXT "%workspace%/%bottom%.baf"
+      COMPILE_BAF_TO_BCS
+
+END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -363,7 +411,7 @@ DEFINE_ACTION_FUNCTION swap_text
 BEGIN
     OUTER_SPRINT files "%files%%file%"
     OUTER_WHILE ~%files%~ STRING_COMPARE_CASE ~~ BEGIN
-      LAF action_return_first_entry STR_VAR list= ~%files%~ RET files=list entry=entry END
+      LAF return_first_entry STR_VAR list= ~%files%~ RET files=list entry=entry END
       ACTION_IF tv BEGIN
             OUTER_SPRINT ~entry~ ~%tutu_var%%entry%~
       END
@@ -483,9 +531,6 @@ BEGIN
       LPF strref_of_tra STR_VAR arguments RET value END
    END
 END
-
-
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -665,7 +710,7 @@ DEFINE_ACTION_FUNCTION clone_script
     STR_VAR script=""
 BEGIN
    ACTION_IF ~%script%~ STRING_COMPARE_CASE ~~ BEGIN
-      LAF action_return_first_pair STR_VAR list= ~%script%~ RET script=list old=key new=value END
+      LAF return_first_pair STR_VAR list= ~%script%~ RET script=list old=key new=value END
       COPY_EXISTING ~%old%.bcs~ ~override/%new%.bcs~
       LAF clone_script STR_VAR script END
    END
@@ -727,10 +772,19 @@ BEGIN
            SPRINT fixed_loc "0x24"
            SPRINT ext_loc "area=>0x40 area=>0x44"
         END
+        wav bam vvc pro baf bcs 2da BEGIN
+           SPRINT fixed_loc ""
+           SPRINT ext_loc ""
+        END
+        eff BEGIN
+           SPRINT fixed_loc ""
+           SPRINT ext_loc ""
+           LPF warning STR_VAR warning="apply_to_strref has skipped %filename%.eff, which might be a problem in the vanishingly unlikely event it's got a strref in it" END
+        END
         DEFAULT
            SPRINT fixed_loc ""
            SPRINT ext_loc ""
-           LPF warning STR_VAR warning="%apply_to_strings can't patch file %filename%.%file_ext%: filetype not recognised%" END
+           LPF warning STR_VAR warning="apply_to_strref can't patch file %filename%.%file_ext%: filetype not recognised" END
         END
         WHILE "%fixed_loc%" STRING_COMPARE "" BEGIN
            LPF return_first_entry STR_VAR list="%fixed_loc%" RET offset=entry fixed_loc=list END
@@ -914,6 +968,7 @@ DEFINE_ACTION_FUNCTION edit_whatever
             editstring=""
             location=""
             locbase=""
+            locabs=""
 
 BEGIN
    OUTER_SPRINT "files" "%files%%file%"
@@ -944,8 +999,236 @@ BEGIN
         OUTER_PATCH_SAVE filename "%entry%" BEGIN
            REPLACE_TEXTUALLY "\..*" ""
         END
-        LAF "edit_%type%" INT_VAR tv allow_missing STR_VAR "%type%"="%filename%" edits editstring location locbase  END
-        LAF edit_whatever INT_VAR tv allow_missing STR_VAR files edits editstring location locbase  END
+        LAF "edit_%type%" INT_VAR tv allow_missing STR_VAR "%type%"="%filename%" edits editstring location locbase locabs END
+        LAF edit_whatever INT_VAR tv allow_missing STR_VAR files edits editstring location locbase locabs END
    END
 END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Statdesc patcher  - we ignore missing rows
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION add_to_statdesc
+    INT_VAR start_row=190
+    STR_VAR string= "-1"
+            bam = "****"
+    RET stat_num
+BEGIN
+    COPY_EXISTING statdesc.2da override
+       COUNT_2DA_ROWS 3 rowcount
+       LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
+       SET_2DA_ENTRY row 1 3 "%string%"
+       SET_2DA_ENTRY row 2 3 "%bam%"
+    BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION add_to_statdesc_helper
+      INT_VAR start_row=0
+              rowcount=0
+      RET stat_num
+          row
+BEGIN
+   PATCH_IF start_row>= rowcount BEGIN
+       READ_2DA_ENTRY (rowcount - 1) 0 3 last_entry
+       SET stat_num=last_entry + 1
+       SET row=rowcount
+       INSERT_2DA_ROW rowcount 3 "%stat_num% -1 ****"
+   END ELSE BEGIN
+     READ_2DA_ENTRY start_row 1 3 entry
+     PATCH_IF entry<=0 BEGIN
+        READ_2DA_ENTRY start_row 0 3 stat_num
+        SET row=start_row
+     END ELSE BEGIN
+        SET start_row +=1
+        LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
+     END
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Find what level a character would be at a given XP level
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION level_at_xp
+    INT_VAR xp=0
+            num_classes=1
+    STR_VAR class=""
+    RET level
+BEGIN
+    // safety check
+    ACTION_IF num_classes<1 BEGIN
+       OUTER_SET num_classes=1
+       LAF warning STR_VAR warning="num_classes variable in the 'level_at_xp' function set to 0 or negative value. Resetting to 1." END
+    END
+   // adjust the XP for multiclassing
+    OUTER_SET xp=xp / num_classes
+    // check the table
+    COPY_EXISTING xplevel.2da override
+         COUNT_2DA_COLS colcount
+         LPF get_table_row_coordinate STR_VAR row="%class%" RET rownum END
+         PATCH_IF rownum<0 BEGIN
+            LPF warning STR_VAR warning="level_at_xp can't determine the level for class %class% as it isn't in xplevel.2da" END
+         END ELSE BEGIN
+            LPF level_at_xp_core INT_VAR xp rownum colcount RET level END
+         END
+    BUT_ONLY
+END
+
+
+
+DEFINE_PATCH_FUNCTION level_at_xp_core
+         INT_VAR min_level=1
+                 xp=0
+                 rownum=0
+                 colcount=40
+         RET level
+BEGIN
+      PATCH_IF min_level >= colcount BEGIN
+         SET level=min_level
+      END ELSE BEGIN
+         READ_2DA_ENTRY rownum (min_level+1) colcount xp_here
+         PATCH_IF xp_here > xp BEGIN
+               SET level=min_level
+         END ELSE BEGIN
+               SET min_level +=1
+               LPF level_at_xp_core INT_VAR min_level xp rownum colcount RET level END
+         END
+      END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Find what level a character would be at the level cap
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION level_at_xp_cap
+    STR_VAR class=""
+            parent_class=""
+    RET level
+BEGIN
+    ACTION_IF "%parent_class%" STRING_EQUAL "" BEGIN
+       OUTER_SPRINT parent_class "%class%"
+    END
+    // count the number of classes
+    OUTER_PATCH_SAVE list "%parent_class%" BEGIN
+       REPLACE_TEXTUALLY "_" " "
+    END
+    LAF length_of_list STR_VAR list RET num_classes=value END
+    // get the XP cap
+    LAF read_table_entry STR_VAR file=xpcap row="%parent_class%" colnum=1 RET xp=value END
+    LAF level_at_xp INT_VAR xp num_classes STR_VAR class RET level END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Sort out a SPLPROT entry
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION resolve_splprot_entry 
+      INT_VAR stat=0
+              value=0
+              relation_number=0
+      STR_VAR relation=""
+      RET value
+BEGIN
+      ACTION_MATCH "%relation%" WITH
+         equals equal BEGIN 
+            OUTER_SET relation_number=1
+         END
+         greater greater_than BEGIN
+            OUTER_SET relation_number=3
+         END
+         less less_than BEGIN
+            OUTER_SET relation_number=2
+         END
+         greater_equal greater_equals BEGIN
+            OUTER_SET relation_number= 4
+         END
+         less_than_equal less_equal less_than_equals less_than_equals BEGIN
+            OUTER_SET relation_number=0
+         END
+         not_equal BEGIN
+            OUTER_SET relation_number=5
+         END
+         "" BEGIN END
+      DEFAULT
+         LAF warning STR_VAR warning="unrecognised relation %relation% in resolve_splprot_entry; defaulting to 0" END
+         OUTER_SET relation_number=0
+      END
+      COPY_EXISTING "splprot.2da" override
+            READ_2DA_ENTRIES_NOW splprot_array 4
+            SET value="-1"
+            FOR (i=0;i<splprot_array;i+=1) BEGIN
+                   READ_2DA_ENTRY_FORMER splprot_array i 1 this_stat
+                   READ_2DA_ENTRY_FORMER splprot_array i 2 this_value
+                   READ_2DA_ENTRY_FORMER splprot_array i 3 this_relation
+                   PATCH_IF (IS_AN_INT this_stat && IS_AN_INT this_value && IS_AN_INT this_relation) BEGIN
+                     PATCH_IF (stat=this_stat && value=this_value && relation_number=this_relation) BEGIN
+                      SET value=i
+                      SET i=splprot_array
+                     END
+                   END
+            END
+            PATCH_IF value<0 BEGIN
+               INSERT_2DA_ROW splprot_array 4 "%splprot_array% %stat% %value% %relation_number%"
+               SET value=splprot_array
+            END
+      BUT_ONLY
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Sort an IDS file into numerical order
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION sort_ids STR_VAR ids="" BEGIN
+   ACTION_CLEAR_ARRAY ids_entries
+   OUTER_SET max=0
+   COPY_EXISTING "%ids%.ids" override
+       READ_2DA_ENTRIES_NOW ids_array 2
+       // top row is either 'IDS V1.0', or a single row entry, or blank
+       PATCH_IF INDEX_BUFFER ("IDS *V1.0")>=0 BEGIN
+          SPRINT top_row "IDS V1.0"
+       END ELSE BEGIN
+          COUNT_2DA_ROWS 1 rowcount_1
+          PATCH_IF rowcount_1=ids_array BEGIN
+             SPRINT top_row " "
+          END ELSE BEGIN
+             READ_2DA_ENTRY 0 0 1 top_row
+          END
+       END
+       FOR (i=0;i<ids_array;i+=1) BEGIN
+          READ_2DA_ENTRY_FORMER ids_array i 0 num
+          PATCH_IF IS_AN_INT num BEGIN
+             SET max= num>max ? num : max
+             READ_2DA_ENTRY_FORMER ids_array i 1 val
+             PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
+                SPRINT temp $ids_entries("%num%")
+                SPRINT $ids_entries("%num%") "%temp% %val%"
+             END ELSE BEGIN
+                SPRINT $ids_entries("%num%") "%val%"
+             END
+          END
+       END
+   BUT_ONLY
+   COPY ".../stratagems-inline/blank" "override/%ids%.ids"
+       INSERT_2DA_ROW 0 2 "DW_SORT_IDS_PLACEHOLDER"
+       SET rowcount=0
+       FOR (num=0;num<max;num+=1) BEGIN
+          PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
+             SPRINT list $ids_entries("%num%")
+             WHILE "%list%" STRING_COMPARE "" BEGIN
+                LPF return_first_entry STR_VAR list RET entry list END
+                SPRINT check "%num%--%entry%"
+                PATCH_IF !VARIABLE_IS_SET "%check%" BEGIN
+                  INSERT_2DA_ROW rowcount 2 "%num% %entry%"
+                  SET rowcount+=1
+                  SPRINT "%check%" ""
+                END
+             END
+          END
+       END
+       REPLACE_TEXTUALLY "DW_SORT_IDS_PLACEHOLDER" "%top_row%"
+END
+
 

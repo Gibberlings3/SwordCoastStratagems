@@ -1,5 +1,6 @@
 DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
-
+ WITH_TRA "%scs_tra_loc%/english/psionic.tra"  "%scs_tra_loc%/%LANGUAGE%/psionic.tra" BEGIN
+   OUTER_SPRINT component_loc psionic
    LAF check_label STR_VAR label=dw#psionic_shared RET value=value END
    ACTION_IF value=0 BEGIN
 
@@ -13,8 +14,10 @@ DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
 
 	// astral travel (clone of Dimension Door)
 
-        LAF install STR_VAR file=dw#mftel.spl location=resource END
-        LAF edit_spell STR_VAR spell=dw#mftel editstring=~say_name=>301~ END
+        LAF install_spell STR_VAR spell=dw#mftel idsname=PSIONIC_ASTRAL_TRAVEL location=resource editstring=~say_name=>301~ RET newname END
+        OUTER_SPRINT PSIONIC_ASTRAL_TRAVEL "%newname%"
+
+        LAF clone_spell STR_VAR spell="%DRYAD_TELEPORT%=>dw#mfesc" editstring=~say_name=>301~ END
 
 	// make prep version of psionic invisibility
 
@@ -45,7 +48,6 @@ DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
 
         MAKE_PATCH
            patch_effect_inline=>~match=>"opcode=12"
-                               check=>12
                                dicenum=>5
                                dicesize=>6~
            patch_effect_inline'=>~match=>"target=3"
@@ -56,8 +58,13 @@ DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
 
         // make psionic versions of Remove Magic and blur
 
-        LAF clone_spell STR_VAR spell= ~%WIZARD_DISPEL_MAGIC%=>dw#psirm~ editstring=~say_name=>300~ END
-        LAF clone_spell STR_VAR spell= ~%WIZARD_BLUR%=>dw#psibl~ editstring="" END
+        LAF add_spell_to_ids STR_VAR typename=innate idsname=PSIONIC_DISPEL_MAGIC RET newname END
+        OUTER_SPRINT PSIONIC_DISPEL_MAGIC "%newname%"
+        LAF add_spell_to_ids STR_VAR typename=innate idsname=PSIONIC_BLUR RET newname END
+        OUTER_SPRINT PSIONIC_BLUR "%newname%"
+
+        LAF clone_spell STR_VAR spell= ~%WIZARD_DISPEL_MAGIC%=>%PSIONIC_DISPEL_MAGIC%~ editstring=~say_name=>300~ END
+        LAF clone_spell STR_VAR spell= ~%WIZARD_BLUR%=>%PSIONIC_BLUR%~ editstring="" END
 
 	// give the Mind Blast power a name
 
@@ -70,17 +77,38 @@ DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
            patch_ability_inline'=>~casting_time=>0~
         END
 
-        ACTION_FOR_EACH power IN DETONATE BALLISTIC DOMINATION EGOWHIP EMOTION_KILL MIND_BLAST
+        ACTION_FOR_EACH power IN DETONATE BALLISTIC ASTRAL_TRAVEL DOMINATION EGOWHIP EMOTION_KILL MIND_BLAST
                                  MAZE PROJECT_FORCE INERTIAL_BARRIER LIFE_DRAIN SUPERIOR_INVISIBILITY
-                                 INFLICT_PAIN DISINTEGRATE 
+                                 INFLICT_PAIN DISINTEGRATE DISPEL_MAGIC BLUR
         BEGIN
            OUTER_SPRINT spell EVALUATE_BUFFER ~%PSIONIC_%power%%~
            LAF edit_spell STR_VAR spell edits=patch_data END
         END
         LAF edit_spell STR_VAR spell= ~%MIND_FLAYER_DOMINATION% %MIND_FLAYER_PSIONIC_BLAST% %ULITHARID_PSIONIC_BLAST% 
-                                                      %BRAIN_PSIONIC_BLAST% dw#psirm dw#psibl dw#mftel~  edits=patch_data 
+                                                      %BRAIN_PSIONIC_BLAST% %PSIONIC_ASTRAL_TRAVEL%~  edits=patch_data
         END
 
+        // innate-repeating bit
+        
+        LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=12
+            STR_VAR arguments="PSIONIC_DETONATE PSIONIC_BALLISTIC PSIONIC_SUPERIOR_INVISIBILITY PSIONIC_EGOWHIP
+                               MIND_FLAYER_PSIONIC_BLAST MIND_FLAYER_DOMINATION ULITHARID_PSIONIC_BLAST ULITHARID_CURE_SERIOUS_WOUNDS"
+        END
+
+        LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=18
+            STR_VAR arguments="PSIONIC_MAZE PSIONIC_ASTRAL_TRAVEL PSIONIC_MIND_BLAST PSIONIC_BLUR"
+        END
+
+        LAF make_innate_repeating_spell
+            INT_VAR overwrite=1 cooldown=120
+            STR_VAR arguments="PSIONIC_DISPEL_MAGIC"
+        END
+
+        // make version of Detonation used for blowing up skeletons
+	
+	LAF install STR_VAR file=dw#detun.spl location=resource END
 
 	// exempt psionic domination from the Fixpack protections for elves and half-elves
 
@@ -96,7 +124,7 @@ DEFINE_ACTION_FUNCTION shared_psionic_resources BEGIN
                               editstring=~delete_effect=>"opcode=206 and resource is_in [%PSIONIC_BALLISTIC% %PSIONIC_DETONATE% %PSIONIC_PROJECT_FORCE% %PSIONIC_MAZE%]"~
         END
    END // end of outer IF-THEN
-
+  END // end of WITH_TRA
 END
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -114,17 +142,6 @@ DEFINE_PATCH_FUNCTION illithid_general BEGIN
          resist_magic_fire=>0
          morale=>10
          morale_break=>0 // illithids who panic flee by script, astrally
-      END
-      LPF check_label STR_VAR label=dw#flayer_detect_invisible RET value=value END
-      PATCH_IF value=1 BEGIN
-           SPRINT $patch_data(add_effect_inline) ~opcode=>193 parameter2=>1~
-      END
-      LPF check_label STR_VAR label=dw#flayer_resistance RET value END
-      PATCH_IF value BEGIN
-           SPRINT $patch_data(resist_slashingGT) 50
-           SPRINT $patch_data(resist_piercingGT) 50
-           SPRINT $patch_data(resist_crushingGT) 50
-           SPRINT $patch_data(resist_missileGT) 50
       END
       LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
 END
@@ -144,6 +161,9 @@ DEFINE_PATCH_FUNCTION make_illithid BEGIN
            save_vs_breathLT=>5
            save_vs_spellLT=>5
            levelGT=>12
+           remove_spells=>all
+           add_spells=>"PSIONIC_MAZE PSIONIC_DETONATE PSIONIC_BALLISTIC MIND_FLAYER_DOMINATION MIND_FLAYER_PSIONIC_BLAST PSIONIC_SUPERIOR_INVISIBILITY PSIONIC_ASTRAL_TRAVEL"
+           strip_scs_scripts=>null
       END
       LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
 
@@ -165,6 +185,9 @@ DEFINE_PATCH_FUNCTION make_ulitharid BEGIN
            save_vs_spellLT=>3
            levelGT=>14
            swap_items=>~mindflay=>dw#ulith~
+           remove_spells=>all
+           add_spells=>"PSIONIC_MAZE PSIONIC_DETONATE PSIONIC_BALLISTIC MIND_FLAYER_DOMINATION ULITHARID_PSIONIC_BLAST PSIONIC_SUPERIOR_INVISIBILITY PSIONIC_ASTRAL_TRAVEL ULITHARID_CURE_SERIOUS_WOUNDS"
+           strip_scs_scripts=>null
       END
       LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
 
@@ -179,12 +202,16 @@ DEFINE_PATCH_FUNCTION make_vampiric_illithid BEGIN
       LPF illithid_general END
       PATCH_MAKE_PATCH
            resist_magic=>90       // from mindfl01
+           resist_coldGT=>50
+           resist_electricityGT=>50
            save_vs_deathLT=>5
            save_vs_wandLT=>6
            save_vs_polyLT=>6
            save_vs_breathLT=>5
            save_vs_spellLT=>5
            levelGT=>12
+           remove_spells=>all
+           add_spells=>"MIND_FLAYER_PSIONIC_BLAST"
       END
       LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
 

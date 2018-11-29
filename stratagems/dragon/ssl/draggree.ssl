@@ -3,11 +3,6 @@
 ///////////////////////////////////////////////////////////////////////
 
 
-BEGIN LOOP(scsspellsubstitute1||!GlobalTimerNotExpired("castspell","LOCALS"))
-BEGIN LOOP(scsspellsubstitute2||!GlobalTimerNotExpired("castspell","LOCALS"))
-	INCLUDE FILE(%scsroot%/mage/ssl/mage_definitions.ssl)
-END LOOP
-END LOOP
 INCLUDE FILE(%scsroot%/dragon/ssl/dragondef.ssl)
 INCLUDE FILE(%scsroot%/dragon/ssl/dragonsetup.ssl)
 
@@ -35,7 +30,7 @@ IF TRIGGER // note we don't get here unless in a fight
    	   RequireBlock(IsFllyissetat)
 	Target(Myself)
 THEN DO
-	Action(TriggerRESMyself,%WIZARD_IMPROVED_HASTE_INSTANT%,dw#0d592,%SPELL_DEFLECTION_NO_VISUAL_INSTANT%)
+	Action(SequencerMyself,FLLYISSETAT_TRIGGER)
 	ReallyForceSpell(NearestEnemyOf(Myself),DRAGON_FEAR)
 	SetGlobalTimer("dragonbreath","LOCALS",1)
 	SetGlobalTimer("redefend","LOCALS",3)
@@ -92,29 +87,27 @@ INCLUDE FILE(%scsroot%/genai/ssl/chase.ssl)
 //////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	TargetBlock(PCsInOrder)
-	TargetBlock(EnemiesInOrder)
-	!Range(scstarget,15)
+	TargetBlock(PCsInReverseOrder)
+	TargetBlock(EnemiesInReverseOrder)
+	!CheckStatGT(scstarget,65,RESISTPOISON)
+	TriggerBlock(AoEPoison)
+THEN DO
+	Action(FastDragonBreath2,GREEN_DRAGON_BREATH,"DrGrBrHt","dragonbreath",black05)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInReverseOrder)
 	!CheckStatGT(scstarget,65,RESISTPOISON)
 THEN DO
 	Action(FastDragonBreath2,GREEN_DRAGON_BREATH,"DrGrBrHt","dragonbreath",black05)
 END
 
-IF
-	!GlobalTimerNotExpired("dragonbreath","LOCALS")
-	!GlobalTimerNotExpired("castspell","LOCALS")
-	!GlobalTimerNotExpired("trytorun","LOCALS")
-	OR(5)
-		!CheckStatGT(NearestEnemyOf(Myself),65,RESISTPOISON)
-		!CheckStatGT(SecondNearestEnemyOf(Myself),65,RESISTPOISON)
-		!CheckStatGT(ThirdNearestEnemyOf(Myself),65,RESISTPOISON)
-		!CheckStatGT(FourthNearestEnemyOf(Myself),65,RESISTPOISON)
-		!CheckStatGT(FifthNearestEnemyOf(Myself),65,RESISTPOISON)
-THEN
-	RESPONSE #100
-	         SetGlobalTimer("trytorun","LOCALS",6)
-		RunAwayFrom(NearestEnemyOf(Myself),30)
+IF TRIGGER
+	TargetBlock(PCsInReverseOrder)
+THEN DO
+	Action(FastDragonBreath2,GREEN_DRAGON_BREATH,"DrGrBrHt","dragonbreath",black05)
 END
+
 
 //////////////////////////////////////////////////////////////////////////
 ///	Use wing buffet to drive away anything at all dangerous
@@ -140,17 +133,39 @@ END
 ///	Renew defences
 ////////////////////////////////////////////////////////////////
 
-
 IF TRIGGER
-	CheckStat(Myself,0,STONESKINS)
-	GlobalTimerExpired("redefend","LOCALS")
-	Target(Myself)
+        RequireBlock(AbazigalEnclave)
+	HPPercentLT(Myself,40)
 THEN DO
-	Action(SpellInnate,DRAGON_STONE_SKIN|100|100)
+	Action(SpellMyself,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
 END
 
 IF TRIGGER
-	CheckStat(Myself,0,CLERIC_DEFENSIVE_HARMONY)
+        RequireBlock(AbazigalEnclave)
+	TriggerBlock(StoneskinFailing)
+	GlobalTimerExpired("redefend","LOCALS")
+	Target(Myself)
+THEN DO
+        Action(Sequencer,GREEN_DRAGON_DEFENSIVE_SEQUENCER)
+END
+
+IF TRIGGER
+	TriggerBlock(StoneskinFailing)
+	GlobalTimerExpired("redefend","LOCALS")
+	Target(Myself)
+THEN DO
+	Action(Spell,DRAGON_STONE_SKIN|100|100)
+END
+
+IF TRIGGER
+        RequireBlock(AbazigalEnclave)
+	HPPercentLT(Myself,75)
+THEN DO
+	Action(SpellMyself,CLERIC_RIGHTEOUS_MAGIC)
+END
+
+IF TRIGGER
+        TriggerBlock(ILackDefensiveHarmony)
 	GlobalTimerExpired("redefend","LOCALS")
 THEN DO
 	Action(SpellMyself,CLERIC_DEFENSIVE_HARMONY|100|100)
@@ -162,12 +177,8 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	TriggerBlock(SpellTurn|Enemy|Helpless)
+	TriggerBlock(SpellDeflect|Enemy|Helpless|PriorityBreach)
 	!GlobalTimerNotExpired("breach","LOCALS")
-	OR(3)
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_ENERGY)
-		CheckStatGT(scstarget,0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
-		CheckStatGT(scstarget,2,STONESKINS)
 THEN DO
 	Combine()
 	SetGlobalTimer("breach","LOCALS",12)
@@ -180,12 +191,12 @@ END
 /////////////////////////////////////////////////////////////////
 
 IF TRIGGER
+        IgnoreBlock(AbazigalEnclave)
 	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(EnemiesInOrderShort)
-	!Alignment(scstarget,MASK_EVIL)
-	TriggerBlock(MR100|SINecromancy|ResistMagicDamage|Enemy)
+	TriggerBlock(MR100|SINecromancy|ResistMagicDamage|Enemy|NotEvil)
 THEN DO
-	Action(Sequencer,CLERIC_UNHOLY_BLIGHT,CLERIC_UNHOLY_BLIGHT,CLERIC_UNHOLY_BLIGHT)
+	Action(SequencerManualUnabbreviated,GREEN_DRAGON_OFFENSIVE_SEQUENCER,CLERIC_UNHOLY_BLIGHT,CLERIC_UNHOLY_BLIGHT,CLERIC_UNHOLY_BLIGHT)
 END
 
 //////////////////////////////////////////////////////////////////////////////
@@ -193,11 +204,11 @@ END
 //////////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
+        IgnoreBlock(AbazigalEnclave)
 	TargetBlock(PCsPreferringWeak)
 	!GlobalTimerNotExpired("insects","LOCALS")
 THEN DO
 	SetGlobalTimer("insects","LOCALS",18)
-	Action(SpellInnate,BLACK_DRAGON_INSECT|200|100)
 	Action(Spell,CLERIC_INSECT_PLAGUE|100|100)
 END
 
@@ -208,17 +219,7 @@ END
 
 IF TRIGGER
 	TargetBlock(EnemiesInOrder)
-	!CheckStatGT(FourthNearest([ENEMY]),0,TRUE_SIGHT)
-	!CheckStatGT(ThirdNearest([ENEMY]),0,TRUE_SIGHT)
-	!CheckStatGT(SecondNearest([ENEMY]),0,TRUE_SIGHT)
-	!CheckStatGT([ENEMY],0,TRUE_SIGHT)
-	!CheckStatGT(Myself,0,TRUE_SIGHT)
-	OR(3)
-		StateCheck(scstarget,STATE_IMPROVEDINVISIBILITY)
-		StateCheck(scstarget,STATE_MIRRORIMAGE)
-		Gender(scstarget,ILLUSIONARY)
-	!Allegiance(scstarget,ENEMY)
-	TriggerBlock(SIDivination)
+	TriggerBlock(TruesightAlreadyCast|IllusionTarget|Enemy|SIDivination)
 THEN DO
 	Action(SpellMyself,WIZARD_TRUE_SIGHT)
 END
@@ -230,9 +231,8 @@ END
 IF TRIGGER
 	ConditionalTargetBlock(PCsPreferringStrong;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(EnemiesInOrderShort)
-	!Alignment(scstarget,MASK_EVIL)
 	TriggerBlock(DirectDamageSafe)
-	TriggerBlock(MR100|SINecromancy|ResistMagicDamage|Enemy|MirrorImage)
+	TriggerBlock(MR100|SINecromancy|ResistMagicDamage|Enemy|NotEvil)
 THEN DO
 	Action(Spell,CLERIC_UNHOLY_BLIGHT|200|100)
 END
@@ -244,14 +244,7 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	OR(6)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_TURNING)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_DEFLECTION)
-		CheckStat(scstarget,1,WIZARD_SPELL_TRAP)
-		CheckStatGT(scstarget,0,WIZARD_SPELL_IMMUNITY)
-		CheckStatGT(scstarget,0,MINORGLOBE)
-		CheckStatGT(scstarget,0,CLERIC_SHIELD_OF_THE_ARCHONS)
-	TriggerBlock(Enemy|Helpless)
+	TriggerBlock(Enemy|Helpless|SpellProtectionTarget)
 THEN DO
 	Combine()
 	Action(Spell,WIZARD_WARDING_WHIP|100|100)
@@ -267,10 +260,11 @@ END
 ///////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
+        IgnoreBlock(AbazigalEnclave)
 	ConditionalTargetBlock(PCSpellcasters;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(PCSpellcasters)
 	TriggerBlock(MR100|SpellTurn|SIConjuration)
-	TriggerBlock(Enemy|Helpless|Silence)
+	TriggerBlock(Enemy|Helpless|Silence|SRPowerWord)
 THEN DO
 	Action(Spell,WIZARD_POWER_WORD_SILENCE|150|50)
 END
@@ -283,7 +277,7 @@ IF TRIGGER
 	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(PCsInOrderShort)
 	TargetBlock(Celestials)
-	TriggerBlock(MR100|SpellTurn|Stun|Enemy|Helpless|SIConjuration)
+	TriggerBlock(MR100|SpellTurn|Stun|Enemy|Helpless|SIConjuration|SRPowerWord)
 	OR(3)
 		HPPercentLT(scstarget,60)
 		Class(scstarget,MAGE)
@@ -332,37 +326,48 @@ THEN DO
 END
 
 ///////////////////////////////////////////////////////////////////////////
-// Hit spellcasters with Melf
+// Hit spellcasters with Melf / sequencer
 ///////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
+        IgnoreBlock(AbazigalEnclave)
 	ConditionalTargetBlock(PCSpellcasters;!CheckStatGT(scstarget,50,RESISTMAGIC))
 	TargetBlock(PCSpellcasters)
-	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy)
+	TriggerBlock(MR100|SIConjuration|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy)
 THEN DO
 	Combine()
-	Action(MinorSequencer,WIZARD_MAGIC_MISSILE,WIZARD_MAGIC_MISSILE)
+	Action(Sequencer,DRAGON_MAGIC_MISSILE_SEQUENCER)
 	Action(Spell,WIZARD_MELF_ACID_ARROW)
 END
+
+IF TRIGGER
+        RequireBlock(AbazigalEnclave)
+	ConditionalTargetBlock(PCSpellcasters;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(PCSpellcasters)
+	TriggerBlock(MR100|SIConjuration|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn|Enemy)
+THEN DO
+	Combine()
+	Action(Sequencer,DRAGON_ACID_ARROW_SEQUENCER)
+	Action(Spell,WIZARD_MELF_ACID_ARROW)
+END
+
 
 //////////////////////////////////////////////////////////////////////////
 ///	Now hit basically anyone with MMs and acid arrows
 //////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
-	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC)&HPPercentLT(scstarget,40))
-	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
-	TargetBlock(EnemiesInOrderShort)
-	TriggerBlock(MR100|SIEvocation|MinorGlobe|SpellTurn|Enemy)
+	ConditionalTargetBlock(PCsPreferringWeak;HPPercentLT(scstarget,40))
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(MR50|SIEvocation|MinorGlobe|SpellTurn|Enemy)
 THEN DO
 	Combine()
 	Action(Spell,WIZARD_MAGIC_MISSILE)
 END
 
 IF TRIGGER
-	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
-	TargetBlock(EnemiesInOrderShort)
-	TriggerBlock(MR100|SIConjuration|Stoneskin|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn)
+	TargetBlock(PCsPreferringWeak)
+	TriggerBlock(MR50|SIConjuration|MirrorImage|MinorGlobe|ArrowSafe|SpellTurn)
 THEN DO
 	Combine()
 	Action(Spell,WIZARD_MELF_ACID_ARROW)

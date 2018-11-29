@@ -1,10 +1,22 @@
+////////////////////////////////////////////////////
+///
+/// "Version" is for testing
+/// 1: resource-building only
+/// 2: mages-before only
+/// 3: main loop only
+/// 4: mages-after only
+/// 5: clericmage only
+
+
 LAF include STR_VAR file=priest_shared.tph END
 
 DEFINE_ACTION_FUNCTION priest
-        STR_VAR version="1"
 BEGIN
-      OUTER_SET prebuff=version
-      LAF make_label STR_VAR label= ~dw#priest_%version%~ END
+
+
+   ACTION_IF !IS_AN_INT version BEGIN
+         OUTER_SET version=0
+   END
 
       OUTER_SPRINT type priest
       // data read-in
@@ -12,33 +24,50 @@ BEGIN
       LAUNCH_ACTION_MACRO read_in_spell_choices
       LAUNCH_ACTION_MACRO read_in_individual_overrides
       LAUNCH_ACTION_MACRO read_in_priest_scripts
+      ACTION_IF !disable_hlas BEGIN
+         LAM read_in_hla_choices
+      END
+      
+      LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
+      LAF define_difficulty STR_VAR type=priest_prep RET prep_difficulty_variable=difficulty_variable END
+      ACTION_IF is_bg2 BEGIN
+         LAF define_difficulty STR_VAR type=priest_hla  END
+      END
+
 
       // instant and prebuff spells
 
       LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
 
-      // scripts
-
-      LAF build_individual_priest_scripts INT_VAR prebuff END
+   ACTION_IF (version=0 || version=1) BEGIN
 
       // resources
-
       LAF make_priest_resources END
+
+   END
 
       // core
       
+   ACTION_IF (version=0 || version=2) BEGIN
       LAF priest_edits_before END
-      LAF priest_edits_main INT_VAR prebuff END
+   END
+   ACTION_IF (version=0 || version=3) BEGIN
+      LAF priest_edits_main  END
+   END
+   ACTION_IF (version=0 || version=4) BEGIN
       LAF priest_edits_after END
+   END
+   
+   ACTION_IF (version=0 || version=5) BEGIN
+
       
       // cleric-mages
-      
 
       LAF check_label STR_VAR label=dw#mage RET value END
       ACTION_IF value BEGIN
-         OUTER_SPRINT component_loc ~caster_shared/clericmage~
-         LAF run STR_VAR file=clericmage END
+              LAF run STR_VAR file=clericmage locbase="caster_shared/clericmage" END
       END
+   END
 
 END
 
@@ -51,9 +80,8 @@ END
 
 
 DEFINE_ACTION_FUNCTION priest_edits_main
-       INT_VAR prebuff=1
 BEGIN
-    OUTER_SPRINT arguments ~prebuff=%prebuff%~
+    OUTER_SPRINT arguments ~~
     ACTION_IF FILE_EXISTS ~override/dw#standardise_nobg2.mrk~ BEGIN
        OUTER_SPRINT arguments ~%arguments% spells_are_bg1~
     END ELSE BEGIN
@@ -61,9 +89,9 @@ BEGIN
     END
     // load in the innocent priests
 
-    LAUNCH_ACTION_FUNCTION innocent_priests RET list=list END
+    LAF innocent_priests RET list END
 
-    // get a list of priests (this is hardcoded, on speed grounds)
+    // get a list of priests and append to the innocent list (this is hardcoded, on speed grounds)
 
     COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
         READ_BYTE 0x273 class
@@ -73,6 +101,7 @@ BEGIN
         11 // druid
         8 // fighter_cleric
         16 // fighter_druid
+        156 // flaming fist
         BEGIN
              SPRINT filename ~%SOURCE_RES%~
              LPF CRE_is_PC RET is_pc=value END
@@ -132,13 +161,22 @@ END
 DEFINE_ACTION_FUNCTION innocent_priests RET list BEGIN
 
     OUTER_SPRINT list ~~
-    LAF install STR_VAR file=~dw#innpr.baf dw#inndr.baf~ location=resource END
+    LAF install STR_VAR file="dw#innpr.baf dw#inndr.baf" location=resource END
     ACTION_IF is_bg1 BEGIN
        ACTION_FOR_EACH innocent IN AGNASI BENTAN BRATHL CADDER CHANTH
                        GALILE GAXIR KELDDA LASKAL MADARC
-                       NALIN ORDULI PALLON POGHMA4 PRIHEL  SHAELL TREMAI UNSHEY
-   BEGIN
-          OUTER_PUSH list ~%tutu_var%%innocent%~
+                       NALIN ORDULI PALLON POGHMA4 PRIHEL SHAELL TREMAI UNSHEY
+
+
+       BEGIN
+          ACTION_IF FILE_EXISTS_IN_GAME "%innocent%.cre" BEGIN // some differing conventions between vanilla/EE
+             COPY_EXISTING "%tutu_var%%innocent%.cre" "%workspace%"
+                 LPF CRE_is_innocent RET value END
+             BUT_ONLY
+             ACTION_IF value BEGIN
+                OUTER_PUSH list ~%tutu_var%%innocent%~
+             END
+          END
        END
     END
     ACTION_IF is_bg2 BEGIN
@@ -152,7 +190,7 @@ DEFINE_ACTION_FUNCTION innocent_priests RET list BEGIN
         ACTION_IF enhanced_edition BEGIN
               LAF edit_creature STR_VAR creature=laskal editstring=~class=>druid~ END
         END ELSE BEGIN
-              LAF edit_creature STR_VAR creature=laskal editstring=~class=>druid script_override=>dw#inndr~ tv=1 END
+              LAF edit_creature STR_VAR creature=laskal editstring=~script_override=>dw#inndr~ tv=1 END
         END
     END
 
@@ -168,6 +206,15 @@ END
 DEFINE_ACTION_FUNCTION priest_edits_before BEGIN
    ACTION_IF is_bg2 BEGIN
 
+         // HLA markers
+     
+         LAF clone_item STR_VAR item= ~dw#marker_file=>dw#hlapr~ editstring=~droppable=>0~ END
+         LAF read_in_list STR_VAR file="hla.2da" RET list END
+         OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+               LAF return_first_entry STR_VAR list RET creature=entry list END
+               LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature editstring="add_items=>dw#hlapr" END
+         END
+
          // class corrections
          
          LAF edit_creature STR_VAR creature=drshnl01 editstring=~class=>DRUID~ END
@@ -178,7 +225,8 @@ DEFINE_ACTION_FUNCTION priest_edits_before BEGIN
          LAF edit_creature STR_VAR creature=cedruid2 editstring=~insert_script_low=>druid8b~ END
 
          // play-dead spell for Nilthiri
-         MAKE_PATCH
+         ACTION_IF !enhanced_edition BEGIN
+           MAKE_PATCH
             add_basic_ability=>null
             add_effect_inline=>~opcode=>28 target=>2 duration=>24 parameter2=>1 parameter1=>100~
             clone_entry_inline=>~type=>effect match=>"opcode=28" opcode=>"entry_index from [29 31 85 86 87 88 89]" number_to_add=>7~
@@ -192,8 +240,9 @@ DEFINE_ACTION_FUNCTION priest_edits_before BEGIN
             add_effect_inline'6=>~opcode=>112 target=>2 resource=>monhp1~
             add_effect_inline'7=>~opcode=>17 target=>2 timing=>4 duration=>24 parameter1=>30 parameter2=>1~
             add_effect_inline'8=>~opcode=>267 target=>2 duration=>24 parameter1=>20438~
+           END
+           LAF make_spell STR_VAR spell=dw#nilde edits=patch_data END
          END
-         LAF make_spell STR_VAR spell=dw#nilde edits=patch_data END
 
          // missing weapons/armor
          
@@ -207,23 +256,6 @@ DEFINE_ACTION_FUNCTION priest_edits_before BEGIN
                                    editstring=~add_items=>leat01~
          END
 
-
-         // shapeshift
-         
-         ACTION_IF FILE_EXISTS ~override/dw#shapeshift.mrk~ BEGIN
-
-                LAF edit_creature STR_VAR creature=~cechal02 cechalle cedruid1 cedruid2 cefgt02 cefgt04
-                                                    druid10a druid10b druid12a druid12b druid8a druid8b
-                                                    gdruid pardru tdr8a tdr8b trevil02 trevil03~
-                                           editstring=~add_items=>dw#shnbr(WEAPON2)~
-                END
-         
-                LAF edit_creature STR_VAR creature=tdr10a editstring=~add_items=>"dw#shnsa(WEAPON2) dw#shnsp(WEAPON3)"~ END
-                LAF edit_creature STR_VAR creature=sppain editstring=~add_items=>"dw#shnsp(WEAPON2) dw#shnsp(WEAPON3)"~ END // Pai'na always takes spider form
-                LAF edit_creature STR_VAR creature=tdr10b editstring=~add_items=>"dw#shnw2(WEAPON2)"~ END
-                LAF edit_creature STR_VAR creature=hgnya01 editstring=~add_items=>"dw#shnea(WEAPON2)"~ END
-
-         END
 
          // blind priests in beholder caves
          
@@ -271,40 +303,31 @@ END
         LAF install STR_VAR file=dw#kreel.baf inline=yes END
         LAF edit_creature STR_VAR creature=dawnmas editstring=~insert_script=>"dw#kreel below sht0902"~ END
 
-   END
+   END  // end of BG2 bit
 
    ACTION_IF is_bg1 BEGIN
 
    // missing scripts
    
-   LAF edit_creature STR_VAR creature=x#black allow_missing=1 editstring=~insert_script_low=>priest3~ END
-   LAF edit_creature STR_VAR creature=beland tv=1 editstring=~script_race=>priest1~ END
+       LAF edit_creature STR_VAR creature=x#black allow_missing=1 editstring=~insert_script_low=>priest3~ END
+       LAF edit_creature STR_VAR creature=beland tv=1 editstring=~script_race=>priest1~ END
 
 
-    // shapeshift
-    LAF check_label STR_VAR label=dw#shapeshift RET value END
-    ACTION_IF value BEGIN
-       LAF edit_creature STR_VAR creature=~seniya takiyah osmadi voltin corsone~ tv=1 editstring=~add_items=>dw#shnbr(WEAPON2)~ END
-       LAF edit_creature STR_VAR creature=amaran tv=1 editstring=~add_items=>"dw#shnsa(WEAPON2) dw#shnsp(WEAPON3)"~ END
-       LAF edit_creature STR_VAR creature=x#andart allow_missing=1 editstring=~add_items=>"dw#shnsa(WEAPON2) dw#shnsp(WEAPON3)"~ END
-       LAF edit_creature STR_VAR creature=izefia tv=1 editstring=~remove_items=>%tutu_var%leat04 add_items=>dw#shnw2(WEAPON2)~ END
-       // in BGEE, Osmadi's Cursed Backbiter spear gets in the way of his shapeshift
+    // in BGEE, Osmadi's Cursed Backbiter spear gets in the way of his shapeshift
        ACTION_IF enhanced_edition BEGIN
-          LAF edit_creature STR_VAR creature=osmadi editstring="remove_items=>sper03 add_items=>staf01(WEAPON1)" END
+          LAF edit_creature STR_VAR creature=osmadi editstring="remove_items=>sper03 add_items=>sper03(inv) add_items=>staf01(WEAPON1)" END
        END
-    END
+
+    // give Brathlen the right class
+    
+    LAF edit_creature STR_VAR creature=brathl tv=1 editstring="class=>cleric" END
 
     // prevent Corsone from attacking his own summons
 
-    LAF install STR_VAR file=dw#corso.baf location=resource END
-    LAF edit_creature STR_VAR creature=corsone tv=1 editstring=~swap_script=>"%tutu_scripts%eeenemy=>dw#corso"~ END
+       LAF install STR_VAR file=dw#corso.baf location=resource END
+       LAF edit_creature STR_VAR creature=corsone tv=1 editstring=~swap_script=>"%tutu_scripts%eeenemy=>dw#corso"~ END
 
-    // bishops arguably shouldn't buff
-
-    LAF edit_creature STR_VAR creature= ~%tutu_scriptbg%bishop~ editstring=~add_items=>dw#nopre~ END
-
-   END
-
+    END // end of BG1 bit
 
 END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -330,38 +353,6 @@ DEFINE_ACTION_FUNCTION priest_edits_after BEGIN
 
 
 END
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////            Build scripts for individual priests               //////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION build_individual_priest_scripts
-    INT_VAR prebuff=1
-BEGIN
-
-   ACTION_FOR_EACH game IN bg1 bg2 BEGIN
-      ACTION_IF $is(~%game%~)=1 BEGIN
-         LAF get_priest_prebuff_variables STR_VAR game prebuff RET variables=variables END
-         LAF check_label STR_VAR label=dw#shapeshift RET value=value END
-         ACTION_IF value BEGIN
-            OUTER_SPRINT variables ~%variables%&ImprovedShapeshift=True~
-         END
-         ACTION_BASH_FOR ~%scsroot%/priest/ssl/%game%/special~ ~.*\.ssl~ BEGIN
-            LAF ssl_to_bcs STR_VAR variables script= ~%BASH_FOR_RES%~ location= ~ssl/%game%/special~ END
-         END
-      END
-   END
-
-   ACTION_IF !is_bg2 BEGIN
-       LAF get_priest_prebuff_variables STR_VAR game=bg2 prebuff RET variables END
-       LAF ssl_to_bcs STR_VAR variables script=dw#nymph location=~priest/ssl/bg2/special~ END
-   END
-END
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -393,7 +384,7 @@ BEGIN
          SET replace=0
          INNER_ACTION BEGIN
               ACTION_IF FILE_EXISTS ~%scsroot%/%component_loc%/scripts/%script%.baf~ BEGIN
-                 ACTION_IF GAME_IS ~tutu tutu_totsc~ BEGIN
+                 ACTION_IF is_tutu BEGIN
                     COPY ~%scsroot%/%component_loc%/scripts/%script%.baf~ ~%workspace%/_%script%.baf~
                     COMPILE EVALUATE_BUFFER ~%workspace%/_%script%.baf~
                     SILENT
@@ -421,106 +412,30 @@ DEFINE_ACTION_FUNCTION make_priest_resources BEGIN
 
     // required for BG1 and BG2
 
-        LAF clone_creature STR_VAR creature=~nymphsu=>dw#nymsu~ editstring=~script_override=>dw#nymph~ END
-
-	COPY_EXISTING ~%CLERIC_CALL_WOODLAND_BEINGS%.spl~ ~override/dw#nymph.spl~
-		REPLACE_TEXTUALLY CASE_INSENSITIVE ~nymphsu~ ~dw#nymph~ (8)
-		REPLACE_TEXTUALLY CASE_INSENSITIVE ~dvnymph~ ~dw#nymph~ (8)
-
-	COPY_EXISTING ~nymphsu.eff~ ~override/dw#nymph.eff~
-		REPLACE_TEXTUALLY CASE_INSENSITIVE ~nymphsu~ ~dw#nymsu~ (8)
-
-       MAKE_PATCH // check if Holy Smite has been cast in the last round (if not, don't bother removing blindness)
-             add_effect_inline=>"opcode=>265 target=>1 timing=>1 resource=>DMWWHLSM parameter1=>1"
-             add_effect_inline'=>"opcode=>265 target=>1 timing=>4 duration=>6 resource=>DMWWHLSM parameter1=>0"
-       END
-       LAF edit_spell STR_VAR spell=CLERIC_HOLY_SMITE edits=patch_data END
-
+         // nothing right now
 
     // required for BG2 only
     
-    ACTION_IF is_bg2=1 BEGIN
+    ACTION_IF is_bg2 BEGIN
 
-    // if SR is installed, make NPC versions of Symbol spells
 
-    ACTION_IF ~demivrgvs~ BEGIN
-       LAF clone_spell STR_VAR spell= ~%WIZARD_SYMBOL_FEAR%=>%WIZARD_NPC_SYMBOL_FEAR%
-                                                      %WIZARD_SYMBOL_DEATH%=>%WIZARD_NPC_SYMBOL_DEATH%
-                                                      %WIZARD_SYMBOL_STUN%=>%WIZARD_NPC_SYMBOL_STUN%~
-       END
-    END
 
-    // if Refinements is installed, copy its versions of HLAs back over the originals
-
-    ACTION_IF refinements BEGIN
-      ACTION_IF demivrgvs BEGIN
-       LAF clone_spell STR_VAR spell=~%CLERIC_ELEMENTAL_SWARM%=>tg#elsu %CLERIC_GREATER_ELEMENTAL_SWARM%=>tg#prca~ END
-      END ELSE BEGIN
-       LAF clone_spell STR_VAR spell=~tg#elsu=>%CLERIC_ELEMENTAL_SWARM% tg#prca=>%CLERIC_GREATER_ELEMENTAL_SWARM%~ END
-      END
-    END
+    // Greater Command should be party-friendly
 
     LAF edit_spell STR_VAR spell=CLERIC_GREATER_COMMAND editstring=~patch_ability_inline=>"projectile=>159"~ END
 
-     // make an NPC version of Summon Elemental Prince
-        
-        COPY_EXISTING ~%CLERIC_GREATER_ELEMENTAL_SWARM%.spl~ ~override/dw#elemp.spl~
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~sumzaam~ ~dw#szaam~ (8)
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~sumchan~ ~dw#schan~ (8)
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~sumsunn~ ~dw#ssunn~ (8)
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~tg#benh~ ~dw#benh~ (8)
-        BUT_ONLY
+     // allow NPCs to use Summon Elemental Prince
 
-        COPY_EXISTING ~sumzaam.eff~ ~override/dw#szaam.eff~
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~elemzaam~ ~dw#ezaam~
-        BUT_ONLY
+       LAF install STR_VAR file="elemzaam.baf elemsunn.baf elemchan.baf" location=resource END
+       
+       LAF edit_creature STR_VAR creature=elemchan editstring="name1_string=>2831" END
+       LAF edit_creature STR_VAR creature=elemsunn editstring="name1_string=>2867" END
+       LAF edit_creature STR_VAR creature=elemzaam editstring="name1_string=>2873" END
 
-        COPY_EXISTING ~sumchan.eff~ ~override/dw#schan.eff~
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~elemchan~ ~dw#echan~
-        BUT_ONLY
-
-        COPY_EXISTING ~sumsunn.eff~ ~override/dw#ssunn.eff~
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~elemsunn~ ~dw#esunn~
-        BUT_ONLY
-
-        ACTION_IF FILE_EXISTS_IN_GAME ~tg#benh.eff~ BEGIN
-          COPY_EXISTING ~tg#benh.eff~ ~override/dw#benh.eff~
-           REPLACE_TEXTUALLY CASE_INSENSITIVE ~tg#benh~ ~dw#benh~
-          BUT_ONLY
-        END
-
-       LAF clone_creature STR_VAR creature=~elemsunn=>dw#esunn~ editstring=~say_both_names=>4300 dv=>dw#esunn~ END
-       LAF clone_creature STR_VAR creature=~elemzaam=>dw#ezaam~ editstring=~say_both_names=>4301 dv=>dw#ezaam~ END
-       LAF clone_creature STR_VAR creature=~elemchan=>dw#echan~ editstring=~say_both_names=>4302 dv=>dw#echan~ END
-       LAF clone_creature STR_VAR creature=~tg#benh=>dw#benh~ editstring=~say_both_names=>4306 dv=>dw#benh~ allow_missing=1 END
-
-         ACTION_IF ~demivrgvs~=1   BEGIN
-           ACTION_IF FILE_EXISTS_IN_GAME ~dw#mehge.bcs~ BEGIN
-              OUTER_SPRINT ~elemental_prince_script~ ~dw#mehge~
-           END ELSE BEGIN
-              OUTER_SPRINT ~elemental_prince_script~ ~wtasight~
-           END
-           ACTION_FOR_EACH prince IN dw#echan dw#ezaam dw#esunn BEGIN
-              LAF edit_creature STR_VAR creature= ~%prince%~ editstring= ~script_override=>%prince% script_default=>%elemental_prince_script%~ END
-              LAF install STR_VAR file= ~%prince%.baf~ location=resource END
-           END
-       END
+       LAF clone_spell STR_VAR spell="%CLERIC_GREATER_ELEMENTAL_SWARM%=>dw#elemp" editstring="name1_string=>~-1~ delete_effect=>~opcode=177~" END
 
         LAF clone_item STR_VAR item=~misc16=>dw#prbig~ editstring=~droppable=>0~ END // too large to use Shield of the Archons (looks stupid)
         LAF install STR_VAR files=~dw#bear.spl dw#ctrlu.spl dw#destu.spl~ location=resource END
-
-        ACTION_DEFINE_ASSOCIATIVE_ARRAY priest_spell_replace_map BEGIN
-           dw#harmn=>"%CLERIC_HARM%"
-           dw#devae=>"%CLERIC_SUMMON_FALLEN_DEVA%"
-           dw#devag=>"%CLERIC_SUMMON_DEVA%"
-           dw#gatep=>"%CLERIC_CONJURE_EARTH_ELEMENTAL%"
-        END
-        
-        ACTION_PHP_EACH priest_spell_replace_map AS new=>old BEGIN
-           ACTION_IF !FILE_EXISTS_IN_GAME ~%new%.spl~ BEGIN
-              LAF clone_spell STR_VAR spell= ~%old%=>%new%~ END
-           END
-        END
 
       END // end of BG2-only block
 

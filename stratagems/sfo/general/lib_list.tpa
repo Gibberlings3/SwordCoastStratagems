@@ -127,17 +127,6 @@ BEGIN
     END
 END
 
-DEFINE_ACTION_FUNCTION action_return_first_entry
-     STR_VAR list=""
-             separator=" "
-     RET list
-         entry
-BEGIN
-     OUTER_INNER_PATCH ~~ BEGIN
-        LPF return_first_entry STR_VAR list separator RET list=list entry=entry END
-     END
-END
-
 DEFINE_ACTION_FUNCTION return_first_entry
      STR_VAR list=""
              separator=" "
@@ -178,18 +167,6 @@ BEGIN
      END
 END
 
-
-DEFINE_ACTION_FUNCTION action_return_first_pair
-     STR_VAR list=""
-     RET key
-         value
-         list
-BEGIN
-     OUTER_INNER_PATCH ~~ BEGIN
-        LPF return_first_pair STR_VAR list RET list=list key=key value=value END
-     END
-END
-
 DEFINE_ACTION_FUNCTION return_first_pair
      STR_VAR list=""
      RET key
@@ -208,32 +185,35 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION read_in_list
+     INT_VAR col=0
      STR_VAR file=""
              location=""
              locbase=""
              locabs=""
      RET list
 BEGIN
-     LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+     LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
      OUTER_SPRINT file "%file_loc%/%file%"
      COPY ~%file%~ ~%workspace%~
            SPRINT list ""
            COUNT_2DA_ROWS 0 rowcount
            FOR (i=0;i<rowcount;i+=1) BEGIN
-              READ_2DA_ENTRY i 0 0 entry
+              READ_2DA_ENTRY i col 0 entry
               SPRINT list ~%list% %entry%~
            END
      BUT_ONLY
 END
 
 DEFINE_PATCH_FUNCTION read_in_list
+      INT_VAR col=0
       STR_VAR file=""
              location=""
              locbase=""
+             locabs=""
       RET list
 BEGIN
    INNER_ACTION BEGIN
-      LAF read_in_list STR_VAR file location locbase RET list=list END
+      LAF read_in_list INT_VAR col STR_VAR file location locbase locabs RET list=list END
    END
 END
 
@@ -271,6 +251,8 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////              load a file (which should be a 2-column array or a 3-column array with => separator, or a list of x=>y pairs) and turn col 1-2 into an associative array list ("key1=>value1 key2=>value2" etc)
+/////////////              
+/////////////              Alternatively get it back as a bona fide assoc array
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -280,8 +262,9 @@ DEFINE_ACTION_FUNCTION read_in_assoc_array
              locbase=""
              locabs=""
      RET list
+     RET_ARRAY array
 BEGIN
-     LAF action_get_directory STR_VAR location locbase locabs RET file_loc=directory END
+     LAF get_directory STR_VAR location locbase locabs RET file_loc=directory END
      OUTER_SPRINT file "%file_loc%/%file%"
      COPY ~%file%~ ~%workspace%~
            REPLACE_TEXTUALLY "=>" " "
@@ -291,6 +274,10 @@ BEGIN
               READ_2DA_ENTRY i 0 0 key
               READ_2DA_ENTRY i 1 0 value
               SPRINT list ~%list% %key%=>%value%~
+              SPRINT $array("%key%") "%value%"
+           END
+           PATCH_IF rowcount=0 BEGIN
+              SPRINT $array("UNDEFINED") ""
            END
      BUT_ONLY
 END
@@ -301,9 +288,10 @@ DEFINE_PATCH_FUNCTION read_in_assoc_array
              locbase=""
              locabs=""
       RET list
+      RET_ARRAY array
 BEGIN
    INNER_ACTION BEGIN
-      LAF read_in_assoc_array STR_VAR file location locabs locbase RET list=list END
+      LAF read_in_assoc_array STR_VAR file location locabs locbase RET list RET_ARRAY array END
    END
 END
 
@@ -460,4 +448,64 @@ BEGIN
    OUTER_PATCH "" BEGIN
       LPF invert_list STR_VAR list RET list=list END
    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Add the first 'number_to_add' elements from 'elements' to 'list' (from front); returns 'elements' with remaining elements in
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION add_elements_to_list
+   INT_VAR number_to_add=0
+   STR_VAR list=""
+           elements=""
+   RET list    
+BEGIN
+   PATCH_IF (number_to_add>0 && "%elements%" STRING_COMPARE "") BEGIN
+        LPF return_first_entry STR_VAR list="%elements%" RET entry elements=list END
+        LPF push STR_VAR head="%entry%" tail="%list%" RET list END
+        SET number_to_add -=1
+        LPF add_elements_to_list INT_VAR number_to_add STR_VAR list elements RET list END
+   END
+END
+
+DEFINE_ACTION_FUNCTION add_elements_to_list
+   INT_VAR number_to_add=0
+   STR_VAR list=""
+           elements=""
+   RET list    
+BEGIN
+   OUTER_PATCH "" BEGIN
+      LPF add_elements_to_list INT_VAR number_to_add STR_VAR list elements RET list END
+   END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////            return a random entry from a list (or "" if the list is empty)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION return_random_entry 
+    STR_VAR list=""
+    RET entry
+BEGIN
+   LPF length_of_list STR_VAR list RET length=value END
+   PATCH_IF length=0 BEGIN
+      SPRINT entry ""
+   END ELSE BEGIN
+      SET element=RANDOM (1 length)
+      WHILE element>0 BEGIN
+         LPF return_first_entry STR_VAR list RET entry list END
+         SET element = element - 1
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION return_random_entry
+    STR_VAR list=""
+    RET entry
+BEGIN
+    OUTER_PATCH "" BEGIN
+        LPF return_random_entry STR_VAR list RET entry END
+    END
 END
