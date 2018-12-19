@@ -925,31 +925,18 @@ BEGIN
       SET col=0
    END
    PATCH_IF max>0 BEGIN
-    COUNT_2DA_ROWS 0 rowcount
+    COUNT_2DA_COLS colcount
+    COUNT_2DA_ROWS colcount rowcount
     FOR (row=0;row<rowcount;row+=1) BEGIN
-     SET done=0
-     WHILE !done BEGIN
-      PATCH_TRY
-          PATCH_SILENT
-          READ_2DA_ENTRY row col 0 strref
-          PATCH_VERBOSE
+     FOR (col=0;col<colcount;col+=1) BEGIN
+          READ_2DA_ENTRY row col colcount strref
           PATCH_IF !"%strref%" STRING_MATCHES_REGEXP "[0-9]+$" & STRING_LENGTH "%strref%" <7  BEGIN // we check length here to avoid overflow
             PATCH_IF (min<= strref & strref<= max) BEGIN
              LPF "%arguments%" INT_VAR strref RET strref_new=strref_new  END
-             SET_2DA_ENTRY row col 0 "%strref_new%"
+             SET_2DA_ENTRY row col colcount "%strref_new%"
             END
           END
-          SET col+=1
-      WITH
-          ~Invalid_argument("index out of bounds")~
-      BEGIN
-          SET done=1
-      END
-      DEFAULT
-          PATCH_PRINT "%ERROR_MESSAGE%"
-          PATCH_RERAISE
-      END // end of PATCH_TRY
-    END // end of WHILE
+    END // end of col FOR
    END // wind of FOR
   END // end_of PATCH_IF
 END // end of function
@@ -1179,8 +1166,6 @@ END
 /////  Sort an IDS file into numerical order
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
 DEFINE_ACTION_FUNCTION sort_ids STR_VAR ids="" BEGIN
    ACTION_CLEAR_ARRAY ids_entries
    OUTER_SET max=0
@@ -1202,11 +1187,13 @@ DEFINE_ACTION_FUNCTION sort_ids STR_VAR ids="" BEGIN
           PATCH_IF IS_AN_INT num BEGIN
              SET max= num>max ? num : max
              READ_2DA_ENTRY_FORMER ids_array i 1 val
-             PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
+             PATCH_IF "%val%" STRING_COMPARE_CASE DMWW_UNUSED_FOR_DELETION BEGIN
+               PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
                 SPRINT temp $ids_entries("%num%")
                 SPRINT $ids_entries("%num%") "%temp% %val%"
-             END ELSE BEGIN
+               END ELSE BEGIN
                 SPRINT $ids_entries("%num%") "%val%"
+               END
              END
           END
        END
@@ -1214,7 +1201,7 @@ DEFINE_ACTION_FUNCTION sort_ids STR_VAR ids="" BEGIN
    COPY ".../stratagems-inline/blank" "override/%ids%.ids"
        INSERT_2DA_ROW 0 2 "DW_SORT_IDS_PLACEHOLDER"
        SET rowcount=0
-       FOR (num=0;num<max;num+=1) BEGIN
+       FOR (num=0;num<=max;num+=1) BEGIN
           PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
              SPRINT list $ids_entries("%num%")
              WHILE "%list%" STRING_COMPARE "" BEGIN

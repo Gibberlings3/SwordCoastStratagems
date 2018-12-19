@@ -263,7 +263,13 @@ BEGIN
                     END
                     COPY "%resource_loc%/%spellname%/%BASH_FOR_FILE%" "%install_loc%/%new_resref%.%BASH_FOR_EXT%"
                        REPLACE_TEXTUALLY "%old_spell_resref%" "%new_spell_resref%"
-                       LPF apply_to_strrefs STR_VAR arguments=strref_updater filename="%BASH_FOR_RES%" file_ext="%BASH_FOR_EXT%" END
+                       PATCH_MATCH "%BASH_FOR_EXT%" WITH
+                       2da BEGIN
+                          LPF apply_to_strrefs_2da STR_VAR arguments=strref_updater END
+                       END
+                       DEFAULT
+                          LPF apply_to_strrefs STR_VAR arguments=strref_updater filename="%BASH_FOR_RES%" file_ext="%BASH_FOR_EXT%" END
+                       END
                    // end of copy
                        // sort out projectiles and summons
                     ACTION_MATCH "%BASH_FOR_EXT%" WITH
@@ -291,7 +297,7 @@ BEGIN
                                     secondary_pro=>"secondary_pro in adjust_projectile_number"
                                  END
                                  PRINT "%new_resref% %install_loc%"
-                             //    LAF edit_pro STR_VAR pro="%new_resref%" locabs="%install_loc%" edits=patch_data END
+                                 LAF edit_pro STR_VAR pro="%new_resref%" locabs="%install_loc%" edits=patch_data END
 
                               END
                           END
@@ -356,6 +362,20 @@ BEGIN
     
     LAF process_table STR_VAR function=remap_spell_resrefs_helper table="spells_used.2da" locabs="%resource_loc%" END
 
+    ACTION_IF FILE_EXISTS_IN_GAME "7eyes.2da" BEGIN
+       COPY_EXISTING "7eyes.2da" override
+          PATCH_IF VARIABLE_IS_SET CLERIC_DESTRUCTION BEGIN
+             SPRINT replace "%CLERIC_DESTRUCTION%"
+             TO_UPPER replace
+             REPLACE_TEXTUALLY SPPR734 "%replace%"
+          END
+          PATCH_IF VARIABLE_IS_SET CLERIC_SYMBOL_HOPELESSNESS BEGIN
+             SPRINT replace "%CLERIC_SYMBOL_HOPELESSNESS%"
+             TO_UPPER replace
+             REPLACE_TEXTUALLY SPPR716 "%replace%"
+          END
+    END
+
     // manual tasks
     
     ACTION_IF "%afterwards%" STRING_COMPARE_CASE "" BEGIN
@@ -387,11 +407,23 @@ END
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION strref_updater STR_VAR offset=0 BEGIN
-   READ_LONG offset old
+DEFINE_PATCH_FUNCTION strref_updater 
+   INT_VAR strref=0
+   STR_VAR offset=0
+   RET strref_new
+BEGIN
+   SET strref_new=strref
+   PATCH_IF offset=0 BEGIN
+      SET old=strref
+   END ELSE BEGIN
+      READ_LONG offset old
+   END
    PATCH_IF VARIABLE_IS_SET $strref_map("%old%") BEGIN
-      SET new=$strref_map("%old%")
-      WRITE_LONG offset new
+      SET strref_new=$strref_map("%old%")
+      PATCH_IF offset>0 BEGIN
+          WRITE_LONG offset strref_new
+      END
+
    END
 END
 
@@ -436,6 +468,7 @@ BEGIN
       SET value=$anim_map("%arguments%")
    END ELSE BEGIN
       arguments +=1 // to force number
+      arguments -=1
       PATCH_IF VARIABLE_IS_SET $anim_missing("%arguments%") BEGIN
          LOOKUP_IDS_SYMBOL_OF_INT anim_name animate arguments
          SPRINT warning_string "Warning: animation %anim_name% does not exist in game. Reverting to MINOTAUR, which may look weird"
