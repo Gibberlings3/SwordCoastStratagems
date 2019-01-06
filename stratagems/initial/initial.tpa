@@ -186,23 +186,27 @@ COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    PATCH_IF value=0 BEGIN
       LPF FJ_CRE_EFF_V2 END
    END
-   LPF CRE_read_race RET race=value END
-   PATCH_MATCH ~%race%~ WITH
-   LYCANTHROPE DOPPLEGANGER BEGIN
+   // these edits are BG1/2 only
+   PATCH_IF !is_iwd BEGIN
+    LPF CRE_read_race RET race=value END
+    PATCH_MATCH ~%race%~ WITH
+    LYCANTHROPE DOPPLEGANGER BEGIN
        LPF CRE_general STR_VAR arguments=MONSTER END
-   END
-   DEFAULT END
-   LPF CRE_read_class RET class=value END
-   PATCH_MATCH ~%class%~ WITH
-   SKELETON SKELETON_WARRIOR BEGIN
+    END
+    DEFAULT END
+    LPF CRE_read_class RET class=value END
+    PATCH_MATCH ~%class%~ WITH
+    SKELETON SKELETON_WARRIOR BEGIN
       SPRINT skeleton ~%skeleton% %filename%~
-   END
-   DEFAULT END
-   // level adjustment - deals with the various BG1 creatures with Lev2=30
-   // hardcoded for speed
-   PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
+    END
+    DEFAULT END
+    // level adjustment - deals with the various BG1 creatures with Lev2=30
+    // hardcoded for speed
+    PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
       WRITE_BYTE 0x235 1
+    END
    END
+   // save and THAC0 fixes are in IWD too
    PATCH_IF !ignore_thac0 BEGIN
       LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
    END
@@ -219,7 +223,7 @@ BUT_ONLY
 VERBOSE
 
 // handle skeletons with weak resistances
-
+ACTION_IF "%skeleton%" STRING_COMPARE_CASE "" BEGIN
 ACTION_CLEAR_ARRAY patch_data
 ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
    match=>"class=SKELETON or class=SKELETON_WARRIOR"
@@ -239,6 +243,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data_sw BEGIN
 END
 LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data END
 LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data_sw END
+END
 
 END
 
@@ -276,7 +281,7 @@ DEFINE_ACTION_FUNCTION scs_ds_correction BEGIN
       timing=>0
       duration=>3
    END
-   LAF edit_spell STR_VAR spell="WIZARD_IMPRISONMENT DEMILICH_TRAP_SOUL WIZARD_MAZE PSIONIC_MAZE" editstring="patch_effect=>patch_data" END
+   LAF edit_spell STR_VAR spell="WIZARD_IMPRISONMENT DEMILICH_TRAP_SOUL WIZARD_MAZE PSIONIC_MAZE" allow_missing=1 editstring="patch_effect=>patch_data" END
    
    // a quirk in the Timestop opcode means its duration is half as long as stated (we'll fix an error with the sound effects at the same time)
    
@@ -514,6 +519,13 @@ END
 
 DEFINE_ACTION_FUNCTION install_spell_core BEGIN
 
+   // preamble piece: install BG2 version of Mordenkainen's Sword on IWD
+
+   ACTION_IF is_iwd BEGIN
+       OUTER_SPRINT component_loc iwdspells
+       LAF run STR_VAR files=bg2spells_morsword locbase=iwdspells END
+   END
+
    OUTER_SPRINT component_loc spell
    // definition blocks
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install BEGIN
@@ -557,14 +569,33 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            rebalance_force_missiles=>dw#forcemissiles
            create_boneguard=>dw#createboneguard
    END
+   ACTION_IF is_iwd BEGIN
+      OUTER_SPRINT $spell_install_iwd_divine("cure_cause_alignment") "dw#curecausealignment"
+   END
    // skip some, depending on install
    ACTION_IF !is_bg2 BEGIN
-      ACTION_FOR_EACH file IN fiend_summoning bonus_spell_scrolls freedom_scrolls spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
+      ACTION_FOR_EACH file IN bonus_spell_scrolls freedom_scrolls fiend_summoning BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF is_iwd BEGIN
+      LAF check_label STR_VAR label=dw#bg2spells_insect RET value END
+      ACTION_IF !value BEGIN
+         OUTER_SPRINT $skip_component("insect_plague") ""
+      END
+   END
+   ACTION_IF !(is_bg2 || is_iwd) BEGIN
+      ACTION_FOR_EACH file IN spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
          OUTER_SPRINT $skip_component("%file%") ""
       END
    END
    ACTION_IF !is_bg1 BEGIN
       ACTION_FOR_EACH file IN elemental_arrows extra_healing BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF is_iwd BEGIN
+      ACTION_FOR_EACH file IN elemental_summoning BEGIN
          OUTER_SPRINT $skip_component("%file%") ""
       END
    END

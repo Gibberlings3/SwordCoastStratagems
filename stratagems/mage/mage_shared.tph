@@ -8,6 +8,7 @@ LAF include STR_VAR locbase=mage file=spell_swaps.tph END
 DEFINE_PATCH_FUNCTION enforce_mage
      STR_VAR filename=""
              arguments=""
+             script="" // if set to a non-null value, this is the name of the script (and the script isn't installed on the CRE file) - used for IWD
 BEGIN
    INNER_ACTION BEGIN
       OUTER_SPRINT type mage
@@ -24,10 +25,17 @@ BEGIN
    LPF find_mage_type STR_VAR class race alignment kitdata filename RET class kit castertype spell_list spell_list_defensive END
    LPF get_caster_level INT_VAR modify_level STR_VAR type=mage castertype filename RET level END
    LPF allocate_mage_spells INT_VAR level spells_are_bg1 refinements STR_VAR class kit race filename spell_list spell_list_defensive RET spells chain_contingencies sequencers level_nine_max spell_turn_list END
-   LPF determine_caster_script_name STR_VAR prefix="mg" RET script END
+   PATCH_IF "%script%" STRING_EQUAL_CASE "" BEGIN
+     LPF determine_caster_script_name STR_VAR prefix="mg" RET script END
+     SET insert_script=1
+   END ELSE BEGIN
+     SET insert_script=0
+   END
    LPF build_mage_script INT_VAR level level_nine_max detect_invisible STR_VAR filename kit race script spells chain_contingencies sequencers spell_turn_list END
-   LPF strip_scs_scripts END
-   LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
+   PATCH_IF insert_script BEGIN
+       LPF strip_scs_scripts END
+       LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
+   END
 END
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 /////          Work out a mage's scriptbase, kit, and caster type
@@ -80,7 +88,7 @@ BEGIN
            LPF CRE_class STR_VAR arguments=FIGHTER_MAGE END
        END
    END
-   OGRE BEGIN
+   OGRE HARPY BEGIN
        SPRINT kit fighter_mage
        SPRINT spell_list fighter_mage
        SPRINT spell_list_defensive fighter_mage
@@ -241,6 +249,11 @@ BEGIN
         LAF warning STR_VAR warning= ~Trying to compile mage base script %base% with variables %variables%~ END
      END
      OUTER_SPRINT variables_here "%variables%%chain_contingencies%%sequencers%"
+     ACTION_IF is_iwd BEGIN
+        OUTER_SPRINT variables_here "%variables_here%&scsvar_help_if_iwd=help&666=89&777=189&groupcheck=InMyGroup(LastHeardBy(Myself))"
+     END ELSE BEGIN
+        OUTER_SPRINT variables_here "%variables_here%&scsvar_help_if_iwd=null"
+     END
      ACTION_TO_UPPER filename
      ACTION_IF VARIABLE_IS_SET $override("boolean" "mage" "%filename%") BEGIN
         OUTER_SPRINT booleans_extra $override("boolean" "mage" "%filename%")
@@ -515,6 +528,9 @@ BEGIN
       cleric_mage druid_mage BEGIN
          SPRINT class_here mage
       END
+      fighter_mage_cleric BEGIN
+         SPRINT class_here fighter_mage
+      END
       DEFAULT
          SPRINT class_here "%class%"
       END
@@ -642,7 +658,7 @@ BEGIN
                           SPRINT kit_seq fighter_mage
                           SPRINT kit_seq_minor elder_orb
              END
-             mind_flayer BEGIN
+             mind_flayer fighter_mage_cleric BEGIN
                           SPRINT kit_seq fighter_mage
                           SPRINT kit_seq_minor fighter_mage
              END

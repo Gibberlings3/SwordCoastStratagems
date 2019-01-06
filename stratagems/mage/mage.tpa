@@ -47,7 +47,7 @@ BEGIN
       // resources
 
       LAF make_mage_resources END
-      ACTION_IF is_bg2 BEGIN
+      ACTION_IF is_bg2 || is_iwd BEGIN
          LAF build_wish_spell END
          LAF mislead END
       END
@@ -63,7 +63,12 @@ BEGIN
 
       // core
 
+ ACTION_IF is_iwd BEGIN
+   ACTION_IF !(version=1) BEGIN
+      LAF run STR_VAR file=mage_iwd version END
+   END
 
+ END ELSE BEGIN  // end of IWD part
    ACTION_IF (version=0 || version=2) BEGIN
       LAF mage_edits_before END
    END
@@ -79,17 +84,19 @@ BEGIN
    ACTION_IF (version=0 || version=4) BEGIN
       LAF mage_edits_after END
    END
+ END
 
-   ACTION_IF (version=0 || version=5) BEGIN
+ ACTION_IF (version=0 || version=5) BEGIN
       // cleric-mages
 
-      LAF check_label STR_VAR label=dw#priest RET value END
-      ACTION_IF value BEGIN
+     LAF check_label STR_VAR label=dw#priest RET value END
+     ACTION_IF value BEGIN
               LAF run STR_VAR file=clericmage locbase="caster_shared/clericmage" END
-      END
+     END
 
+     ACTION_IF is_bg2 BEGIN
       // beholder mages
-      
+
       LAF check_label STR_VAR label=dw#beholder RET value END
       ACTION_IF value BEGIN
           LAF include STR_VAR file=beholder.tpa locbase=beholder END
@@ -111,7 +118,9 @@ BEGIN
          OUTER_SPRINT component_loc ascension
          LAF run STR_VAR file=abazigal_finale END
       END
-   END
+     END
+ END
+
 
 END
 
@@ -730,10 +739,6 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
 
    LAF install STR_VAR files=dw#nahal.spl location=resource END
 
-   // lich fear
-   
-   LAF clone_spell STR_VAR spell="%DEMON_FEAR%=>dw#licfi" editstring="say_name=>304" END
-
    // melf, and EB
 
    LAF install STR_VAR files=dw#melf.spl location=resource END
@@ -750,13 +755,27 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
       BUT_ONLY
    END
 
+    //bg2-only section
+
   ACTION_IF is_bg2 BEGIN
+
+         LAF run STR_VAR file=friendly_fiends locbase=fiend tra=fiend END
+       // copies required for CC
+
+       ACTION_FOR_EACH copy_name IN dw#sfc1 dw#sfc2 BEGIN
+         COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" "override/%copy_name%.spl" REPLACE_TEXTUALLY "%WIZARD_SUMMON_FIEND%" "%copy_name%"
+       END
+
 
    // if SR is not installed, mark Mord. swords as vulnerable to ADHW
 
    ACTION_IF !demivrgvs BEGIN
         LAF edit_creature STR_VAR creature=sword01 editstring=~add_items=>dw#morhw~ END
    END
+   
+   // lich fear
+   LAF clone_spell STR_VAR spell="%DEMON_FEAR%=>dw#licfi" editstring="say_name=>304" END
+
     
     
 
@@ -811,7 +830,6 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
     // fiends and celestials
     
 
-    LAF run STR_VAR file=friendly_fiends locbase=fiend tra=fiend END
     ACTION_IF demivrgvs BEGIN
         LAF ssl_to_bcs STR_VAR script="dv_deva" locbase=fiend location="ssl/summon" variables="ImprovedFiends=True" rename_to=devagood END
         LAF ssl_to_bcs STR_VAR script="dv_plan" locbase=fiend location="ssl/summon" variables="ImprovedFiends=True" rename_to=planet END
@@ -821,11 +839,7 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
     LAF clone_script STR_VAR script="devagood=>devaevil planet=>plangood planet=>planevil" END
     LAF clone_script STR_VAR script="devagood=>devaevil planet=>plangood planet=>planevil" END
 
-    // copies required for CC
 
-    ACTION_FOR_EACH copy_name IN dw#sfc1 dw#sfc2 BEGIN
-         COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" "override/%copy_name%.spl" REPLACE_TEXTUALLY "%WIZARD_SUMMON_FIEND%" "%copy_name%"
-    END
 
 
     // smart clone resources
@@ -834,6 +848,8 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
     // LAF install  INT_VAR overwrite=0 STR_VAR files=~dw#licim.spl dw#vamim.spl~ location=resource END // no need to install as resources already present
 
   END // end of BG2-only section
+
+
 
     // tutu fixes
 
@@ -868,7 +884,11 @@ DEFINE_ACTION_FUNCTION ~build_wish_spell~ BEGIN
 
        ACTION_FOR_EACH ind IN 1 2 3 4 5 6 7 BEGIN
           LAF clone_spell STR_VAR spell=~spwi919=>dw#wisg%ind%~ editstring=~patch_effect_inline=>"match=>opcode=67 resource=>dw#wish%ind%"~ END
-          LAF clone_creature STR_VAR creature=~wish02=>dw#wish%ind%~ editstring=~swap_script=>"wish01=>dw#wish%ind%" immunity_to_spell=>%DRAGON_WING_BUFFET%~ END
+          OUTER_SPRINT editstring ~swap_script=>"wish01=>dw#wish%ind%"~
+          ACTION_IF is_bg2 BEGIN
+              OUTER_SPRINT editstring ~%editstring% immunity_to_spell=>%DRAGON_WING_BUFFET%~
+          END
+          LAF clone_creature STR_VAR creature=~wish02=>dw#wish%ind%~ editstring END
        END
 
        LAF install STR_VAR files=~dw#wish1.baf~ location=resource END

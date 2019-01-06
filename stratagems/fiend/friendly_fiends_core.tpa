@@ -5,6 +5,7 @@ DEFINE_ACTION_FUNCTION friendly_fiends_core
         STR_VAR script_loc=""     // carries the locbase for the scripts
                 tph_loc=""        // where to find the maker for fiend spells
                 boot_loc="resource"       // where to find the fiend-hiding boots
+                missing_loc="resource/missing" // where to find the IWD missing spells
 BEGIN
   LAF check_label STR_VAR label=dw#friendly_fiends RET value END
   ACTION_IF !value BEGIN
@@ -22,12 +23,20 @@ BEGIN
     LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
     LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
 
+    // on IWD install, SPIN996-9 are missing (even though used by core scripts, i.e. this is an IWDEE bug).
+    // Replace them.
+    ACTION_IF is_iwd BEGIN
+     ACTION_BASH_FOR "%scsroot%/%component_loc%/%missing_loc%" ".*\.spl" BEGIN
+       COPY "%BASH_FOR_FILESPEC%" override
+     END
+    END
+
     // make needed spells
 
     // vanilla is:
     // - nabassu (demnabsu): silence once; Vampiric Touch and paralysis at will; death gaze overlaid
     // - glabrezu (demglasu): Remove Magic once; PW:Stun at will (but maybe make 7 x)
-    // - pit fiend (dempitsu): Fear once; Remove Magic once; Symbol: Fear and Deathknight Fireball at will
+    // - pit fiend (dempitsu): Fear once; Remove Magic once; Symbol: Fear (or Pain if available) and Deathknight Fireball at will
 
     // extra from SCS summon-alignment-based-fiends is:
     // - bone fiend (dw#bfsum): Fear once; II at will; Cone of Cold 3x/day
@@ -52,9 +61,14 @@ BEGIN
     END
     LAF edit_creature STR_VAR creature=demglasu edits=patch_data END
 
+    ACTION_IF iwd_divine BEGIN
+       OUTER_SPRINT symbol CLERIC_SYMBOL_PAIN
+    END ELSE BEGIN
+       OUTER_SPRINT symbol WIZARD_SYMBOL_FEAR
+    END
     MAKE_PATCH
        remove_spells=>all
-       add_spells=>"INNATE_FIEND_FIREBALL INNATE_FIEND_SYMBOL_FEAR WIZARD_DISPEL_MAGIC"
+       add_spells=>"INNATE_FIEND_FIREBALL %symbol% WIZARD_DISPEL_MAGIC"
     END
     LAF edit_creature STR_VAR creature=dempitsu edits=patch_data END
 
@@ -209,13 +223,13 @@ END
 
     // if appropriate, make the Grimoires of Demon Binding
     
-    ACTION_IF (grimoire && enhanced_edition && !demivrgvs) BEGIN
+    ACTION_IF (grimoire && enhanced_edition && !demivrgvs && is_bg2) BEGIN
        LAF grimoire END
     END
 
     // if enhanced edition (and no Demi), make the damnation resources
     
-    ACTION_IF enhanced_edition && !demivrgvs BEGIN
+    ACTION_IF enhanced_edition && !demivrgvs && is_bg2 BEGIN
        LAF damnation END
     END
   END

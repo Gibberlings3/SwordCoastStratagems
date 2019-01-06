@@ -36,7 +36,10 @@ DEFINE_PATCH_FUNCTION dragon_general BEGIN
    PATCH_MAKE_PATCH
       immunity_to_opcode=>~74 13 55 211 19~//immunity to blindness/slay/death/imprisonment/Mind Flayer
       immunity_to_string=>~1474 32089 14674~ // blindness, devour brain
-      immunity_to_spell=>~%DRAGON_WING_BUFFET% %WIZARD_IMPRISONMENT%~
+      immunity_to_spell=>~%WIZARD_IMPRISONMENT%~
+   END
+   PATCH_IF !is_iwd BEGIN
+      SPRINT $patch_data("immunity_to_spell'") "%DRAGON_WING_BUFFET%"
    END
    LPF apply_patches STR_VAR edits=patch_data file_ext=CRE END
  END
@@ -56,6 +59,23 @@ DEFINE_ACTION_FUNCTION dragon_resources_shared BEGIN
    LAF check_label STR_VAR label=dw#dragon_resources RET value END
    ACTION_IF !value BEGIN
 
+       LAF make_label STR_VAR label=dw#dragon_resources END
+       LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
+
+       ////////////////
+       // sequencer data
+       ////////////////
+
+       MAKE_PATCH
+          minor_sequencer=>spwi420b
+          sequencer=>spwi710b
+          trigger=>spwi809b
+       END
+       ACTION_PHP_EACH patch_data AS entry=>resref BEGIN
+           OUTER_SPRINT "%entry%_icon" "%resref%"
+       END
+
+
     ////////////////
     // difficulty
     ////////////////
@@ -69,31 +89,34 @@ DEFINE_ACTION_FUNCTION dragon_resources_shared BEGIN
    // (may also be built by Anadramatis)
    /////////////////
 
-   LAF clone_spell STR_VAR spell=~%WIZARD_SPELL_IMMUNITY_ABJURATION%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION%=>dw#0d592~
-                           editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
-   END
-
-      // versions of SI:Abj, SI:Div without the animation, which looks silly on dragons
-      // (may also be built by Anadramatis)
-
+   ACTION_IF !is_iwd BEGIN
       LAF clone_spell STR_VAR spell=~%WIZARD_SPELL_IMMUNITY_ABJURATION%=>dw#0d590 %WIZARD_SPELL_IMMUNITY_DIVINATION%=>dw#0d592~
                            editstring=~add_effect_inline=>"opcode=>291 target=>1 parameter2=>1 timing=>1"~
       END
+   END
 
 
-       LAF make_label STR_VAR label=dw#dragon_resources END
-       LAF include STR_VAR file=caster_shared.tph locbase=caster_shared END
 
-       MAKE_PATCH
-          minor_sequencer=>spwi420b
-          sequencer=>spwi710b
-          trigger=>spwi809b
+       // add missing innates on IWD
+       ACTION_IF is_iwd BEGIN
+          LAF add_spell_to_ids STR_VAR typename=innate idsname=DRAGON_FEAR RET newname END
+          COPY "%scsroot%/%component_loc%/resource/spin895.spl" "override/%newname%.spl"
+          LAF add_spell_to_ids STR_VAR typename=innate idsname=DRAGON_STONE_SKIN RET newname END
+          COPY "%scsroot%/%component_loc%/resource/spin694.spl" "override/%newname%.spl"
+          LAF add_spell_to_ids STR_VAR typename=innate idsname=SPELL_DEFLECTION_NO_VISUAL RET newname END
+          COPY
+             "%scsroot%/%component_loc%/resource/spin710.spl" "override/%newname%.spl"
+             "%scsroot%/%component_loc%/resource/spin710b.spl" "override/%newname%b.spl"
+              REPLACE_TEXTUALLY spin710 "%newname%"
+          LAF add_spell_to_ids STR_VAR typename=innate idsname=DRAGON_LOWER_COLD RET newname END
+          COPY "%scsroot%/%component_loc%/resource/spin682.spl" "override/%newname%.spl"
+          OUTER_SPRINT DRAGON_LOWER_COLD "%newname%"
+          MAKE_PATCH
+             match=>"opcode=30"
+             opcode=>28
+          END
+          LAF edit_spell STR_VAR spell=DRAGON_LOWER_COLD editstring="patch_effect=>patch_data" END
        END
-       ACTION_PHP_EACH patch_data AS entry=>resref BEGIN
-           OUTER_SPRINT "%entry%_icon" "%resref%"
-       END
-
-       LAF process_table STR_VAR table=dragon_triggers.2da locbase=dragon function=build_dragon_trigger END
 
        // innate spells need to properly be innate
        MAKE_PATCH
@@ -101,7 +124,20 @@ DEFINE_ACTION_FUNCTION dragon_resources_shared BEGIN
             spell_type=>innate
             patch_ability_inline=>"ability_icon_loc=>4"
        END
-       LAF edit_spell STR_VAR spell="PROTECTION_MAGIC_WEAPON_NOEFF DRAGON_LOWER_ELECTRICAL DRAGON_LOWER_FIRE BLACK_DRAGON_PLANT BLACK_DRAGON_INSECT DRAGON_SILENCE DRAGON_STONE_SKIN" edits=patch_data END
+       ACTION_IF is_iwd BEGIN
+          OUTER_SPRINT spell "DRAGON_FEAR DRAGON_STONE_SKIN DRAGON_LOWER_COLD"
+       END ELSE BEGIN
+          OUTER_SPRINT spell "PROTECTION_MAGIC_WEAPON_NOEFF DRAGON_LOWER_ELECTRICAL DRAGON_LOWER_COLD DRAGON_LOWER_FIRE BLACK_DRAGON_PLANT BLACK_DRAGON_INSECT DRAGON_SILENCE DRAGON_STONE_SKIN"
+       END
+       LAF edit_spell STR_VAR spell edits=patch_data END
+
+       ACTION_IF is_iwd BEGIN
+          OUTER_SPRINT table dragon_triggers_iwd.2da
+       END ELSE BEGIN
+          OUTER_SPRINT table dragon_triggers.2da
+       END
+       LAF process_table STR_VAR table locbase=dragon function=build_dragon_trigger END
+
    END
 END
 

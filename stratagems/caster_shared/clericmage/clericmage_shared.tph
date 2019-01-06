@@ -2,12 +2,13 @@ LAF include STR_VAR locbase=mage file=mage_shared.tph END
 LAF include STR_VAR locbase=priest file=priest_shared.tph END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
-/////          Enforce being a mage
+/////          Enforce being a cleric/mage
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION enforce_clericmage
      STR_VAR filename=""
              arguments=""
+             script="" // if set to a non-null value, this is the name of the script (and the script isn't installed on the CRE file) - used for IWD
 BEGIN
 
    // allocate mage spells
@@ -51,13 +52,19 @@ BEGIN
    LPF CRE_level1 INT_VAR arguments=priest_level END
    LPF CRE_level2 INT_VAR arguments=mage_level END
 
-   // build script
-   LPF determine_caster_script_name STR_VAR filename prefix="cm" RET script END
+   // build script                          
+   PATCH_IF "%script%" STRING_EQUAL_CASE "" BEGIN
+     LPF determine_caster_script_name STR_VAR prefix="cm" RET script END
+     SET insert_script=1
+   END ELSE BEGIN
+     SET insert_script=0
+   END
    SPRINT spells "%spells_priest% %spells_mage%"
    LPF build_clericmage_script INT_VAR level=mage_level level_nine_max level_seven_max STR_VAR filename kit race script spells chain_contingencies sequencers END
-   LPF strip_scs_scripts END
-   LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
-
+   PATCH_IF insert_script BEGIN
+       LPF strip_scs_scripts END
+       LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
+   END
 
 END
 
@@ -77,6 +84,11 @@ BEGIN
      LAM read_in_instant_prebuff_spells
      OUTER_SPRINT scriptname ~%script%~
      OUTER_SPRINT variables_here "Placeholder=Placeholder%chain_contingencies%%sequencers%"
+     ACTION_IF is_iwd BEGIN
+        OUTER_SPRINT variables_here "%variables_here%&scsvar_help_if_iwd=help&666=89&777=189&groupcheck=InMyGroup(LastHeardBy(Myself))"
+     END ELSE BEGIN
+        OUTER_SPRINT variables_here "%variables_here%&scsvar_help_if_iwd=null"
+     END
      
      OUTER_SET spell_level = $caster_level_to_spell_level("mage" "%level%")
      OUTER_FOR (i=1;i<=spell_level;i+=1) BEGIN
@@ -98,13 +110,18 @@ BEGIN
         PRINT "variables:%variables_here%%variables_extra%"
         PRINT "spells: %spells%"
      END
+     ACTION_IF "%race%" STRING_EQUAL_CASE rakshasa BEGIN
+        OUTER_SPRINT script_base cmraksh
+     END ELSE BEGIN
+        OUTER_SPRINT script_base cleric_mage
+     END
      ACTION_IF ( INDEX (ALACRITY "%spells%") >=0 | INDEX (WISH "%spells%") >=0) BEGIN
         LAF ssl_to_baf STR_VAR variables="%variables_here%%variables_extra%" script=cleric_mage location=~clericmage/ssl~ locbase=caster_shared rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
         COPY_EXISTING "%workspace%/ssl_out/cleric_mage.baf" "%workspace%/ssl_out/%scriptname%.baf"
             REPLACE_TEXTUALLY ~/\*slowspell\*/~ ~OR(2)CheckStat(Myself,0,WIZARD_IMPROVED_ALACRITY)Global("alacritycompromise","LOCALS",1)~
         COMPILE EVALUATE_BUFFER "%workspace%/ssl_out/%scriptname%.baf"
      END ELSE BEGIN
-        LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script=cleric_mage location=~clericmage/ssl~ locbase=caster_shared rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
+        LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script="%script_base%" location=~clericmage/ssl~ locbase=caster_shared rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
      END
 END
 

@@ -1,6 +1,6 @@
 LAF include STR_VAR files="hla.tph" locbase=lib END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////                                                      
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -74,7 +74,7 @@ BEGIN
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-////  read in spell choices (spelltype is priest or mage, base_folder_spells_X is set in always and is iwd, demivrgvs, or vanilla)
+////  read in spell choices (spelltype is priest or mage, base_folder_spells_X is set in always and is iwd, iwdtrue, demivrgvs, or vanilla)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -102,7 +102,17 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
       ACTION_IF FILE_EXISTS ~%scsroot%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~ BEGIN
          OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~
       END ELSE BEGIN
-         OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
+         ACTION_MATCH "%base_folder_spells%" WITH
+         iwdtrue BEGIN
+            ACTION_IF FILE_EXISTS ~%scsroot%/%type%/spellchoices/iwd/%BASH_FOR_FILE%~ BEGIN
+                 OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/iwd/%BASH_FOR_FILE%~
+            END ELSE BEGIN
+                 OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
+            END
+         END
+         DEFAULT
+            OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
+         END
       END
       COPY ~%file_here%~ ~%workspace%~
           SPRINT ~kit~ ~%BASH_FOR_RES%~
@@ -190,7 +200,7 @@ END
 DEFINE_ACTION_MACRO read_in_individual_overrides BEGIN
  ACTION_IF !VARIABLE_IS_SET $individual_choices_read_in( ~%type%~) BEGIN
   OUTER_SET $individual_choices_read_in(~%type%~)=1
-  ACTION_FOR_EACH game IN bg1 bg2 BEGIN
+  ACTION_FOR_EACH game IN bg1 bg2 iwd BEGIN
       ACTION_IF $is( ~%game%~)=1 BEGIN
          ACTION_IF ~%game%~ STRING_EQUAL_CASE ~bg1~ BEGIN OUTER_SPRINT macro_tutuvar ~%tutu_var%~ END ELSE BEGIN OUTER_SPRINT macro_tutuvar ~~ END
          ACTION_FOR_EACH macro_type IN spellchoice kit level alignment boolean variable BEGIN
@@ -1054,7 +1064,7 @@ END
 // Build sequencer preparation
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION build_sequencer_preparatory 
+DEFINE_ACTION_FUNCTION build_sequencer_preparatory
 BEGIN
    ACTION_FOR_EACH copy IN dw#sfc1 dw#sfc2 BEGIN
       COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" "override/%copy%.spl"
@@ -1090,13 +1100,18 @@ BEGIN
    WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
       LPF return_first_entry STR_VAR list RET entry list END
       PATCH_MATCH "%entry%" WITH
+         iwdtrue BEGIN
+            PATCH_IF is_iwd BEGIN
+               SET value=1
+            END
+         END
          iwd BEGIN
-            PATCH_IF (iwd_arcane && !demivrgvs) BEGIN
+            PATCH_IF (iwd_arcane && !demivrgvs && !is_iwd) BEGIN
                SET value=1
             END
          END
          iwdee BEGIN
-            PATCH_IF (iwd_arcane && !demivrgvs && enhanced_edition) BEGIN
+            PATCH_IF (iwd_arcane && !demivrgvs && enhanced_edition &&!is_iwd) BEGIN
                SET value=1
             END
          END
@@ -1317,4 +1332,32 @@ BEGIN
                END
           END
      END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+/// unique-ify summons in an iwd script
+/////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION unique_iwd_script_summons
+   INT_VAR counter_start=0
+   STR_VAR original=""
+           new_prefix=""
+   RET counter_end
+BEGIN
+           SET counter=counter_start
+           DECOMPILE_AND_PATCH BEGIN
+              REPLACE_EVALUATE
+              ~CreateCreature("%original%",\[\([0-9]+\.[0-9]+\)\],\([NESW]+\))~
+              BEGIN
+                  SPRINT crefile "%new_prefix%%counter%"
+                  counter +=1
+                  INNER_ACTION BEGIN
+                       COPY_EXISTING "%original%.cre" "override/%crefile%.cre"
+                  END
+              END
+              ~CreateCreature("%crefile%",[%MATCH1%],%MATCH2%)~
+           END
+           SET counter_end=counter
+
 END

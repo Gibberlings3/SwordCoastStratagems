@@ -476,19 +476,17 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ARE_swap_scripts
-     STR_VAR arguments=""
-BEGIN
-   LPF patch_entry STR_VAR arguments="ARE_swap_script_core=>~%arguments%~ type=>actor" file_ext filename END
-END
 
-DEFINE_PATCH_FUNCTION ARE_swap_script_core
+DEFINE_PATCH_FUNCTION ARE_swap_scripts
      INT_VAR
         offset_base=0
      STR_VAR
         arguments=""
 BEGIN
-   LPF process_pair STR_VAR input= ~%arguments%~ RET oldscript=key newscript=value END
+   LPF return_first_pair STR_VAR list= ~%arguments%~ RET oldscript=key newscript=value END
+   PATCH_IF "%newscript%" STRING_EQUAL_CASE null BEGIN
+      SPRINT newscript ""
+   END
    PATCH_FOR_EACH script IN override class race general default specifics BEGIN
       LPF ~ARE_read_script_%script%~ INT_VAR offset_base=offset_base RET scriptvalue=value END
       PATCH_IF ~%scriptvalue%~ STRING_EQUAL_CASE ~%oldscript%~ BEGIN
@@ -496,6 +494,50 @@ BEGIN
       END
    END
 END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ARE_swap_scripts") ""
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               reorders scripts so that identified script (which should be in the allocated scripts) is at the bottom
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ARE_move_script_to_bottom
+    STR_VAR arguments=""
+            filename=""
+BEGIN
+    CLEAR_ARRAY temp_array
+    WHILE "%arguments%" STRING_COMPARE_CASE "" BEGIN
+       LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+       TO_LOWER entry
+       SPRINT $temp_array("%entry%") ""
+    END
+    READ_ASCII offset_base actorname (0x20)
+    READ_ASCII (offset_base+0x80) actorresource
+    SET found_script=0
+    SET lowest_slot=0
+    SET last_slot=0
+    FOR (slot=0;slot<6;slot+=1) BEGIN
+      READ_ASCII (offset_base + 0x50 + 8*slot) script
+      TO_LOWER script
+      PATCH_IF "%script%" STRING_COMPARE_CASE "" BEGIN
+       PATCH_IF found_script BEGIN
+          WRITE_ASCIIE (offset_base + 0x50 + 8*last_slot) "%script%" (8)
+          WRITE_ASCIIE (offset_base + 0x50 + 8*slot) "%lower_script%" (8)
+          SET last_slot=slot
+       END ELSE BEGIN
+          PATCH_IF VARIABLE_IS_SET $temp_array("%script%") BEGIN
+             SET found_script=1
+             SET last_slot=slot
+             SPRINT lower_script "%script%"
+          END
+       END
+      END
+    END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ARE_move_script_to_bottom") ""
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
