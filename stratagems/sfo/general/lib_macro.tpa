@@ -155,27 +155,27 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
     COPY_EXISTING ~spell.ids~ ~override~
          READ_2DA_ENTRIES_NOW ~unique_macro_spell_array~ 2
          FOR (i=0;i<~unique_macro_spell_array~;i=i+1) BEGIN
-          READ_2DA_ENTRY_FORMER ~unique_macro_spell_array~ i 0 ~spellcode~
-          PATCH_IF !~%spellcode%~ STRING_EQUAL_CASE ~IDS~ BEGIN
-           INNER_PATCH_SAVE ~spellcode~ ~%spellcode%~ BEGIN
+          READ_2DA_ENTRY_FORMER ~unique_macro_spell_array~ i 0 ~spellcode_base~
+          PATCH_IF !~%spellcode_base%~ STRING_EQUAL_CASE ~IDS~ BEGIN
+           INNER_PATCH_SAVE ~spellcode~ ~%spellcode_base%~ BEGIN
               READ_ASCII 0x1 ~level~ (1)
               SET level -= 1
               DELETE_BYTES 0 1
               INSERT_BYTES 0 4
-              PATCH_IF (~spellcode~<2000) BEGIN
+              PATCH_IF (~spellcode_base~<2000) BEGIN
                    WRITE_ASCII 0x0 ~SPPR~ (4)
                    SPRINT ~spelltype~ ~priest~
               END ELSE
-              PATCH_IF (~spellcode~<3000) BEGIN
+              PATCH_IF (~spellcode_base~<3000) BEGIN
                    WRITE_ASCII 0x0 ~SPWI~ (4)
                    SPRINT ~spelltype~ ~wizard~
               END ELSE
-              PATCH_IF (~spellcode~<4000) BEGIN
+              PATCH_IF (~spellcode_base~<4000) BEGIN
                    WRITE_ASCII 0x0 ~SPIN~ (4)
                    SPRINT ~spelltype~ ~innate~
                    SET level=0
               END ELSE
-              PATCH_IF (~spellcode~<5000) BEGIN
+              PATCH_IF (~spellcode_base~<5000) BEGIN
                    WRITE_ASCII 0x0 ~SPCL~ (4)
                    SPRINT ~spelltype~ ~innate~
                    SET level=0
@@ -198,6 +198,15 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
             SET ~RESREF_%spellcode%_LEVEL~=level
             SPRINT  ~%spell_ID%_TYPE~ ~%spelltype%~
             SPRINT ~RESREF_%spellcode%_TYPE~ ~%spelltype%~
+            PATCH_IF !macro_spellcode_skip_scrolls BEGIN // we use this rather than just SYMBOL_OF_IDS because of the possibility of multiple entries in spell.ids
+           
+             PATCH_IF VARIABLE_IS_SET $spellcode_map("%spellcode_base%") BEGIN
+               SPRINT temp $spellcode_map("%spellcode_base%")
+               SPRINT $spellcode_map("%spellcode_base%") "%temp% %spell_ID%"
+             END ELSE BEGIN
+                SPRINT $spellcode_map("%spellcode_base%") "%spell_ID%"
+             END
+            END
            END
         END
     BUT_ONLY
@@ -205,7 +214,7 @@ DEFINE_ACTION_MACRO ~read_in_spellcodes~ BEGIN
        PRINT "Adding bespoke spell variables; press a key to continue"
        ACTION_READLN blook
     END
-    
+
      <<<<<<<< .../stratagems-inline/extra_spells.2da
        CLERIC_CHROMATIC_ORB           SPDR101 0 priest
        CLERIC_WEB                     SPDR201 1 priest
@@ -344,7 +353,7 @@ DEFINE_PATCH_MACRO log_scroll_main BEGIN
        GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
        PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
           READ_SHORT fx_off opcode
-          PATCH_IF (opcode=146 || opcode=147 || opcode=148) BEGIN
+          PATCH_IF (opcode=146 || opcode=147 || opcode=148) & !success BEGIN
              READ_ASCII (0x14 + fx_off) resref
              INNER_PATCH_SAVE code "%resref%" BEGIN
                    READ_ASCII 0x0 start (4)
@@ -364,15 +373,18 @@ DEFINE_PATCH_MACRO log_scroll_main BEGIN
                 SET success=0
              END
              PATCH_IF success BEGIN
-                    LOOKUP_IDS_SYMBOL_OF_INT spellname spell code
+               SPRINT list $spellcode_map("%code%")
+               WHILE  "%list%" STRING_COMPARE_CASE "" BEGIN
+                    LPF return_first_entry STR_VAR list RET spellname=entry list END
                     TO_UPPER spellname
                     SPRINT  ~%spellname%_SCROLL~ ~%filename%~
                     PATCH_MATCH "%spellname%" WITH
                        "WIZARD_.*" BEGIN
                        SPRINT $arcane_scroll_list("%spellname%") "%filename%"
                        END
-                       DEFAULT
-                       END
+                    DEFAULT
+                    END
+               END
              END
          END
        END
