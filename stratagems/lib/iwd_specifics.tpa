@@ -1,0 +1,251 @@
+DEFINE_ACTION_FUNCTION iwd_specifics BEGIN
+
+   // remove unused entries from specific.ids
+   
+   COPY_EXISTING "specific.ids" override
+      PATCH_FOR_EACH entry IN NORMAL NO_MAGIC MAGIC SHARRAN SHOU_MONK SHOU_FLAYER QUADIM_SPIDER CULTIST CULAK_SPIDER BARBARIAN SNOW_TROLL WATER_DWELLING BEGIN
+         REPLACE_TEXTUALLY "%entry%" "DMWW_UNUSED_FOR_DELETION"
+      END
+   BUT_ONLY
+   LAF sort_ids STR_VAR ids=specific END  // sort here to remove redundant entries
+
+   APPEND "specific.ids" "103 LIZARD_GABBER_1" UNLESS "103 +LIZARD_GABBER_1"
+   APPEND "specific.ids" "104 LIZARD_GABBER_2" UNLESS "103 +LIZARD_GABBER_2"
+
+   // setup water-specifics rerouting
+   LAF reroute_water_specifics RET stat_ind END
+   
+   // main allocation loop
+   COPY_EXISTING_REGEXP GLOB ".*\.cre" override
+       // water specifics
+       LPF CRE_read_specifics RET specific_old=value END
+       PATCH_IF specific_old=150 BEGIN
+          LPF ADD_CRE_EFFECT INT_VAR opcode=328 target=2 timing=1 parameter2=stat_ind special=1 END
+          LPF CRE_specifics STR_VAR arguments=0 END
+       END
+       // main allocation
+       LPF CRE_read_race RET race=value END
+       LPF CRE_read_class RET class=value END
+       LPF CRE_read_general RET general=value END
+       LPF CRE_read_gender RET gender=value END
+       LPF CRE_read_animation RET animation=value END
+       LPF CRE_read_allegiance RET allegiance=value END
+       LPF determine_genai_specifics STR_VAR race class general gender animation allegiance filename="%SOURCE_RES%" RET specific END
+       PATCH_IF "%specific%" STRING_COMPARE_CASE NONE BEGIN
+            LPF get_or_add_to_IDS INT_VAR minimum=50 STR_VAR to_add="%specific%" idsfile=SPECIFIC RET arguments=idsnum END
+            LPF CRE_specifics STR_VAR arguments END
+       END
+   BUT_ONLY
+   
+   // tidy up
+   
+   LAF sort_ids STR_VAR ids=specific END
+
+END
+
+///////////////////////////////////////////////////////////////////
+//  ADHW uses a Specifics code to apply its extra effects to
+//  water-based creatures. We'll reroute this to a splstate-based
+//  system.
+///////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION reroute_water_specifics RET stat_ind BEGIN
+
+           LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id=WATER_CREATURE RET stat_ind END
+           LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=equal RET splprot=value END
+           MAKE_PATCH
+              patch_effect_inline=>"match=>opcode=177 opcode=>326 parameter1=>%stat_ind% parameter2=>%splprot%"
+           END
+           LAF edit_spell STR_VAR spell="%WIZARD_ABI_DALZIMS_HORRID_WILTING% SPWISH32" edits=patch_data END
+
+END
+
+///////////////////////////////////////////////////////////////////
+//  Actually decide on the right specifics
+///////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION determine_genai_specifics
+     STR_VAR 
+     general=""
+     race=""
+     class=""
+     animation=""
+     filename=""
+     allegiance=""
+     gender=""
+     RET specific
+BEGIN
+  // filters
+  PATCH_IF ("%gender%" STRING_EQUAL_CASE summoned || "%general%" STRING_EQUAL_CASE dead) BEGIN
+      SPRINT specific NONE
+  END ELSE BEGIN
+   // outermost allocation: based on actual filename
+   PATCH_MATCH "%filename%" WITH // some specific allocations
+   fingol01 fingol02 fincor01 fincor02 belhif BEGIN
+      SPRINT specific BELHIFET_FINALE
+   END
+   "purvish.*" "pomimg.*" "vexing.*" demglasu demnabsu dempitsu devagood devaevil plangood planevil seer seercut seercut2 kaarund cutspy cutspy2 "bparty.*"
+   cdpresio alpheusd purvis "hparty.*" elemchan elemsunn verbeegd animtest bperdiem cdbethla bharken badson sincylia
+   dirtllew eepomab mercthfd mercwr2d wish01 wish02 wizeye wsbird wylfdene planwish
+   plybass plyflind mouth nym famdust famfer famimp famquas gasform1 gasform2 gasform3 charbase digby elisia
+   cook edion sbethla vera bandoth cdnefgas cyearthe "druid.*" dver shmind shearth
+   kalabac cdshwele
+   BEGIN
+      SPRINT specific NONE
+   END
+   "mdk.*"
+   BEGIN
+      SPRINT specific MDK
+   END
+   verbeeg rtfgverb acolyte acolyted
+   BEGIN
+      SPRINT specific FORGOTTENGOD
+   END
+   icasa dlwater BEGIN
+      SPRINT specific SAHUAGIN
+   END
+   jklshm jklsum BEGIN
+      SPRINT specific DOG
+   END
+   trollt talonam talonaf BEGIN
+      SPRINT specific TALONITE
+   END
+   jorn BEGIN
+      SPRINT specific BARBARIAN_WARRIOR_TAN
+   END
+   ilmadia drowpm BEGIN
+      SPRINT specific FIRE_GIANT
+   END
+   presio presapp presfig lordm BEGIN
+      SPRINT specific UNDEAD
+   END 
+   digby dolan doogal BEGIN
+      SPRINT specific IDIOT_BROTHERS
+   END
+   tarnsen BEGIN
+      SPRINT specific FIRE_CREATURE
+   END
+   drowsor drowspe drowvan ettin BEGIN
+      SPRINT specific GOBLINOID // this works as an upper-Dorns-Deep specific
+   END
+   ckinvst BEGIN
+      SPRINT specific RAKSHASA
+   END
+   tanarri BEGIN
+      SPRINT specific YUANTI_LIZARDMAN_TROLL
+   END
+   "cdcapv[1-8]a" arundel arundel1 everard everard2 hjollder hjolldrh lysanbar 
+   hroth hroth1 gareth kieran hermit kumirek
+   BEGIN
+      SPRINT specific INNOCENT
+   END
+   wtettin lysan BEGIN
+      SPRINT specific ICE_CREATURE_HOSTILE
+   END
+   kontik biknight adran criek shelhai alpheus mercwar1 mercwar2 mercthf pshar vaarglan BEGIN
+      SPRINT specific EVIL_PARTY
+   END
+   lddarchr kelly ldthief2 lddthie2 lddthie3 lddthief rldthief fleezum flozem 
+   fleezum2 flozem2 krakmag ilair invstlk malavon marketh seth sethh
+   BEGIN
+      SPRINT specific LOWER_DORNS_DEEP
+   END
+   uhlk8010 malavons cdigolem BEGIN
+      SPRINT specific MALAVON
+   END
+   DEFAULT // if filename doesn't fix it:
+    // next do undead, the only case identified under GENERAL
+     PATCH_IF "%general%" STRING_EQUAL_CASE undead BEGIN // almost all undead on the same filter, but shadowed creatures are separate
+        PATCH_MATCH "%animation%" WITH
+           ".*ELF.*" BEGIN
+              SPRINT specific SHADOWED_ELF
+           END
+           ".*ORC.*" ".*GOBLIN.*" BEGIN
+              SPRINT specific SHADOWED_GOBLINOID
+           END
+        DEFAULT
+           SPRINT specific UNDEAD
+        END
+     END ELSE
+     // now look at class
+     PATCH_MATCH "%class%" WITH
+     innocent BEGIN
+        SPRINT specific INNOCENT
+     END 
+     food_creature BEGIN
+        SPRINT specific NONE
+     END
+     remorhaz elemental_earth elemental_water BEGIN
+        SPRINT specific "%class%"
+     END
+     salamander_frost wolf_winter bear_polar BEGIN
+        PATCH_IF "%allegiance%" STRING_EQUAL_CASE enemy BEGIN
+           SPRINT specific ICE_CREATURE_HOSTILE
+        END ELSE BEGIN
+           SPRINT specific ICE_CREATURE_NEUTRAL
+        END
+     END
+     salamander_fire elemental_fire BEGIN
+        SPRINT specific FIRE_CREATURE
+     END
+     DEFAULT // now look at race
+       PATCH_MATCH "%race%" WITH
+       troll BEGIN
+          PATCH_MATCH "%animation%" WITH
+          troll_ice troll_snow BEGIN
+             PATCH_IF "%allegiance%" STRING_EQUAL_CASE enemy BEGIN
+                 SPRINT specific ICE_CREATURE_HOSTILE
+             END ELSE BEGIN
+                 SPRINT specific ICE_CREATURE_NEUTRAL
+             END
+          END
+          DEFAULT
+             SPRINT specific YUANTI_LIZARDMAN_TROLL
+          END
+       END
+       yuanti lizardman BEGIN
+           SPRINT specific YUANTI_LIZARDMAN_TROLL
+       END
+       myconid shrieker shambling_mound BEGIN
+          SPRINT specific MUSHROOM
+       END
+       orc goblin ogre BEGIN
+           SPRINT specific GOBLINOID
+       END
+       svirfneblin beetle spider wolf bear sahuagin beholder rakshasa umberhulk
+       lycanthrope wyvern harpy demonic slime genie carrioncrawler minotaur 
+       BEGIN
+           SPRINT specific "%race%"
+       END
+       lycanthrope dog BEGIN
+          SPRINT specific DOG
+       END
+       cat rabbit golem no_race statue BEGIN
+           SPRINT specific NONE
+       END
+       DEFAULT // finally do it by animation if we're not already there
+          PATCH_MATCH "%animation%" WITH
+          tundra_yeti giant_frost BEGIN
+            PATCH_IF "%allegiance%" STRING_EQUAL_CASE enemy BEGIN
+              SPRINT specific ICE_CREATURE_HOSTILE
+            END ELSE BEGIN
+              SPRINT specific ICE_CREATURE_NEUTRAL
+            END
+          END
+          giant_fire_iwd BEGIN
+             SPRINT specific FIRE_GIANT
+          END
+          cyclops barbarian_warrior_tan barbarian_warrior_brown barbarian_warrior_red BEGIN
+             SPRINT specific "%animation%"
+          END
+          DEFAULT
+             LPF log_this STR_VAR file=residual_specifics.txt input="%filename%: %general%-%race%-%class%" repeat=no END
+             SPRINT specific NONE
+          END // end of animation DEFAULT
+       END // end of race DEFAULT
+     END // end of class DEFAULT
+  END // end of filename DEFAULT
+ END // end of outer filter
+END
+
+

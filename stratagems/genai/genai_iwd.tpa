@@ -1,0 +1,119 @@
+DEFINE_ACTION_FUNCTION genai_iwd BEGIN
+   LAF include STR_VAR file=genai_shared_iwd.tph END
+   LAF include STR_VAR file=genai.tpa END // for the kits_levels function
+
+   LAF include STR_VAR file=research_iwd_scripts.tph locbase=lib END
+   LAF iwd_script_explore END
+   LAM read_in_iwd_genai_scripts // do it once, not once per run
+   LAF genai_edits_before END
+   LAF kits_levels END
+   LAF genai_edits_area END
+   LAF genai_edits_creature END
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION genai_edits_before BEGIN
+
+    // ranged creatures using designated melee scripts
+    
+    // goblin archer marshalls in beetle-eating areas
+    LAF swap_are_cre_script STR_VAR area=ar2001 creature=goblinea script="2001atta=>efatkbth" END
+    LAF swap_are_cre_script STR_VAR area=ar2006 creature=goblinea script="2006atta=>efatkbth" END
+
+    // some slightly malassigned EFATKBTH/EFATKMEL
+
+    LAF edit_creature STR_VAR creature=psentry editstring="swap_script=>~efatkbth=>efatkmel~" END
+    LAF swap_are_cre_script STR_VAR area=ar9101 creature=hobart script="efatkmel=>efatkbth" END
+    LAF swap_are_cre_script STR_VAR area=ar9715 creature=hobart2 script="efatkmel=>efatkbth" END
+    
+    // a few creatures should call for help but not respond to others' calls or go hostile on hearing them - they have an item which prevents them responding
+
+    LAF clone_item STR_VAR item=~dw#marker_file=>dw#nohlp~ END
+    LAF edit_creature STR_VAR creature=~fleezum flozem fleezum2 flozem2 malavon marketh seth sethh~ editstring=~add_items=>dw#nohlp~ END
+
+    // these ranged-only innate weapons need melee versions [code copy from genai.tpa]
+
+    MAKE_PATCH
+           match=>"ability_type=2"
+           ability_type=>1
+    END
+
+    LAF clone_item STR_VAR item="%tutu_var%jellmu1=>dw#jelmu" editstring="patch_ability=>patch_data" END
+    LAF edit_creature STR_VAR creature="jellmu jellmul jellymu" tv=1 allow_missing=1 editstring="add_items=>dw#jelmu(weapon)" END
+
+    // these creatures are missing melee weapons
+    
+    LAF edit_creature STR_VAR creature="lddarchr" editstring="add_items=>sw1h04" END
+    LAF edit_creature STR_VAR creature="kaylessa skelbow " editstring="add_items=>shlswrd2" END
+    LAF edit_creature STR_VAR creature="saclerbw" editstring="add_items=>sper01" END
+
+    // these have misaligned spellcasting combat scripts
+    COPY_EXISTING "ar5401.are" override REPLACE_TEXTUALLY "shshdsd1" "efatkbth" (8) BUT_ONLY
+
+    // these are the various group-control files used in IWD
+
+
+   LAF ssl_to_baf STR_VAR script="gnteamx gnteamxe gnteamxm gnteamxs gntxmove gntxtrpq" location=ssl END
+   OUTER_FOR (number=1;number<=9;number+=1) BEGIN
+      OUTER_SPRINT scsvar_main "MAP_GROUP_HOSTILE%number%"
+      COPY "%workspace%/ssl_out/gnteamx.baf" "override/gnteam%number%.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+      COPY "%workspace%/ssl_out/gnteamxe.baf" "override/gnteam%number%e.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+      COPY "%workspace%/ssl_out/gnteamxm.baf" "override/gnteam%number%m.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+      COPY "%workspace%/ssl_out/gnteamx.baf" "override/gnteam%number%v.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+      COPY "%workspace%/ssl_out/gntxmove.baf" "override/gnt%number%move.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+      COPY "%workspace%/ssl_out/gntxtrpq.baf" "override/gnt%number%trpq.bcs" EVALUATE_BUFFER COMPILE_BAF_TO_BCS
+   END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION genai_edits_area BEGIN
+
+    COPY_EXISTING_REGEXP GLOB "ar.*\.are" override
+//COPY_EXISTING "ar3401.are" override
+          GET_OFFSET_ARRAY act_arr ARE_V10_ACTORS
+          PHP_EACH act_arr AS act_ind=>act_off BEGIN
+             READ_ASCII (0x80+act_off) filename
+             FOR (script_off=0x58+act_off;script_off<0x80+act_off;script_off+=8) BEGIN
+                READ_ASCII script_off script_old
+                LPF genai STR_VAR script_old filename RET script END
+                PATCH_IF "%script%" STRING_COMPARE_CASE "" BEGIN
+                   WRITE_ASCIIE script_off "%script%" (8)
+                END
+             END
+          END
+          PATCH_PRINT "...done"
+    BUT_ONLY
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION genai_edits_creature BEGIN
+   PRINT "editing scripts for CRE files"
+   COPY_EXISTING_REGEXP GLOB ".*\.cre" override
+     PATCH_MATCH "%SOURCE_RES%" WITH
+     mdk2kurt mdk2doc mdk2max plangood planevil planwish devagood devaevil BEGIN
+     END
+     DEFAULT
+         FOR (script_off=0x248;script_off<0x270;script_off+=8) BEGIN
+            READ_ASCII script_off script_old
+            PATCH_MATCH "%script_old%" WITH
+            "gnsumm.*" 
+            BEGIN
+            END
+            DEFAULT
+              LPF genai STR_VAR script_old filename="%SOURCE_RES%" RET script END
+              PATCH_IF "%script%" STRING_COMPARE_CASE "" BEGIN
+                WRITE_ASCIIE script_off "%script%" (8)
+              END
+            END
+         END
+     END
+   BUT_ONLY
+   PRINT "...done"
+END
+
