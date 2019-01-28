@@ -5,7 +5,8 @@ DEFINE_ACTION_FUNCTION install_iwd_spell_resources
                     smtables_list="" 
                     spell_list="" 
                     proj_list="" 
-                    smtables_list="" 
+                    smtables_list=""
+                    scroll_price_list=""
                     tra="" 
                     lookup=""
                     location=""
@@ -81,12 +82,13 @@ BEGIN
 
     PRINT "Resolving animation reallocations"
 
+    ACTION_IF enhanced_edition BEGIN
     // get a list of which IWD animations are missing in BG(2)EE
-    ACTION_IF !GAME_IS iwdee BEGIN
-    ACTION_IF !(FILE_EXISTS "%data_loc%/missing_animations.2da") BEGIN
+     ACTION_IF !GAME_IS iwdee BEGIN
+     ACTION_IF !(FILE_EXISTS "%data_loc%/missing_animations.2da") BEGIN
        LAF run STR_VAR file=audit_animations location="%iwdspells_lib%" END
-    END
-    ACTION_IF FILE_EXISTS "%data_loc%/missing_animations.2da" BEGIN // theoretically it might still not exist because every animation has been added!
+     END
+     ACTION_IF FILE_EXISTS "%data_loc%/missing_animations.2da" BEGIN // theoretically it might still not exist because every animation has been added!
           COPY "%data_loc%/missing_animations.2da" "%workspace%"
              READ_2DA_ENTRIES_NOW missing_anim_array 1
              FOR (i=0;i<missing_anim_array;i+=1) BEGIN
@@ -95,6 +97,7 @@ BEGIN
                 SPRINT $anim_missing("%entry%") ""
              END
           BUT_ONLY
+     END
     END
 
     // load in and resolve any animation reallocations
@@ -132,7 +135,7 @@ BEGIN
     END
 
     // sort out monster-summoning entries
-
+    ACTION_IF enhanced_edition BEGIN
     LAF read_in_assoc_array STR_VAR file="%smtables_list%" locabs="%resource_loc%" RET list END
     COPY_EXISTING "smtables.2da" override
        COUNT_2DA_ROWS 2 rowcount
@@ -144,6 +147,11 @@ BEGIN
            SET rowcount +=1
        END
     BUT_ONLY
+    END
+    
+    // load in scroll prices
+    
+    LAF read_in_assoc_array STR_VAR file="%scroll_price_list%" locabs="%resource_loc%" RET_ARRAY scroll_prices=array END
 
     PRINT "Resolving projectile entries"
 
@@ -203,7 +211,10 @@ BEGIN
         // on SR installs, skip the whole MONSTER_SUMMONING bit
         ACTION_IF demivrgvs BEGIN
            ACTION_MATCH "%spellname%" WITH
-           "WIZARD_MONSTER_SUMMONING.*" BEGIN
+           "WIZARD_MONSTER_SUMMONING.*" 
+           "CLERIC_CAUSE_SERIOUS_WOUNDS_IWD"
+           "CLERIC_CAUSE_CRITICAL_WOUNDS_IWD"
+           BEGIN
               OUTER_SET proceed=0
               PRINT "Cancelling overwrite, SR version present"
            END
@@ -273,12 +284,13 @@ BEGIN
                           LPF apply_to_strrefs STR_VAR arguments=strref_updater filename="%BASH_FOR_RES%" file_ext="%BASH_FOR_EXT%" END
                        END
                    // end of copy
-                       // sort out projectiles and summons
+                    // sort out projectiles and summons
                     ACTION_MATCH "%BASH_FOR_EXT%" WITH
                           spl itm BEGIN
                               MAKE_PATCH
                                     patch_ability_inline=>"projectile=>~projectile in adjust_projectile_number~"
                                     patch_effect_inline=>"match=>opcode=331 parameter2=>~parameter2 in summons_swap~"
+                                    delete_effect=>"opcode=324 and parameter2=63" // remove Evasion
                               END
                               ACTION_IF !("%new_resref%.%BASH_FOR_EXT%" STRING_MATCHES_REGEXP "SPWI[1-9][0-9][0-9]\.spl") BEGIN
                                     OUTER_SPRINT $patch_data("enforce_school") null
@@ -298,7 +310,6 @@ BEGIN
                                     explosion_pro=>"explosion_pro in adjust_projectile_number"
                                     secondary_pro=>"secondary_pro in adjust_projectile_number"
                                  END
-                                 PRINT "%new_resref% %install_loc%"
                                  LAF edit_pro STR_VAR pro="%new_resref%" locabs="%install_loc%" edits=patch_data END
 
                               END
@@ -321,7 +332,12 @@ BEGIN
                  END ELSE BEGIN
                     OUTER_SPRINT name_func cd_scroll_name
                  END
-                 LAF make_scroll_of_spell STR_VAR spell_loc="%install_loc%" resref="%new_spell_resref%" name_func RET scrollname END
+                 ACTION_IF VARIABLE_IS_SET $scroll_prices("%old_spell_resref%") BEGIN
+                    OUTER_SET price=$scroll_prices("%old_spell_resref%")
+                 END ELSE BEGIN
+                    OUTER_SET price="-1"
+                 END
+                 LAF make_scroll_of_spell INT_VAR price STR_VAR spell_loc="%install_loc%" resref="%new_spell_resref%" name_func RET scrollname END
                  OUTER_SPRINT "%spellname%_SCROLL" "%scrollname%"
             END
             ACTION_IF overwrite BEGIN
@@ -468,12 +484,14 @@ END
 DEFINE_PATCH_FUNCTION summons_swap
    STR_VAR arguments=0 RET value
 BEGIN
+ PATCH_IF enhanced_edition BEGIN
    PATCH_IF VARIABLE_IS_SET $smtables_map("%arguments%") BEGIN
       SPRINT value $smtables_map("%arguments%")
    END ELSE BEGIN
       SPRINT value "%arguments%"
       LPF warning STR_VAR warning="failed to recognise a swap for summons code %arguments%" END
    END
+ END
 END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

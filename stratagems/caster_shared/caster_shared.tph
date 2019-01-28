@@ -90,6 +90,9 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
  LOCAL_SET j=0
 
 
+ ACTION_IF !VARIABLE_IS_SET enhanced_healing BEGIN
+    LAF check_label STR_VAR label=dw#enhance_cure_cause RET enhanced_healing=value END
+ END
  ACTION_IF !VARIABLE_IS_SET  ~macro_read_in_%type%_spell_choices~ BEGIN
    ACTION_IF "%spelltype%" STRING_EQUAL_CASE priest BEGIN
     OUTER_SPRINT base_folder_spells "%base_folder_spells_priest%"
@@ -121,7 +124,8 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
           FOR (j=1;j<rowcount;j+=1) BEGIN
              READ_2DA_ENTRY j 0 0 level
              LPF read_rest_of_line INT_VAR row=j col=1 RET data=list END
-             PATCH_MATCH ~%level%~ WITH 
+             LPF spell_read_in_substitutions STR_VAR data RET data END
+             PATCH_MATCH ~%level%~ WITH
                  1 2 3 4 5 6 7 8 9 BEGIN
                    SPRINT $spell_choices(~%type%~ ~%kit%~ ~%level%~) ~%data%~
                    PATCH_IF debug_variable=2 BEGIN
@@ -932,8 +936,6 @@ DEFINE_ACTION_FUNCTION build_sequencer
                  locabs=""
                  seq_alloc="seq_alloc.2da"
 BEGIN
-     // preparatory
-     LAF build_sequencer_preparatory END
      MAKE_PATCH
         minor_sequencer=>spwi420b
         sequencer=>spwi710b
@@ -1058,18 +1060,6 @@ BEGIN
                       LAF make_spell_trigger INT_VAR remover STR_VAR spell1 spell2 spell3 spell4="%contingency%" prefix strref name type icon END
               END
            END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Build sequencer preparation
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION build_sequencer_preparatory
-BEGIN
-   ACTION_FOR_EACH copy IN dw#sfc1 dw#sfc2 BEGIN
-      COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" "override/%copy%.spl"
-          REPLACE_TEXTUALLY "%WIZARD_SUMMON_FIEND%" "%copy%"
-   END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1363,3 +1353,45 @@ BEGIN
            SET counter_end=counter
 
 END
+
+/////////////////////////////////////////////////////////////////////////////
+/// make global spell swaps in the spells read in
+/////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION spell_read_in_substitutions
+    STR_VAR data=""
+    RET data
+BEGIN
+    PATCH_FOR_EACH var IN enhanced_healing demivrgvs BEGIN
+       PATCH_IF !VARIABLE_IS_SET "%var%" BEGIN
+          SET "%var%"=0
+       END
+    END
+    INNER_PATCH_SAVE data "%data%" BEGIN
+           // healing/cause wounds spells that are too weak to waste time with
+           PATCH_IF (!demivrgvs && !enhanced_healing) BEGIN
+                REPLACE_TEXTUALLY "\(CURE\|CAUSE\)_\(LIGHT\|MEDIUM\|SERIOUS\)_WOUNDS" ""
+                REPLACE_TEXTUALLY "CAUSE_CRITICAL_WOUNDS" ""
+           END
+           // IWD versions of cause wounds
+           PATCH_IF VARIABLE_IS_SET CLERIC_CAUSE_SERIOUS_WOUNDS_IWD BEGIN
+              REPLACE_TEXTUALLY "CAUSE_SERIOUS_WOUNDS" "CAUSE_SERIOUS_WOUNDS_IWD"
+           END
+           PATCH_IF VARIABLE_IS_SET CLERIC_CAUSE_CRITICAL_WOUNDS_IWD BEGIN
+              REPLACE_TEXTUALLY "CAUSE_CRITICAL_WOUNDS" "CAUSE_CRITICAL_WOUNDS_IWD"
+           END
+           // IWD spells missing on some (e.g., non-EE IWDification) installs
+           PATCH_IF !VARIABLE_IS_SET CLERIC_SMASHING_WAVE BEGIN
+              REPLACE_TEXTUALLY SMASHING_WAVE THORN_SPRAY
+           END
+           PATCH_IF !VARIABLE_IS_SET CLERIC_GIANT_INSECT BEGIN
+              REPLACE_TEXTUALLY GIANT_INSECT ANIMAL_SUMMONING_1
+           END
+           PATCH_FOR_EACH spell IN MORDENKAINENS_FORCE_MISSILES MORDENKAINENS_SWORD_IWD SHOUT CREATE_BONEGUARD BEGIN
+              PATCH_IF !VARIABLE_IS_SET "WIZARD_%spell%" BEGIN
+                 REPLACE_TEXTUALLY "%spell%" ""
+              END
+           END
+    END
+END
+
