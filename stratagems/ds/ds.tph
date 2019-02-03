@@ -1,13 +1,12 @@
-// Detectable Spells v3.95_dw
-//
-//  January 2017
-//  David, editing Ardanis version
+// Detectable Spells v3.96
+//  January 2019 - David Wallace ('DavidW')
 //
 //  Changes:
 //  - Now incorporate flexible handling of TOBEX stats using BGEE splstate baseline
 //  - if filename has no .spl suffix, try looking it up in SPELL.ids (and skip if not found)
-// - added function to apply it directly to an individual spell
-// - uses SFO 'sort_ids' to sort stats.ids, rather than native ds_sort_stats_ids. (sort_ids preserves duplicates, inter alia helpful with CDTweaks proficiencies)
+//  - added function to apply it directly to an individual spell
+//  - use new 'ds_sort_ids' (exported from SCS's function library 'sort_ids') to sort stats.ids, rather than native ds_sort_stats_ids.
+//    (sort_ids preserves duplicates, inter alia helpful with CDTweaks proficiencies)
 
 // Detectable Spells v3.95
 // February 3rd, 2016 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
@@ -532,8 +531,7 @@ ACTION_PHP_EACH stats_array AS name => code BEGIN
       END
 END
 
- LAF sort_ids STR_VAR ids=stats END // DW edit to use SFO version - it's quicker, and more importantly, it retains duplicates
-// LAM ds_sort_stats_ids
+ LAF ds_sort_ids STR_VAR ids=stats END 
 END
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -541,7 +539,7 @@ END
 // fix the bug in G3's DS
 ACTION_IF fix_khelben = 1 BEGIN
   ACTION_IF NOT FILE_EXISTS_IN_GAME ~cddetect.spl~ BEGIN
-    COPY_EXISTING ~dw#marker_file.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
+    COPY_EXISTING ~misc01.itm~ ~override/cddetect.spl~ // tell CamDawg's (?) version that DS is already installed
     LAM ds_fix_khelben
   END
 END
@@ -551,7 +549,7 @@ END
 // fix old Ascension DS
 ACTION_IF fix_old_ds = 1 BEGIN
   ACTION_IF NOT FILE_EXISTS_IN_GAME ~dw#DScleanout.mrk~ BEGIN
-    COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
+    COPY_EXISTING ~misc01.itm~ ~override/dw#DScleanout.mrk~ // tell DavidW's version that we've already fixed it
     LAM ds_fix_old_scripts
     LAM ds_fix_old_ds
   END
@@ -1034,50 +1032,87 @@ END // end of macro
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 
-// Rebuild STATS.IDS
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Sort an IDS file into numerical order (copy of function in stratagems/sfo/general/lib_general.tpa, with new ds-localised helper function)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_MACRO ds_sort_stats_ids BEGIN
+DEFINE_ACTION_FUNCTION ds_sort_ids STR_VAR ids="" BEGIN
+   ACTION_CLEAR_ARRAY ids_entries
+   OUTER_SET max=0
+   COPY_EXISTING "%ids%.ids" override
+       READ_2DA_ENTRIES_NOW ids_array 2
+       // top row is either 'IDS V1.0', or a single row entry, or blank
+       PATCH_IF INDEX_BUFFER ("IDS *V1.0")>=0 BEGIN
+          SPRINT top_row "IDS V1.0"
+       END ELSE BEGIN
+          COUNT_2DA_ROWS 1 rowcount_1
+          PATCH_IF rowcount_1=ids_array BEGIN
+             SPRINT top_row " "
+          END ELSE BEGIN
+             READ_2DA_ENTRY 0 0 1 top_row
+          END
+       END
+       FOR (i=0;i<ids_array;i+=1) BEGIN
+          READ_2DA_ENTRY_FORMER ids_array i 0 num
+          PATCH_IF IS_AN_INT num BEGIN
+             SET max= num>max ? num : max
+             READ_2DA_ENTRY_FORMER ids_array i 1 val
+             PATCH_IF "%val%" STRING_COMPARE_CASE DMWW_UNUSED_FOR_DELETION BEGIN
+               PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
+                SPRINT temp $ids_entries("%num%")
+                SPRINT $ids_entries("%num%") "%temp% %val%"
+               END ELSE BEGIN
+                SPRINT $ids_entries("%num%") "%val%"
+               END
+             END
+          END
+       END
+   BUT_ONLY
+   COPY ".../ds-inline/blank" "override/%ids%.ids"
+       INSERT_2DA_ROW 0 2 "DW_SORT_IDS_PLACEHOLDER"
+       SET rowcount=0
+       FOR (num=0;num<=max;num+=1) BEGIN
+          PATCH_IF VARIABLE_IS_SET $ids_entries("%num%") BEGIN
+             SPRINT list $ids_entries("%num%")
+             WHILE "%list%" STRING_COMPARE "" BEGIN
+                LPF ds_return_first_entry STR_VAR list RET entry list END
+                SPRINT check "%num%--%entry%"
+                PATCH_IF !VARIABLE_IS_SET "%check%" BEGIN
+                  INSERT_2DA_ROW rowcount 2 "%num% %entry%"
+                  SET rowcount+=1
+                  SPRINT "%check%" ""
+                END
+             END
+          END
+       END
+       REPLACE_TEXTUALLY "DW_SORT_IDS_PLACEHOLDER" "%top_row%"
+END
 
-COPY - ~...inlined/ds/stats_extra.2da~ override
-  READ_2DA_ENTRIES_NOW stats 2
-  FOR (i=0;i<stats;i+=1) BEGIN
-    READ_2DA_ENTRY_FORMER stats i 0 num
-    READ_2DA_ENTRY_FORMER stats i 1 str
-    SPRINT $arr3("%num%") ~%str%~
-  END
-
-COPY_EXISTING - stats.ids override
-  max=1
-  READ_2DA_ENTRIES_NOW stats 2
-  FOR (i=0;i<stats;i+=1) BEGIN
-    READ_2DA_ENTRY_FORMER stats i 0 num
-    READ_2DA_ENTRY_FORMER stats i 1 str
-    max = (num>max) ? num : max
-    SET $arr1("%num%") = 1
-    SPRINT $arr2("%num%") ~%str%~
-  END
-  PHP_EACH arr1 AS i1 => r1 BEGIN
-    min=max
-    PHP_EACH arr2 AS i2 => r2 BEGIN
-      PATCH_IF (i2<min) && (~%r2%~ STR_CMP ~~) BEGIN
-        min = (i2<min) ? i2 : min
+DEFINE_PATCH_FUNCTION ds_return_first_entry
+   STR_VAR list=""
+   RET entry
+       list
+BEGIN
+   PATCH_IF "%list%" STRING_EQUAL "" BEGIN // return nothing if list is empty
+      SPRINT list ""
+      SPRINT entry ""
+   END ELSE
+   PATCH_IF INDEX (" " "%list%")<0 BEGIN // only one entry
+      SPRINT entry "%list%"
+      SPRINT list ""
+   END ELSE BEGIN
+    INNER_PATCH_SAVE list "%list%" BEGIN
+      REPLACE_EVALUATE "\([^ ]*\) \(.*\)"
+      BEGIN
+         SPRINT entry "%MATCH1%"
       END
+      "%MATCH2%"
     END
-    SPRINT $stats("%min%""core") $arr2("%min%")
-    PATCH_IF VARIABLE_IS_SET $arr3("%min%") BEGIN
-      SPRINT $stats("%min%""append") $arr3("%min%")
-    END
-    SPRINT $arr2("%min%") ~~
-  END
+   END
+END
 
-<<<<<<<<...ds/inline/blank
+<<<<<<<< .../ds-inline/blank
 >>>>>>>>
-COPY ~...ds/inline/blank~ ~override/stats.ids~
-ACTION_PHP_EACH stats AS ind => res BEGIN
-  APPEND stats.ids ~%ind% %res%~
-END
-
-END
 
 //////////////////////////////////////////////////////////////////////////////////////
 /// duplicated in stratagems_shared
@@ -1197,7 +1232,7 @@ COPY - ~...inlined/ds/ag#old_ds_swap.2da~ override
 
 // Ascension
 ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixasc~) && (FILE_EXISTS_IN_GAME ~finbodhi.bcs~) THEN BEGIN
-  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixasc~
+  COPY_EXISTING ~misc01.itm~ ~override/dw#fixasc~
 ACTION_FOR_EACH file IN
 finabaz
 finaluf
@@ -1226,7 +1261,7 @@ END
 
 // Kelsey
 ACTION_IF !(FILE_EXISTS_IN_GAME ~dw#fixkelsey~) && (FILE_EXISTS_IN_GAME ~j#ceara.bcs~) THEN BEGIN
-  COPY_EXISTING ~dw#marker_file.itm~ ~override/dw#fixkelsey~
+  COPY_EXISTING ~misc01.itm~ ~override/dw#fixkelsey~
 ACTION_FOR_EACH file IN
 j#ceara
 j#clinn
@@ -1241,7 +1276,7 @@ END
 
 // Kiara-Zaiya
 ACTION_IF !(FILE_EXISTS_IN_GAME ~ag#fixkiara~) && (FILE_EXISTS_IN_GAME ~amafight.bcs~) THEN BEGIN
-  COPY_EXISTING ~dw#marker_file.itm~ ~override/ag#fixkiara~
+  COPY_EXISTING ~misc01.itm~ ~override/ag#fixkiara~
 ACTION_FOR_EACH file IN
 kzjao
 kzwuje

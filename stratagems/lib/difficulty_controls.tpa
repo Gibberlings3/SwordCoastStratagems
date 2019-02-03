@@ -1,5 +1,26 @@
 DEFINE_ACTION_FUNCTION difficulty_controls BEGIN
 
+    // check if we're using the widget
+    
+    ACTION_IF enhanced_edition BEGIN
+       OUTER_SET ui_integration=1
+       LAF check_ini STR_VAR ini=Force_Difficulty_Widget RET value END
+       ACTION_IF value BEGIN
+          OUTER_SET ui_integration=0
+       END
+    END ELSE BEGIN
+       OUTER_SET ui_integration=0
+    END
+    
+    // if not, try fixing the interface
+    
+    ACTION_IF ui_integration BEGIN
+       LAF difficulty_ui RET abort END
+       ACTION_IF abort BEGIN 
+          OUTER_SET ui_integration=0
+       END
+    END
+ 
     OUTER_SPRINT component_loc lib
 // define commonly-held strings
 
@@ -58,7 +79,18 @@ COPY ".../stratagems-inline/difficulty_dialog.d" "%workspace%"
 
 // finish the block, add exit block and acknowledgement blocks
 
-<<<<<<<< .../stratagems-inline/difficulty_dialog_add.txt
+
+<<<<<<<< .../stratagems-inline/difficulty_dialog_integration.txt
+IF ~~ THEN REPLY @1031 GOTO exit
+END
+
+IF ~~ THEN BEGIN exit
+SAY @1032
+IF ~~ THEN DO ~DestroySelf()~ EXIT
+END
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/difficulty_dialog_no_integration.txt
 IF ~Global("DW_difficulty_control_inactive","GLOBAL",0)~ THEN REPLY @1033 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",1)~ GOTO control_off
 IF ~Global("DW_difficulty_control_inactive","GLOBAL",1)~ THEN REPLY @1034 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",0)~ GOTO control_on
 IF ~~ THEN REPLY @1031 GOTO exit
@@ -88,7 +120,11 @@ END
 >>>>>>>>
 
 COPY "%workspace%/difficulty_dialog.d" "%workspace%"
-    APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_add.txt"
+    PATCH_IF ui_integration BEGIN
+       APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_integration.txt"
+    END ELSE BEGIN
+       APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_no_integration.txt"
+    END
     FOR (var=0;var<=7;var+=1) BEGIN
         SET string=$diff_response_strings("%var%")
         APPEND_FILE_EVALUATE TEXT ".../stratagems-inline/difficulty_acknowledge.txt"
@@ -99,6 +135,7 @@ COPY "%workspace%/difficulty_dialog.d" "%workspace%"
 LAF process_table STR_VAR table=difficulty_controls.2da function=difficulty_helper_main END
 
 /// compile the dialog file
+
 
 COMPILE "%workspace%/difficulty_dialog.d" EVALUATE_BUFFER
 
@@ -142,7 +179,9 @@ MAKE_PATCH
 END
 LAF make_spell STR_VAR spell=dw#diff2 edits=patch_data END
 
-// install it in starting areas
+// install it in starting areas if we don't have integration
+
+ACTION_IF !ui_integration BEGIN
 
 <<<<<<<< .../stratagems-inline/diff_install.baf
 IF
@@ -163,6 +202,8 @@ ACTION_IF is_bg1 BEGIN
 END
 ACTION_IF is_iwd BEGIN
     LAF extend_area_script STR_VAR area="ar1006 ar9100" top=diff_install inline=yes END
+END
+
 END
 
 
@@ -333,6 +374,101 @@ BEGIN
        APPEND_OUTER "%workspace%/difficulty_dialog.d" "END"
      END
     END
+
+
+END
+
+DEFINE_ACTION_FUNCTION difficulty_ui
+   RET abort
+BEGIN
+
+           OUTER_SET abort=0
+
+           // read in the UI
+           LAF read_file_into_array STR_VAR file=ui.menu locabs=override RET_ARRAY ui_array=file_contents END
+
+           // get required data
+           LAF UI_extract_object STR_VAR ui_array object_ident=menu object_name_field=name object_name=OPTIONS_GAMEPLAY RET_ARRAY menu_array=object_array END
+           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=FEEDBACK_BUTTON entry_field=area RET feedback_entry=entry END
+           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=ASSIGN_KEYS_BUTTON entry_field=area RET keys_entry=entry END
+           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=ASSIGN_KEYS_BUTTON entry_field=bam RET bam_string=entry END
+           OUTER_INNER_PATCH "%feedback_entry%" BEGIN
+              REPLACE_EVALUATE "[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*"
+              BEGIN
+                feedback_xloc="%MATCH1%"
+                feedback_yloc="%MATCH2%"
+                feedback_width="%MATCH3%"
+                feedback_height="%MATCH4%"
+              END
+              ""
+           END
+           OUTER_INNER_PATCH "%keys_entry%" BEGIN
+              REPLACE_EVALUATE "[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*"
+              BEGIN
+                keys_xloc="%MATCH1%"
+                keys_yloc="%MATCH2%"
+                keys_width="%MATCH3%"
+                keys_height="%MATCH4%"
+              END
+              ""
+           END
+           ACTION_IF !(keys_xloc=feedback_xloc) || !(keys_width=feedback_width) BEGIN
+              OUTER_SET abort=1 // in this case the setup is too different from what we're used to
+           END
+           OUTER_SET delta=feedback_yloc - keys_yloc
+           OUTER_SET new_yloc=keys_yloc - delta
+           OUTER_SPRINT area_string "%feedback_xloc% %new_yloc% %feedback_width% %feedback_height%"
+
+           // make the patch
+           
+        ACTION_IF !abort BEGIN
+
+           // main changes
+
+   <<<<<<<< .../stratagems-inline/diff_button
+	button
+        {
+		bam		%bam_string%
+		sequence	0
+		area		%area_string%
+		text		"SCS_DIFFICULTY_BUTTON"
+		text style	"button"
+		action
+		"
+			scsSummonWidget()
+                        e:SelectEngine(worldScreen)
+		"
+	}
+   >>>>>>>>
+   <<<<<<<< .../stratagems-inline/diff_func
+function scsSummonWidget()
+	  C:Eval('CreateCreatureObject("dw#diffi",Player1,0,0,0)')
+end
+   >>>>>>>>
+
+          LAF read_file_into_array STR_VAR file=diff_func inline=yes RET_ARRAY diff_func=file_contents END
+          LAF read_file_into_array STR_VAR file=diff_button inline=yes RET_ARRAY diff_button=file_contents END
+          LAF UI_add_function STR_VAR ui_array_in=ui_array function_array=diff_func RET_ARRAY ui_array=ui_array_out END
+          LAF UI_insert_into_menu STR_VAR ui_array_in=ui_array insert_array=diff_button menu_name=OPTIONS_GAMEPLAY RET_ARRAY ui_array=ui_array_out END
+          LAF write_array_into_file STR_VAR file="override/ui.menu" file_contents=ui_array END
+
+          // add the identifying string
+
+          LAF UI_add_string INT_VAR tra_entry=1128 STR_VAR string_id="SCS_DIFFICULTY_BUTTON" END
+          
+          // tweaks
+          
+          ACTION_IF (GAME_IS BGEE && !GAME_INCLUDES SOD) BEGIN
+             COPY_EXISTING "ui.menu" override
+                   REPLACE_TEXTUALLY "area 44 190 360 262" "area 44 190 360 192"
+             BUT_ONLY
+          END
+
+      END
+
+
+
+
 
 
 END

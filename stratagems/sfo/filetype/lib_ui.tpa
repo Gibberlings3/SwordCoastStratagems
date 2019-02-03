@@ -1,17 +1,24 @@
-DEFINE_ACTION_FUNCTION UI_get_menus
+DEFINE_ACTION_FUNCTION UI_get_menus // actually works for other items
    STR_VAR ui_array=""
+           object_ident="menu"
+           object_name_field="name"
    RET_ARRAY menu_starts
              menu_ends
 BEGIN
+   OUTER_SPRINT $menu_starts("NULL_ENTRY") ""
+   OUTER_SPRINT $menu_ends("NULL_ENTRY") ""
    OUTER_SET is_menu=0
    ACTION_PHP_EACH "%ui_array%" AS ind=>line BEGIN
      // are we currently parsing a menu?
      ACTION_IF is_menu BEGIN
+           ACTION_IF backup_count>0 BEGIN 
+              OUTER_SET backup_count -=1
+           END
            // is it the 'name' string?
-           ACTION_IF (!"%line%" STRING_CONTAINS_REGEXP "name" && !found_name) BEGIN
+           ACTION_IF (!"%line%" STRING_CONTAINS_REGEXP "%object_name_field%" && !found_name) BEGIN
               OUTER_SET found_name=1
               OUTER_PATCH "%line%" BEGIN
-                 REPLACE_EVALUATE ~name\(%TAB%\| \)+\("\|'\)\([A-Za-z0-9_]+\)\("\|'\)~
+                 REPLACE_EVALUATE ~%object_name_field%\(%TAB%\| \)+\("\|'\)\([A-Za-z0-9_]+\)\("\|'\)~
                  BEGIN
                    SPRINT this_menu_id "%MATCH3%"
                  END
@@ -25,21 +32,24 @@ BEGIN
            ACTION_IF INDEX ("}" "%line%") >=0 BEGIN
               OUTER_SET paren_count -=1
            END
-           ACTION_IF (found_name && paren_count=0) BEGIN
+           ACTION_IF ((found_name || backup_count=0) && paren_count=0) BEGIN
                OUTER_SET is_menu=0
                OUTER_SET $menu_ends("%this_menu_id%")=ind
            END
      END ELSE BEGIN
         // is it a 'menu' string?
-        ACTION_IF INDEX ("menu" "%line%")>=0 BEGIN
+        ACTION_IF INDEX ("%object_ident%" "%line%")>=0 BEGIN
            OUTER_SET is_menu=1
            OUTER_SET menu_start=ind
            OUTER_SET paren_count=0
            OUTER_SET found_name=0
+           OUTER_SET backup_count=5
+           OUTER_SPRINT this_menu_id "UNNAMED_ITEM"
         END
      END
    END
 END
+
 
 
 DEFINE_ACTION_FUNCTION UI_insert_into_menu
@@ -76,15 +86,61 @@ BEGIN
    END
 END
 
+DEFINE_ACTION_FUNCTION UI_extract_object
+   STR_VAR ui_array=""
+           object_name=""
+           object_ident=""
+           object_name_field=""
+   RET_ARRAY object_array
+BEGIN
+   OUTER_SPRINT $object_array("0") "NULL"
+   LAF UI_get_menus STR_VAR ui_array object_ident object_name_field RET_ARRAY menu_starts menu_ends END
+   OUTER_SET start_point=0
+   OUTER_SET end_point="-1"
+   ACTION_PHP_EACH menu_ends AS name=>end BEGIN
+      ACTION_IF "%name%" STRING_EQUAL_CASE "%object_name%" BEGIN
+         OUTER_SET end_point=end
+         OUTER_SET start_point = $menu_starts("%name%")
+      END
+   END
+   OUTER_SET ind_overall=0
+   ACTION_PHP_EACH "%ui_array%" AS ind=>line BEGIN
+      ACTION_IF (ind>=start_point && ind<=end_point) BEGIN
+           OUTER_SPRINT $object_array("%ind_overall%") "%line%"
+           OUTER_SET ind_overall +=1
+      END
+   END
+END
+
+DEFINE_ACTION_FUNCTION UI_get_object_entry
+  STR_VAR ui_array=""
+          object_name=""
+          object_ident=""
+          object_name_field=""
+          entry_field=""
+  RET entry
+BEGIN
+    LAF UI_extract_object STR_VAR ui_array object_name object_ident object_name_field RET_ARRAY object_array END
+    OUTER_SPRINT entry NOT_FOUND
+    ACTION_PHP_EACH object_array AS ind=>line BEGIN
+       OUTER_INNER_PATCH "%line%" BEGIN
+          REPLACE_EVALUATE "[^a-zA-z]*%entry_field%\(.*\)" BEGIN
+            SPRINT entry "%MATCH1%"
+          END
+          ""
+       END
+    END
+END
+
 DEFINE_ACTION_FUNCTION UI_replace_menu
    STR_VAR ui_array_in=""
            replace_array=""
            menu_name=""
    RET_ARRAY ui_array_out
 BEGIN
-    LAF UI_get_menus STR_VAR ui_array="%ui_array_in%" RET_ARRAY menu_starts menu_ends END
-    OUTER_SET start_point=0
-    OUTER_SET end_point="-1"
+   LAF UI_get_menus STR_VAR ui_array="%ui_array_in%" RET_ARRAY menu_starts menu_ends END
+   OUTER_SET start_point=0
+   OUTER_SET end_point="-1"
    ACTION_PHP_EACH menu_ends AS name=>end BEGIN
       ACTION_IF "%name%" STRING_EQUAL_CASE "%menu_name%" BEGIN
          OUTER_SET end_point=end
@@ -110,6 +166,42 @@ BEGIN
                OUTER_SET ind_overall +=1
             END
    END
+END
 
 
+DEFINE_ACTION_FUNCTION UI_add_function
+    STR_VAR ui_array_in=""
+            function_array=""
+    RET_ARRAY ui_array_out
+BEGIN
+   OUTER_SET ind_overall=0
+   OUTER_SET inserted_func=0
+   ACTION_PHP_EACH "%ui_array_in%" AS ind=>line BEGIN
+      ACTION_IF !inserted_func BEGIN
+            ACTION_IF INDEX ("function" "%line%") >=0 BEGIN
+                  ACTION_PHP_EACH "%function_array%" AS ind2=>line2 BEGIN
+                     OUTER_SPRINT $ui_array_out("%ind_overall%") "%line2%"
+                     OUTER_SET ind_overall +=1
+                  END
+                  OUTER_SPRINT $ui_array_out("%ind_overall%") ""
+                  OUTER_SET ind_overall +=1
+                  OUTER_SET inserted_func=1
+            END
+      END
+      OUTER_SPRINT $ui_array_out("%ind_overall%") "%line%"
+      OUTER_SET ind_overall +=1
+   END
+END
+
+DEFINE_ACTION_FUNCTION UI_add_string
+    INT_VAR tra_entry=0
+    STR_VAR string_id=""
+            string=""
+BEGIN
+   ACTION_IF "%string%" STRING_EQUAL "" BEGIN
+       OUTER_SPRINT string (AT tra_entry)
+   END
+   COPY_EXISTING "L_%EE_LANGUAGE%.lua" override
+        REPLACE_TEXTUALLY ~uiStrings *= *{~ ~uiStrings = {%WNL%    %string_id% = "%string%",~
+   BUT_ONLY
 END

@@ -70,6 +70,10 @@ DEFINE_ACTION_FUNCTION fiend_resources BEGIN
        patch_effect_inline=>~savebonus=>"-10"~
     END
     LAF install_spell STR_VAR spell="telekinesis => dw#batel" locbase="caster_shared/resource" edits=patch_data END
+    MAKE_PATCH
+       patch_effect_inline=>~match=>"opcode=235" parameter2=>4~
+    END
+    LAF clone_spell STR_VAR spell="dw#batel=>dw#bate2" edits=patch_data END
 
 
     // Baalor explosion, borrowed from Ascension
@@ -91,7 +95,15 @@ DEFINE_ACTION_FUNCTION fiend_resources BEGIN
     END
     LAF clone_item STR_VAR item=~blun32=>dw#balwp~ edits=patch_data END
 
-
+    // demon lord's Flame Strike spell (see uddemon.dlg)
+    
+    MAKE_PATCH
+       say_name=>101
+       clone_effect_inline=>~match=>"opcode=12" parameter2b=>64~
+       patch_effect_inline=>"resist_dispel=>0"
+       patch_effect_inline'=>"match=>~resource=%CLERIC_FLAME_STRIKE%~ resource=>dw#abyfs"
+    END
+    LAF clone_spell STR_VAR spell="%CLERIC_FLAME_STRIKE%=>dw#abyfs" edits=patch_data END
 
     // allow for insect plague component
     ACTION_IF FILE_EXISTS_IN_GAME ~dw#insectplague.mrk~ THEN BEGIN
@@ -241,7 +253,7 @@ DEFINE_ACTION_FUNCTION fiend_scripts BEGIN
 
    LAF ssl_to_bcs STR_VAR script=~dembal01 demglab demglasu tanari
                                   marilith demsuc   demmau01 uddeath
-                                  demalu01 dw#bonef dempit
+                                  demalu01 dw#bonef dempit demlord
                                   dempitsu cornugon erinyes  gorchr 
                                   demogor2 demnabsu dw#llbnf dw#llcor dw#llbal
                                   dw#solar gorgua01 gorgua02 demyoch~
@@ -253,6 +265,15 @@ DEFINE_ACTION_FUNCTION fiend_scripts BEGIN
               LAF ssl_to_bcs STR_VAR script location="ssl/summon" variables="ImprovedFiends=True" END
          END
    END
+   
+   // if Friendly Fiends is installed, we need to redo its script changes, as we'll have overwritten them
+
+   LAF check_label STR_VAR label=dw#friendly_fiends RET value END
+   ACTION_IF value BEGIN
+      LAF include STR_VAR file=friendly_fiends_core.tpa END
+      LAF friendly_fiends_scripts END
+   END
+
 END
 
 ////////////////////////////////////////////////////////////////
@@ -350,7 +371,7 @@ DEFINE_ACTION_FUNCTION fiend_core BEGIN
      //   Bone fiends
      ////////////////
 
-     // install script at the same time
+     // install script at the same time - hence, bone fiends are omitted from filter
      LAF edit_creature STR_VAR creature=~dbonef01 gorbat5~ editstring=~bone_fiend=>null script_override=>dw#bonef~ END
      LAF edit_creature STR_VAR creature=~dw#vibon~ allow_missing=1 editstring=~bone_fiend=>null script_override=>dw#bonef gender=>EXTRA7~ END
 
@@ -508,14 +529,31 @@ DEFINE_ACTION_FUNCTION fiend_core BEGIN
 
      MAKE_PATCH
         fiend_general=>tanarri
+        balor=>null
+        add_spells=>"WIZARD_WAIL_OF_THE_BANSHEE WIZARD_POWER_WORD_KILL(3) dw#abyfs(3) WIZARD_TRUE_SIGHT(3)"
         level_all=>25
+        hitpointsGT=>250
+        xp_value=>52000 // higher than Tahazzar
      END
      LAF edit_creature STR_VAR creature=uddemon edits=patch_data END
+     
+     COPY_EXISTING
+          uddemon.dlg override
+          udardul.dlg override
+          udphae01.dlg override
+           DECOMPILE_AND_PATCH BEGIN
+             REPLACE_TEXTUALLY ~Kill(Player1)~ ~Enemy()~
+             REPLACE_TEXTUALLY ~ReallyForceSpell(Player1,CLERIC_FLAME_STRIKE)~ ~ReallyForceSpellRES("dw#abyfs",Player1)~
+             REPLACE_TEXTUALLY ~ReallyForceSpell(Myself,CLERIC_FLAME_STRIKE)~ ~ReallyForceSpellRES("dw#abyfs",Myself)~
+           END
+     BUT_ONLY
+
+
 
      ///////////////////
      // Chromatic Demon
      ///////////////////
-     
+
      MAKE_PATCH
         fiend_general=>tanarri
         level_all=>28

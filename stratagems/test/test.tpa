@@ -18,133 +18,45 @@ ACTION_IF GAME_IS iwdee BEGIN
    LAF edit_store STR_VAR store="%temples%" editstring="add_cure=>patch_data" END
    */
 
+   /*
+   WITH_TRA "%scsroot%/lang/english/difficulty.tra" BEGIN
+      LAF include STR_VAR file=difficulty_controls.tpa locbase=lib END
+      LAF difficulty_ui END
+   END
+   */
+   ACTION_FOR_EACH input IN true false BEGIN
 
-   COPY_EXISTING_REGEXP "SP\(PR\|WI\)[1-9][0-9][0-9].spl" override
-        PATCH_IF SHORT_AT 0x25 = 1 BEGIN
-           READ_STRREF 0x8 name
-           PATCH_PRINT "%name%"
-        END
-   BUT_ONLY
-
+     OUTER_SPRINT string "createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill\[currentChargenThiefSkill\].id, %input%)"
+     OUTER_SPRINT string_new_base "createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, %input%)"
+     OUTER_SPRINT string_new "%string_new_base%%WNL%"
+     OUTER_FOR (i=0;i<4;i+=1) BEGIN
+       OUTER_SPRINT string_new "%string_new%%string_new_base%%WNL%"
+     END
+     COPY_EXISTING "ui.menu" override
+      REPLACE_TEXTUALLY "%string%" "%string_new%"
+     BUT_ONLY
+   END
 
 END ELSE BEGIN
 
-  // LAF run STR_VAR file=enhance_cure_cause locbase=spell version=maximum tra=spell END
-   ACTION_IF VARIABLE_IS_SET CLERIC_CAUSE_SERIOUS_WOUNDS_IWD BEGIN
-      OUTER_SPRINT variables "CauseWoundsIWD=True"
-   END ELSE BEGIN
-      OUTER_SPRINT variables ""
-   END
-   LAF ssl_to_bcs STR_VAR variables script=nymph location=~ssl/main~ locbase=priest END
+
+      LAF run STR_VAR file=difficulty_controls locbase=lib tra=difficulty END
+
+
+
+
 
 
 END
 END
 
-DEFINE_ACTION_FUNCTION make_physical_mirror_level_5 BEGIN
-
-   // we leave the old one in to aid mod compatibility
-
-   // disable original version from spell.ids and from the selection screen (no need to remove it from spellbooks since we redo them globally for IWD anyway)
-   
-   COPY_EXISTING spell.ids override
-          REPLACE_TEXTUALLY CLERIC_PHYSICAL_MIRROR CLERIC_MIRROR_OLD  // avoid 'CLERIC_PHYSICAL_MIRROR' because it's better not to have an ids entry that's a substring of another one
-   BUT_ONLY
-   APPEND "hidespl.2da" "%CLERIC_PHYSICAL_MIRROR% 1 0 0"
-
-   // put new version into place
-
-   COPY_EXISTING "%CLERIC_PHYSICAL_MIRROR%.spl" override
-   ADD_SPELL "override/%CLERIC_PHYSICAL_MIRROR%.spl" 1 5 CLERIC_PHYSICAL_MIRROR
-   OUTER_INNER_PATCH_SAVE CLERIC_PHYSICAL_MIRROR "%CLERIC_PHYSICAL_MIRROR%" BEGIN
-      INSERT_BYTES 0x0 3
-      WRITE_ASCII 0x0 "SPPR"
-   END
-   
-   // patch new version
-
-   MAKE_PATCH
-      level=>5
-      patch_ability_inline=>"casting_time=>5"
-      patch_effect_inline=>"power=>5"
-      substitute_description=>"6=>5"
-   END
-   LAF edit_spell STR_VAR spell="%CLERIC_PHYSICAL_MIRROR%" edits=patch_data END
 
 
-END
-
-
-
-DEFINE_PATCH_FUNCTION spell_read_in_substitutions
-    STR_VAR data=""
-    RET data
-BEGIN
-    PATCH_FOR_EACH var IN enhanced_healing demivrgvs BEGIN
-       PATCH_IF !VARIABLE_IS_SET "%var%" BEGIN
-          SET "%var%"=0
-       END
-    END
-    INNER_PATCH_SAVE data "%data%" BEGIN
-           // healing/cause wounds spells that are too weak to waste time with
-           PATCH_IF (!demivrgvs && !enhanced_healing) BEGIN
-                REPLACE_TEXTUALLY "\(CURE\|CAUSE\)_\(LIGHT\|MEDIUM\|SERIOUS\)_WOUNDS" ""
-                REPLACE_TEXTUALLY "CAUSE_CRITICAL_WOUNDS" ""
-           END
-           // IWD versions of cause wounds
-           PATCH_IF VARIABLE_IS_SET CLERIC_CAUSE_SERIOUS_WOUNDS_IWD BEGIN
-              REPLACE_TEXTUALLY "CAUSE_SERIOUS_WOUNDS" "CAUSE_SERIOUS_WOUNDS_IWD"
-           END
-           PATCH_IF VARIABLE_IS_SET CLERIC_CAUSE_CRITICAL_WOUNDS_IWD BEGIN
-              REPLACE_TEXTUALLY "CAUSE_CRITICAL_WOUNDS" "CAUSE_CRITICAL_WOUNDS_IWD"
-           END
-           // IWD spells missing on some (e.g., non-EE IWDification) installs
-           PATCH_IF !VARIABLE_IS_SET CLERIC_SMASHING_WAVE BEGIN
-              REPLACE_TEXTUALLY SMASHING_WAVE THORN_SPRAY
-           END
-           PATCH_IF !VARIABLE_IS_SET CLERIC_GIANT_INSECT BEGIN
-              REPLACE_TEXTUALLY GIANT_INSECT ANIMAL_SUMMONING_1
-           END
-           PATCH_FOR_EACH spell IN MORDENKAINENS_FORCE_MISSILES MORDENKAINENS_SWORD_IWD SHOUT CREATE_BONEGUARD BEGIN
-              PATCH_IF !VARIABLE_IS_SET "WIZARD_%spell%" BEGIN
-                 REPLACE_TEXTUALLY "%spell%" ""
-              END
-           END
-    END
-END
-
-
-DEFINE_ACTION_FUNCTION make_aura
-   STR_VAR spell=""
-           payload=""
-BEGIN
-   LAF find_unique_filename STR_VAR extension=eff RET effect=filename END
-   MAKE_PATCH
-      add_basic_ability=>null
-      add_effect_inline=>"opcode=>272 target=>1 timing=>1 parameter1=>1 parameter2=>3 resource=>%effect%"
-   END
-   LAF make_spell STR_VAR spell edits=patch_data END
-   LAF make_casting_effect STR_VAR spell="%payload%" effect END
-
-END
-
-
-<<<<<<<< .../stratagems-inline/ilyich.baf
-IF
-  !Global("active","LOCALS",1)
-THEN
-    RESPONSE #100
-             SetGlobal("active","LOCALS",1)
-             ApplySpellRES("dw#mumau",Myself)
-END
->>>>>>>>
-
-
-/* IWD hla fragment: 
+/* IWD hla fragment:
 
      COPY_EXISTING lunumab.2da override
         REPLACE_TEXTUALLY 99 2
-     
+
       LAF read_file_into_array STR_VAR file=ui.menu locabs=override RET_ARRAY ui_array=file_contents END
       LAF read_file_into_array STR_VAR file=extra_hla_button.menu RET_ARRAY insert_array=file_contents END
       LAF read_file_into_array STR_VAR file=new_hla_menu.menu RET_ARRAY replace_array=file_contents END

@@ -61,13 +61,30 @@ BEGIN LOOP(scsdemon||LAWFUL_EVIL)
 	INCLUDE FILE(%scsroot%/fiend/ssl/bloodwar.ssl)
 END LOOP
 
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Wail (demon lord only)
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+        !GlobalTimerNotExpired("wails","LOCALS")
+        RequireBlock(IsDemonLord)
+	TargetBlock(PCsInOrder)
+	Range(scstarget,10)
+	TriggerBlock(Slay|MR100|Enemy|Helpless|SINecromancy|DirectDamageSafe)
+THEN DO
+	Action(SpellMyself,WIZARD_WAIL_OF_THE_BANSHEE|150|50)
+	SetGlobalTimer("wails","LOCALS",18)
+END
+
 /////////////////////////////////////////////////////////////////////////////////////////
 ///	Fire Storm will usually be first action, but we don't use it for the Suldanesselar
-///	Balor that's chewing on elves, or for Irenicus's flunkies, or when summoned
+///	Balor that's chewing on elves, or for Irenicus's flunkies, or when summoned,
+///     and the Lesser Demon Lord uses WotB instead
 /////////////////////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
         IgnoreBlock(IsSummoned)
+        IgnoreBlock(IsDemonLord)
 	TargetBlock(PCsInOrder)
 	TriggerBlock(CorePlus)
 	!AreaCheck("AR2800") // Suldanesselar
@@ -89,6 +106,20 @@ INCLUDE FILE(%scsroot%/fiend/ssl/jump.ssl)
 //////////////////////////////////////////////////////////////////////////////////////
 VARIABLE(FirstDispel=True)
 INCLUDE FILE(%scsroot%/fiend/ssl/dispel.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Truesight (demon lord only)
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+        RequireBlock(IsDemonLord)
+	TargetBlock(EnemiesInOrder)
+	Gender(scstarget,ILLUSIONARY)
+	!Allegiance(scstarget,ENEMY)
+	TriggerBlock(TruesightAlreadyCast|Enemy|SIDivination|EasyPlus)
+THEN DO
+	Action(SpellMyself,INNATE_FIEND_TRUE_SIGHT)
+END
 
 ///////////////////////////////////////////////////////////////////////////////////////
 ///	Breach enemy defenses
@@ -122,6 +153,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////
 
 IF TRIGGER
+        IgnoreBlock(IsDemonLord)
 	TargetBlock(EnemiesInOrder)
 	TriggerBlock(Insane)
 	!GlobalGT("chapter","GLOBAL",7)
@@ -133,6 +165,7 @@ THEN DO
 END
 
 IF TRIGGER
+        IgnoreBlock(IsDemonLord)
 	TargetBlock(EnemiesInOrder)
 	TriggerBlock(HardPlus)
 	GlobalGT("chapter","GLOBAL",7)
@@ -142,6 +175,19 @@ IF TRIGGER
 THEN DO
 	Action(Spell,CLERIC_IMPLOSION|100|100)
 END
+
+IF TRIGGER
+        RequireBlock(IsDemonLord)
+	TargetBlock(EnemiesInOrder)
+	TriggerBlock(CorePlus)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(SpellTurn|Enemy|Helpless)
+THEN DO
+	Action(SpellRES,"dw#abyfs"|100|100)
+END
+
+
 
 //////////////////////////////////////////////////////////////////////////////////////////
 ///	Telekinesis - get rid of nearby warrior types
@@ -157,14 +203,59 @@ IF TRIGGER
 		Class(scstarget,RANGER_ALL)
 		Class(scstarget,MONK)
 	CheckStatGT(scstarget,-10,SAVEVSSPELL)
+	Range(scstarget,5)
 THEN DO
 	Combine()
 	Action(SpellNoDecRES,"dw#batel"|100|100)
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////
+///	Telekinesis - pull in spellcasters
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	TriggerBlock(Enemy|Disabled)
+	TriggerBlock(CorePlus)
+	OR(5)
+		Class(scstarget,MAGE)
+		Class(scstarget,MAGE_THIEF)
+		Class(scstarget,CLERIC)
+		Class(scstarget,CLERIC_MAGE)
+		Class(scstarget,SORCERER)
+	CheckStatGT(scstarget,-10,SAVEVSSPELL)
+	!Range(scstarget,15)
+THEN DO
+	Combine()
+	Action(SpellNoDecRES,"dw#bate2"|100|200)
+END
+
+
 //////////////////////////////////////////////////////////////////////////////////////
 ///	Use offensive magic
 //////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////
+///   Power Word: Kill (demon lord only)
+//////////////////////////////
+
+IF TRIGGER
+        RequireBlock(IsDemonLord)
+	ConditionalTargetBlock(PCsPreferringWeak;!CheckStatGT(scstarget,50,RESISTMAGIC))
+	TargetBlock(PCsInOrderShort)
+	OR(2)
+		HPPercentLT(scstarget,75)
+		!CheckStatGT(scstarget,12,Level)
+	OR(3)
+		HPPercentLT(scstarget,50)
+		Class(scstarget,MAGE)
+		Class(scstarget,MAGE_THIEF)
+	TriggerBlock(MR100|SpellTurn|Slay|SIConjuration|Enemy|SRPowerWord)
+	TriggerBlock(DirectDamageSafe)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_POWER_WORD_KILL|150|50)
+END
 
 //////////////////////////////
 ///   Symbol: Stun
@@ -213,9 +304,35 @@ END
 ///	Combat
 //////////////////////////////////////////////////////////////////////////////
 
+
+
+///////////////////////////////////////////////////////////////////////
+////	Kill anything in sight
+///////////////////////////////////////////////////////////////////////
+
+
+IF
+	See([ANYONE])
+THEN
+	RESPONSE #100
+		AttackOneRound(LastSeenBy(Myself))
+END
+
 ///////////////////////////////////////////////////////////////////////
 ////	At least *consider* chewing on stunned victims
 ///////////////////////////////////////////////////////////////////////
+
+IF
+	RequireBlock(IsDemonLord)
+	Global("DemonHatesAll","GLOBAL",1)
+        See([ANYONE])
+	StateCheck(LastSeenBy(Myself),STATE_STUNNED)
+THEN
+	RESPONSE #100
+		AttackOneRound(LastSeenBy(Myself))
+	RESPONSE #100
+	         Continue()
+END
 
 IF TRIGGER
 	Target(NearestEnemyOfType([PC]))
@@ -228,6 +345,15 @@ END
 //////////////////////////////////////////////////////////////////////////////
 ////	Core combat block
 ///////////////////////////////////////////////////////////////////////////////
+
+IF
+        RequireBlock(IsDemonLord)
+	Global("DemonHatesAll","GLOBAL",1)
+        See([ANYONE])
+THEN
+	RESPONSE #100
+		AttackOneRound(LastSeenBy(Myself))
+END
 
 
 BEGIN LOOP(MyWeaponStrength||5)

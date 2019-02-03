@@ -9,177 +9,15 @@ DEFINE_ACTION_FUNCTION friendly_fiends_core
 BEGIN
   LAF check_label STR_VAR label=dw#friendly_fiends RET value END
   ACTION_IF !value BEGIN
+
     LAF make_label STR_VAR label=dw#friendly_fiends END
 
-    // isolate fiends summoned by SR Summon Fiend / Gate
-    
     ACTION_IF demivrgvs BEGIN
-       COPY_EXISTING "spfiend.eff" "override/dwdvgla.eff"
-           REPLACE_TEXTUALLY demglasu dwdvglab
-       COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" override
-           REPLACE_TEXTUALLY spfiend dwdvgla
-       COPY_EXISTING "demglasu.cre" "override/dwdvglab.cre"
-       COPY_EXISTING "demglasu.cre" override
-           WRITE_ASCII 0x248 demglasu
-
-       COPY_EXISTING "spgate.eff" "override/dwdvpf.eff"
-          REPLACE_TEXTUALLY dempitsu dwdvpitf
-       COPY_EXISTING "%WIZARD_GATE%.spl" override
-          REPLACE_TEXTUALLY spgate dwdvpf
-       COPY_EXISTING "dempitsu.cre" "override/dwdvpitf.cre"
-       COPY_EXISTING "dempitsu.cre" override
-           WRITE_ASCII 0x248 dempitsu
+       LAF friendly_fiends_isolate_sr END
     END
 
-    // define variables
-
-    OUTER_SET ids=enhanced_edition? 1 : 2
-
-    LAF ds_resolve_stat INT_VAR ids STR_VAR id=DW_SCS_CASTER RET stat_ind_npc=stat_ind END
-
-    OUTER_SPRINT splstate_low DW_POWER_UPGRADE4
-    OUTER_SPRINT splstate_high DW_POWER_UPGRADE5
-
-    LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
-    LAF ds_resolve_stat INT_VAR ids STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
-
-    // on IWD install, SPIN996-9 are missing (even though used by core scripts, i.e. this is an IWDEE bug).
-    // Replace them.
-    ACTION_IF is_iwd BEGIN
-     ACTION_BASH_FOR "%scsroot%/%component_loc%/%missing_loc%" ".*\.spl" BEGIN
-       COPY "%BASH_FOR_FILESPEC%" override
-     END
-    END
-
-    // make needed spells
-
-    // vanilla is:
-    // - nabassu (demnabsu): silence once; Vampiric Touch and paralysis at will; death gaze overlaid
-    // - glabrezu (demglasu): Remove Magic once; PW:Stun at will (but maybe make 7 x)
-    // - pit fiend (dempitsu): Fear once; Remove Magic once; Symbol: Fear (or Pain if available) and Deathknight Fireball at will
-
-    // extra from SCS summon-alignment-based-fiends is:
-    // - bone fiend (dw#bfsum): Fear once; II at will; Cone of Cold 3x/day
-    // - cornugon (dw#cosum): fear once; LB at will
-    // - balor (dw#basum): Symbol: stun 3x/day, Remove Magic once, Confusion once, paralysis at will
-
-    // make SPL files
-
-    LAF run STR_VAR file=fiend_spells_basic locbase="%tph_loc%" END
-
-    // edit CRE files
-    
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"TANARI_PARALYZE TANARI_VAMPIRIC_TOUCH TANARI_SILENCE TANARI_DEATH_GAZE"
-    END
-    LAF edit_creature STR_VAR creature=demnabsu edits=patch_data END
-
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"WIZARD_POWER_WORD_STUN(7) WIZARD_DISPEL_MAGIC"
-    END
-    LAF edit_creature STR_VAR creature=demglasu edits=patch_data END
-
-    ACTION_IF iwd_divine BEGIN
-       OUTER_SPRINT symbol CLERIC_SYMBOL_PAIN
-    END ELSE BEGIN
-       OUTER_SPRINT symbol WIZARD_SYMBOL_FEAR
-    END
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"INNATE_FIEND_FIREBALL %symbol% WIZARD_DISPEL_MAGIC"
-    END
-    LAF edit_creature STR_VAR creature=dempitsu edits=patch_data END
-
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"INNATE_FIEND_IMPROVED_INVISIBILITY WIZARD_CONE_OF_COLD(3)"
-    END
-    LAF edit_creature STR_VAR allow_missing=1 creature=dw#bfsum edits=patch_data END
-
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"WIZARD_LIGHTNING_BOLT(3) WIZARD_FIREBALL(3)"
-    END
-    LAF edit_creature STR_VAR allow_missing=1 creature=dw#cosum edits=patch_data END
-
-    MAKE_PATCH
-       remove_spells=>all
-       add_spells=>"WIZARD_SYMBOL_STUN(3) WIZARD_DISPEL_MAGIC WIZARD_CONFUSION TANARI_PARALYZE"
-    END
-    LAF edit_creature STR_VAR allow_missing=1 creature=dw#basum edits=patch_data END
-
-
-    // make scripts and amend existing scripts
-    CLEAR_IDS_MAP
-    //
-    LAF check_label STR_VAR label=dw#fiend RET value END
-    ACTION_IF value THEN BEGIN
-        OUTER_SPRINT variables "ImprovedFiends=True"
-    END ELSE BEGIN
-        OUTER_SPRINT variables ""
-    END
- 
-    MAKE_PATCH
-       dempitsu=>dw#hlpit
-       demglasu=>dw#hlgla
-       demnabsu=>dw#hlnab
-       dw#llbnf=>dw#hlbnf
-       dw#llcor=>dw#hlcor
-       dw#llbal=>dw#hlbal
-    END
-    LAF define_difficulty STR_VAR type=fiend RET difficulty_variable END
-    ACTION_PHP_EACH patch_data AS script=>newscript BEGIN
-     ACTION_IF (FILE_EXISTS_IN_GAME "%script%.bcs") BEGIN
-       // make the scripts if they don't exist
-       ACTION_IF !FILE_EXISTS_IN_GAME "%newscript%.bcs" BEGIN
-            LAF ssl_to_bcs STR_VAR locbase="%script_loc%" script="%newscript%" variables END
-       END
-       ACTION_MATCH "%script%" WITH
-          dempitsu dw#llbal BEGIN
-              OUTER_SPRINT splstate "%splstate_high%"
-          END
-       DEFAULT
-              OUTER_SPRINT splstate "%splstate_low%"
-       END
-       <<<<<<<< .../stratagems-inline/demontop.ssl
-       IF
-             OnCreation()
-             CheckSpellState(LastSummonerOf(Myself),%splstate%)
-             Allegiance(LastSummonerOf(Myself),GOODCUTOFF)
-       THEN
-           RESPONSE #100
-             ChangeGeneral(Myself,MONSTER)
-             ChangeAIScript("%newscript%",OVERRIDE)
-             ChangeAIScript("",DEFAULT)
-	     DestroyItem("dw#sumfi")
-             Ally()
-       END
-
-       IF
-             OnCreation()
-             OR(2)
-                 CheckSpellState(LastSummonerOf(Myself),%splstate%)
-                 CheckSpellState(LastSummonerOf(Myself),%stat_ind_npc%)
-             Allegiance(LastSummonerOf(Myself),EVILCUTOFF)
-       THEN
-           RESPONSE #100
-             ChangeGeneral(Myself,MONSTER)
-             ChangeAIScript("%newscript%",OVERRIDE)
-             ChangeAIScript("",DEFAULT)
-	     DestroyItem("dw#sumfi")
-             Enemy()
-       END
-      >>>>>>>>
-       LAF extend STR_VAR script top=demontop ssl=yes inline=yes END
-     END
-    END
-
-    // hide fiends until they're summoned
-
-    LAF install STR_VAR file=~dw#sumfi.itm~ location="%boot_loc%" END
-    LAF edit_creature STR_VAR creature=~dempitsu demglasu demnabsu dw#llbnf dw#llcor dw#llbal~ allow_missing=1 editstring=~gender=>SUMMONED_DEMON add_items=>dw#sumfi(boots)~ END
+    LAF friendly_fiends_resources END
+    LAF friendly_fiend_scripts END
 
     // if appropriate, make the Grimoires of Demon Binding
     
@@ -205,8 +43,8 @@ DEFINE_ACTION_FUNCTION damnation INT_VAR damned=40011 no_resurrection=40010 more
     OUTER_SPRINT splstate_low DW_POWER_UPGRADE4
     OUTER_SPRINT splstate_high DW_POWER_UPGRADE5
 
-    LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
-    LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
+    LAF resolve_stat STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
+    LAF resolve_stat STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
 
 
    // create a specific-alignment-check SPLPROT entry
@@ -356,4 +194,195 @@ DEFINE_ACTION_FUNCTION grimoire BEGIN
 
 END
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+// make needed resources
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION friendly_fiends_resources BEGIN
+
+    // on IWD install, SPIN996-9 are missing (even though used by core scripts, i.e. this is an IWDEE bug).
+    // Replace them.
+    ACTION_IF is_iwd BEGIN
+     ACTION_BASH_FOR "%scsroot%/%component_loc%/%missing_loc%" ".*\.spl" BEGIN
+       COPY "%BASH_FOR_FILESPEC%" override
+     END
+    END
+
+    // make needed spells
+
+    // vanilla is:
+    // - nabassu (demnabsu): silence once; Vampiric Touch and paralysis at will; death gaze overlaid
+    // - glabrezu (demglasu): Remove Magic once; PW:Stun at will (but maybe make 7 x)
+    // - pit fiend (dempitsu): Fear once; Remove Magic once; Symbol: Fear (or Pain if available) and Deathknight Fireball at will
+
+    // extra from SCS summon-alignment-based-fiends is:
+    // - bone fiend (dw#bfsum): Fear once; II at will; Cone of Cold 3x/day
+    // - cornugon (dw#cosum): fear once; LB at will
+    // - balor (dw#basum): Symbol: stun 3x/day, Remove Magic once, Confusion once, paralysis at will
+
+    // make SPL files
+
+    LAF run STR_VAR file=fiend_spells_basic locbase="%tph_loc%" END
+
+    // edit CRE files
+    
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"TANARI_PARALYZE TANARI_VAMPIRIC_TOUCH TANARI_SILENCE TANARI_DEATH_GAZE"
+    END
+    LAF edit_creature STR_VAR creature=demnabsu edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"WIZARD_POWER_WORD_STUN(7) WIZARD_DISPEL_MAGIC"
+    END
+    LAF edit_creature STR_VAR creature=demglasu edits=patch_data END
+
+    ACTION_IF iwd_divine BEGIN
+       OUTER_SPRINT symbol CLERIC_SYMBOL_PAIN
+    END ELSE BEGIN
+       OUTER_SPRINT symbol WIZARD_SYMBOL_FEAR
+    END
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"INNATE_FIEND_FIREBALL %symbol% WIZARD_DISPEL_MAGIC"
+    END
+    LAF edit_creature STR_VAR creature=dempitsu edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"INNATE_FIEND_IMPROVED_INVISIBILITY WIZARD_CONE_OF_COLD(3)"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#bfsum edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"WIZARD_LIGHTNING_BOLT(3) WIZARD_FIREBALL(3)"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#cosum edits=patch_data END
+
+    MAKE_PATCH
+       remove_spells=>all
+       add_spells=>"WIZARD_SYMBOL_STUN(3) WIZARD_DISPEL_MAGIC WIZARD_CONFUSION TANARI_PARALYZE"
+    END
+    LAF edit_creature STR_VAR allow_missing=1 creature=dw#basum edits=patch_data END
+
+    // hide fiends until they're summoned
+
+    LAF install STR_VAR file=~dw#sumfi.itm~ location="%boot_loc%" END
+    LAF resolve_stat STR_VAR id=DO_NOT_TARGET_SPELLS RET parameter2=stat_ind END
+    COPY_EXISTING "dw#sumfi.itm" override
+       PATCH_IF enhanced_edition BEGIN
+           LPF ADD_ITEM_EQEFFECT INT_VAR opcode=328 target=1 parameter2 timing=2 special=1 END
+       END ELSE BEGIN
+           LPF ADD_ITEM_EQEFFECT INT_VAR opcode=318 target=1 parameter2 timing=2 END
+       END
+    LAF edit_creature STR_VAR creature=~dempitsu demglasu demnabsu dw#llbnf dw#llcor dw#llbal~ allow_missing=1 editstring=~gender=>SUMMONED_DEMON add_items=>dw#sumfi(boots)~ END
+
+
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+// isolate fiends summoned by SR Summon Fiend / Gate
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION friendly_fiends_isolate_sr BEGIN
+       COPY_EXISTING "spfiend.eff" "override/dwdvgla.eff"
+           REPLACE_TEXTUALLY demglasu dwdvglab
+       COPY_EXISTING "%WIZARD_SUMMON_FIEND%.spl" override
+           REPLACE_TEXTUALLY spfiend dwdvgla
+       COPY_EXISTING "demglasu.cre" "override/dwdvglab.cre"
+       COPY_EXISTING "demglasu.cre" override
+           WRITE_ASCII 0x248 demglasu
+
+       COPY_EXISTING "spgate.eff" "override/dwdvpf.eff"
+          REPLACE_TEXTUALLY dempitsu dwdvpitf
+       COPY_EXISTING "%WIZARD_GATE%.spl" override
+          REPLACE_TEXTUALLY spgate dwdvpf
+       COPY_EXISTING "dempitsu.cre" "override/dwdvpitf.cre"
+       COPY_EXISTING "dempitsu.cre" override
+           WRITE_ASCII 0x248 dempitsu
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+// make scripts and amend existing scripts
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION friendly_fiends_scripts BEGIN
+
+    OUTER_SPRINT splstate_low DW_POWER_UPGRADE4
+    OUTER_SPRINT splstate_high DW_POWER_UPGRADE5
+    // define variables
+
+    LAF resolve_stat STR_VAR id=DW_SCS_CASTER RET stat_ind_npc=stat_ind END
+    LAF resolve_stat STR_VAR id="%splstate_low%" RET stat_ind_low=stat_ind END
+    LAF resolve_stat STR_VAR id="%splstate_high%" RET stat_ind_high=stat_ind END
+
+
+    CLEAR_IDS_MAP
+    //
+    LAF check_label STR_VAR label=dw#fiend RET value END
+    ACTION_IF value THEN BEGIN
+        OUTER_SPRINT variables "ImprovedFiends=True"
+    END ELSE BEGIN
+        OUTER_SPRINT variables ""
+    END
+
+    MAKE_PATCH
+       dempitsu=>dw#hlpit
+       demglasu=>dw#hlgla
+       demnabsu=>dw#hlnab
+       dw#llbnf=>dw#hlbnf
+       dw#llcor=>dw#hlcor
+       dw#llbal=>dw#hlbal
+    END
+    LAF define_difficulty STR_VAR type=fiend RET difficulty_variable END
+    ACTION_PHP_EACH patch_data AS script=>newscript BEGIN
+     ACTION_IF (FILE_EXISTS_IN_GAME "%script%.bcs") BEGIN
+       // make the scripts if they don't exist
+       ACTION_IF !FILE_EXISTS_IN_GAME "%newscript%.bcs" BEGIN
+            LAF ssl_to_bcs STR_VAR locbase="%script_loc%" script="%newscript%" variables END
+       END
+       ACTION_MATCH "%script%" WITH
+          dempitsu dw#llbal BEGIN
+              OUTER_SPRINT splstate "%splstate_high%"
+          END
+       DEFAULT
+              OUTER_SPRINT splstate "%splstate_low%"
+       END
+       <<<<<<<< .../stratagems-inline/demontop.ssl
+       IF
+             OnCreation()
+             CheckSpellState(LastSummonerOf(Myself),%splstate%)
+             Allegiance(LastSummonerOf(Myself),GOODCUTOFF)
+       THEN
+           RESPONSE #100
+             ChangeGender(Myself,OTHER)
+             ChangeAIScript("%newscript%",OVERRIDE)
+             ChangeAIScript("",DEFAULT)
+	     DestroyItem("dw#sumfi")
+	     ChangeEnemyAlly(Myself,ALLY)
+       END
+
+       IF
+             OnCreation()
+             OR(2)
+                 CheckSpellState(LastSummonerOf(Myself),%splstate%)
+                 CheckSpellState(LastSummonerOf(Myself),%stat_ind_npc%)
+             Allegiance(LastSummonerOf(Myself),EVILCUTOFF)
+       THEN
+           RESPONSE #100
+             ChangeGender(Myself,OTHER)
+             ChangeAIScript("%newscript%",OVERRIDE)
+             ChangeAIScript("",DEFAULT)
+	     DestroyItem("dw#sumfi")
+	     ChangeEnemyAlly(Myself,ENEMY)
+       END
+      >>>>>>>>
+       LAF extend STR_VAR script top=demontop ssl=yes inline=yes END
+     END
+    END
+
+
+END
