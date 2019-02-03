@@ -1,0 +1,137 @@
+DEFINE_ACTION_FUNCTION restoration_ability_drain BEGIN
+
+    ACTION_IF enhanced_edition BEGIN  // sanity check
+    
+        // manually record greater restoration spells
+        
+        ACTION_FOR_EACH spell IN "%CLERIC_RESTORATION%" OHBRESTO SPWISH07 SPWISH46 BEGIN
+           ACTION_TO_UPPER spell
+           OUTER_SPRINT $greater_restoration("%spell%") ""
+        END
+
+        // collect spells and items that carry out ability drain (filtering those that do any other substantial thing)
+        // Also collect spells and items that apply the Restoration opcode
+
+        OUTER_SPRINT list_lesser ""
+        OUTER_SPRINT list_greater ""
+        OUTER_SPRINT spell ""
+        OUTER_SPRINT item ""
+        COPY_EXISTING_REGEXP
+                    ".*\.itm" "%workspace%"
+                    ".*\.spl" "%workspace%"
+           SET is_item = ("%SOURCE_EXT%" STRING_EQUAL_CASE itm)? 1 : 0
+           SPRINT filename "%SOURCE_RES%"
+           TO_UPPER filename
+           PATCH_IF is_item BEGIN
+              GET_OFFSET_ARRAY ab_array ITM_V10_HEADERS
+           END ELSE BEGIN
+              GET_OFFSET_ARRAY ab_array SPL_V10_HEADERS
+           END
+           SET found=0
+           SET blocked=0
+           SET blocked_lesser=0
+           SET restores=0
+           PHP_EACH ab_array AS ind=>ab_off BEGIN
+              PATCH_IF is_item BEGIN
+                 GET_OFFSET_ARRAY2 fx_array ab_off ITM_V10_HEAD_EFFECTS
+              END ELSE BEGIN
+                 GET_OFFSET_ARRAY2 fx_array ab_off SPL_V10_HEAD_EFFECTS
+              END
+              PHP_EACH fx_array AS ind2=>fx_off BEGIN
+                 READ_SHORT fx_off opcode
+                 PATCH_MATCH "%opcode%" WITH
+                 19 44 6 10 15 49 BEGIN
+                    READ_BYTE (0x2+fx_off) target
+                    READ_LONG (0x4+fx_off) increment
+                    READ_BYTE (0xc+fx_off) timing
+                    PATCH_IF (target=2 && increment<0 && timing=0) BEGIN
+                       SET found=1
+                    END
+                 END
+                 0 1 39 45 54 74 166 BEGIN // Stun, reduce MR, sleep, blindness, THAC0 reduction, AC reduction, APR reduction - note: don't check for 216 (level drain), restoration removes that too!
+                    SET blocked=1
+                 END
+                 3 25 76 78 128 BEGIN // disease, poison, confusion, berserk, feeblemind
+                    SET blocked_lesser=1
+                 END
+                 224 BEGIN
+                    SET restores=1
+                 END
+                 DEFAULT
+                 END
+              END
+           END
+           PATCH_IF (found && !blocked) BEGIN
+              PATCH_IF blocked_lesser BEGIN
+                  SPRINT list_greater "%list_greater% %filename%"
+              END ELSE BEGIN
+                  SPRINT list_lesser "%list_lesser% %filename%"
+              END
+           END
+           PATCH_IF restores BEGIN
+              PATCH_IF is_item BEGIN
+                 SPRINT item "%item% %filename%"
+              END ELSE BEGIN
+                     SPRINT spell "%spell% %filename%"
+              END
+           END
+        BUT_ONLY
+        
+        // any manual additions (basically items that we expect to be added after this component, or after SCS)
+        
+        LAF check_label STR_VAR label=dw#vampire RET value END
+        ACTION_IF !value BEGIN
+           OUTER_SPRINT list_lesser "%list_lesser% dw#bldd dw#bldd1 dw#bldd2 dw#bldd3" // Improved Vampires blood drain, since it'll probably be installed later
+        END
+
+
+        // Apply the changes
+
+        MAKE_PATCH
+           match=>"opcode=224"
+           opcode=>321 
+           var_list=>"[%list_lesser%]"
+           number_to_add=>"length list"
+           resource=>"entry_index from list"
+        END
+        ACTION_IF "%spell%" STRING_COMPARE_CASE "" BEGIN
+           LAF edit_spell STR_VAR spell editstring="clone_effect=>patch_data" END
+        END
+        ACTION_IF "%item%" STRING_COMPARE_CASE "" BEGIN
+           LAF edit_item STR_VAR item editstring="clone_effect=>patch_data" END
+        END
+        MAKE_PATCH
+           match=>"opcode=224"
+           opcode=>321 
+           var_list=>"[%list_greater%]"
+           number_to_add=>"length list"
+           resource=>"entry_index from list"
+        END
+        ACTION_PHP_EACH greater_restoration AS spell=>discard BEGIN
+           LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell editstring="clone_effect=>patch_data" END
+        END
+
+
+        // Patch the descriptions
+
+        OUTER_SPRINT lesser_old @1100
+        OUTER_SPRINT greater_old @1101
+        OUTER_SPRINT new @1102
+        
+        COPY_EXISTING "%CLERIC_LESSER_RESTORATION%.spl" "%workspace%"
+             READ_LONG 0x50 tlk_entry
+        BUT_ONLY
+        LAF substitute_tlk_entry INT_VAR tlk_entry STR_VAR arguments="~%lesser_old%~=>~%new%~" END
+        COPY_EXISTING "%CLERIC_RESTORATION%.spl" "%workspace%"
+             READ_LONG 0x50 tlk_entry
+        BUT_ONLY
+        LAF substitute_tlk_entry INT_VAR tlk_entry STR_VAR arguments="~%greater_old%~=>~%new%~" END
+        
+        // end of main patch
+
+   END ELSE BEGIN
+      LAF warning STR_VAR warning="restoration_ability_drain function called on a non-EE install" END
+
+   END
+
+END
