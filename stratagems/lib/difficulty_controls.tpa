@@ -381,54 +381,249 @@ END
 DEFINE_ACTION_FUNCTION difficulty_ui
    RET abort
 BEGIN
+           // first sort out some bespoke replacements
+           
+           OUTER_SET x_rescale=0
+           ACTION_IF MOD_IS_INSTALLED "leui-bg1ee/leui-bg1ee.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam bg1_button_resized
+              OUTER_SET x_rescale=1
+           END ELSE
+           ACTION_IF MOD_IS_INSTALLED "leui-sod/leui-sod.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam sod_button_resized
+              OUTER_SET x_rescale=1
+           END ELSE
+           ACTION_IF MOD_IS_INSTALLED "leui-iwdee/leui-iwdee.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam iwd_button_resized
+              OUTER_SET x_rescale=1
+           END ELSE BEGIN
+              OUTER_SPRINT smaller_bam bg2_button_resized
+              OUTER_SET x_rescale=1
+           END
 
            OUTER_SET abort=0
+           COPY_EXISTING ui.menu override
+                LPF UI_analyze_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name patch=get_feedback_ui_coordinates RET_ARRAY feedback=patch_output END
+                LPF UI_analyze_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name patch=get_assign_keys_ui_coordinates RET_ARRAY keys=patch_output END
+                PATCH_IF !(keys_xloc=feedback_xloc) || !(keys_width=feedback_width) BEGIN
+                   SET abort=1 // in this case the setup is too different from what we're used to
+                END
+           BUT_ONLY
+           ACTION_IF !abort BEGIN
+             COPY_EXISTING ui.menu override
+                //main patch
+                SET delta=feedback_yloc - keys_yloc
+                SET new_yloc=keys_yloc - delta
+                SPRINT area_string "%feedback_xloc% %new_yloc% %feedback_width% %feedback_height%"
+                LPF UI_insert_into_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name insert=".../stratagems-inline/diff_button" END
+                LPF UI_add_function STR_VAR function=".../stratagems-inline/diff_func" END
+                LPF UI_alter_object STR_VAR object=ESC_MENU object_type=menu object_name_field=name patch="ui_sub_true" END
+                LPF UI_alter_object STR_VAR object=START_OPTIONS object_type=menu object_name_field=name patch="ui_sub_false" END
+                // tweaks
+                PATCH_IF (GAME_IS BGEE && !GAME_INCLUDES SOD) BEGIN
+                    REPLACE_TEXTUALLY "area 44 190 360 262" "area 44 190 360 192"
+                END
+             BUT_ONLY
 
-           // read in the UI
-           LAF read_file_into_array STR_VAR file=ui.menu locabs=override RET_ARRAY ui_array=file_contents END
+             // add the identifying string
+             LAF UI_add_string INT_VAR tra_entry=1128 STR_VAR string_id="SCS_DIFFICULTY_BUTTON" END
 
-           // get required data
-           LAF UI_extract_object STR_VAR ui_array object_ident=menu object_name_field=name object_name=OPTIONS_GAMEPLAY RET_ARRAY menu_array=object_array END
-           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=FEEDBACK_BUTTON entry_field=area RET feedback_entry=entry END
-           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=ASSIGN_KEYS_BUTTON entry_field=area RET keys_entry=entry END
-           LAF UI_get_object_entry STR_VAR ui_array=menu_array object_ident=button object_name_field=text object_name=ASSIGN_KEYS_BUTTON entry_field=bam RET bam_string=entry END
-           OUTER_INNER_PATCH "%feedback_entry%" BEGIN
-              REPLACE_EVALUATE "[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*"
+
+
+             // check if we have a space problem and if so, adjust
+             COPY_EXISTING "ui.menu" "%workspace%"
+                           LPF UI_return_object STR_VAR object=OPTIONS_GAMEPLAY object_name_field=name object_type=menu RET object_data END
+             BUT_ONLY
+             OUTER_INNER_PATCH "%object_data%" BEGIN
+                     LPF UI_analyze_object
+                               STR_VAR object=ASSIGN_KEYS_BUTTON
+                                       object_type=BUTTON
+                                       object_name_field=text
+                                       patch=UI_get_coordinates
+                     RET_ARRAY patch_output
+                     END
+                     SET xmin=$patch_output("xloc")
+                     SET width=$patch_output("width")
+                     SET height=$patch_output("height")
+                     SET xmax=xmin + width
+                     SET ymax=$patch_output("yloc")
+             END
+             OUTER_INNER_PATCH "%object_data%" BEGIN
+                  SET $patch_output("clearance")=9999
+                  LPF UI_analyze_object
+                      STR_VAR
+                             object_type=slider
+                             patch=check_clearance
+                      RET_ARRAY patch_output
+                  END
+             END
+             OUTER_SPRINT clearance $patch_output("clearance")
+             ACTION_IF clearance>(height * 11)/10  BEGIN
+                  OUTER_SET space=1
+             END ELSE BEGIN
+                  OUTER_SET space=0
+             END
+             ACTION_IF !space BEGIN
+                 PRINT "smaller_bam is %smaller_bam%"
+                 COPY "%scsroot%/%component_loc%/resource/%smaller_bam%.bam" "override/dwostcl.bam"
+                 COPY_EXISTING ui.menu override
+                           LPF UI_alter_object
+                               STR_VAR object=OPTIONS_GAMEPLAY
+                                       object_type=menu
+                                       object_name_field=name
+                                       patch=rescale_buttons
+                           END
+                 BUT_ONLY
+             END
+
+
+
+        END
+
+
+
+END
+
+
+
+
+/// resources and helper functions for the UI edit
+
+
+
+
+DEFINE_PATCH_FUNCTION get_feedback_ui_coordinates
+    RET_ARRAY patch_output
+BEGIN
+    LPF UI_analyze_object
+        STR_VAR object=FEEDBACK_BUTTON 
+                object_type=BUTTON 
+                object_name_field=text 
+                patch=UI_get_coordinates
+        RET_ARRAY patch_output
+    END
+END
+
+DEFINE_PATCH_FUNCTION get_assign_keys_ui_coordinates
+    RET_ARRAY patch_output
+BEGIN
+    LPF UI_analyze_object
+        STR_VAR object=ASSIGN_KEYS_BUTTON
+                object_type=BUTTON 
+                object_name_field=text
+                patch=UI_get_coordinates
+        RET_ARRAY patch_output
+    END
+END
+
+DEFINE_PATCH_FUNCTION check_clearance
+   RET_ARRAY patch_output
+BEGIN
+REPLACE_EVALUATE "area +\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)[^0-9]*"
               BEGIN
-                feedback_xloc="%MATCH1%"
-                feedback_yloc="%MATCH2%"
-                feedback_width="%MATCH3%"
-                feedback_height="%MATCH4%"
+                SET xloc_here="%MATCH1%"
+                SET yloc_here="%MATCH3%" + "%MATCH7%"
+                SET width="%MATCH5%"
+                SET xmin_here=xloc_here
+                SET xmax_here=xloc_here + width
+                PATCH_IF (xmin_here<=xmax) || (xmax_here>=xmin) BEGIN
+                   SET clearance=$patch_output("clearance")
+                   SET clearance_here= ymax - yloc_here
+                   PATCH_IF clearance_here<0 BEGIN
+                      SET clearance_here=9999
+                   END
+                   SET clearance = clearance < clearance_here ? clearance : clearance_here
+                   SET $patch_output("clearance")=clearance
+                END
               END
               ""
-           END
-           OUTER_INNER_PATCH "%keys_entry%" BEGIN
-              REPLACE_EVALUATE "[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*\([0-9]+\)[^0-9]*"
-              BEGIN
-                keys_xloc="%MATCH1%"
-                keys_yloc="%MATCH2%"
-                keys_width="%MATCH3%"
-                keys_height="%MATCH4%"
-              END
-              ""
-           END
-           ACTION_IF !(keys_xloc=feedback_xloc) || !(keys_width=feedback_width) BEGIN
-              OUTER_SET abort=1 // in this case the setup is too different from what we're used to
-           END
-           OUTER_SET delta=feedback_yloc - keys_yloc
-           OUTER_SET new_yloc=keys_yloc - delta
-           OUTER_SPRINT area_string "%feedback_xloc% %new_yloc% %feedback_width% %feedback_height%"
 
-           // make the patch
-           
-        ACTION_IF !abort BEGIN
+END
 
-           // main changes
+DEFINE_PATCH_FUNCTION difficulty_lower
+BEGIN
+     LPF shared_lower INT_VAR number=4 END
+END
+
+DEFINE_PATCH_FUNCTION assign_keys_lower
+BEGIN
+     LPF shared_lower INT_VAR number=3 END
+END
+
+
+DEFINE_PATCH_FUNCTION auto_feedback_lower
+BEGIN
+     LPF shared_lower INT_VAR number=2 END
+END
+
+DEFINE_PATCH_FUNCTION autopause_lower
+BEGIN
+     LPF shared_lower INT_VAR number=1 END
+END
+
+DEFINE_PATCH_FUNCTION shared_lower
+   INT_VAR number=0
+BEGIN
+     REPLACE_EVALUATE "\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\([^0-9]*\)"
+     BEGIN
+         SET xloc="%MATCH1%"
+         SET yloc="%MATCH3%"
+         SET width="%MATCH5%"
+         SET height="%MATCH7%"
+         SET yloc +=(number * height) / 4
+         SET height= (3* height) / 4
+         PATCH_IF x_rescale BEGIN
+            SET xloc += (width / 8)
+            SET width = (3* width) / 4
+         END
+     END
+     " %xloc% %yloc% %width% %height%%MATCH8%"
+     REPLACE_TEXTUALLY "bam\( \|%TAB%\)+.*\(%WNL%\|%LNL%\|%MNL%\)" "bam dwostcl\2"
+
+
+END
+
+
+DEFINE_PATCH_FUNCTION rescale_buttons
+BEGIN
+    LPF UI_alter_object
+        STR_VAR object=SCS_DIFFICULTY_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=difficulty_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=ASSIGN_KEYS_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=assign_keys_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=AUTO_PAUSE_BUTTON
+                object_type=BUTTON 
+                object_name_field=text
+                patch=autopause_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=FEEDBACK_BUTTON
+                object_type=BUTTON 
+                object_name_field=text
+                patch=auto_feedback_lower
+    END
+END
+
+DEFINE_PATCH_FUNCTION ui_sub_true BEGIN
+   REPLACE_TEXTUALLY "Infinity_PushMenu( *'OPTIONS_GAMEPLAY' *)" "%WNL%scsInGameVar=true%WNL%Infinity_PushMenu( 'OPTIONS_GAMEPLAY' )%WNL%"
+END
+
+DEFINE_PATCH_FUNCTION ui_sub_false BEGIN
+   REPLACE_TEXTUALLY "Infinity_PushMenu( *'OPTIONS_GAMEPLAY' *)" "%WNL%scsInGameVar=false%WNL%Infinity_PushMenu( 'OPTIONS_GAMEPLAY' )%WNL%"
+END
 
    <<<<<<<< .../stratagems-inline/diff_button
 	button
         {
-		bam		%bam_string%
+		enabled         scsInGameVar
+                bam		%feedback_bam%
 		sequence	0
 		area		%area_string%
 		text		"SCS_DIFFICULTY_BUTTON"
@@ -436,6 +631,7 @@ BEGIN
 		action
 		"
 			scsSummonWidget()
+			Infinity_PopMenu()
                         e:SelectEngine(worldScreen)
 		"
 	}
@@ -445,30 +641,3 @@ function scsSummonWidget()
 	  C:Eval('CreateCreatureObject("dw#diffi",Player1,0,0,0)')
 end
    >>>>>>>>
-
-          LAF read_file_into_array STR_VAR file=diff_func inline=yes RET_ARRAY diff_func=file_contents END
-          LAF read_file_into_array STR_VAR file=diff_button inline=yes RET_ARRAY diff_button=file_contents END
-          LAF UI_add_function STR_VAR ui_array_in=ui_array function_array=diff_func RET_ARRAY ui_array=ui_array_out END
-          LAF UI_insert_into_menu STR_VAR ui_array_in=ui_array insert_array=diff_button menu_name=OPTIONS_GAMEPLAY RET_ARRAY ui_array=ui_array_out END
-          LAF write_array_into_file STR_VAR file="override/ui.menu" file_contents=ui_array END
-
-          // add the identifying string
-
-          LAF UI_add_string INT_VAR tra_entry=1128 STR_VAR string_id="SCS_DIFFICULTY_BUTTON" END
-          
-          // tweaks
-          
-          ACTION_IF (GAME_IS BGEE && !GAME_INCLUDES SOD) BEGIN
-             COPY_EXISTING "ui.menu" override
-                   REPLACE_TEXTUALLY "area 44 190 360 262" "area 44 190 360 192"
-             BUT_ONLY
-          END
-
-      END
-
-
-
-
-
-
-END

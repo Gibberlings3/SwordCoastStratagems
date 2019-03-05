@@ -1150,3 +1150,70 @@ BEGIN
       LAF find_unique_filename INT_VAR to_try STR_VAR prefix extension RET filename END
    END
 END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////    given an index in a file, a left character, and a right character, extract the
+////////////    index number of the left character and the matching right character
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION find_parenthesis_range
+     STR_VAR left="{"
+             right="}"
+             index=0
+     RET     start
+             end
+BEGIN
+     SET next_right="-1"
+     SET start=INDEX_BUFFER("%left%" index)
+     PATCH_IF start>=0 BEGIN
+        SET indent=1
+        SET loc=start + 1
+        WHILE indent>0 BEGIN
+           SET next_left = INDEX_BUFFER ("%left%" loc)
+           SET next_right = INDEX_BUFFER ("%right%" loc)
+           PATCH_IF next_right<0 BEGIN
+              SET indent=0
+              LPF warning STR_VAR warning="Failed to properly extract next %left%---%right% section from file %SOURCE_RES%, starting at %index%" END
+           END ELSE 
+           PATCH_IF next_left<0 BEGIN
+              SET indent -=1
+              SET loc=next_right + 1
+           END ELSE
+           PATCH_IF (next_left<next_right && next_left>=0) BEGIN
+              SET indent +=1
+              SET loc=next_left + 1
+           END ELSE BEGIN
+              SET indent -=1
+              SET loc=next_right + 1
+           END
+        END
+        SET end=next_right
+     END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////    given a 2da with variable numbers of entries, read the file in as an array
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION read_variable_array
+   RET_ARRAY array_data
+BEGIN
+   CLEAR_ARRAY array_data
+   INSERT_BYTES 0x0 2
+   WRITE_ASCIIE 0x0 "%WNL%"
+   REPLACE_EVALUATE "\(%WNL%\|%LNL%\|%MNL%\)\([^\(%WNL%\|%LNL%\|%MNL%\)]*\)" BEGIN
+     INNER_PATCH "%MATCH2%" BEGIN
+        REPLACE_TEXTUALLY "\(%TAB%\| \)+" " "
+        REPLACE_EVALUATE "^\([^ ]\)* +\([^ ].*\)" BEGIN
+
+          SPRINT $array_data("%MATCH1%") "%MATCH2%"
+        END
+        ""
+     END
+   END
+   ""
+END
