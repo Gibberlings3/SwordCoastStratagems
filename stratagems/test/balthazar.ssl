@@ -1,0 +1,1103 @@
+//////////////////////////////////////
+//////////////////////////////////////
+// This is basically a combination of
+// the (very similar) FINBALTH and
+// BALTHFT2. We generate the scripts
+// for the various Balthazars using this
+// as a template
+//
+// A note on difficulty (this applies
+// only in the Ascension main component):
+//
+// - On EASIEST, Balthazar doesn't use 
+//   Shadow Stance, Second Wind, Dragon Fist, or Hand of Murder,
+//   or detect the player's TS
+// - On EASY, he doesn't use Second Wind or Dragon Fist
+// - On CORE, he doesn't use Second Wind
+//////////////////////////////////////
+//////////////////////////////////////
+
+
+
+//////////////////////////////////////
+// Lunar Stance if someone's casting TS
+//////////////////////////////////////
+
+IF
+  Global("FIN_CASTING_TIME_STOP","GLOBAL",1)
+  !Difficulty(EASIEST)
+  HaveSpellRES("balth02")
+  !GlobalTimerNotExpired("spell","LOCALS")
+  !GlobalTimerNotExpired("timestop_lunar","LOCALS")
+  See(NearestEnemyOf(Myself))
+THEN
+    RESPONSE #100
+      SetGlobalTimer("spell","LOCALS",6)
+      SetGlobalTimer("timestop_lunar","LOCALS",24)
+      ForceSpellRES(NearestEnemyOf(Myself),"balth02")
+END
+
+//////////////////////////////////////
+// Second Wind!
+//////////////////////////////////////
+
+IF
+  DifficultyGT(NORMAL)
+  HPPercentLT(Myself,20)
+  HPGT(Myself,1)
+  !GlobalTimerNotExpired("SecondWind","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("SecondWind","LOCALS",1000)
+    DisplayStringHead(Myself,73944)  // ~Second wind!~
+    ReallyForceSpell(Myself,CLERIC_HEAL)
+END
+
+//////////////////////////////////////
+// Player interjection (friendly version only)
+//////////////////////////////////////
+
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  !Allegiance(Myself,ENEMY)
+  Global("MelStillImmortal","AR6200",2)
+  Delay(6)
+  See([PC])
+THEN
+  RESPONSE #100
+    SetGlobal("MelStillImmortal","AR6200",3)
+    StartDialogNoSet([PC])
+END
+
+//////////////////////////////////////
+// 2-second pause on creation, to keep out
+// of Melissan's way
+//////////////////////////////////////
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  Global("initial_pause","LOCALS",0)
+THEN
+    RESPONSE #100
+             SetGlobal("initial_pause","LOCALS",1)
+             Wait(2)
+END
+
+//////////////////////////////////////
+// Initial stance
+//////////////////////////////////////
+
+IF
+  See(NearestEnemyOf(Myself))
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  Global("FirstStance","LOCALS",0)
+THEN
+  RESPONSE #100
+    SetGlobal("FirstStance","LOCALS",1)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,72908)  // ~Lunar Stance!~
+    ForceSpellRES("balth02",NearestEnemyOf(Myself))  // ~Lunar Stance!~
+END
+
+//////////////////////////////////////
+// General combat-status checks
+//////////////////////////////////////
+
+IF
+  Global("CloseCombat","LOCALS",1)
+  GlobalTimerExpired("attacked","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",0)
+    SetGlobalTimer("SafeForAWhile","LOCALS",6)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  Global("safe","LOCALS",0)
+  GlobalTimerExpired("SafeForAWhile","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobal("safe","LOCALS",1)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  AttackedBy(NearestEnemyOf(Myself),DEFAULT)
+  Range(NearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",1)
+    SetGlobal("safe","LOCALS",0)
+    SetGlobalTimer("attacked","LOCALS",5)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  AttackedBy(SecondNearestEnemyOf(Myself),DEFAULT)
+  Range(SecondNearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",1)
+    SetGlobal("safe","LOCALS",0)
+    SetGlobalTimer("attacked","LOCALS",5)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  AttackedBy(ThirdNearestEnemyOf(Myself),DEFAULT)
+  Range(ThirdNearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",1)
+    SetGlobal("safe","LOCALS",0)
+    SetGlobalTimer("attacked","LOCALS",5)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  AttackedBy(FourthNearestEnemyOf(Myself),DEFAULT)
+  Range(FourthNearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",1)
+    SetGlobal("safe","LOCALS",0)
+    SetGlobalTimer("attacked","LOCALS",5)
+END
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  HitBy([ANYONE],CRUSHING)
+  Range(NearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("CloseCombat","LOCALS",1)
+    SetGlobal("safe","LOCALS",0)
+    SetGlobalTimer("attacked","LOCALS",5)
+END
+
+//////////////////////////////////////
+// Initial teleport (Monastery fight only)
+//////////////////////////////////////
+
+IF
+  Global("balth_is_tougher","GLOBAL",1)
+  Allegiance(Myself,ENEMY)
+  Global("FirstTeleport","LOCALS",0)
+THEN
+  RESPONSE #100
+    SetGlobal("FirstTeleport","LOCALS",1)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",[1014.1148])
+END
+
+//////////////////////////////////////
+// Flip resistances
+// shift to physical if 
+// (a) nearest opponent has >4 attacks
+// (and, DW variant, they don't have 
+// eneblade or melfmet)
+// (b) at least two opponents within 8
+//////////////////////////////////////
+
+IF
+  Range(NearestEnemyOf(Myself),8)
+  CheckStatGT(NearestEnemyOf(Myself),4,NUMBEROFATTACKS)
+  !HasItem("eneblade",NearestEnemyOf(Myself))
+  !HasItem("melfmet",NearestEnemyOf(Myself))
+  !StateCheck(Myself,STATE_INVISIBLE)
+  !GlobalTimerNotExpired("DefensiveParry","LOCALS")
+  !GlobalTimerNotExpired("Spell","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("DefensiveParry","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,12090)
+    ForceSpellRES("balth11",Myself)  // balth11
+END
+
+IF
+  Global("CloseCombat","LOCALS",1)
+  Range(NearestEnemyOf(Myself),8)
+  Range(SecondNearestEnemyOf(Myself),8)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  !GlobalTimerNotExpired("DefensiveParry","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("DefensiveParry","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,@1012)
+    ForceSpellRES("balth11",Myself)  // balth11
+  RESPONSE #100
+    Continue()
+END   
+
+IF
+  Global("CloseCombat","LOCALS",0)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  !GlobalTimerNotExpired("DefensiveParry","LOCALS")
+THEN
+    RESPONSE #100
+    SetGlobalTimer("DefensiveParry","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,@1012)
+    ForceSpellRES("finbafl",Myself)  // balth11
+  RESPONSE #100
+    Continue()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",0)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  !GlobalTimerNotExpired("DefensiveParry","LOCALS")
+  SpellCastOnMe([GOODCUTOFF],0)
+THEN
+    RESPONSE #100
+    SetGlobalTimer("DefensiveParry","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,@1012)
+    ForceSpellRES("finbafl",Myself)  // balth11
+  RESPONSE #100
+    Continue()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  !GlobalTimerNotExpired("DefensiveParry","LOCALS")
+  SpellCastOnMe([EVILCUTOFF],0)
+THEN
+    RESPONSE #100
+    SetGlobalTimer("DefensiveParry","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,@1012)
+    ForceSpellRES("finbafl",Myself)  // balth11
+  RESPONSE #100
+    Continue()
+END
+
+//////////////////////////////////////
+// Healing potion
+//////////////////////////////////////
+
+IF
+  HPPercentLT(Myself,50)
+  !GlobalTimerNotExpired("PotionUse","LOCALS")
+  OR(2)
+     !Range(NearestEnemyOf(Myself),8)
+     StateCheck(Myself,STATE_INVISIBLE)
+  HasItem("POTN55",Myself)  // ~Potion of Superior Healing~
+THEN
+  RESPONSE #100
+    SetGlobalTimer("PotionUse","LOCALS",6)
+    DisplayStringHead(Myself,46150)  // ~quaffs a potion~
+    UseItem("POTN55",Myself)  // ~Potion of Superior Healing~
+END
+
+//////////////////////////////////////
+// Consider Shadow Stance if somewhat hurt and in combat
+//////////////////////////////////////
+
+IF
+  HPPercentLT(Myself,75)
+  DifficultyGT(EASIEST)
+  Global("CloseCombat","LOCALS",1)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  !CheckStatGT(NearestEnemyOf(Myself),0,TRUE_SIGHT)
+  !CheckStatGT(SecondNearestEnemyOf(Myself),0,TRUE_SIGHT)
+  !CheckStatGT(ThirdNearestEnemyOf(Myself),0,TRUE_SIGHT)
+  !CheckStatGT(FourthNearestEnemyOf(Myself),0,TRUE_SIGHT)
+  !GlobalTimerNotExpired("ShadowStance","LOCALS")
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth10")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("ShadowStance","LOCALS",18)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73943)  // ~Shadow Stance!~
+    ForceSpellRES("balth10",Myself)  // ~Shadow Stance!~
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////////////////////////
+//// Look for an opportunity to use Solar Stance
+////////////////////////////////////////////////////
+
+IF
+  Global("UseSolarStance","LOCALS",1)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",0)
+    Continue()
+END
+
+IF
+  Range(NearestEnemyOf(Myself),20)
+  CheckStatLT(NearestEnemyOf(Myself),50,RESISTFIRE)
+  !CheckStatGT(NearestEnemyOf(Myself),30,RESISTMAGIC)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",1)
+    Continue()
+END
+
+IF
+  Range(SecondNearestEnemyOf(Myself),20)
+  CheckStatLT(SecondNearestEnemyOf(Myself),50,RESISTFIRE)
+  !CheckStatGT(SecondNearestEnemyOf(Myself),30,RESISTMAGIC)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",1)
+    Continue()
+END
+
+IF
+  Range(ThirdNearestEnemyOf(Myself),20)
+  CheckStatLT(ThirdNearestEnemyOf(Myself),50,RESISTFIRE)
+  !CheckStatGT(ThirdNearestEnemyOf(Myself),30,RESISTMAGIC)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",1)
+    Continue()
+END
+
+IF
+  Global("CloseCombat","LOCALS",1)
+  OR(2)
+  Range(SecondNearestEnemyOf(Myself),8)
+  Range(ThirdNearestEnemyOf(Myself),20)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",1)
+    Continue()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  Range(Nearest([GOODCUTOFF]),20)
+  OR(2)
+  !CheckStatGT(Nearest([GOODCUTOFF]),99,RESISTFIRE)
+  !CheckStatGT(Nearest([GOODCUTOFF]),75,RESISTMAGIC)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",0)
+    Continue()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  Range(SecondNearest([GOODCUTOFF]),20)
+  OR(2)
+  !CheckStatGT(SecondNearest([GOODCUTOFF]),99,RESISTFIRE)
+  !CheckStatGT(SecondNearest([GOODCUTOFF]),75,RESISTMAGIC)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",0)
+    Continue()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  Range(ThirdNearest([GOODCUTOFF]),20)
+THEN
+  RESPONSE #100
+    SetGlobal("UseSolarStance","LOCALS",0)
+    Continue()
+END
+
+IF
+  Global("UseSolarStance","LOCALS",1)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth01")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,72906)  // ~Solar Stance!~
+    ForceSpellRES("balth01",Myself)  // ~Solar Stance!~
+  RESPONSE #50
+    Continue()
+END
+
+////////////////////////////////////////////////////
+//// Use Lunar Stance, 50/50, by default
+////////////////////////////////////////////////////
+
+IF
+  See(NearestEnemyOf(Myself))
+  !StateCheck(Myself,STATE_INVISIBLE)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth02")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,72908)  // ~Lunar Stance!~
+    ForceSpellRES("balth02",Myself)  // ~Lunar Stance!~
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////////////////////////
+//// Consider teleporting away.
+////////////////////////////////////////////////////
+
+  Global("TimeToMove","LOCALS",1)
+THEN
+  RESPONSE #100
+    SetGlobal("TimeToMove","LOCALS",0)
+    Continue()
+END
+
+IF
+  Global("CloseCombat","LOCALS",1)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  Range(NearestEnemyOf(Myself),8)
+  Range(SecondNearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("TimeToMove","LOCALS",1)
+    Continue()
+  RESPONSE #200
+    Continue()
+END
+
+IF
+  HPPercentLT(Myself,50)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  Global("CloseCombat","LOCALS",1)
+  Range(NearestEnemyOf(Myself),8)
+THEN
+  RESPONSE #100
+    SetGlobal("TimeToMove","LOCALS",1)
+    Continue()
+  RESPONSE #200
+    Continue()
+END
+
+IF
+  Range(ThirdNearestEnemyOf(Myself),8)
+  Global("CloseCombat","LOCALS",1)
+  !StateCheck(Myself,STATE_INVISIBLE)
+THEN
+  RESPONSE #100
+    SetGlobal("TimeToMove","LOCALS",1)
+    Continue()
+  RESPONSE #300
+    Continue()
+END
+
+////////////////////////////////////////////////////
+//// If you do, choose where to go
+////////////////////////////////////////////////////
+
+IF
+  Global("TimeToMove","LOCALS",1)
+  !Range("ThroneR",25)  // ThroneR
+  !Range("ThroneC",25)  // ThroneC
+  !Range("ThroneL",25)  // ThroneL
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth08")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneR_loc)
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneC_loc)
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneL_loc)
+END
+
+IF
+  Global("TimeToMove","LOCALS",1)
+  Range("ThroneR",25)  // ThroneR
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth08")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneC_loc)
+  RESPONSE #100
+    SetGlobalTimer("BalthTeleport","LOCALS",12)
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneL_loc)
+END
+
+IF
+  Global("TimeToMove","LOCALS",1)
+  Range("ThroneC",25)  // ThroneC
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth08")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneR_loc)
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneL_loc)
+END
+
+IF
+  Global("TimeToMove","LOCALS",1)
+  Range("ThroneL",25)  // ThroneL
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpellRES("balth08")
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneR_loc)
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73941)  // ~Faster Than the Eye!~
+    ForceSpellPointRES("balth08",throneC_loc)
+END
+
+///////////////////////////////////////
+//// If invisible and injured, retreat
+////////////////////////////////////////
+
+IF
+  StateCheck(Myself,STATE_INVISIBLE)
+  HPPercentLT(Myself,100)
+THEN
+  RESPONSE #100
+    RunAwayFrom(NearestEnemyOf(Myself),45)
+END
+
+
+///////////////////////////////////////
+//// If allied and out of combat, return to the PC;
+//// otherwise, don't do anything
+////////////////////////////////////////
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  CombatCounter(0)
+  !See(NearestEnemyOf(Myself))
+  !Range(Player1,15)
+  !Global("FinalFight","AR6200",4)
+THEN
+  RESPONSE #100
+    MoveToObject(Player1)
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  CombatCounter(0)
+  !ActuallyInCombat()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+///////////////////////////////////////
+//// Select a target
+////////////////////////////////////////
+
+// generic
+
+IF
+  OR(6)
+  See(SixthNearestEnemyOf(Myself))
+  See(FifthNearestEnemyOf(Myself))
+  See(FourthNearestEnemyOf(Myself))
+  See(ThirdNearestEnemyOf(Myself))
+  See(SecondNearestEnemyOf(Myself))
+  See(NearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// the Five, if allied
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  OR(6)
+  See("finbodh")  // finbodh
+  See("finyaga")  // finyaga
+  See("finabaz")  // finabaz
+  See("finilla")  // finilla
+  See("finsend")  // finsend
+  See("finiren")  // finiren
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// clerics
+
+IF
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_SILENCED)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_STUNNED)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_PANIC)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_SLEEPING)
+  CheckStatLT(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]),100,SPELLFAILUREPRIEST)
+  See(SecondNearestEnemyOfType([0.0.0.CLERIC_ALL]))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+  !StateCheck(NearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_SILENCED)
+  !StateCheck(NearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_STUNNED)
+  !StateCheck(NearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_PANIC)
+  !StateCheck(NearestEnemyOfType([0.0.0.CLERIC_ALL]),STATE_SLEEPING)
+  CheckStatLT(NearestEnemyOfType([0.0.0.CLERIC_ALL]),100,SPELLFAILUREPRIEST)
+  See(NearestEnemyOfType([0.0.0.CLERIC_ALL]))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// mages
+
+
+IF
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_SILENCED)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_STUNNED)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_PANIC)
+  !StateCheck(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_SLEEPING)
+  CheckStatLT(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]),100,SPELLFAILUREMAGE)
+  See(SecondNearestEnemyOfType([0.0.0.MAGE_ALL]))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+  !StateCheck(NearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_SILENCED)
+  !StateCheck(NearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_STUNNED)
+  !StateCheck(NearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_PANIC)
+  !StateCheck(NearestEnemyOfType([0.0.0.MAGE_ALL]),STATE_SLEEPING)
+  CheckStatLT(NearestEnemyOfType([0.0.0.MAGE_ALL]),100,SPELLFAILUREMAGE)
+  See(NearestEnemyOfType([0.0.0.MAGE_ALL]))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// if allied, the PC's enemy
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  HPPercentGT(Myself,50)
+  Range(LastAttackerOf(Player1),15)
+  !StateCheck(LastAttackerOf(Player1),STATE_REALLY_DEAD)
+  !StateCheck(LastAttackerOf(Player1),STATE_PANIC)
+  !StateCheck(LastAttackerOf(Player1),STATE_STUNNED)
+  !StateCheck(LastAttackerOf(Player1),STATE_HELPLESS)
+  !StateCheck(LastAttackerOf(Player1),STATE_SLEEPING)
+  !Gender(LastAttackerOf(Player1),ILLUSIONARY)
+  See(LastAttackerOf(Player1))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// nearby opponent
+
+IF
+  Range(LastAttackerOf(Myself),8)
+  !StateCheck(LastAttackerOf(Myself),STATE_REALLY_DEAD)
+  Global("CloseCombat","LOCALS",1)
+  !StateCheck(LastAttackerOf(Myself),STATE_PANIC)
+  !StateCheck(LastAttackerOf(Myself),STATE_STUNNED)
+  !StateCheck(LastAttackerOf(Myself),STATE_HELPLESS)
+  !StateCheck(LastAttackerOf(Myself),STATE_SLEEPING)
+  OR(2)
+  !Gender(LastAttackerOf(Myself),SUMMONED)
+  LevelGT(LastAttackerOf(Myself),10)
+  !Gender(LastAttackerOf(Myself),ILLUSIONARY)
+  See(LastAttackerOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// the vulnerable (if semi-close)
+
+ Range(FourthNearestEnemyOf(Myself),20)
+ !Gender(FourthNearestEnemyOf(Myself),ILLUSIONARY)
+  !Gender(FourthNearestEnemyOf(Myself),SUMMONED)
+  OR(3)
+  CheckStatGT(FourthNearestEnemyOf(Myself),0,ARMORCLASS)
+  HPPercentLT(FourthNearestEnemyOf(Myself),30)
+  StateCheck(FourthNearestEnemyOf(Myself),STATE_STUNNED)
+  !CheckStatLT(FourthNearestEnemyOf(Myself),-9,ARMORCLASS)
+  CheckStatLT(FourthNearestEnemyOf(Myself),50,RESISTCRUSHING)
+  See(FourthNearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+  Range(ThirdNearestEnemyOf(Myself),20)
+  !Gender(ThirdNearestEnemyOf(Myself),ILLUSIONARY)
+  !Gender(ThirdNearestEnemyOf(Myself),SUMMONED)
+  OR(3)
+  CheckStatGT(ThirdNearestEnemyOf(Myself),0,ARMORCLASS)
+  HPPercentLT(ThirdNearestEnemyOf(Myself),30)
+  StateCheck(ThirdNearestEnemyOf(Myself),STATE_STUNNED)
+  !CheckStatLT(ThirdNearestEnemyOf(Myself),-9,ARMORCLASS)
+  CheckStatLT(FourthNearestEnemyOf(Myself),50,RESISTCRUSHING)
+  See(ThirdNearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+ Range(SecondNearestEnemyOf(Myself),20)
+  !Gender(SecondNearestEnemyOf(Myself),ILLUSIONARY)
+  !Gender(SecondNearestEnemyOf(Myself),SUMMONED)
+  OR(3)
+  CheckStatGT(SecondNearestEnemyOf(Myself),0,ARMORCLASS)
+  HPPercentLT(SecondNearestEnemyOf(Myself),30)
+  StateCheck(SecondNearestEnemyOf(Myself),STATE_STUNNED)
+  !CheckStatLT(SecondNearestEnemyOf(Myself),-9,ARMORCLASS)
+  CheckStatLT(FourthNearestEnemyOf(Myself),50,RESISTCRUSHING)
+  See(SecondNearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+ Range(NearestEnemyOf(Myself),20)
+  !Gender(NearestEnemyOf(Myself),ILLUSIONARY)
+  !Gender(NearestEnemyOf(Myself),SUMMONED)
+  OR(3)
+  CheckStatGT(NearestEnemyOf(Myself),0,ARMORCLASS)
+  HPPercentLT(NearestEnemyOf(Myself),30)
+  StateCheck(NearestEnemyOf(Myself),STATE_STUNNED)
+  !CheckStatLT(NearestEnemyOf(Myself),-9,ARMORCLASS)
+  CheckStatLT(NearestEnemyOf(Myself),50,RESISTCRUSHING)
+  See(NearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+// highly dangerous close people
+
+IF
+  Range(SecondNearestEnemyOf(Myself),8)
+  CheckStatGT(SecondNearestEnemyOf(Myself),4,NUMBEROFATTACKS)
+  !HasItem("eneblade",SecondNearestEnemyOf(Myself))
+  !HasItem("melfmet",SecondNearestEnemyOf(Myself))
+  !StateCheck(SecondNearestEnemyOf(Myself),STATE_PANIC)
+  !StateCheck(SecondNearestEnemyOf(Myself),STATE_STUNNED)
+  !StateCheck(SecondNearestEnemyOf(Myself),STATE_HELPLESS)
+  !StateCheck(SecondNearestEnemyOf(Myself),STATE_SLEEPING)
+  See(SecondNearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+  Range(NearestEnemyOf(Myself),8)
+  CheckStatGT(NearestEnemyOf(Myself),4,NUMBEROFATTACKS)
+  !HasItem("eneblade",NearestEnemyOf(Myself))
+  !HasItem("melfmet",NearestEnemyOf(Myself))
+  !StateCheck(NearestEnemyOf(Myself),STATE_PANIC)
+  !StateCheck(NearestEnemyOf(Myself),STATE_STUNNED)
+  !StateCheck(NearestEnemyOf(Myself),STATE_HELPLESS)
+  !StateCheck(NearestEnemyOf(Myself),STATE_SLEEPING)
+  See(NearestEnemyOf(Myself))
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",1)
+  Range("finmel01",30)  // ~Melissan~
+  See("finmel01")  // ~Melissan~
+  False()
+THEN
+  RESPONSE #100
+    NoAction()
+END
+
+///////////////////////////////////////////
+//// If at the end of all that you haven't
+//// got a target, move towards an enemy, or
+//// else random walk
+/////////////////////////////////////////////
+
+IF
+  Global("balth_is_friendly","GLOBAL",0)
+  Allegiance(LastSeenBy(Myself),EVILCUTOFF)
+  See([GOODCUTOFF])
+THEN
+  RESPONSE #100
+    MoveToObject([GOODCUTOFF])
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",0)
+  OR(2)
+  !Allegiance(LastSeenBy(Myself),GOODCUTOFF)
+  !See([GOODCUTOFF])
+  !Range(Player1,15)
+THEN
+  RESPONSE #100
+    MoveToObject(Player1)
+END
+
+IF
+  Global("balth_is_friendly","GLOBAL",0)
+  OR(2)
+  !Allegiance(LastSeenBy(Myself),GOODCUTOFF)
+  !See([GOODCUTOFF])
+  Range(Player1,15)
+THEN
+  RESPONSE #100
+    RandomWalk()
+END
+
+IF
+   Global("balth_is_friendly","GLOBAL",1)
+  !Allegiance(LastSeenBy(Myself),EVILCUTOFF)
+  See([EVILCUTOFF])
+THEN
+  RESPONSE #100
+    MoveToObject([EVILCUTOFF])
+END
+
+IF
+   Global("balth_is_friendly","GLOBAL",1)
+  OR(2)
+  !Allegiance(LastSeenBy(Myself),EVILCUTOFF)
+  !See([EVILCUTOFF])
+THEN
+  RESPONSE #100
+    MoveToObject(Player1)
+END
+
+/////////////////////////////////
+//// If you're allied and have ended
+//// up targetting Imoen, stop it
+/////////////////////////////////////////
+
+IF
+   Global("balth_is_friendly","GLOBAL",1)
+  Name("Imoen2",LastSeenBy(Myself))
+  Allegiance("Imoen2",EVILCUTOFF)  // Imoen2
+  !Name("Imoen2",LastTargetedBy(Player1))
+  OR(3)
+  See("finsolar")  // finsolar
+  See("finbodh")  // finbodh
+  See("finiren")  // finiren
+THEN
+  RESPONSE #100
+    MoveToObject(LastSeenBy(Myself))
+END
+
+IF
+   Global("balth_is_friendly","GLOBAL",1)
+  Name("Imoen2",LastSeenBy(Myself))
+  Allegiance("Imoen2",EVILCUTOFF)  // Imoen2
+  !Name("Imoen2",LastTargetedBy(Player1))
+  !See("finsolar")  // finsolar
+  !See("finbodh")  // finbodh
+  !See("finiren")  // finiren
+THEN
+  RESPONSE #100
+    RunAwayFrom("Imoen2",30)
+END
+
+////////////////////////////////
+/// If somehow you've ended up
+/// targetting someone dead, just
+/// do something basic
+////////////////////////////////
+
+IF
+  StateCheck(LastSeenBy(Myself),STATE_DEAD)
+THEN
+  RESPONSE #100
+    AttackOneRound(NearestEnemyOf(Myself))
+END
+
+////////////////////////////////
+/// If your target has anything worth
+/// breaching, hit them with Dragon Fist (50/50)
+////////////////////////////////
+
+IF
+  DifficultyGT(EASY)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpell("balth03")
+  !StateCheck(Myself,STATE_INVISIBLE)
+  Range(LastSeenBy(Myself),4)
+  OR(7)
+  CheckStatGT(LastSeenBy(Myself),0,CLERIC_BLADE_BARRIER)
+  CheckStatGT(LastSeenBy(Myself),0,STONESKINS)
+  CheckStatGT(LastSeenBy(Myself),0,CLERIC_CHAOTIC_COMMANDS)
+  CheckStatGT(LastSeenBy(Myself),0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+  CheckStatGT(LastSeenBy(Myself),0,SCRIPTINGSTATE2)
+  CheckStatGT(LastSeenBy(Myself),0,SCRIPTINGSTATE5)
+  StateCheck(LastSeenBy(Myself),STATE_HASTED)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,72915)  // ~Dragon Fist~
+    FaceObject(LastSeenBy(Myself))
+    ForceSpellRES("balth03",LastSeenBy(Myself))  // ~Dragon Fist~
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////
+/// If your target is vulnerable (and you
+/// don't have Tiger Strike active) use
+/// Hand of Murder and then attack
+////////////////////////////////
+
+IF
+  !Difficulty(EASIEST)
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpell("balth05")
+  !GlobalTimerNotExpired("tigerstrike","LOCALS")
+  OR(2)
+      HPPercentGT(Myself,50)
+      !StateCheck(Myself,STATE_INVISIBLE)
+  Range(LastSeenBy(Myself),4)
+  !CheckStatGT(LastSeenBy(Myself),0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+  !CheckStatGT(LastSeenBy(Myself),0,STONESKINS)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,71989)  // ~Hand of Murder~
+    ReallyForceSpellRES("balth05",Myself)  // ~Hand of Murder~
+    AttackOneRound(LastSeenBy(Myself))
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////
+/// Failing that, do Tiger Strike
+////////////////////////////////
+
+IF
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpell("balth04")
+  OR(2)
+     HPPercentGT(Myself,50)
+     !StateCheck(Myself,STATE_INVISIBLE)
+  Range(LastSeenBy(Myself),4)
+  !CheckStatGT(LastSeenBy(Myself),0,WIZARD_PROTECTION_FROM_MAGIC_WEAPONS)
+  !CheckStatGT(LastSeenBy(Myself),3,STONESKINS)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    SetGlobalTimer("TigerStrike","LOCALS",12)
+    DisplayStringHead(Myself,72916)  // ~Tiger Strike~
+    ReallyForceSpellRES("balth04",Myself)  // ~Tiger Strike~
+    AttackReevaluate(LastSeenBy(Myself),30)
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////
+/// Go for a shadowless kick
+////////////////////////////////
+
+IF
+  !GlobalTimerNotExpired("Spell","LOCALS")
+  HaveSpell("balth09")
+  OR(2)
+  HPPercentGT(Myself,50)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  Range(LastSeenBy(Myself),4)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("Spell","LOCALS",6)
+    DisplayStringHead(Myself,73942)  // ~Shadowless Kick!~
+    FaceObject(LastSeenBy(Myself))
+    ForceSpellRES("balth09",LastSeenBy(Myself))  // ~Shadowless Kick!~
+  RESPONSE #100
+    Continue()
+END
+
+////////////////////////////////
+/// Melee block
+////////////////////////////////
+
+IF
+  Global("xyxManeuvered","LOCALS",0)
+  GlobalTimerExpired("xyxAttack","LOCALS")
+THEN
+  RESPONSE #100
+    SetGlobal("xyxManeuvered","LOCALS",1)
+    RandomWalkContinuous()
+END
+
+IF
+  OR(4)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  HPPercentGT(Myself,50)
+  StateCheck(LastSeenBy(Myself),STATE_STUNNED)
+  HPPercentLT(LastSeenBy(Myself),30)
+  !StateCheck(LastSeenBy(Myself),STATE_SLEEPING)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("xyxAttack","LOCALS",5)
+    SetGlobal("xyxManeuvered","LOCALS",0)
+    SelectWeaponAbility(SLOT_WEAPON0,0)
+    Attack(LastSeenBy(Myself))
+END
+
+IF
+  OR(4)
+  !StateCheck(Myself,STATE_INVISIBLE)
+  HPPercentGT(Myself,50)
+  StateCheck(LastSeenBy(Myself),STATE_STUNNED)
+  HPPercentLT(LastSeenBy(Myself),30)
+  StateCheck(LastSeenBy(Myself),STATE_SLEEPING)
+THEN
+  RESPONSE #100
+    SetGlobalTimer("xyxAttack","LOCALS",5)
+    SetGlobal("xyxManeuvered","LOCALS",0)
+    SelectWeaponAbility(SLOT_WEAPON1,0)
+    Attack(LastSeenBy(Myself))
+END
+
+IF
+  True()
+THEN
+  RESPONSE #100
+    RandomWalkContinuous()
+END
+

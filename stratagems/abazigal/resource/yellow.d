@@ -186,14 +186,7 @@ END
 END
 
 
-INTERJECT_COPY_TRANS dw#abdgy poormefull DMWWYellowHaer
-== HAERD25J IF ~IsValidForPartyDialogue("HaerDalis")~ THEN @3091
-END
 
-
-INTERJECT_COPY_TRANS dw#abdgy poormeguarddog DMWWYellowHaer
-== HAERD25J IF ~IsValidForPartyDialogue("HaerDalis")~ THEN @3091
-END
 
 INTERJECT_COPY_TRANS dw#abdgy poormefull DMWWYellowImoen
 == IMOEN25J IF ~IsValidForPartyDialogue("Imoen2")~ THEN @3012
@@ -202,7 +195,6 @@ END
 INTERJECT_COPY_TRANS dw#abdgy poormepartial DMWWYellowImoen
 == IMOEN25J IF ~IsValidForPartyDialogue("Imoen2")~ THEN @3012
 END
-
 
 INTERJECT_COPY_TRANS dw#abdgy poormeguarddog DMWWYellowSarevok
 == SAREV25J IF ~IsValidForPartyDialogue("Sarevok")~ THEN @3013

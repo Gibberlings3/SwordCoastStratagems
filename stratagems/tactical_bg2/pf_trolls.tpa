@@ -1,0 +1,194 @@
+DEFINE_ACTION_FUNCTION pf_trolls BEGIN
+     // make every fire/acid/cold spell cast power-removal spell (do this first, to avoid editing the troll spells themselves)
+
+     ACTION_CLEAR_ARRAY troll_spells
+     COPY_EXISTING_REGEXP
+     ".*\.spl" override
+     ".*\.itm" override
+         LPF CLONE_EFFECT INT_VAR dicenumber=0 dicesize=0 savingthrow=0 special=0 silent=1 match_opcode=12 opcode=177 STR_VAR match_function=troll_damage_match function=troll_damage_patch END
+     BUT_ONLY
+
+     // strip min-hp item from trolls; apply regeneration spell (do this second, so all relevant troll-regeneration powers are visible to subsequent code)
+     
+     COPY_EXISTING_REGEXP ".*\.cre" override
+         PATCH_IF INDEX_BUFFER ("trollreg")>=0 BEGIN
+            LPF patch_troll_cre INT_VAR rate_base=1 END
+         END
+         PATCH_IF INDEX_BUFFER ("cdtrlblz")>=0 BEGIN
+            LPF patch_troll_cre INT_VAR rate_base=6 END
+         END
+         PATCH_IF INDEX_BUFFER ("cdtorgal")>=0 BEGIN
+            LPF patch_troll_cre INT_VAR rate_base=2 END
+         END
+         PATCH_IF INDEX_BUFFER ("cdhgtrl")>=0 BEGIN
+            LPF patch_troll_cre INT_VAR rate_base=1 fire_troll=1 END
+         END
+     BUT_ONLY
+
+     // make spells, and EFF files, that inflict 1 point of damage (need to go AFTER regexp to avoid being caught by it)
+
+     LAF make_spell STR_VAR spell=dw#trlfi editstring="add_basic_ability=>null" END
+     COPY_EXISTING "dw#trlfi.spl" override
+        LPF ADD_SPELL_EFFECT INT_VAR opcode=12 target=2 timing=1 parameter1=1 parameter2=8*0x10000 END
+     BUT_ONLY
+
+     COPY_EXISTING "dw#trlfi.spl" "override/dw#trlac.spl"
+        LPF ALTER_EFFECT INT_VAR parameter2=1*0x10000 END
+     BUT_ONLY
+     COPY_EXISTING "dw#trlfi.spl" "override/dw#trlco.spl"
+        LPF ALTER_EFFECT INT_VAR parameter2=2*0x10000 END
+     BUT_ONLY
+     LAF make_casting_effect STR_VAR effect=dw#trlfi spell=dw#trlfi END
+     LAF make_casting_effect STR_VAR effect=dw#trlac spell=dw#trlac END
+     LAF make_casting_effect STR_VAR effect=dw#trlco spell=dw#trlco END
+
+
+     // make spells that block and strip troll regeneration
+
+     // fire version
+     LAF make_spell STR_VAR spell=dwtrolfi editstring="add_basic_ability=>null" END
+     COPY_EXISTING "dwtrolfi.spl" override
+        // standard troll regeneration effects
+        FOR (rate=1;rate<30;rate+=1) BEGIN
+           SPRINT spell "dwtrrg%rate%"
+           PATCH_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=0 STR_VAR resource="%spell%" END
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=6 STR_VAR resource="%spell%" END
+           END
+        END
+        LPF ADD_SPELL_EFFECT INT_VAR opcode=177 target=2 timing=4 parameter2=2 STR_VAR resource=dw#trlfi END // 1 hp fire damage - delay of 1 so it comes in after effects are done
+     BUT_ONLY
+     LAF make_casting_effect STR_VAR effect=dwtrolfi spell=dwtrolfi END
+
+     // acid version
+     LAF make_spell STR_VAR spell=dwtrolac editstring="add_basic_ability=>null" END
+     COPY_EXISTING "dwtrolac.spl" override
+        // standard troll regeneration effects
+        FOR (rate=1;rate<30;rate+=1) BEGIN
+           SPRINT spell "dwtrrg%rate%"
+           PATCH_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=0 STR_VAR resource="%spell%" END
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=6 STR_VAR resource="%spell%" END
+           END
+        END
+        // fire troll regeneration effects
+        FOR (rate=1;rate<30;rate+=1) BEGIN
+           SPRINT spell "dwtfrg%rate%"
+           PATCH_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=0 STR_VAR resource="%spell%" END
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=6 STR_VAR resource="%spell%" END
+           END
+        END
+        LPF ADD_SPELL_EFFECT INT_VAR opcode=12 target=2 timing=4 parameter1=1 parameter2=1*0x10000 END // 1 hp acid damage
+     BUT_ONLY
+     LAF make_casting_effect STR_VAR effect=dwtrolac spell=dwtrolac END
+
+     // cold version
+     LAF make_spell STR_VAR spell=dwtrolco editstring="add_basic_ability=>null" END
+     COPY_EXISTING "dwtrolco.spl" override
+        // fire troll regeneration effects
+        FOR (rate=1;rate<30;rate+=1) BEGIN
+           SPRINT spell "dwtfrg%rate%"
+           PATCH_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=0 STR_VAR resource="%spell%" END
+                LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=6 STR_VAR resource="%spell%" END
+           END
+        END
+        LPF ADD_SPELL_EFFECT INT_VAR opcode=12 target=2 timing=4 parameter1=1 parameter2=2*0x10000 END // 1 hp cold damage
+     BUT_ONLY
+     LAF make_casting_effect STR_VAR effect=dwtrolco spell=dwtrolco END
+
+     // strip down the troll-regenerate items so they no longer block sleep or grant regeneration;
+     // strip down the troll-sleep spells so only the sleep effect remains
+
+     ACTION_FOR_EACH item IN trollreg cdhgtrl cdtorgal cdtrlblz BEGIN
+        COPY_EXISTING "%item%.itm" override
+           LPF DELETE_EFFECT INT_VAR match_opcode=101 END
+           LPF DELETE_EFFECT INT_VAR match_opcode=267 END
+           LPF DELETE_EFFECT INT_VAR match_opcode=98 END
+        BUT_ONLY
+        COPY_EXISTING "%item%.spl" override
+           LPF DELETE_EFFECT STR_VAR match_function=troll_spell_stripdown END
+           LPF ALTER_EFFECT INT_VAR match_duration=20 duration=12 END
+        BUT_ONLY
+     END
+
+END
+
+
+DEFINE_PATCH_FUNCTION patch_troll_cre
+   INT_VAR rate_base=0
+           fire_troll=0
+BEGIN
+   REMOVE_CRE_ITEM monhp1
+   LPF check_ini STR_VAR ini=troll_regen_addition RET add=value END
+   LPF check_ini STR_VAR ini=troll_regen_multiplication RET mult=value END
+   SET rate=(rate_base * mult) + add
+   PATCH_IF fire_troll BEGIN
+      SPRINT base dwtfrg
+   END ELSE BEGIN
+      SPRINT base dwtrrg
+   END
+   INNER_ACTION BEGIN
+      LAF troll_regen_spell INT_VAR rate STR_VAR base END
+   END
+   LPF ADD_CRE_EFFECT INT_VAR opcode=272 target=2 parameter1=1 parameter2=3 timing=1 STR_VAR resource="%base%%rate%" END
+END
+
+DEFINE_ACTION_FUNCTION troll_regen_spell
+   INT_VAR rate=0
+   STR_VAR base=""
+BEGIN 
+   OUTER_SPRINT spell "%base%%rate%"
+   ACTION_IF !FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+      MAKE_PATCH
+         add_basic_ability=>null
+         add_effect_inline=>"opcode=>17 target=>2 timing=>1 parameter1=>%rate%"
+         add_effect_inline'=>"opcode=>208 target=>2 timing=>0 duration=>2 parameter1=>1"
+      END
+      LAF make_spell STR_VAR spell edits=patch_data END
+      LAF make_casting_effect STR_VAR effect="%spell%" spell END
+   END
+END
+
+DEFINE_PATCH_FUNCTION troll_damage_match
+   RET value
+BEGIN
+   READ_SHORT 0xa type
+   PATCH_MATCH "%type%" WITH 1 2 8 BEGIN
+      SET value=1
+   END
+   DEFAULT
+      SET value=0
+   END
+END
+
+DEFINE_PATCH_FUNCTION troll_damage_patch
+BEGIN
+   READ_SHORT 0xa type
+   PATCH_MATCH "%type%" WITH 
+   1 BEGIN SPRINT resource dwtrolac END
+   2 BEGIN SPRINT resource dwtrolco END
+   8 BEGIN SPRINT resource dwtrolfi END
+   DEFAULT END
+   WRITE_ASCIIE 0x14 "%resource%" (8)
+   WRITE_LONG 0x4 129
+   WRITE_LONG 0x8 4
+END
+
+DEFINE_PATCH_FUNCTION troll_spell_stripdown
+RET value 
+BEGIN
+   READ_SHORT 0x0 opcode
+   PATCH_MATCH opcode WITH 17 39 112 143 BEGIN
+      READ_ASCII 0x14 resource
+      PATCH_IF "%resource%" STRING_EQUAL_CASE monhp1 BEGIN
+         SET value=1
+      END ELSE BEGIN
+         SET value=0
+      END
+   END
+   DEFAULT
+      SET value=1
+   END
+END

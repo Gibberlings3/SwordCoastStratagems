@@ -6,6 +6,9 @@ DEFINE_ACTION_FUNCTION fiend STR_VAR version="" BEGIN
         LAF fiend_resources_iwd END
         LAF fiend_iwd END
      END ELSE BEGIN
+        
+        LAF check_marker STR_VAR marker=fin_ascension_main RET ascension_2_0=value END // if Ascension 2.0 is installed, no need to make resources
+
         LAF fiend_resources END
         LAF fiend_corrections END
         LAF fiend_scripts END
@@ -44,6 +47,79 @@ DEFINE_ACTION_FUNCTION fiend_resources BEGIN
     LAF edit_spell STR_VAR spell=DEMON_FEAR editstring="add_effect=>patch_data" END
 
     ///////////////
+    /// Nabassu
+    ///////////////
+
+    /*
+      We're a bit inspired by Ascension 2.0 - we keep the Nabassu paralysation aura but not anything else.
+    */
+    
+
+    ACTION_IF !ascension_2_0 BEGIN
+        // make the resources
+        LAF make_aura STR_VAR spell=nabpara effect=nabpara payload=nabparab END
+        
+        // this copied from Ascension 2.0
+
+// projectile for the payload
+
+COPY_EXISTING inareasm.pro "override/finnabas.pro"
+         WRITE_SHORT 0x200 64 // not affecting allies
+ADD_PROJECTILE "override/finnabas.pro"
+OUTER_SET projectile=finnabas
+
+// make an effect to display the 'paralysation aura' string
+
+COPY_EXISTING cdheld.eff "override/finnastr.eff"
+WRITE_LONG 0x1c RESOLVE_STR_REF (@1027)
+
+// now build our payload spell from Hold Person
+
+COPY_EXISTING "%WIZARD_HOLD_PERSON%.spl" "override/nabparab.spl"
+         WRITE_LONG NAME1 "-1"
+         LPF ALTER_SPELL_HEADER INT_VAR projectile END
+         PATCH_IF enhanced_edition BEGIN // this is just cosmetic, it avoids unneeded saving throws
+            LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=318 target=2 parameter2=1 duration=1 STR_VAR resource="%DEST_RES%" END // undead are immune
+            LPF CLONE_EFFECT INT_VAR match_opcode=318 parameter2=9 END // elementals are immune
+            LPF CLONE_EFFECT INT_VAR match_opcode=318 parameter1=121 parameter2=104 END // demons are immune
+         END
+         LPF ALTER_EFFECT STR_VAR match_resource=cdheld resource=finnastr END
+         PATCH_FOR_EACH match_opcode IN 177 175 BEGIN
+            PATCH_FOR_EACH parameter1 IN 2 5 BEGIN // animal, gianthumanoid
+                LPF CLONE_EFFECT INT_VAR match_opcode match_parameter1=1 match_parameter2=3 parameter1 END
+            END
+         END
+         LPF ADD_SPELL_EFFECT INT_VAR opcode=206 target=2 parameter1="-1" duration=60 resist_dispel=1 STR_VAR resource="%DEST_RES%" END
+         LPF ADD_SPELL_EFFECT INT_VAR opcode=206 target=2 parameter1="-1" duration=6 resist_dispel=0 STR_VAR resource="%DEST_RES%" END  // this second one is so that creatures with MR check only 1/rd
+// BUT_ONLY
+
+    // at least pro tem, make some rudimentary allowance for old-style Ascension
+
+    ACTION_IF FILE_EXISTS_IN_GAME finnabas.bcs BEGIN
+
+    LAF DELETE_SCRIPT_BLOCK STR_VAR script=finnabas match="ParalyzeAura" END
+
+<<<<<<<<.../stratagems-inline/finnabas_top.baf
+IF
+  !Global("aura","LOCALS",1)
+  DifficultyGT(EASY)
+THEN
+    RESPONSE #100
+             SetGlobal("aura","LOCALS",1)
+             ApplySpellRES("nabpara",Myself)
+             Continue()
+END
+>>>>>>>>
+
+    LAF extend STR_VAR script=finnabas top=finnabas_top inline=yes END
+
+
+    END
+
+
+    END
+
+    ///////////////
     /// Marilith
     ///////////////
 
@@ -75,25 +151,65 @@ DEFINE_ACTION_FUNCTION fiend_resources BEGIN
     END
     LAF clone_spell STR_VAR spell="dw#batel=>dw#bate2" edits=patch_data END
 
+    // Balor sword: revert vAsc edits
+    
+    ACTION_IF !ascension_2_0 && FILE_EXISTS_IN_GAME finabaz.cre BEGIN
 
-    // Baalor explosion, borrowed from Ascension
-    // Baalor weapon (provides fire shield and non-chunking vorpal effect)
-    // Baalor whip, 1d4 crushing+3d6 fire, FLAIL proficiency, rather crude/minimal version of atweaks
+       LAF edit_item STR_VAR item=balor editstring="delete_global_effect=>1" END
 
-    LAF install STR_VAR file=~baldead.spl balor.itm balaura.spl~ location=resource END
+    END
 
+    // Balor sword: extra SCS edits
+    
     MAKE_PATCH
         patch_ability_inline=>~ability_range=>3~
         proficiency=>PROFICIENCYLONGSWORD
         enchantment=>5
     END
     LAF edit_item STR_VAR item=balor edits=patch_data END
-     MAKE_PATCH
+
+    // Baalor explosion, borrowed from Ascension
+    
+    ACTION_IF !ascension_2_0 BEGIN
+     COPY "%scsroot%/%component_loc%/resource/baldead.spl" override
+        PATCH_IF enhanced_edition BEGIN
+            LPF DELETE_EFFECT INT_VAR match_save_vs_spell=0 END // get rid of the no-save effect
+            LPF ALTER_EFFECT INT_VAR save_for_half=1 parameter1=50 END // put save-for-half on the remaining effect, and double its damage
+        END
+    END
+
+    // Baalor whip, 1d4 crushing+3d6 fire, FLAIL proficiency, rather crude/minimal version of atweaks
+
+    MAKE_PATCH
         patch_ability_inline=>~ability_range=>3 ability_dicesize=>4 to_hit=>0 damage_bonus=>0~
         enchantment=>5
         add_effect_inline=>~match=>"ability_type=1" opcode=>12 parameter2=>524288 dicenum=>3 dicesize=>6~
     END
     LAF clone_item STR_VAR item=~blun32=>dw#balwp~ edits=patch_data END
+
+    // Balor aura
+    
+    ACTION_IF !ascension_2_0 BEGIN
+    
+    // borrowed from Ascension 2.0
+
+COPY_EXISTING "%CLERIC_AURA_OF_FLAMING_DEATH%.spl" "override/finbalor.spl"
+    WRITE_LONG NAME1 "-1"
+    WRITE_BYTE 0x27 0       // zero sectype
+    LPF DELETE_SPELL_HEADER INT_VAR min_level=2 END  // remove all but the first header
+    PATCH_FOR_EACH match_opcode IN 30 84 142 174 0 120 328 318 233 BEGIN // get rid of all Aura of FD effects except the cosmetics and cast-on-condition
+       LPF DELETE_EFFECT INT_VAR match_opcode END
+    END
+    LPF ALTER_EFFECT INT_VAR resist_dispel=0 END
+    LPF ALTER_EFFECT INT_VAR match_timing=0 duration=0 timing=1 END         // make permanent and nonmagical
+    LPF ALTER_EFFECT INT_VAR match_opcode=232 STR_VAR resource=balaura END  // patch in new payload
+// BUT_ONLY
+
+COPY_EXISTING "%CLERIC_AURA_OF_FLAMING_DEATH%d.spl" "override/balaura.spl"
+    LPF ALTER_EFFECT INT_VAR power=0 dicenumber=4 dicesize=6 END
+// BUT_ONLY
+    
+    END
 
     // demon lord's Flame Strike spell (see uddemon.dlg)
     
@@ -105,12 +221,7 @@ DEFINE_ACTION_FUNCTION fiend_resources BEGIN
     END
     LAF clone_spell STR_VAR spell="%CLERIC_FLAME_STRIKE%=>dw#abyfs" edits=patch_data END
 
-    // allow for insect plague component
-    ACTION_IF FILE_EXISTS_IN_GAME ~dw#insectplague.mrk~ THEN BEGIN
-             LAF include STR_VAR file=insect_plague.tpa locbase=spell END
-             LAUNCH_ACTION_MACRO read_insect_plague_patch
-             LAF edit_item STR_VAR item=balor edits=insect_plague_patch END
-    END
+
 
     ///////////////
     /// Yochlols

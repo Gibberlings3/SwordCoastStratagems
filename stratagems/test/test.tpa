@@ -1,4 +1,4 @@
-INCLUDE "%scsroot%/lib/ai_wrap.tph"
+//INCLUDE "%scsroot%/lib/ai_wrap.tph"
 
 DEFINE_ACTION_FUNCTION test BEGIN
 
@@ -33,76 +33,85 @@ ACTION_IF GAME_IS iwdee BEGIN
 
 
 END ELSE BEGIN
+  
+   LAF run STR_VAR file=testing_suite locbase=lib END
 
-    ACTION_FOR_EACH resource IN "%WIZARD_MINOR_GLOBE_OF_INVULNERABILITY%.spl" "%WIZARD_GLOBE_OF_INVULNERABILITY%.spl" "SPWM126.spl" "JWGLOBE.spl" "lich.itm" "rakring.itm" "demilich.itm" BEGIN
-      COPY_EXISTING "%resource%" override
-         LPF CLONE_EFFECT INT_VAR match_opcode=206 STR_VAR match_resource=SPPR105 resource="%WIZARD_SNILLOCS_SNOWBALL_SWARM%" END
-      BUT_ONLY
-    END
 
-END
 
 END
 
 
 
-/* IWD hla fragment:
 
-     COPY_EXISTING lunumab.2da override
-        REPLACE_TEXTUALLY 99 2
+END
 
-      LAF read_file_into_array STR_VAR file=ui.menu locabs=override RET_ARRAY ui_array=file_contents END
-      LAF read_file_into_array STR_VAR file=extra_hla_button.menu RET_ARRAY insert_array=file_contents END
-      LAF read_file_into_array STR_VAR file=new_hla_menu.menu RET_ARRAY replace_array=file_contents END
-      LAF UI_insert_into_menu STR_VAR ui_array_in=ui_array insert_array menu_name=LEVELUP_PROFICIENCIES RET_ARRAY ui_array=ui_array_out END
-      LAF UI_replace_menu STR_VAR ui_array_in=ui_array replace_array menu_name=CHARGEN_HIGH_LEVEL_ABILITIES RET_ARRAY ui_array=ui_array_out END
-      LAF write_array_into_file STR_VAR file="override/ui.menu" file_contents=ui_array END
-
-      COPY_EXISTING "ui.menu" override
-         REPLACE_TEXTUALLY "return +63817" "return 34713"
-*/
-
-
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////
-///     Read in every entry in spell.ids and set a variable with that name whose
-///     value is the spell resref, and store the data in the sfo_spell_resrefs array
-///
-///     e.g. WIZARD_FIREBALL = SPWI304
-///          $sfo_spell_resrefs("WIZARD_FIREBALL") = SPWI304
-///
-///    If sfo_include_scrolls is set to 1, also reads in every divine and arcane
-///    spell, and stores them like this:
-///
-///    WIZARD_FIREBALL_SCROLL=scrl1g
-///    $sfo_arcane_scrolls("WIZARD_FIREBALL")=scrl1g
-///    CLERIC_FREE_ACTION_SCROLL=scrl58
-///    $sfo_divine_scrolls("CLERIC_FREE_ACTION")=scrl58
-///////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION read_in_2da
-   INT_VAR lookup_column=0
-           data_column=1
-           first_row=0
-   STR_VAR file=""
-   RET_ARRAY array_data
+DEFINE_PATCH_FUNCTION cauldron_condition
+   INT_VAR red=0
+           green=0
+           blue=0
+   RET value
 BEGIN
-   COPY_EXISTING "%file%.2da" "%workspace%"
-        COUNT_2DA_COLS colcount
-        READ_2DA_ENTRIES_NOW 2da_data colcount
-        FOR (i=first_row;i<2da_data;i+=1) BEGIN
-           READ_2DA_ENTRY_FORMER 2da_data i lookup_column var
-           READ_2DA_ENTRY_FORMER 2da_data i data_column val
-           SPRINT $array_data("%var%") "%val%"
-        END
-        PATCH_IF first_row>=2da_data BEGIN
-           SPRINT $array_data("null") ""
-        END
-   BUT_ONLY
+   PATCH_IF (red>50 && green<200) BEGIN
+      SET value=1
+   END ELSE BEGIN
+      SET value=0
+   END
 END
 
+DEFINE_PATCH_FUNCTION cauldron_action
+   INT_VAR red=0
+           green=0
+           blue=0
+   RET red green blue
+BEGIN
+  SET red_old=red
+//  SET green=red_old/2
+  SET blue=green/4
+  SET red=red/6
+  SET green=(2*green)/3
+END
+
+DEFINE_ACTION_FUNCTION abazigal_new_ar6012 BEGIN
+   // copy over old AR6004 for new version, removing all actors in the process
+
+   LAF clone_area STR_VAR area="ar6004=>ar6012" editstring="delete_actor=>1 area_script=>ar6012 wed=>ar6012" END
+
+   // make the new WED file
+
+   COPY_EXISTING ar6004.wed "override/ar6012.wed"
+      WRITE_ASCII 0x24 ar6012 (8)
+
+   // invert! adding recolored tis/pvrz and height maps in the process
+
+   LAF flip_area STR_VAR area=ar6012 file_loc="%scsroot%/%component_loc%/ar6012" END
 
 
+
+END
+
+DEFINE_PATCH_FUNCTION add_animation
+   INT_VAR xloc=0
+           yloc=0
+           number=0
+BEGIN
+     PATCH_IF (number / 2) * 2 = number BEGIN
+        WRITE_ASCIIE anim_off + number*0x4c "%anim_data%"
+     END ELSE BEGIN
+        WRITE_ASCIIE anim_off + number*0x4c "%anim_data_2%"
+     END
+     WRITE_SHORT anim_off+0x20 + 0x4c*number xloc
+     WRITE_SHORT anim_off+0x22 + 0x4c*number yloc
+END
+
+DEFINE_PATCH_FUNCTION add_ambient
+   INT_VAR xloc=0
+           yloc=0
+           number=0
+BEGIN
+   WRITE_ASCIIE amb_off + number * 2 * 0xd4 "%amb_data%"
+   WRITE_ASCIIE amb_off + (number * 2 +1) * 0xd4 "%amb_data_2%"
+   WRITE_SHORT amb_off + number * 2 * 0xd4 + 0x20 xloc
+   WRITE_SHORT amb_off + number * 2 * 0xd4 + 0x22 yloc
+   WRITE_SHORT amb_off + (number * 2 + 1 ) * 0xd4 + 0x20 xloc
+   WRITE_SHORT amb_off + (number * 2 + 1 ) * 0xd4 + 0x22 yloc
+END
