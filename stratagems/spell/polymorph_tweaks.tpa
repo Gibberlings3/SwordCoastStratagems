@@ -1,0 +1,90 @@
+DEFINE_ACTION_FUNCTION polymorph_tweaks BEGIN
+
+   // move non-EE installs over to the EE method
+   
+   ACTION_IF !enhanced_edition BEGIN
+
+      ACTION_FOR_EACH file IN "squirp.itm" "isquirl.bam" BEGIN
+         COPY "%scsroot%/%component_loc%/resource/%file%" override
+      END
+
+      COPY_EXISTING "%WIZARD_POLYMORPH_OTHER%.spl" override
+          LPF DELETE_EFFECT INT_VAR check_globals=0 END
+          LPF polymorph_patch INT_VAR duration=300000 power=4 END
+          LPF ADD_SPELL_EFFECT INT_VAR opcode=174 target=2 power=4 timing=1 STR_VAR resource=eff_p07 END
+          LPF ADD_SPELL_EFFECT INT_VAR opcode=141 target=2 power=4 parameter2=4 timing=1 END
+      BUT_ONLY
+      
+      ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_SPHERE_OF_CHAOS%.spl" BEGIN
+        COPY_EXISTING "%WIZARD_SPHERE_OF_CHAOS%.spl" override
+          LPF DELETE_EFFECT INT_VAR match_opcode=135 END
+          LPF DELETE_EFFECT INT_VAR match_opcode=111 END
+          LPF polymorph_patch INT_VAR duration=9 power=7 probability1=10 STR_VAR savetype=spell END
+        BUT_ONLY
+      END
+      // wand of polymorphing
+
+      ACTION_IF FILE_EXISTS_IN_GAME "wand09.itm" BEGIN
+        COPY_EXISTING wand09.itm override
+           LPF DELETE_EFFECT INT_VAR check_globals=0 END
+           LPF polymorph_patch INT_VAR power=4 STR_VAR savetype=wand type=item END
+        BUT_ONLY
+      END
+
+   END
+   
+   // even on EE, a couple of spells/items aren't fully handled
+   
+   COPY_EXISTING "bolt05.itm" override
+       PATCH_FOR_EACH match_opcode IN 111 135 0 BEGIN
+          LPF DELETE_EFFECT INT_VAR match_opcode END
+       END
+       LPF polymorph_patch INT_VAR duration=300000 power=0 STR_VAR type=item END
+   BUT_ONLY
+   
+   COPY_EXISTING "%MAJOR_POLYMORPH%.spl" override
+       LPF DELETE_EFFECT INT_VAR check_globals=0 END
+       LPF polymorph_patch INT_VAR power=4 savebonus="-4" END
+       LPF ADD_SPELL_EFFECT INT_VAR opcode=174 target=2 power=4 timing=1 STR_VAR resource=eff_p07 END
+       LPF ADD_SPELL_EFFECT INT_VAR opcode=141 target=2 power=4 parameter2=4 timing=1 END
+   BUT_ONLY
+
+
+END
+
+DEFINE_PATCH_FUNCTION polymorph_patch
+   INT_VAR duration=0
+           savebonus=0
+           power=0
+           probability1=100
+           probability2=0
+   STR_VAR savetype=polymorph
+           type=spell
+BEGIN
+          PATCH_MATCH "%savetype%" WITH
+             polymorph BEGIN
+                save_vs_polymorph=1
+                save_vs_wand=0
+                save_vs_spell=0
+             END
+             wand BEGIN
+                save_vs_polymorph=0
+                save_vs_wand=1
+                save_vs_spell=0
+             END
+             spell BEGIN
+                save_vs_polymorph=0
+                save_vs_wand=0
+                save_vs_spell=1
+             END
+          DEFAULT
+             PATCH_FAIL "unrecognised save type %savetype%"
+          END
+          TO_UPPER type
+          LPF DELETE_EFFECT INT_VAR match_opcode=111 STR_VAR match_resource=squirp END
+          LPF "ADD_%type%_EFFECT" INT_VAR type=99 opcode=111 target=2 power parameter1=1 duration probability1 probability2 save_vs_wand save_vs_polymorph save_vs_spell savebonus STR_VAR resource=squirp END
+          PATCH_FOR_EACH resource IN SPIN122 SPIN123 SPIN124 SPIN150 SPIN151 SPIN160 SPIN529 SPIN667 SPIN718 SPIN794 SPINHUM SPMDSLAY SPWI489 SPWI490 SPWI491 BEGIN
+              LPF DELETE_EFFECT INT_VAR match_opcode=172 STR_VAR match_resource="%resource%" END
+              LPF CLONE_EFFECT INT_VAR match_opcode=111 opcode=172 timing=1 STR_VAR resource END
+          END
+END
