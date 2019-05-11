@@ -4,17 +4,16 @@ LAUNCH_ACTION_MACRO read_in_instant_prebuff_spells
 
 DEFINE_ACTION_FUNCTION abazigal BEGIN
 
+// sort out dragon resources if needed (even non-dragon Abaz uses them)
 
-   LAF define_difficulty STR_VAR type=dragon RET difficulty_variable END
-
-
-   // sort out dragon resources if needed
+   LAF include STR_VAR file=dragon_shared.tph locbase=dragon END
    LAF check_label STR_VAR label=dw#dragon RET value END
-         ACTION_IF value BEGIN
-            LAF include STR_VAR file=dragon_shared.tph locbase=dragon END
+         ACTION_IF !value BEGIN
             LAF dragon_resources_shared END
    END
+
    LAM read_in_spell_trigger_data // do it after creating dragon sequencers
+
 
 
    ACTION_IF FILE_EXISTS_IN_GAME abazdg02.cre BEGIN
@@ -26,7 +25,7 @@ DEFINE_ACTION_FUNCTION abazigal BEGIN
    END
 
    ACTION_IF FILE_EXISTS_IN_GAME finabaz.cre BEGIN
-         LAF check_label STR_VAR label=dw#mage RET value=value END
+         LAF check_label STR_VAR label=dw#mage RET value END
          ACTION_IF value BEGIN
             LAF run STR_VAR file=abazigal_finale END
          END
@@ -35,11 +34,27 @@ END
 
 DEFINE_ACTION_FUNCTION abazigal_main BEGIN
 
-               // delay Tamah
+               LAF define_difficulty STR_VAR type=genai RET difficulty_variable END
 
-               LAF get_area_script STR_VAR area=ar6005 RET script=script END
-               LAF swap_text STR_VAR files= ~%script%.bcs~ swaps=~CreateCreature("ABAZDG02".*=>NULL~ END
+               // Tamah retreats, if injured, during first phase of the battle
 
+               MAKE_PATCH
+                  add_effect_inline=>"opcode=>124 target=>1 timing=>4 duration=>1"
+                  delete_effect=>"opcode is_in [20 98 166]"
+               END
+               LAF clone_spell STR_VAR spell="%SUCCUBUS_ETHEREAL%=>dwtameth" edits=patch_data END
+               LAF clone_spell STR_VAR spell="%CLERIC_HEAL%=>dw#silhe" editstring="delete_effect=>~opcode=139~" END
+
+               COPY_EXISTING abazigal.bcs override
+                  DECOMPILE_AND_PATCH BEGIN
+                     REPLACE_TEXTUALLY ~SetGlobal("STARTEDCHANGE","LOCALS",1)~ ~SetGlobal("STARTEDCHANGE","LOCALS",1)SetGlobal("dw_abaz_change","MYAREA",1)~
+                  END
+               BUT_ONLY
+
+
+               LAF install STR_VAR file="ar6005sr.bmp dw#tamah.baf" location=resource END // Tamah's hideyhole
+
+               LAF edit_creature STR_VAR creature=abazdg02 editstring="insert_script_high=>dw#tamah" END
 
 		// Abazigal (human): new script; enforce as 30th level Kensai/Mage
 
@@ -53,6 +68,20 @@ DEFINE_ACTION_FUNCTION abazigal_main BEGIN
                    add_spells=>"2X_MAGIC_MISSILE WIZARD_MAGIC_MISSILE(3) DEATH_SPELL"
                 END
                 LAF edit_creature STR_VAR creature=abazigal edits=patch_data END
+
+                // drakes
+                
+                MAKE_PATCH
+                IsFireDrake=>drake01
+                IsShadowDrake=>drake02
+                IsIceDrake=>drake03
+                IsEarthDrake=>drake04
+                END
+                ACTION_PHP_EACH patch_data AS variable=>rename_to BEGIN
+                      LAF ssl_to_bcs STR_VAR script=drake location=ssl locbase=ascension variables="%variable%=True" rename_to END
+                END
+                LAF edit_creature STR_VAR creature="drake01 drake02 drake03 drake04" editstring="add_spells=>~CLERIC_CURE_CRITICAL_WOUNDS(4) DRAGON_STONE_SKIN(4) WIZARD_INVISIBILITY(4)~" END
+
 
 END
 

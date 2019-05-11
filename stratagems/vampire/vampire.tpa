@@ -53,20 +53,18 @@ END
 ////   Make attack spells (charm, bats, mesmerise etc)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-
 DEFINE_ACTION_FUNCTION vampire_spells BEGIN
 
    // Bat clouds
 
-   LAF install_spell STR_VAR spell=dw#vbat1 idsname=VAMPIRE_BAT_CLOUD location=resource RET newname END // actually just a clean copy of Summon Insects, changed to Innate
-   OUTER_SPRINT VAMPIRE_BAT_CLOUD "%newname%"
+   LAF add_spell_to_ids STR_VAR idsname=VAMPIRE_BAT_CLOUD typename=innate RET newname END
    MAKE_PATCH
+      spell_type=>innate
       say_name=>2400
       primary=>0
       patch_ability_inline=>~casting_time=>0~
-      patch_effect_inline'=>~resist_dispel=>0 duration=>"if duration>3 then 18 else no_change"~
    END
-   LAF edit_spell STR_VAR spell="%VAMPIRE_BAT_CLOUD%" edits=patch_data END
+   LAF clone_spell STR_VAR spell="%CLERIC_SUMMON_INSECTS%=>%newname%" edits=patch_data END
 
    // regeneration
 
@@ -126,6 +124,7 @@ DEFINE_ACTION_FUNCTION vampire_spells BEGIN
    END
 END
 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////   Make resources needed for shapeshifts
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -135,6 +134,10 @@ DEFINE_ACTION_FUNCTION vampire_shapeshifts BEGIN
    // gaseous, wolf, rat and bat forms
 
    LAF install STR_VAR file=~dw#vmwol.itm dw#vmbat.itm dw#vmrat.spl dw#vmnrt.spl dw#vmjum.spl~ location=resource END
+   
+   // rat and gaseous forms should give immunity to turning (otherwise things break)
+   
+   LAF edit_item STR_VAR item="dw#vmrat dw#vmjum dw#vmnrt" editstring="add_effect_inline=>~opcode=>297 target=>1 timing=>2 parameter2=>1~" END
 
    MAKE_PATCH
       say_name=>14504
@@ -360,7 +363,8 @@ END
 
 // If SCS mage component not installed, give Tanova a vampire combat block
 
-        ACTION_IF !FILE_EXISTS "override/dw#mage.mrk" BEGIN
+        LAF check_label STR_VAR label=dw#mage RET value END
+        ACTION_IF !value BEGIN
 	   LAF edit_creature STR_VAR creature=c6tanov editstring=~script_race=>vampir01~ END
 	END
 	/// sort out intermittent Saemon/Sime bug (caused by saving at the wrong moment after reaching Brynnlaw?)
@@ -417,6 +421,82 @@ END
 	     EXTEND_BOTTOM c6bodhi.bcs ~override/vampir01.bcs~
              EXTEND_BOTTOM bodhi2.bcs ~override/vampir01.bcs~
 	END
+	
+    // handle the Asylum quasi-cutscene
+    
+     LAF ssl_to_bcs STR_VAR script="dw#vmmin" location=ssl END
+    
+     MAKE_PATCH
+          dw#asvmb=>ppbodhi4
+          dw#asvm1=>dw#asvm1
+          dw#asvm2=>dw#asvm2
+     END
+     ACTION_PHP_EACH patch_data AS resref=>vamp BEGIN
+           LAF clone_spell STR_VAR spell="%VAMPIRE_FORM_CHANGE%=>%resref%" END
+           LAF swap_text STR_VAR files="%resref%.spl" swaps="c6vamp01=>%vamp%" END
+     END
+     MAKE_PATCH
+        match=>"actorname is_in [bodhi vam1514a vam1514b]"
+        actor_resource=>c6bat
+        script_override=>"actorname in [bodhi->dw#asvmb vam1514a->dw#asvm1 vam1514b->dw#asvm2 default->no_change]"
+     END
+     LAF edit_area STR_VAR area=ar1514 editstring="patch_actor=>patch_data" END
+     
+     LAF edit_creature STR_VAR creature=ppbodhi4 editstring="script_default=>dw#vmmin" END
+     LAF install STR_VAR file="dw#asvmb.baf" location=resource END
+
+     LAF clone_creature STR_VAR creature="vamold01=>dw#asvm1" editstring="dv=>vam1514a strip_script=>all insert_script_low=>dw#vmmin insert_script_high=>dw#asvrn" END
+     LAF clone_creature STR_VAR creature="vammat01=>dw#asvm2" editstring="dv=>vam1514b strip_script=>all insert_script_low=>dw#vmmin insert_script_high=>dw#asvrn" END
+
+     COPY_EXISTING
+          "dw#asvmb.bcs" "override/dw#asvm1.bcs"
+          "dw#asvmb.bcs" "override/dw#asvm2.bcs"
+       DECOMPILE_AND_PATCH BEGIN
+          REPLACE_TEXTUALLY "dw#asvmb" "%DEST_RES%"
+       END
+       
+     COPY_EXISTING ar1514.are override
+        LPF ADD_AREA_REGION_TRIGGER 
+           INT_VAR ab_RT_Type=0
+                   ab_RT_VxPr=4
+                   ab_RT_BbLX=1943
+                   ab_RT_BbLY=1119
+                   ab_RT_BbHX=2346
+                   ab_RT_BbHY=1478
+                   ab_RT_Vx_X_0=2346
+                   ab_RT_Vx_Y_0=1261
+                   ab_RT_Vx_X_1=2075
+                   ab_RT_Vx_Y_1=1478
+                   ab_RT_Vx_X_2=1943
+                   ab_RT_Vx_Y_2=1269
+                   ab_RT_Vx_X_3=2135
+                   ab_RT_Vx_Y_3=1119
+                   ab_RT_LPoX=2043
+                   ab_RT_LPoY=1266
+                   ab_RT_ALPX=2043
+                   ab_RT_ALPY=1266
+           STR_VAR ab_RT_Name=dw_bodhi_trigger
+                   ab_RT_Rbcs=dw#asvtr
+        END
+     
+     <<<<<<<< .../stratagems-inline/dw#asvtr.baf
+     IF
+       IsOverMe(Player1)
+     THEN
+         RESPONSE #100
+            SetGlobal("dw_bodhi_cs","MYAREA",1)
+     END
+     >>>>>>>>
+     <<<<<<<< .../stratagems-inline/dw#asvrm.baf
+     IF
+       Global("AsylumPlot","GLOBAL",43)
+     THEN
+         RESPONSE #100
+            ApplySpell(Myself,VAMPIRE_BAT_FORM_CHANGE)
+     END
+     >>>>>>>>
+     LAF install STR_VAR file="dw#asvtr.baf dw#asvrm.baf" inline=yes END
+
 
 
 END
