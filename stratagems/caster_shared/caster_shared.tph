@@ -43,6 +43,7 @@ STR_VAR spells=""
         swap_in=""
 RET     spells
 BEGIN
+
       PATCH_IF ~%swap_out%~ STRING_COMPARE ~~ BEGIN
        LPF return_first_entry STR_VAR list= ~%swap_out%~ RET this_swap_out=entry swap_out=list END
        SPRINT list ~%swap_in%~
@@ -68,7 +69,7 @@ BEGIN
                PUSH spells ~%entry%~
             END
          END
-        LPF substitute_spells STR_VAR spells swap_in swap_out RET spells=spells END
+        LPF substitute_spells STR_VAR spells swap_in swap_out RET spells END
       END
 
 END
@@ -94,7 +95,7 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
     LAF check_label STR_VAR label=dw#enhance_cure_cause RET enhanced_healing=value END
  END
  ACTION_IF !VARIABLE_IS_SET  ~macro_read_in_%type%_spell_choices~ BEGIN
-   ACTION_IF "%spelltype%" STRING_EQUAL_CASE priest BEGIN
+   ACTION_IF "%type%" STRING_EQUAL_CASE priest BEGIN
     OUTER_SPRINT base_folder_spells "%base_folder_spells_priest%"
    END ELSE BEGIN
     OUTER_SPRINT base_folder_spells "%base_folder_spells_mage%"
@@ -116,6 +117,9 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
          DEFAULT
             OUTER_SPRINT file_here ~%scsroot%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
          END
+      END
+      ACTION_IF debug_variable=2 BEGIN
+                    PRINT ~spells being read in from %file_here% (base_folder_spells=%base_folder_spells%)~
       END
       COPY ~%file_here%~ ~%workspace%~
           SPRINT ~kit~ ~%BASH_FOR_RES%~
@@ -688,7 +692,9 @@ DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
         // make the scripts for replacement
         PRINT "scs_tra_loc is %scs_tra_loc%"
         WITH_TRA "%scs_tra_loc%/english/mage.tra" "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/mage.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra" BEGIN
+          LAF define_difficulty STR_VAR type=mage RET difficulty_variable END
           LAF ssl_to_bcs STR_VAR script=dw#copmg location="ssl/main" locbase=mage variables="IsCopy=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
+          LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
           LAF ssl_to_bcs STR_VAR script=dw#coppr location="ssl/main" locbase=priest variables="IsCopy=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
           LAF ssl_to_bcs STR_VAR script=dw#coppr rename_to=dw#copdr location="ssl/main" locbase=priest variables="IsCopy=True&IsDruid=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
         END
@@ -700,7 +706,7 @@ DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
            OUTER_SPRINT oppos_script dw1mc2ge
         END
         LAF build_genai_script STR_VAR script="%oppos_script%" END
-        LAF install STR_VAR file=~dw#clone.spl dw#oppos.baf~ location=resource locbase=caster_shared END
+        LAF install STR_VAR file=~dw#clone.spl dw#oppos.baf dw#optop.baf~ location=resource locbase=caster_shared END
 
         COPY_EXISTING ~dw#clone.spl~ ~override~ /// legacy
             WRITE_LONG 0x8 ~-1~
@@ -1267,7 +1273,7 @@ END
 
 DEFINE_ACTION_FUNCTION "build_caster_label" BEGIN
 
-  LAF resolve_stat STR_VAR id=DW_SCS_CASTER RET stat_ind END
+  LAF ds_resolve_stat STR_VAR id=DW_SCS_CASTER RET stat_ind END
   ACTION_IF enhanced_edition BEGIN
    MAKE_PATCH
       add_basic_ability=>null
@@ -1288,14 +1294,14 @@ END
 DEFINE_ACTION_FUNCTION "build_detect_invisibility_label" BEGIN // currently just for SR
 
   ACTION_IF enhanced_edition BEGIN
-   LAF resolve_stat STR_VAR id=DETECT_INVISIBILITY RET stat_ind END
+   LAF ds_resolve_stat STR_VAR id=DETECT_INVISIBILITY RET stat_ind END
    MAKE_PATCH
       add_basic_ability=>null
       add_effect_inline=>"opcode=>328 mode=>1 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
    END
    LAF make_spell STR_VAR spell="dw#caldi" edits=patch_data END
   END ELSE BEGIN
-   LAF resolve_stat STR_VAR id=DW_DETECT_INVISIBILITY RET stat_ind END
+   LAF ds_resolve_stat STR_VAR id=DW_DETECT_INVISIBILITY RET stat_ind END
    MAKE_PATCH
       add_basic_ability=>null
       add_effect_inline=>"opcode=>318 timing=>9 target=>1 power=>1 parameter2=>%stat_ind%"
@@ -1306,7 +1312,7 @@ END
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-////   identify wands
+////   identify wands (and related items)
 ////
 ////   For speed, and because false positives don't really matter, we just do a text search of the file
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1321,6 +1327,9 @@ BEGIN
                   SPRINT wands "%wands% %wand%"
                END
           END
+     END
+     PATCH_IF INDEX_BUFFER ("%WIZARD_SPELL_STRIKE_SCROLL%")>=0 BEGIN
+        SPRINT wands "%wands% SPELL_STRIKE_SCROLL"
      END
 END
 

@@ -51,6 +51,11 @@ BEGIN
          LAF build_wish_spell END
          LAF mislead END
       END
+      ACTION_IF is_bg2 BEGIN  // this has to be outside the make_mage_resources function so it doesn't get lost
+             OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC "dw#qalac"
+             OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC_type "%WIZARD_IMPROVED_ALACRITY_type%"
+             OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC_spelltype "%WIZARD_IMPROVED_ALACRITY_spelltype%"
+      END
 
       // do this second, sequencers/triggers require Mislead
 
@@ -133,7 +138,8 @@ END
 
 DEFINE_ACTION_FUNCTION mage_edits_main
 BEGIN
-    ACTION_IF FILE_EXISTS ~override/dw#standardise_nobg2.mrk~ BEGIN
+    LAF check_label STR_VAR label=dw#standardise_nobg2 RET value END
+    ACTION_IF value BEGIN
        OUTER_SPRINT arguments ~spells_are_bg1~
     END ELSE BEGIN
        OUTER_SPRINT arguments ~spells_are_not_bg1~
@@ -316,8 +322,17 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
        END
      BUT_ONLY
 
-     // irenicus should be designated as DEMONIC, and should be immune to normal and +1 weapons (the player is)
-     LAF edit_creature STR_VAR creature=hellslay editstring=~race=>DEMONIC class=>FIGHTER_MAGE add_items=>immune2~ END
+     // irenicus should be designated as DEMONIC, should be immune to normal and +1 weapons (the player is), can detect invisible by script, and gets a Spellstrike scroll
+     // for use against Pro/Magic
+     MAKE_PATCH
+      race=>DEMONIC 
+      class=>FIGHTER_MAGE 
+      add_items=>immune2
+      delete_effect=>~opcode=193~
+      add_effect_inline=>~opcode=>193 parameter2=>1~
+      add_items=>"%WIZARD_SPELL_STRIKE_SCROLL%"
+     END
+     LAF edit_creature STR_VAR creature=hellslay edits=patch_data END
      // slight glitch in Irenicus's hp caused by hellslay/helljon mismatch
      LAF edit_creature STR_VAR creature=helljon editstring=~hitpoints=>217~ END
 
@@ -331,7 +346,8 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
 
      // Kuo-toa wizards need a Continue() in their truesight
 
-     ACTION_IF !FILE_EXISTS_IN_GAME ~dw#priest.mrk~ BEGIN
+     LAF check_label STR_VAR label="dw#priest" RET value END
+     ACTION_IF !value BEGIN
         LAF swap_text STR_VAR files=~kuotoa.bcs~ swaps=~ReallyForceSpell(Myself,KOA_TRUE_SIGHT_NO_VIS)=>ReallyForceSpell(Myself,KOA_TRUE_SIGHT_NO_VIS)Continue()~ END
      END
      // remove pointless truesight requested by the AR5002 area file
@@ -435,6 +451,43 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
      
      LAF swap_text STR_VAR file=ppworker.dlg swaps=~ChangeAIScript("WTASIGHT",DEFAULT)=>null~ END
 
+     // vampire lovers
+     // we assume 2.25MXP, enough to put Nalia at L16
+
+   // Tyris: L7 fighter/L14 mage
+
+   ACTION_IF FILE_EXISTS_IN_GAME "g#tfvamp.cre" BEGIN
+      LAF edit_creature STR_VAR creature="g#tfvamp" editstring="class=>fighter_mage level1=>7 level2=>14 insert_script_low=>mage12a" END
+      LAF DELETE_SCRIPT_BLOCK STR_VAR script="g#tfvamp" match=DOMINATION END
+   END
+
+   // Angelo: L7 fighter/L14 mage
+
+   ACTION_IF FILE_EXISTS_IN_GAME "adangvam.cre" BEGIN
+      LAF edit_creature STR_VAR creature=adangvam editstring="class=>fighter_mage level1=>7 level2=>14 insert_script_low=>mage12a" END
+      LAF DELETE_SCRIPT_BLOCK STR_VAR script=adangvam match=DOMINATION END
+   END
+   
+   // Evandra: L16 mage
+   
+   ACTION_IF FILE_EXISTS_IN_GAME "rh#evamp.cre" BEGIN
+      LAF edit_creature STR_VAR creature="rh#evamp" editstring="class=>mage level1=>16 insert_script_low=>mage12a" END
+      LAF DELETE_SCRIPT_BLOCK STR_VAR script="rh#evamp" match=DOMINATION END
+   END
+
+   // Kelsey: L16 mage (we ignore sorcerer features, life's too short)
+
+   ACTION_IF FILE_EXISTS_IN_GAME "j#vmpkel.cre" BEGIN
+      LAF edit_creature STR_VAR creature="j#vmpkel" editstring="class=>mage level1=>16 insert_script_low=>mage12a" END
+      LAF DELETE_SCRIPT_BLOCK STR_VAR script="j#vmpkel" match=DOMINATION END
+   END
+
+   // Nalia: L16 mage
+
+   ACTION_IF FILE_EXISTS_IN_GAME "pgnalvam.cre" BEGIN
+      LAF edit_creature STR_VAR creature="pgnalvam" editstring="class=>mage level1=>16 insert_script_low=>mage12a" END
+      LAF DELETE_SCRIPT_BLOCK STR_VAR script="pgvamnal" match=DOMINATION END
+   END
 
 
    END
@@ -468,6 +521,7 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
      //unneeded scripts
      
      LAF edit_creature STR_VAR creature=silke editstring=~strip_script=>%tutu_scripts%eeenemy~ tv=1 END
+     LAF edit_creature STR_VAR creature="%tutu_scripts%handal2" editstring="strip_script=>%tutu_scriptw%trunsgt" END
 
      // Centeol: presumably has lost her magic, but might as well use her frost wand
 
@@ -494,7 +548,7 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
 
         LAF edit_creature STR_VAR creature=andris tv=1 editstring=~add_items=>minhp1~ END
         LAF install STR_VAR file=dw#andri.spl location=resource END
-    
+
           // get the "Contingency" string
     
         COPY_EXISTING ~%WIZARD_CONTINGENCY%.spl~ ~override~
@@ -535,23 +589,12 @@ DEFINE_ACTION_FUNCTION mage_edits_after BEGIN
      // flag Kruin as Wild Mage
      LAF edit_creature STR_VAR creature=kruin editstring=~kit=>WILDMAGE~ END
 
-
-     // Azamantes needs at least one Alacrity
-
-      MAKE_PATCH
-         match=>"(%WIZARD_IMPROVED_ALACRITY% in has_spell)=0"
-         add_spells=>IMPROVED_ALACRITY
-      END
-      LAF edit_creature STR_VAR creature=gorlic01 edits=patch_data END
-
      // Vithal needs access to mage scripts (NB: this needs to be in the "after" block as we rely on dwvith having been replaced by his real combat script)
 
      LAF edit_creature STR_VAR creature=udvith editstring="insert_script_high=>dwvith" END
 
 
-
-
-   END
+   END // end of bg2 section
 
    ACTION_IF is_bg1 BEGIN
 
@@ -819,10 +862,6 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
        parameter2=>0
     END
     LAF clone_spell STR_VAR spell=~%WIZARD_IMPROVED_ALACRITY%=>dw#qalac~ editstring=~clone_effect=>patch_data~ END
-    APPEND_OUTER "%data_loc_root%/dw_shared/dw#hla_feat.2da" "WIZARD_IMPROVED_ALACRITY_NPC dw#qalac grant"
-    OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC "dw#qalac"
-    OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC_type "%WIZARD_IMPROVED_ALACRITY_type%"
-    OUTER_SPRINT WIZARD_IMPROVED_ALACRITY_NPC_spelltype "%WIZARD_IMPROVED_ALACRITY_spelltype%"
 
 
     /*
@@ -1019,6 +1058,11 @@ DEFINE_ACTION_FUNCTION mislead BEGIN
       END
    END
    
+   // sunfire requires special attention
+
+   COPY_EXISTING dw#mlsun.spl override
+      LPF ALTER_SPELL_HEADER INT_VAR projectile=38 END
+   
    // install the script
 
    LAF ssl_to_bcs STR_VAR script=dw#mislm location=~mage/ssl/main~ END
@@ -1104,7 +1148,7 @@ mage6c  mage8a  mage8b  mage8c  mage8d  mage8e  amlich02 draconis
 cmage20a zilmag01 gpmage1  tief3 teltief3 cmage20a cmage20b ogmagi01 clone1   cowenf02
 cowenf01 cowenf03 cowenf04 degard2 kuomag01 duemag01 gpmage2  kproen02
 neva     obshal03 demmag   gorcamb2 lyros    hgwiz01  ppjon2   sujon
-hlsion gorstam dwvith kalah
+hlsion gorstam dwvith kalah kbsham01
 figmag06 figmag10 figmag16 figmag06 fgtmag14 trfued05 ckmag20b ppmag01
 gith06   githfgmg jangit01 illasera magthf14 thiefmag shadmt1 maevar chgood08
  aesgar lavok01    d0mvcler tolger mekrat raksha02 raksha01

@@ -1,4 +1,3 @@
-INCLUDE ~%scsroot%/ds/ds.tph~
 
 
 DEFINE_ACTION_FUNCTION initial BEGIN
@@ -33,6 +32,98 @@ DEFINE_ACTION_FUNCTION initial BEGIN
     COPY_EXISTING spcl321.spl override
           LPF ALTER_EFFECT INT_VAR match_opcode=139 opcode=177 parameter1=30 parameter2=2 STR_VAR resource=dw#rgstr END
 
+   // Fire Shield backlash should bypass MI
+
+   ACTION_FOR_EACH spell IN spcryod spimixd sppr951d sppr952d spwi403d spwi418d BEGIN
+     ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+       COPY_EXISTING "%spell%.spl" override
+         LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
+     END
+   END
+   
+   // these innate spells are marked as 'wizard' or 'priest
+
+   LAF edit_spell STR_VAR spell="BLACK_DRAGON_INSECT SHADOW_DRAGON_SHADOWS NYMPH_CONFUSION ABAZIGAL_SHOCKWAVE BURNING_MAN_CINDER_SHOWER BLUE_DRAGON_BREATH LAVA_BURST BEGUILE DEMOCHM SPYANC01" editstring="spell_type=>innate" allow_missing=1 END
+
+   // Protection from Magic scrolls don't remove undispellable buffs
+   
+   COPY_EXISTING "scrl07.itm" override
+       PATCH_FOR_EACH parameter2 IN 1 2 7 BEGIN
+       LPF CLONE_EFFECT INT_VAR match_opcode=142 opcode=221 timing=1 parameter1=10 parameter2 END
+       END
+       
+
+   ACTION_IF (is_bg2 && enhanced_edition) BEGIN
+
+     // on EE, certain weapons have been too-crudely given immunity to poison (they have multiple effects and the poison immunity
+     // blocks all of them)
+
+      ACTION_FOR_EACH item IN blun30 blun30c halb05 halb11 BEGIN
+           COPY_EXISTING "%item%.itm" override
+                LPF DELETE_EFFECT INT_VAR match_opcode=324 END
+                LPF CLONE_EFFECT INT_VAR match_opcode=12 match_parameter2b=32 opcode=324 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
+                LPF CLONE_EFFECT INT_VAR match_opcode=324 parameter2=77 END
+           BUT_ONLY
+      END
+      COPY_EXISTING marili.itm override
+                LPF DELETE_EFFECT INT_VAR match_opcode=318 END
+                LPF CLONE_EFFECT INT_VAR match_opcode=25 opcode=318 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
+                LPF CLONE_EFFECT INT_VAR match_opcode=318 parameter2=77 END
+      BUT_ONLY
+      COPY_EXISTING sw2h18.itm override
+               LPF DELETE_EFFECT INT_VAR match_opcode=324 END
+               LPF DELETE_EFFECT INT_VAR match_opcode=12 END
+               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=324 target=2 parameter2=55 STR_VAR resource="%SOURCE_RES%" END
+               LPF CLONE_EFFECT INT_VAR match_opcode=324 END
+               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=12 target=2 parameter2b=32 timing=9 probability1=10 dicenumber=2 dicesize=12 END
+      BUT_ONLY
+      
+      // also on EE, the default summoned-AI script gets confused if its target goes invisible
+      
+      LAF ALTER_SCRIPT_BLOCK 
+              STR_VAR script=bdsum00 
+                      match=AttackOneRound 
+                      swap_out1="!InParty(LastSeenBy(Myself))" 
+                      swap_in1="!InParty(LastSeenBy(Myself))See(LastSeenBy(Myself))" 
+                      swap_out2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)" 
+                      swap_in2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)See(LastSeenBy(Myself))" 
+      END
+
+
+   END
+
+   // on BG1, Clair De'lain should have a bow and doesn't. BGEE tries to fix this, but messes it up.
+   
+   ACTION_IF is_bg1 BEGIN
+     COPY_EXISTING "%tutu_var%claird.cre" override
+      REMOVE_CRE_ITEM "arow02 " "%tutu_var%arow02" "%tutu_var%bow04"
+      ADD_CRE_ITEM "%tutu_var%bow04" #0 #0 #0 NONE WEAPON EQUIP TWOHANDED
+      ADD_CRE_ITEM "%tutu_var%arow02" #10 #0 #0 NONE QUIVER
+     BUT_ONLY
+   END
+   
+   // a couple of problems in SR v4
+   
+   ACTION_IF demivrgvs BEGIN
+   
+      // Holy Smite blindness has the wrong duration
+
+      ACTION_IF FILE_EXISTS_IN_GAME "sppr313e.spl" BEGIN
+         OUTER_SPRINT file sppr313e
+      END ELSE BEGIN
+         OUTER_SPRINT file sppr313
+      END
+      COPY_EXISTING "%file%.spl" override
+         LPF ALTER_EFFECT INT_VAR match_opcode=74 duration=6 END
+      BUT_ONLY
+      
+      // summoned Death Knights ought to have their allegiance set to Match Target, else hostile ones get attacked
+      
+      COPY_EXISTING spcaco.eff override
+        WRITE_LONG 0x20 1
+      BUT_ONLY
+
+   END
 
    // some general resources needed
    LAF random_useful_items END
@@ -46,9 +137,8 @@ DEFINE_ACTION_FUNCTION initial BEGIN
         LAF make_label STR_VAR label=dw#detectablespells END
         LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
    END
-   LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table = "%scsroot%/ds/ds_scs.2da" END  // additional SCS entries
-   LAF scs_ds_correction END // A couple of manual fixes
-
+   CLEAR_IDS_MAP // make sure any DS changes to splstate/stats are logged
+   
    LAF speed_debug STR_VAR string="Running Detectable Items" END
 
    LAF detectable_items END
@@ -85,17 +175,16 @@ DEFINE_ACTION_FUNCTION initial BEGIN
      END
      // some misc bugfixes
      LAF initial_bg2_misc END
-     LAF include STR_VAR file=stoneskin.tph END // eliminate a couple of stoneskins that are immune to breach
-     LAF initial_stoneskin END
+     // eliminate a couple of stoneskins that are immune to breach
+     LAF run STR_VAR file=initial_stoneskin END
 
      // some BG2-specific bits of Detectable X
-     LAF ds_detectable_weapon_enchantment END // weapon enchantment
+     
+     ACTION_IF !enhanced_edition BEGIN
+         LAF ds_detectable_weapon_enchantment END // weapon enchantment
+     END
      LAF include STR_VAR file=detecttrap.tph END
      LAF detect_trap END
-
-   END ELSE BEGIN
-   
-            LAF resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END // since we use this occasionally even in BG1 scripts, we need it in stats.ids
 
    END
 ////////////////////////
@@ -118,6 +207,7 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    OUTER_SPRINT component_loc caster_shared
    LAF run STR_VAR file=ai_initialise END
    OUTER_SPRINT component_loc initial
+   CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
 
 ////////////////////////
 ///// Spell core
@@ -295,32 +385,6 @@ DEFINE_ACTION_FUNCTION detectable_items BEGIN
   END
 END
 
-////////////////////////////////////////////////////////////////////
-// Manual edits to some SCS detectable-spell effects
-////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION scs_ds_correction BEGIN
-   OUTER_SET opcode_stat= enhanced_edition? 328 : 318
-
-   // imprisonment and maze DS needs to be only a few seconds
-   MAKE_PATCH
-      match=>"opcode=%opcode_stat%"
-      timing=>0
-      duration=>3
-   END
-   LAF edit_spell STR_VAR spell="WIZARD_IMPRISONMENT DEMILICH_TRAP_SOUL WIZARD_MAZE PSIONIC_MAZE" allow_missing=1 editstring="patch_effect=>patch_data" END
-   
-   // a quirk in the Timestop opcode means its duration is half as long as stated (we'll fix an error with the sound effects at the same time)
-   
-   MAKE_PATCH
-      match=>"opcode is_in [%opcode_stat% 174]"
-      duration=>"duration / 2"
-   END
-   LAF edit_spell STR_VAR spell="WIZARD_TIME_STOP SPWISH17" editstring="patch_effect=>patch_data" allow_missing=1 END
-
-
-END
-
 ///////////////////////////////////////////////////////////////////////////
 // misc. IDS files
 ///////////////////////////////////////////////////////////////////////////
@@ -459,7 +523,6 @@ DEFINE_ACTION_FUNCTION spell_shield BEGIN
 
     LAF include STR_VAR file=~ardanis_spell_shield.tph~ END
     LAF ardanis_spell_shield END
-    LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END // let other mods know spell is altered
   END
 END
 
@@ -577,6 +640,7 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            skull_trap=>dw#skulltrap
            clone_slots=>dw#clone_slots
            npc_symbols=>dw#npcsymbols
+           polymorph_tweaks=>dw#polymorphtweaks
    END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_divine BEGIN
            sanctity_of_mind=>dw#sanctity

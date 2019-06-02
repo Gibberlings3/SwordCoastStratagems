@@ -34,13 +34,7 @@ BEGIN
 
         // scripts
 
-        LAF ssl_to_bcs STR_VAR script=~bodhi2 c6bodhi dw#chbod finbodhi~ variables location=ssl END
-
-        // ascension
-        
-        ACTION_IF FILE_EXISTS_IN_GAME finbodhi.cre BEGIN 
-           LAF bodhi_ascension STR_VAR variables END
-        END
+        LAF ssl_to_bcs STR_VAR script=~bodhi2 c6bodhi dw#chbod~ location=ssl END
 
         // mages
         
@@ -93,48 +87,107 @@ DEFINE_ACTION_FUNCTION bodhi_spells
 INT_VAR version=1
 BEGIN
 
-        // labelling
+
+        // many are made from hot-modifying existing spells. For safety (and especially for SR) in most cases we use a pristine copy
+
+
+        ACTION_IF enhanced_edition BEGIN
+              OUTER_SPRINT copy_loc "%scsroot%/%component_loc%/resource/unmodified/ee"
+           END ELSE BEGIN
+              OUTER_SPRINT copy_loc "%scsroot%/%component_loc%/resource/unmodified/vanilla"
+        END
+
+
+        // Cloud of Bats - just a renamed clone of Creeping Doom
         
+        LAF clone_spell STR_VAR spell="%CLERIC_CREEPING_DOOM%=>ibodhi1" editstring="say_name=>2400 spell_type=>innate patch_ability_inline=>~casting_time=>0~" END
+
+        // Abyssal Darkness, Buried Alive - fine, but reduce the save penalty to -4 from -10, and Buried Alive
+        // needs to remove the effects of a Slow spell and vice versa
+        
+        LAF install STR_VAR file="ibodhi2.spl ibodhi3.spl" location=resource END
+        LAF edit_spell STR_VAR spell=ibodhi2 editstring="say_name=>2502 patch_effect_inline=>~savebonus=>-4~" END
+        LAF edit_spell STR_VAR spell=ibodhi3 editstring="say_name=>2503 patch_effect_inline=>~savebonus=>-4~" END
+
+        ACTION_IF enhanced_edition BEGIN
+           LAF edit_spell STR_VAR spell=ibodhi3 editstring="add_effect_inline=>~opcode=>321 power=>3 timing=>1 target=>2 save_vs_spell=>1 savebonus=>-4 resource=>%WIZARD_SLOW%~" END
+           LAF edit_spell STR_VAR spell="%WIZARD_SLOW%" editstring="add_effect_inline=>~opcode=>321 power=>3 timing=>1 target=>2 save_vs_spell=>1 savebonus=>-4 resource=>ibodhi3~" END
+        END ELSE BEGIN
+           LAF edit_spell STR_VAR spell=ibodhi3 editstring="add_effect_inline=>~opcode=>206 power=>3 timing=>0 duration=>24 target=>2 save_vs_spell=>1 savebonus=>-4 resource=>%WIZARD_SLOW% at_end=>1~" END
+           LAF edit_spell STR_VAR spell="%WIZARD_SLOW%" editstring="add_effect_inline=>~opcode=>206 power=>3 timing=>0 duration=>60 target=>2 save_vs_spell=>1 savebonus=>-4 resource=>ibodhi3 at_end=>1~" END
+        END
+        
+        //  Chill of the Grave - based on Horrid Wilting, lowest-level (L16) effect, with cold damage in place of magic
+        
+
+        COPY "%copy_loc%/horrid_wilting.spl" "override/ibodhi4.spl"
         MAKE_PATCH
-           1=>2400
-           2=>2502
-           3=>2503
-           4=>2504
-           5=>2505
-           6=>2506
-           7=>2507
-           7d=>2507
-           8=>2510
+           say_name=>2504
+           spell_type=>innate
+           delete_ability=>"ability_min_level>1"
+           patch_ability_inline=>"casting_time=>0"
+           patch_effect_inline=>"match=>opcode=12 parameter2b=>2"
         END
-        ACTION_PHP_EACH patch_data AS code=>string BEGIN
-           LAF install STR_VAR file=~ibodhi%code%.spl~ location=resource END
-           LAF edit_spell STR_VAR spell=~ibodhi%code%~ editstring=~say_name=>%string%~ END
+        LAF edit_spell STR_VAR spell=ibodhi4 edits=patch_data END
+
+        // touch of death - variant Death Spell that also does 36 hp magic damage to all in area, and heals caster of 36 hp
+
+        COPY "%copy_loc%/death_spell.spl" "override/ibodhi5.spl"
+        MAKE_PATCH
+           say_name=>2505
+           spell_type=>innate
+           patch_ability_inline=>"casting_time=>0"
+           add_effect_inline=>"power=>6 opcode=>12 target=>2 timing=>1 parameter2b=>64 parameter1=>36"
+           add_effect_inline'=>"power=>6 opcode=>141 target=>2 timing=>1 parameter2=>2"
+           add_effect_inline''=>"power=>6 opcode=>18 target=>1 timing=>0 duration=>300 parameter1=>36"
         END
-        
-        // tweaks relative to Tactics
+        LAF edit_spell STR_VAR spell=ibodhi5 edits=patch_data END
 
-        // Cloud of Bats
+        // Sepulchral Sleep - clone of Greater Command with cosmetic changes
 
-        LAF edit_spell STR_VAR spell=ibodhi1 editstring=~patch_effect_inline=>"duration=>18"~ END
+        COPY "%copy_loc%/greater_command.spl" "override/ibodhi6.spl"
+        MAKE_PATCH
+           say_name=>2506
+           spell_type=>innate
+           delete_ability=>"ability_min_level>1"
+           patch_ability_inline=>"casting_time=>0 projectile=>172"
+           delete_effect=>"resource=spcomend"
+           patch_effect_inline=>"match=>opcode=215 resource=>spnwchrm"
+        END
+        LAF edit_spell STR_VAR spell=ibodhi6 edits=patch_data END
 
-        // Abyssal Darkness, Buried Alive, Sepulchral sleep
+        // Bodhi's insane-only fire shield effect, which also buffs her -
+        // based on ordinary fire shield, but permanent and applies a minor Malison effect
 
-        LAF edit_spell STR_VAR spell=~ibodhi2 ibodhi3 ibodhi6~ editstring=~patch_effect_inline=>"savebonus=>-4"~ END  // reduced from -10
-        
-        // bodhi's insane-only fire shield, which also buffs her
-        
-         LAF hitpoint_boost_effects INT_VAR remove_only=1 RET sectype END
-         MAKE_PATCH
-            secondary=>%sectype%
-            add_effect_inline=>"opcode=>215 target=>1 parameter2=>1 duration=>6000 resource=>spfiresb"
-            add_effect_inline'=>"opcode=>215 target=>1 parameter2=>1 duration=>6000 resource=>spfiresa" 
-            add_effect_inline'2=>~opcode=>102 target=>1 timing=>1 parameter1=>1~ // immune to L1 spells
-            add_effect_inline'3=>~opcode=>102 target=>1 timing=>1 parameter1=>2~ // immune to L2 spells
-            add_effect_inline'4=>~opcode=>1 target=>1 duration=>60000 parameter1=>4 parameter2=>1~ // 4 attacks
-         END
+        LAF hitpoint_boost_effects INT_VAR remove_only=1 RET sectype END
+        COPY "%copy_loc%/fire_shield_blue.spl" "override/ibodhi7.spl"
+        MAKE_PATCH
+           say_name=>2507
+           secondary=>"%sectype%"
+           delete_ability=>"ability_min_level>1"
+           patch_effect_inline=>"duration=>60000 resist_dispel=>0"
+           patch_effect_inline'=>"match=>opcode=232 resource=>ibodhi7d"
+           add_effect_inline=>"opcode=>215 target=>1 parameter2=>1 duration=>6000 resource=>spfiresb"
+           add_effect_inline'=>"opcode=>215 target=>1 parameter2=>1 duration=>6000 resource=>spfiresa"
+           add_effect_inline'2=>~opcode=>102 target=>1 timing=>1 parameter1=>1~ // immune to L1 spells
+           add_effect_inline'3=>~opcode=>102 target=>1 timing=>1 parameter1=>2~ // immune to L2 spells
+           add_effect_inline'4=>~opcode=>1 target=>1 duration=>60000 parameter1=>4 parameter2=>1~ // 4 attacks
 
-         LAF edit_spell STR_VAR spell=ibodhi7 edits=patch_data END
+        END
+        LAF edit_spell STR_VAR spell=ibodhi7 edits=patch_data END
 
+        MAKE_PATCH
+           say_name=>2507
+           add_effect_inline=>"power=>4 opcode=>142 target=>2 parameter2=>45 resist_dispel=>3 duration=>36"
+           add_effect_inline'=>"power=>4 opcode=>139 target=>2 parameter1=>44916 timing=>1"
+           add_effect_inline''=>"number_to_add=>5 power=>4 opcode=>entry_index+33 target=>2 parameter1=>-1 duration=>36 resist_dispel=>3"
+        END
+        LAF clone_spell STR_VAR spell="%WIZARD_FIRE_SHIELD_BLUE%d=>ibodhi7d" edits=patch_data END
+
+        // Bodhi's undead-control power - fine
+
+        LAF install STR_VAR file="ibodhi8.spl" location=resource END
+        LAF edit_spell STR_VAR spell=ibodhi8 editstring="say_name=>2510 spell_type=>innate" END
 
 END
 
@@ -171,27 +224,7 @@ DEFINE_ACTION_FUNCTION bodhi_mages BEGIN
 
 END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION bodhi_ascension
-STR_VAR variables=""
-BEGIN
-
-               MAKE_PATCH
-                  strip_script=>all
-                  script_override=>finbodhi
-                  dv=>finbodh
-                  dialog=>finbodh
-                  remove_items=>minhp1
-                  xp_value=>26000
-               END
-               LAF clone_creature STR_VAR creature=~c6bodhi=>finbodh~ edits=patch_data END
-
-               LAF ssl_to_bcs STR_VAR script=finbodhi variables location=~ssl~ END
-
-
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

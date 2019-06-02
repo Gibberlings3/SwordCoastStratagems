@@ -2763,7 +2763,7 @@ BEGIN
     INSECTS insects INSECT insect BEGIN
         LPF CRE_immunity_to_spell STR_VAR arguments=~%CLERIC_SUMMON_INSECTS% %CLERIC_INSECT_PLAGUE% %CLERIC_CREEPING_DOOM%~ END
         PATCH_IF is_bg2 BEGIN
-           LPF CRE_immunity_to_spell STR_VAR arguments="%BLACK_DRAGON_BREATH%" END
+           LPF CRE_immunity_to_spell STR_VAR arguments="%BLACK_DRAGON_INSECT%" END
         END
     END
     POISON poison BEGIN
@@ -3249,5 +3249,98 @@ BEGIN
 END
 
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               check that memorised spells are actually used
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION spell_use_script_check
+  INT_VAR type=0
+  STR_VAR script=""
+          log="spells_unused.txt"
+          filename=""
+BEGIN
+   INNER_ACTION BEGIN
+      COPY_EXISTING "%script%.bcs" "override"
+   END
+   PATCH_IF "%filename%" STRING_EQUAL "" BEGIN
+      SPRINT filename "%SOURCE_RES%"
+   END
+   GET_OFFSET_ARRAY spell_array CRE_V10_KNOWN_SPELLS
+   PHP_EACH spell_array AS ind=>spell_off BEGIN
+      READ_ASCII spell_off spell_resref
+      PATCH_MATCH "%spell_resref%" WITH
+      "SPPR.*" BEGIN
+         SET idscode=1
+      END
+      "SPWI.*" BEGIN
+         SET idscode=2
+      END
+      "SPIN.*" BEGIN
+         SET idscode=3
+      END
+      "SPCL.*" BEGIN
+         SET idscode=4
+      END
+      DEFAULT
+         SET idscode=0
+      END
+      PATCH_IF type=0 || idscode=0 BEGIN
+          SET found=0
+      END ELSE BEGIN
+          SET found=!(type=idscode)
+      END
+      PATCH_IF idscode>0 BEGIN
+         INNER_PATCH_SAVE res_num "%spell_resref%" BEGIN
+            DELETE_BYTES 0x0 4
+            INSERT_BYTES 0x0 1
+            WRITE_ASCII 0x0 "%idscode%" (1)
+         END
+         PATCH_IF FILE_CONTAINS "override/%script%.bcs" "%res_num%" BEGIN
+            SET found=1
+         END
+      END ELSE BEGIN
+      END
+      PATCH_IF !found BEGIN
+         PATCH_IF FILE_CONTAINS "override/%script%.bcs" "%spell_resref%" BEGIN
+            SET found=1
+         END
+      END
+      PATCH_IF !found BEGIN
+         PATCH_IF idscode>0 BEGIN
+            LPF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%spell_resref%" RET spell_name END
+            SPRINT input "%filename% %spell_name% (%spell_resref%)"
+         END ELSE BEGIN
+            SPRINT input "%filename% %spell_resref%"
+         END
+         LPF log_this STR_VAR file="%log%" input END
+      END
+
+   END
+END
+
+DEFINE_ACTION_FUNCTION spell_use_script_check_batch
+   INT_VAR type=0
+   STR_VAR prefix=""
+BEGIN
+    COPY_EXISTING_REGEXP ".*\.cre" override
+       SET match=0
+       FOR (offset=0x248;offset<0x270;offset+=8) BEGIN
+           READ_ASCII offset script_here
+           PATCH_MATCH "%script_here%" WITH
+           "%prefix%.*" BEGIN
+              SPRINT script "%script_here%"
+              SET match=1
+           END
+           DEFAULT
+           END
+       END
+       PATCH_IF match BEGIN
+          LPF spell_use_script_check INT_VAR type STR_VAR script filename="%SOURCE_RES%" END
+       END
+    BUT_ONLY
+END
 
 

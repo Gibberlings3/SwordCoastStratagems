@@ -2,8 +2,6 @@ DEFINE_ACTION_FUNCTION item_labels
        INT_VAR omniscient=0
 BEGIN
 
-   INCLUDE ~%scsroot%/ds/ds.tph~
-
    <<<<<<<< .../stratagems-inline/autolib.slb
    >>>>>>>>
    
@@ -28,8 +26,8 @@ BEGIN
              END
              LPF append_autolib INT_VAR omniscient STR_VAR trigger statname markername END
              INNER_ACTION BEGIN
-                LAF resolve_stat STR_VAR id="%statname%" END   // make sure they're all in SPLSTATE or STATS so scripts compile
-                LAF resolve_stat STR_VAR id="%statname%_SEEN" END
+                LAF ds_resolve_stat STR_VAR id="%statname%" RET "NEW_STAT_%statname%"=stat_ind END   // make sure they're all in SPLSTATE or STATS so scripts compile
+                LAF ds_resolve_stat STR_VAR id="%statname%_SEEN" RET "NEW_STAT_%statname%_SEEN"=stat_ind END
              END
           END
           206 BEGIN
@@ -38,9 +36,10 @@ BEGIN
              SET see_name_code+=1
              LPF append_autolib INT_VAR omniscient STR_VAR trigger statname markername END
              INNER_ACTION BEGIN
-                LAF resolve_stat STR_VAR id="%statname%" END   // make sure they're all in SPLSTATE or STATS so scripts compile
+                LAF ds_resolve_stat STR_VAR id="%statname%" RET "NEW_STAT_%statname%"=stat_ind END   // make sure they're all in SPLSTATE or STATS so scripts compile
+                LAF ds_resolve_stat STR_VAR id="%statname%_SEEN" RET "NEW_STAT_%statname%_SEEN"=stat_ind END
                 ACTION_IF "%markername%" STRING_COMPARE "*" BEGIN
-                    LAF resolve_stat STR_VAR id="%markername%" END
+                    LAF ds_resolve_stat STR_VAR id="%markername%" END
                 END
              END
           END
@@ -55,19 +54,10 @@ BEGIN
    
    COPY ~.../stratagems-inline/item_stats.2da~ ~%workspace%~
 
-   COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override
-//   COPY_EXISTING "amul17.itm" override
-        GET_OFFSET_ARRAY fx_eq_array ITM_V10_GEN_EFFECTS
-        PHP_EACH fx_eq_array AS int=>offset BEGIN
-             LPF add_ds_item_entry INT_VAR offset STR_VAR type=g filename="%SOURCE_RES%" END
-        END
-        GET_OFFSET_ARRAY ab_array ITM_V10_HEADERS
-        PHP_EACH ab_array AS int=>offset_base BEGIN
-           GET_OFFSET_ARRAY2 fx_array offset_base ITM_V10_HEAD_EFFECTS
-           PHP_EACH fx_array AS int2=>offset BEGIN
-               LPF add_ds_item_entry INT_VAR offset STR_VAR type=a filename="%SOURCE_RES%" END
-           END
-        END
+//   COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override
+   COPY_EXISTING "scrl07.itm" override
+        LPF CLONE_EFFECT INT_VAR silent=1 STR_VAR match_function=match_ds_entry function=patch_ds_entry END
+
    BUT_ONLY
 
 
@@ -114,7 +104,7 @@ DEFINE_PATCH_FUNCTION ds_item
 BEGIN
    SPRINT idbase $101_stat("%arguments%")
    INNER_ACTION BEGIN
-      LAF resolve_stat STR_VAR id="%idbase%_SEEN" RET value=stat_ind END
+      LAF ds_resolve_stat STR_VAR id="%idbase%_SEEN" RET value=stat_ind END
    END
 END
 
@@ -166,5 +156,61 @@ BEGIN
                        END
                     END
               END
+
+END
+
+DEFINE_PATCH_FUNCTION match_ds_entry
+RET value
+BEGIN
+   READ_SHORT 0x0 opcode
+   PATCH_IF opcode=101 BEGIN
+        READ_LONG 0x8 parameter2
+        PATCH_IF VARIABLE_IS_SET $101_stat("%parameter2%") BEGIN
+           SET value=1
+        END ELSE BEGIN
+           SET value=0
+        END
+   END ELSE
+   PATCH_IF opcode=206 BEGIN
+        READ_ASCII 0x14 resource
+        TO_UPPER resource
+        PATCH_IF VARIABLE_IS_SET $206_stat("%resource%") BEGIN
+           SET value=1
+        END ELSE BEGIN
+           SET value=0
+        END
+   
+   END ELSE BEGIN
+      SET value=0
+   END
+END
+
+DEFINE_PATCH_FUNCTION patch_ds_entry
+BEGIN
+   READ_SHORT 0x0 opcode
+   PATCH_IF opcode=101 BEGIN
+      READ_LONG 0x8 parameter2
+      SPRINT stat $101_stat("%parameter2%")
+   END ELSE
+   PATCH_IF opcode=206 BEGIN
+        READ_ASCII 0x14 resource
+        TO_UPPER resource
+        SPRINT stat $206_stat("%resource%")
+   END ELSE BEGIN
+      PATCH_FAIL "error in patch_ds_entry in item_labels.tpa: illegal opcode"
+   END
+   SET stat_ind=EVAL "%NEW_STAT_%stat%%"
+   PATCH_IF enhanced_edition BEGIN
+         WRITE_SHORT 0x0 328
+         WRITE_LONG 0x8 stat_ind
+         WRITE_LONG 0x2c 1
+   END ELSE BEGIN
+         WRITE_SHORT 0x0 318
+         WRITE_LONG 0x4 1
+         WRITE_SHORT 0x8 stat_ind
+   END
+
+
+
 
 END

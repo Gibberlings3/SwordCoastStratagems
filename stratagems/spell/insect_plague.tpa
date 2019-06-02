@@ -1,82 +1,295 @@
-DEFINE_ACTION_FUNCTION ~insect_plague~ BEGIN
+DEFINE_ACTION_FUNCTION insect_plague BEGIN
 
-   ADD_SECTYPE Insects @5019
-   
+    // make the secondary types we need
 
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY insect_spell_array BEGIN
-          ~%CLERIC_INSECT_PLAGUE%~=>5
-          ~%CLERIC_CREEPING_DOOM%~=>7
-   END
-   ACTION_PHP_EACH insect_spell_array AS insectspell=>level BEGIN
+    LAF add_silent_sectype STR_VAR sectype=InsectPlague1 RET sectype1=sectype_value END
+    LAF add_silent_sectype STR_VAR sectype=InsectPlague2 RET sectype2=sectype_value END
+    LAF add_silent_sectype STR_VAR sectype=InsectPlague3 RET sectype3=sectype_value END
 
-   // copy the original spell to a "payload" spell with a 6-second duration
-
-      MAKE_PATCH
-         name1_string=>~-1~
-         flags=>0
-         patch_ability_inline=>"projectile=>1"
-         patch_effect_inline=>"duration=>6"
-         secondary=>~%Insects%~
-      END
-      LAF clone_spell STR_VAR spell= ~%insectspell%=>%insectspell%b~ edits=patch_data END
-
-   // make new spell that casts the payload spell 1/rd for 6 rds
-
-      MAKE_PATCH
-         secondary => ~%Insects%~
-         add_basic_ability=>null
-         add_effect_inline=>~opcode=>146 target=>2 parameter2=>1 timing=>1 resist_dispel=>3 resource=>%insectspell%b~
-         clone_effect_inline=>~match=>"opcode=146" number_to_add=>6 timing=>4 duration=>(1+entry_index)*6~
-      END
-      LAF make_spell STR_VAR spell=~%insectspell%a~ edits=patch_data END
-      
-    //  change original spell to just cast the intermediate spell
+    // get the strings we need
     
-      MAKE_PATCH
-         delete_effect=>1
-         add_effect_inline=>~opcode=>146 target=>2 power=>%level% parameter2=>1 timing=>1 resist_dispel=>2 resource=>%insectspell%a~
+    OUTER_SET swarm_immune=RESOLVE_STR_REF (@400)
+
+    // make the spells themselves
+
+    <<<<<<<< .../stratagems-inline/insect_table
+    spell                   desc  overall_save  overall_save_bonus     duration      damage_eff      damage_tick         spellfailure        spellfailure_save  spellfailure_save_bonus   thac0       ac          fear           fear_save
+    CLERIC_SUMMON_INSECTS   5002  1             -4                     7             ipdam1          2                   50                  1                  0                         -2          -2          0              0
+    CLERIC_CREEPING_DOOM    5001  0             0                      3             ipdam2          1                   100                 1                  -2                        -2          -2          1              -2
+    CLERIC_INSECT_PLAGUE    5000  0             0                      6             ipdam1          1                   100                 1                  -2                        -2          -2          1              -2
+    >>>>>>>>
+    LAF process_table STR_VAR table=insect_table inline=yes function=insect_plague_helper END
+
+    COPY_EXISTING "%CLERIC_CREEPING_DOOM%.spl" "override/%BLACK_DRAGON_INSECT%.spl"
+       WRITE_LONG 0x8 45045
+       WRITE_SHORT 0x1c 4
+    BUT_ONLY
+
+    // get the list of affected spells
+    
+    COPY ".../stratagems-inline/insect_table" "%workspace%"
+       SPRINT insect_spells ""
+       COUNT_2DA_ROWS 1 rowcount
+       FOR (i=1;i<rowcount;i+=1) BEGIN
+          READ_2DA_ENTRY i 0 1 spell
+          PATCH_IF VARIABLE_IS_SET "%spell%" BEGIN
+             SPRINT resref EVAL "%%spell%%"
+          END ELSE BEGIN
+             SPRINT resref "%spell%"
+          END
+          SPRINT insect_spells "%insect_spells% %resref%"
+       END
+
+   /////////////////////////////////////////////////////
+   // undead need immunity to the delivery spells
+   /////////////////////////////////////////////////////
+
+   COPY_EXISTING_REGEXP ".*\.cre" override
+       PATCH_IF BYTE_AT 0x271=4 BEGIN // undead
+           SPRINT list "%insect_spells%"
+           WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+              LPF return_first_entry STR_VAR list RET entry list END
+              LPF ADD_CRE_EFFECT INT_VAR opcode=206 target=1 parameter1=swarm_immune timing=9 STR_VAR resource="%entry%a" END
+           END
+       END
+   BUT_ONLY
+
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // items and spells (e.g. immune2) granting permanent immunity to nonmagical weapons need to give immunity to the delivery spell.
+   //
+   // If they give temporary immunity, they need to give immunity to the primary payload spell, and remove the primary and secondary
+   // payloads
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+   
+   // first, find them
+   
+   OUTER_SPRINT list ""
+   COPY_EXISTING_REGEXP ".*\.itm" override
+      SET found=0
+      GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+      PHP_EACH fx_arr AS ind=>fx_off BEGIN
+          PATCH_IF SHORT_AT fx_off=120 BEGIN
+             SET found=1
+          END
       END
-      LAF edit_spell STR_VAR spell=~%insectspell%~ edits=patch_data END
+      PATCH_IF found BEGIN
+         SPRINT list "%list% %SOURCE_RES%.itm"
+      END
+   BUT_ONLY
+   COPY_EXISTING_REGEXP ".*\.spl" override
+      SET found=0
+      GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+      PHP_EACH ab_arr AS ind=>ab_off BEGIN
+         PATCH_IF ind=0 BEGIN
+            GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+            PHP_EACH fx_arr AS ind2=>fx_off BEGIN
+               PATCH_IF SHORT_AT fx_off=120 BEGIN
+                  SET found=1
+               END
+            END
+         END
+      END
+      PATCH_IF found BEGIN
+         SPRINT list "%list% %SOURCE_RES%.spl"
+      END
+   BUT_ONLY
+
+   // now apply effects
+
+   OUTER_WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+      LAF return_first_entry STR_VAR list RET entry list END
+      COPY_EXISTING "%entry%" override
+          // permanent effects
+          SPRINT list2 "%insect_spells%"
+          WHILE "%list2%" STRING_COMPARE_CASE "" BEGIN
+              LPF return_first_entry STR_VAR list="%list2%" RET entry2=entry list2=list END
+              LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=120 match_parameter2=2 match_duration=0 opcode=206 parameter1=swarm_immune parameter2=0 STR_VAR resource="%entry2%a" END
+          END
+          // temporary effects
+          SPRINT list2 "%insect_spells%"
+          WHILE "%list2%" STRING_COMPARE_CASE "" BEGIN
+              LPF return_first_entry STR_VAR list="%list2%" RET entry2=entry list2=list END
+              LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=120 match_parameter2=2 match_timing=0 opcode=206 parameter1=swarm_immune parameter2=0 STR_VAR resource="%entry2%b" END
+          END
+          LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=120 match_parameter2=2 match_timing=0 opcode=221 parameter2=sectype2 timing=1 duration=0 END
+          LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=120 match_parameter2=2 match_timing=0 opcode=221 parameter2=sectype3 timing=1 duration=0 END
+      BUT_ONLY
+   END
+   
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // Fire shields need to remove all three sectypes and give immunity to the delivery vehicles
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+   OUTER_INNER_PATCH_SAVE insect_spells_a "%insect_spells%" BEGIN
+      INSERT_BYTES BUFFER_LENGTH 1
+      WRITE_ASCII (BUFFER_LENGTH - 1) " "
+      REPLACE_TEXTUALLY "\([0-9a-z_]\) " "\1a "
+   END
+   MAKE_PATCH
+      clone_effect_inline=>"match=>opcode=232 opcode=>221 parameter1=>10 timing=>1 number_to_add=>3 duration=>0 resource=>null parameter1=>10 parameter2=>~entry_index from [%sectype1% %sectype2% %sectype3%]~ clone_above=>1"
+      clone_effect_inline'=>"var_list=>~[%insect_spells_a%]~ match=>opcode=232 opcode=>206 timing=>0 number_to_add=>~length list~ resource=>null parameter1=>%swarm_immune% parameter2=>0 resource=>~entry_index from list~ clone_above=>1"
+   END
+   LAF edit_spell STR_VAR spell="WIZARD_FIRE_SHIELD_RED WIZARD_FIRE_SHIELD_BLUE CLERIC_AURA_OF_FLAMING_DEATH" edits=patch_data allow_missing=1 END
+
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // Death Spell needs to kill insects
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+   // externalise Death spell to a secondary spell
+
+   COPY_EXISTING "%WIZARD_DEATH_SPELL%.spl" "override/dw#605a.spl"
+     WRITE_LONG 0x8 "-1"
+
+   COPY_EXISTING "%WIZARD_DEATH_SPELL%.spl" override
+      READ_SHORT (0x26 + LONG_AT 0x64) projectile
+      LPF DELETE_EFFECT INT_VAR check_globals=0 END
+      LPF ADD_SPELL_EFFECT INT_VAR opcode=148 target=1 parameter2=1 STR_VAR resource="dw#605a" END
+      LPF CLONE_EFFECT STR_VAR match_resource="dw#605a" resource="dw#605b" END
+      LPF ALTER_SPELL_HEADER INT_VAR projectile=1 END
+   BUT_ONLY
+
+   // duplicate the Death Spell projectile as invisible and party-targetted
+
+   OUTER_INNER_PATCH "" BEGIN LOOKUP_IDS_SYMBOL_OF_INT proj_resref projectl (projectile - 1) END
+
+   MAKE_PATCH
+      travel_anim=>null
+      show_sparkle=>0
+      target=>allies
+      secondary_pro=>0
+      explosion_pro=>0
+   END
+   LAF clone_pro STR_VAR pro="%proj_resref%=>dw#dsspw" edits=patch_data RET pro_num END
+
+   MAKE_PATCH
+      patch_ability_inline=>"projectile=>%pro_num%"
+      delete_effect=>1
+      add_effect_inline=>"opcode=>221 target=>2 parameter1=>10 timing=>1 number_to_add=>3 duration=>0 resource=>null parameter1=>10 parameter2=>~entry_index from [%sectype1% %sectype2% %sectype3%]~"
+   END
+   LAF clone_spell STR_VAR spell="dw#605a=>dw#605b" edits=patch_data END
+   ACTION_IF enhanced_edition BEGIN
+      LAF resolve_splprot_entry INT_VAR stat=IDS_OF_SYMBOL (stats CLERIC_INSECT_PLAGUE) value=0 STR_VAR relation=equal RET splprot_entry=value END
+      OUTER_SET spawn_killed_string=RESOLVE_STR_REF (@401)
+      MAKE_PATCH
+         add_effect_inline=>"opcode=>139 target=>2 timing=>1 parameter1=>%spawn_killed_string% at_end=>1"
+         add_effect_inline'=>"target=>2 opcode=>318 duration=>1 parameter2=>%splprot_entry% resource=>dw#605b"
+      END
+      LAF edit_spell STR_VAR spell="dw#605b" edits=patch_data END
+
    END
 
-   OUTER_SPRINT plague_desc @5000
-   OUTER_SPRINT creeping_desc @5001
-   LAF edit_spell STR_VAR spell=CLERIC_INSECT_PLAGUE editstring=~say_description=>5000~ END
-   LAF edit_spell STR_VAR spell=CLERIC_CREEPING_DOOM editstring=~say_description=>5001~ END
 
-   LAF edit_spell STR_VAR spell=CLERIC_SUMMON_INSECTS editstring=~secondary=>%Insects%~ END
-
-   LAUNCH_ACTION_MACRO read_insect_plague_patch
-   LAF edit_spell STR_VAR spell=~WIZARD_FIRE_SHIELD_RED WIZARD_FIRE_SHIELD_BLUE spimixd CLERIC_AURA_OF_FLAMING_DEATH~ edits=insect_plague_patch allow_missing=1 END
-   LAF edit_item STR_VAR item=~dw#shsal dw#shfir balor SUN_SOUL_GREATER_SUN~ edits=insect_plague_patch allow_missing=1 END
-   
-
-<<<<<<<<...inline/ds/my_table.2da
-sppr517b.spl   233     2     120   54     n     a          //  Insect Plague
-sppr717b.spl   233     3     120   54     n     a          //  Creeping Doom
->>>>>>>>
-INCLUDE ~%scsroot%/ds/ds.tph~
-LAF detectable_spells STR_VAR path=~...inline/ds~ table = ~my_table.2da~ END
 
 END
 
-//// this is a macro, so it can be used elsewhere
+DEFINE_ACTION_FUNCTION insect_plague_helper
+   STR_VAR desc=0
+           spell=""
+           overall_save=0
+           overall_save_bonus=0
+           duration=0
+           damage_eff=""
+           damage_tick=0
+           spellfailure=0
+           spellfailure_save=0
+           spellfailure_save_bonus=0
+           thac0=0
+           ac=0
+           fear=0
+           fear_save=0
+BEGIN
+ ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+   LAF log_this STR_VAR file="scs_modified_spells.2da" input="%spell%" repeat=no END
 
 
-DEFINE_ACTION_MACRO read_insect_plague_patch BEGIN
-   ACTION_CLEAR_ARRAY insect_plague_patch
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY insect_plague_patch BEGIN   // note that, for reasons that escape me, opcodes 216 and 206 must PRECEDE 232
-        clone_effect_inline=>~match=>"opcode=232"
-                             opcode=>206
-                             parameter1=>0
-                             number_to_add=>2
-                             clone_above=>1
-                             resource=>"entry_index from [sppr517a sppr717a]~
-        clone_effect_inline'=>~match=>"opcode=232"
-                             opcode=>221
-                             parameter1=>10
-                             parameter2=>%Insects%
-                             clone_above=>1
-                             resource=>null~
+   // get spell resref
+   ACTION_IF VARIABLE_IS_SET "%spell%" BEGIN
+      OUTER_SPRINT resref_base EVAL "%%spell%%"
+   END ELSE BEGIN
+      OUTER_SPRINT resref_base "%spell%"
    END
+
+   /////////////////////////
+   // setup primary spell
+   /////////////////////////
+   
+   MAKE_PATCH
+      delete_effect=>1
+      say_description=>"%desc%"
+      add_effect_inline=>"opcode=>146 target=>2 parameter2=>1 timing=>1 resource=>%resref_base%a save_vs_breath=>%overall_save% savebonus=>%overall_save_bonus%"
+   END
+   LAF edit_spell STR_VAR spell="%resref_base%" edits=patch_data END
+
+   /////////////////////////
+   // make delivery vehicle
+   /////////////////////////
+
+   OUTER_SET ds_val=IDS_OF_SYMBOL (stats CLERIC_INSECT_PLAGUE)
+   MAKE_PATCH
+      secondary=>"%sectype1%"
+      add_basic_ability=>null
+      add_effect_inline'0=>"number_to_add=>%duration% target=>2 opcode=>177 parameter2=>2 timing=>4 duration=>entry_index*6 resource=>%resref_base%b"
+      add_effect_inline'1=>"opcode=>215 target=>2 parameter2=>1 duration=>%duration%*6 resource=>icinhit"
+      add_effect_inline'2=>"opcode=>233 target=>2 duration=>%duration%*6 parameter1=>1 parameter2=>%ds_val%"
+   END
+   LAF make_spell STR_VAR spell="%resref_base%a" edits=patch_data END
+
+   //////////////////////////////////////////////
+   // make eff file to deliver primary payload
+   ///////////////////////////////////////////////
+   LAF make_casting_effect STR_VAR spell="%resref_base%b" effect="%resref_base%b" END
+   /////////////////////////
+   // make primary payload
+   //
+   // NB: getting the damage to
+   // play nice with Stoneskin
+   // was delicate. Neither opcode 12
+   // nor opcode 232 quite work.
+   /////////////////////////
+   MAKE_PATCH
+      secondary=>"%sectype2%"
+      add_basic_ability=>null
+      add_effect_inline=>"number_to_add=>(6/damage_tick) opcode=>177 target=>2 timing=>4 duration=>entry_index*damage_tick parameter2=>2 resource=>%damage_eff%"
+
+    //  add_effect_inline=>"number_to_add=>(6/damage_tick) opcode=>12 target=>2 timing=>4 duration=>entry_index*damage_tick parameter1=>%damage_num% parameter2b=>16"
+    //  add_effect_inline'1=>"opcode=>272 target=>2 timing=>0 duration=>6 parameter1=>%damage_tick% parameter2=>3 resource=>%damage_eff%"
+      add_effect_inline'2=>"opcode=>177 target=>2 timing=>1 parameter2=>2 resource=>%resref_base%c at_end=>1"
+   END
+   LAF make_spell STR_VAR spell="%resref_base%b" edits=patch_data END
+
+   
+   ACTION_IF enhanced_edition BEGIN
+      LAF resolve_splprot_entry INT_VAR stat=IDS_OF_SYMBOL (stats STONESKINS) value=0 STR_VAR relation=greater_than RET splprot_entry=value END
+      MAKE_PATCH
+         clone_effect_inline=>"match=>~resource=%resref_base%c~ opcode=>318 duration=>1 parameter2=>%splprot_entry% resource=>%resref_base%c clone_above=>1"
+      END
+      LAF edit_spell STR_VAR spell="%resref_base%b" edits=patch_data END
+
+   END
+
+   //////////////////////////////////////////////
+   // make eff file to deliver secondary payload
+   ///////////////////////////////////////////////
+   LAF make_casting_effect STR_VAR spell="%resref_base%c" effect="%resref_base%c" END
+   //////////////////////////////////////////////
+   // make secondary payload
+   //////////////////////////////////////////
+   MAKE_PATCH
+      secondary=>"%sectype3%"
+      add_basic_ability=>null
+      add_effect_inline'0=>"opcode=>142 target=>2 parameter2=>83 duration=>6 save_vs_breath=>%spellfailure_save% savebonus=>%spellfailure_save_bonus%"
+      add_effect_inline'1=>"opcode=>60 target=>2 duration=>6 parameter1=>%spellfailure% parameter2=>entry_index number_to_add=>2 save_vs_breath=>%spellfailure_save% savebonus=>%spellfailure_save_bonus%"
+      add_effect_inline'2=>"opcode=>54 target=>2 parameter1=>%thac0% duration=>6"
+      add_effect_inline'3=>"opcode=>0 target=>2 parameter1=>%ac% duration=>6"
+   END
+   LAF make_spell STR_VAR spell="%resref_base%c" edits=patch_data END
+   ACTION_IF fear BEGIN
+      MAKE_PATCH
+         add_effect_inline'0=>"opcode=>24 target=>2 duration=>6 save_vs_spell=>1 savebonus=>%fear_save% at_end=>1"
+         add_effect_inline'1=>"opcode=>139 target=>2 duration=>6 parameter1=>14007 save_vs_spell=>1 savebonus=>%fear_save% at_end=>1"
+         add_effect_inline'2=>"opcode=>142 target=>2 duration=>6 parameter2=>36 save_vs_spell=>1 savebonus=>%fear_save% at_end=>1"
+      END
+      LAF edit_spell STR_VAR spell="%resref_base%c" edits=patch_data END
+   END
+  END
 END

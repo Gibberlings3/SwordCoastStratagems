@@ -236,8 +236,9 @@ DEFINE_ACTION_FUNCTION build_marker_spell
     STR_VAR marker_name=""
             splstate=""
 BEGIN
-   LAF resolve_stat STR_VAR id="%splstate%" RET code=stat_ind END
+   LAF ds_resolve_stat STR_VAR id="%splstate%" RET code=stat_ind END
    ACTION_IF enhanced_edition BEGIN
+     ACTION_CLEAR_ARRAY patch_data
      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
         parameter2=>"%code%"
         parameter1=>1
@@ -265,7 +266,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION return_detectable_string STR_VAR type="" RET string BEGIN
-   LAF resolve_stat STR_VAR id="%type%" RET stat_ind END
+   LAF ds_resolve_stat STR_VAR id="%type%" RET stat_ind END
    ACTION_IF enhanced_edition BEGIN
       OUTER_SPRINT string "opcode=>328 parameter1=>1 parameter2=>%stat_ind% mode=>1 target=>2"
    END ELSE BEGIN
@@ -273,103 +274,6 @@ DEFINE_ACTION_FUNCTION return_detectable_string STR_VAR type="" RET string BEGIN
    END
 END
 
-//////////////////////////////////////////////////////////////////////////////////////
-// variant duplicate of 'ds_resolve_stat' version in ds.tph
-//
-// this version autodetermines the 'ids' variable if it's not set (or set to -1)
-// along these lines:
-// - if 'index' is set to a nonzero value, assume ids=2
-// otherwise, assume it's 1 on EE, 2 otherwise
-//////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION resolve_stat INT_VAR ids="-1" index=0 delete=0 STR_VAR id="" RET stat_ind BEGIN
-
-ACTION_IF ids<0 BEGIN
-   ACTION_IF index>0 BEGIN
-      OUTER_SET ids=2
-   END ELSE
-   ACTION_IF enhanced_edition BEGIN
-      OUTER_SET ids=1
-   END ELSE BEGIN
-      OUTER_SET ids=2
-   END
-END
-
-OUTER_SPRINT ids_file stats OUTER_SET min_new=401
-
-ACTION_IF ids=0 BEGIN OUTER_SPRINT ids_file extstate OUTER_SET min_new=0 END
-ACTION_IF ids=1 BEGIN OUTER_SPRINT ids_file splstate OUTER_SET min_new=0 END
-
-COPY_EXISTING ~%ids_file%.ids~ override
-  stat_ind=0
-  found=0
-
-  READ_2DA_ENTRIES_NOW stats 2
-  FOR (row=0;row<stats;row+=1) BEGIN
-    READ_2DA_ENTRY_FORMER stats row 0 ind
-    READ_2DA_ENTRY_FORMER stats row 1 str
-    SET $stat("%row%") = ind
-    PATCH_IF index BEGIN
-      PATCH_IF ind=index BEGIN
-        REMOVE_2DA_ROW row 2
-        found=1
-        PATCH_IF delete=0 BEGIN
-          INSERT_2DA_ROW row 2 ~%index% %id%~
-        END
-        row=stats
-      END
-    END ELSE BEGIN
-      PATCH_IF ~%str%~ STRING_EQUAL_CASE ~%id%~ BEGIN
-        stat_ind=ind
-        found=1
-     /* row=stats */ // don't stop looking, the same ID may be assigned to a greater index, which takes priority when compiling
-      END
-    END
-  END
-
-  PATCH_IF found=0 BEGIN
-    stat_ind=min_new
-    PHP_EACH stat AS row => ind BEGIN
-      PATCH_IF found=0 && (row+1 < stats) BEGIN // not at the end of file
-        next_row = row+1
-        next_ind = EVAL $stat("%next_row%")
-        PATCH_IF index BEGIN
-          PATCH_IF index<next_ind && index>ind BEGIN
-            INSERT_2DA_ROW next_row 2 ~%index% %id%~
-            found=1
-          END
-        END ELSE BEGIN
-          PATCH_IF stat_ind<next_ind BEGIN
-            PATCH_IF ind<stat_ind BEGIN
-              INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
-              found=1
-            END ELSE BEGIN
-              stat_ind+=1
-              PATCH_IF stat_ind<next_ind BEGIN
-                INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
-                found=1
-              END
-            END
-          END
-        END
-      END ELSE BEGIN // at the end of file
-        PATCH_IF found=0 BEGIN
-          PATCH_IF index BEGIN
-            INSERT_2DA_ROW stats 2 ~%index% %id%~
-          END ELSE BEGIN
-            PATCH_IF stat_ind>ind BEGIN
-              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
-            END ELSE BEGIN
-              stat_ind+=1
-              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
-            END
-          END
-        END
-      END
-    END // PHP_EACH
-  END
-
-END
 
 //////////////////////////////////////////////////////////////////////////////////////
 // make spells that grant/remove instant uninterruptible casting
@@ -428,7 +332,7 @@ DEFINE_ACTION_FUNCTION innate_see_invisible_effects BEGIN
          secondary=>~%Innate_See_Invisible%~
          add_basic_ability=>null
          add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_See_Invisible%"~
-         add_effect_inline=>~opcode=>101 timing=>1 target=>1 parameter2=>38 at_end=>1~
+         add_effect_inline=>~opcode=>193 timing=>1 target=>1 parameter2=>1 at_end=>1~
       END
       LAF make_spell STR_VAR spell=dw#sinat edits=patch_data END
 
@@ -462,7 +366,7 @@ BEGIN
          secondary=>~%Hitpoint_Bonus%~
          add_basic_ability=>null
          add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Hitpoint_Bonus%"~
-         add_effect_inline'=>~opcode=>18 timing=>0 duration=>60 target=>1 parameter1=>%mult% parameter2=>2 at_end=>1~
+         add_effect_inline'=>~opcode=>18 timing=>0 duration=>300000 target=>1 parameter1=>%mult% parameter2=>2 at_end=>1~
        END
        LAF make_spell STR_VAR spell edits=patch_data END
       END

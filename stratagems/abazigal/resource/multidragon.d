@@ -14,7 +14,7 @@ IF ~True()~ THEN dw#abbl1 dragon1
 DO ~SetGlobal("DMWWAbazBlacks","GLOBAL",3)~
 == dw#abbl2
 @3032
-== minsc25j IF ~IsValidForPartyDialogue("Minsc")~ THEN
+== %MINSC_25JOINED% IF ~IsValidForPartyDialogue("Minsc")~ THEN
 @3033
 EXIT
 
@@ -73,11 +73,11 @@ IF ~~ THEN DO ~SetGlobal("DMWWAbazRedGreen","GLOBAL",5)~ EXIT END
 
 
 INTERJECT_COPY_TRANS dw#abred redarrives anomenred
-== ANOME25J IF ~IsValidForPartyDialogue("Anomen")Alignment("Anomen",LAWFUL_GOOD)~ THEN 
+== %ANOMEN_25JOINED% IF ~IsValidForPartyDialogue("Anomen")Alignment("Anomen",LAWFUL_GOOD)~ THEN
 @3049
 END 
 
 INTERJECT_COPY_TRANS dw#abred endgame haerred
-== HAERD25J IF ~IsValidForPartyDialogue("HaerDalis")~ THEN
+== %HAERDALIS_25JOINED% IF ~IsValidForPartyDialogue("HaerDalis")~ THEN
 @3050
 END
