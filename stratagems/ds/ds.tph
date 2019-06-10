@@ -43,7 +43,7 @@ ASSASSIN_POISON                         POISON_WEAPON
 KENSAI_KIA                              KENSAI_KIA
 SPDWD02                                 DEFENSIVE_STANCE
 ARCHER_CALL_SHOT                        ARCHER_CALL_SHOT
-WIZARD_CHAOS_SHIELD                     CHAOS_SHIELD
+WIZARD_CHAOS_SHIELD                     SPLSTATE:CHAOS_SHIELD
 WIZARD_IMPROVED_CHAOS_SHIELD            IMPROVED_CHAOS_SHIELD
 SPCL542A                                SKALD_SONG
 SPCL751A                                JESTER_SONG
@@ -67,6 +67,7 @@ CLERIC_FAERIE_FIRE                      FAERIE_FIRE
 CLERIC_BARKSKIN                         BARKSKIN
 CLERIC_MISCAST_MAGIC                    MISCAST_MAGIC
 CLERIC_DEATH_WARD                       DEATH_WARD
+CLERIC_DEATH_WARD                       SPLSTATE:DEATH_WARD
 CLERIC_HOLY_POWER                       HOLY_POWER
 WIZARD_GLITTERDUST                      GLITTERDUST
 WIZARD_FIRE_SHIELD_BLUE                 BLUE_FIRESHIELD
@@ -471,10 +472,12 @@ BEGIN
    // get the data for the stat
       LAF ds_resolve_stat STR_VAR id RET stat_param stat_opcode END
    // patch
-      COPY_EXISTING "%filespec%" override
+      ACTION_IF stat_opcode>=0 BEGIN // return value of -1 means we can't patch this (probably because TOBEX is missing)
+        COPY_EXISTING "%filespec%" override
               LPF DELETE_EFFECT INT_VAR match_opcode=stat_opcode match_parameter2=stat_param END // clear out any previous version
               LPF CLONE_EFFECT INT_VAR silent=!complain multi_match=1 match_opcode match_parameter2 opcode=stat_opcode duration timing parameter1=stat_value parameter2=stat_param special=(opcode=328) STR_VAR match_resource END
-      BUT_ONLY
+        BUT_ONLY
+      END
 
    END ELSE BEGIN
           ACTION_IF complain BEGIN
@@ -521,11 +524,12 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION ds_add_entry
+  INT_VAR min=0
   STR_VAR id="" file=""
   RET stat_ind
 BEGIN
    INNER_ACTION BEGIN
-      LAF ds_add_entry STR_VAR id file RET stat_ind END
+      LAF ds_add_entry INT_VAR min STR_VAR id file RET stat_ind END
    END
 END
 
@@ -537,12 +541,27 @@ DEFINE_PATCH_FUNCTION ds_resolve_stat STR_VAR id="" RET stat_ind stat_param stat
 BEGIN
    // initialise
    INNER_ACTION BEGIN
+      CLEAR_IDS_MAP
       LAF ds_set_vars RET is_tobex enhanced_edition END
    END
+   // see if it's forced
+   SET enforce_splstate=0
 
+   INNER_PATCH "%id%" BEGIN
+      REPLACE_EVALUATE "^\(.*\):\(.*\)$" BEGIN
+         PATCH_IF "%MATCH1%" STRING_EQUAL_CASE "splstate" BEGIN
+            SPRINT id "%MATCH2%"
+            SET enforce_splstate=1
+         END ELSE BEGIN
+            SET enforce_splstate=0
+            PATCH_WARN "unrecognised naming convention for state '%id%' in DS"
+         END
+      END
+      ""
+   END
    // first, see if it's in stats.ids
    SET check_stats = IDS_OF_SYMBOL (stats "%id%")
-   PATCH_IF ( check_stats >=89 && (check_stats<=134 || check_stats>=156) && ( check_stats<256 || is_tobex ) ) BEGIN
+   PATCH_IF (!enforce_splstate && ( check_stats >=89 && (check_stats<=134 || check_stats>=156) && ( check_stats<256 || is_tobex ) )) BEGIN
        SET stat_ind=check_stats
        SPRINT stat_type stats
        PATCH_IF stat_ind>387 BEGIN
@@ -576,11 +595,19 @@ BEGIN
            SET stat_opcode=328
            SET stat_param=stat_ind
        END ELSE BEGIN
-          // get a new value
-          LPF ds_add_entry STR_VAR id file=stats RET stat_ind END
-          SPRINT stat_type stats
-          SET stat_opcode=318
-          SET stat_param=stat_ind + 0x10000
+          // if we're not ToBEx, quit
+          PATCH_IF is_tobex BEGIN
+             // get a new value
+             LPF ds_add_entry INT_VAR min=401 STR_VAR id file=stats RET stat_ind END
+             SPRINT stat_type stats
+             SET stat_opcode=318
+             SET stat_param=stat_ind + 0x10000
+          END ELSE BEGIN
+             SPRINT stat_type null
+             SET stat_opcode="-1"
+             SET stat_param="-1"
+             SET stat_ind="-1"
+          END
        END
    END
 END
@@ -606,7 +633,7 @@ LAF ds_set_vars RET is_tobex enhanced_edition END
 
 COPY_EXISTING spell.ids override
 ACTION_IF !FILE_CONTAINS_EVALUATED ("override/spell.ids" "4213[ %TAB%]+PALADIN_PROTECTION_FROM_EVIL") BEGIN
-         APPEND "stats.ids" "4213 PALADIN_PROTECTION_FROM_EVIL"
+         APPEND "spell.ids" "4213 PALADIN_PROTECTION_FROM_EVIL"
       END
 
 ACTION_CLEAR_ARRAY stats_array
