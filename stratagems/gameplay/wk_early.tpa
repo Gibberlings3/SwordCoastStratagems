@@ -7,9 +7,11 @@ DEFINE_ACTION_FUNCTION wk_early BEGIN
 // first time in AR4000 (i.e., immediately after expansion starts), jump to AR3000, applying AR4000's on-creation journal and chapter updates
 
    ACTION_IF enhanced_edition BEGIN
-      OUTER_SPRINT journalstring "EraseJournalEntry(97346)AddJournalEntry(97346,QUEST_DONE)EraseJournalEntry(4352)"
+      OUTER_SPRINT journal_erase_string "EraseJournalEntry(97346)EraseJournalEntry(4352)"
+      OUTER_SPRINT journal_add_string "AddJournalEntry(97347,QUEST)AddJournalEntry(73256,INFO)"
    END ELSE BEGIN
-      OUTER_SPRINT journalstring "EraseJournalEntry(4352)"
+      OUTER_SPRINT journal_erase_string "EraseJournalEntry(4352)"
+      OUTER_SPRINT journal_add_string "AddJournalEntry(73256,INFO)"
    END
 
 <<<<<<<< .../stratagems-inline/ar4000add.baf
@@ -18,8 +20,7 @@ IF
 THEN
     RESPONSE #100
 		StartCutSceneMode()
-		SetGlobal("chapter","GLOBAL",%bg2_chapter_8%)
-		%journalstring%
+		%journal_erase_string%
 		LeaveAreaLUAPanic("AR3000","",[1300.1840],4)
 		ActionOverride(Player1,LeaveAreaLUA("AR3000","",[1631.2548],4))
 		ActionOverride(Player2,LeaveAreaLUA("AR3000","",[1717.2555],4))
@@ -28,8 +29,20 @@ THEN
 		ActionOverride(Player5,LeaveAreaLUA("AR3000","",[1637.2579],0))
 		ActionOverride(Player6,LeaveAreaLUA("AR3000","",[1642.2505],0))
 		SetGlobal("DMWWWKEarly","GLOBAL",1)
+		SetGlobalTimer("DMWWWKEarlyTimer","GLOBAL",3)
 		FadeFromColor([20.0],0)
 		EndCutSceneMode()
+END
+
+IF
+   Global("DMWWWKEarly","GLOBAL",1) // i.e., upon returning
+   !GlobalTimerNotExpired("DMWWWKEarlyTimer","GLOBAL")
+THEN
+    RESPONSE #100
+               SetGlobal("DMWWWKEarly","GLOBAL",2)
+	       SetGlobal("chapter","GLOBAL",%bg2_chapter_8%)
+               %journal_add_string%
+               Continue()
 END
 >>>>>>>>
 
@@ -109,7 +122,20 @@ END
       
       // wipe unneeded content from ar4000 script
       
-      LAF edit_script STR_VAR script=ar4000 editstring="patch=>~ar4000_nojournal|delete_trigger_if(FORCETOBPARTYMOVE4000)~" END
+      LAF ALTER_SCRIPT_BLOCK
+                  STR_VAR script=ar4000
+                          match=~Global("TurnDay","AR4000",0)~ 
+                          swap_out1=~SetGlobal("chapter","GLOBAL",[0-9]+)~
+                          swap_in1=~~
+                          swap_out2=~EraseJournalEntry([0-9]+)~
+                          swap_in2=~~
+                          swap_out3=~AddJournalEntry([^)]+)~
+                          swap_in3=~~
+      END
+      LAF DELETE_SCRIPT_BLOCK
+                  STR_VAR script=ar4000
+                          match=FORCETOBPARTYMOVE4000
+      END
 
       //////// Make WK inaccessible from the SoA map
 
@@ -118,21 +144,6 @@ END
 END
 
 
-DEFINE_PATCH_FUNCTION BCS_ar4000_nojournal
-STR_VAR trig_in=""  act_in=""
-RET trig_out act_out
-BEGIN
-   PATCH_IF INDEX ("TurnDay" "%act_in%") >=0 BEGIN
-      INNER_PATCH_SAVE act_out "%act_in%" BEGIN
-         REPLACE_TEXTUALLY ~SetGlobal("chapter","GLOBAL",[0-9]+)~ ~~
-         REPLACE_TEXTUALLY ~EraseJournalEntry([0-9]+)~ ~~
-         REPLACE_TEXTUALLY ~AddJournalEntry([^,]+,QUEST_DONE)~ ~~
-      END
-   END ELSE BEGIN
-      SPRINT act_out "%act_in%"
-   END
-   SPRINT trig_out "%trig_in%"
-END
 
 
 

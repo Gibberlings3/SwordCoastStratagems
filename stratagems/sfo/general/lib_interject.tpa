@@ -1,0 +1,202 @@
+DEFINE_PATCH_FUNCTION generate_interjection
+   INT_VAR line_count_here=0
+   STR_VAR condition=""
+           dialog_main=""
+           stack=""
+   RET final_do
+       data
+       stack
+BEGIN
+ INNER_ACTION BEGIN
+   OUTER_SPRINT data ""
+   OUTER_SPRINT marker1 ~Global("DW_substitute_var","GLOBAL",1)~
+   OUTER_SPRINT marker2 ~Global("DW_substitute_var","GLOBAL",2)~
+   OUTER_SET block_count=0
+   OUTER_FOR (this_line = line_count_here - 1; this_line >=0; this_line = this_line - 1) BEGIN
+       ACTION_IF this_line = line_count_here - 1 BEGIN
+         OUTER_SPRINT initial_dialog_temp $ict_array_dialog_temp("%this_line%")
+         OUTER_SPRINT maybe_marker "%marker1%"
+       END ELSE BEGIN
+         OUTER_SPRINT maybe_marker ""
+       END
+       OUTER_SPRINT dialog $ict_array_dialog_temp("%this_line%")
+       OUTER_SPRINT say_strref $ict_array_say_temp("%this_line%")
+       OUTER_SPRINT do $ict_array_do_temp("%this_line%")
+       OUTER_SPRINT data "%data%%WNL%APPEND %dialog%%WNL%IF ~%maybe_marker%~ THEN BEGIN block_%block_count% %WNL%SAY #%say_strref%%WNL%"
+       OUTER_SET block_count +=1
+       ACTION_IF this_line=0 BEGIN
+          OUTER_SPRINT final_do "%do%"
+          OUTER_SPRINT data "%data%IF ~%marker2%~ THEN EXIT%WNL% END%WNL% END%WNL%"
+       END ELSE BEGIN
+          OUTER_SET next_line = this_line - 1
+          OUTER_SPRINT next_dialog $ict_array_dialog_temp("%next_line%")
+          ACTION_IF "%do%" STRING_EQUAL "" BEGIN
+             OUTER_SPRINT do_line ""
+          END ELSE BEGIN
+             OUTER_SPRINT do_line "DO ~%do%~"
+          END
+          ACTION_IF "%next_dialog%" STRING_EQUAL_CASE "%dialog%" BEGIN
+             OUTER_SPRINT data "%data%IF ~~ THEN %do_line% GOTO block_%block_count% %WNL%END %WNL%END%WNL%"
+          END ELSE BEGIN
+             OUTER_SPRINT data "%data%IF ~~ THEN %do_line% EXTERN %next_dialog% block_%block_count% %WNL%END %WNL%END%WNL%"
+          END
+       END
+   END
+   <<<<<<<< .../stratagems-inline/temp.d
+   %data%
+   >>>>>>>>
+   COMPILE ".../stratagems-inline/temp.d" EVALUATE_BUFFER
+   //COPY_EXISTING "%
+
+   LAF FIND_DLG_BLOCK STR_VAR dialog="%initial_dialog_temp%" match="%marker1%" RET block_number END
+   ACTION_IF "%dialog_main%" STRING_EQUAL_CASE "%initial_dialog_temp%" BEGIN
+      OUTER_SPRINT trans_string "GOTO"
+   END ELSE BEGIN
+      OUTER_SPRINT trans_string "EXTERN %initial_dialog_temp%"
+   END
+   OUTER_SPRINT stack "%stack%IF ~%condition%~ THEN %trans_string% %block_number%%WNL%"
+   COPY_EXISTING "%initial_dialog_temp%.dlg" override
+      DECOMPILE_AND_PATCH BEGIN
+         REPLACE_TEXTUALLY "%marker1%" ""
+      END
+   BUT_ONLY
+ END
+END
+
+DEFINE_PATCH_FUNCTION parse_ict_line
+   STR_VAR line=""
+   RET dialog condition say do success
+BEGIN
+   INNER_PATCH "%line%" BEGIN
+      SET success=0
+      SPRINT dialog ""
+      SPRINT condition ""
+      SET say_strref=0
+      SPRINT do ""
+      REPLACE_EVALUATE " DO ~\([^~]*\)~" BEGIN
+         SPRINT do "%MATCH1%"
+      END
+      ""
+      REPLACE_EVALUATE "^ *?~\([^ ~]*\)?~ +IF +~\([^~]*\)~ +THEN @\([0-9]+\)" BEGIN
+         SET success=1
+         SPRINT dialog "%MATCH1%"
+         SPRINT condition "%MATCH2%"
+         SPRINT say_strref "%MATCH3%"
+      END
+      ""
+      SET say = RESOLVE_STR_REF (( AT say_strref))
+   END
+END
+
+DEFINE_PATCH_FUNCTION parse_ict_command
+BEGIN
+   SET linecount=0
+   // evaluate any variables
+   EVALUATE_BUFFER
+   // get the header data
+   REPLACE_EVALUATE "I_C_T[34] +~?\([^ ~]+\)~? +\([^ ]+\) +\([^ %WNL%%LNL%%MNL%]+\)" BEGIN
+        SPRINT dialog_main "%MATCH1%"
+        SET dialog_main_state="%MATCH2%"
+        SPRINT control_var "%MATCH3%"
+   END
+   ""
+   SET global_passback_say="-1"
+   // look for a global passback (do this before removing commented-out lines)
+   // it's defined as a condition-free block with the main dialog as its start
+   REPLACE_EVALUATE "== *~?%dialog_main%~? +@\([0-9]+\)" BEGIN
+     SET global_passback_say= RESOLVE_STR_REF (( AT "%MATCH1%"))
+   END
+   ""
+   // assess whether we need a passback
+   LPF assess_main_state_do_commands INT_VAR dialog_main_state STR_VAR dialog_main RET needs_passback do_list END
+   // prepare file for general read
+   // remove comments
+   REPLACE_TEXTUALLY "//.*\(%WNL%\|%MNL%\|%LNL%\)" ""
+   // remove line breaks
+   REPLACE_TEXTUALLY "\(%WNL%\|%MNL%\|%LNL%\)" " "
+   // set aside the 'END' block
+   REPLACE_TEXTUALLY "END$" "%WNL%END"
+   // get the main entries
+   REPLACE_EVALUATE "==\([^=]*\)" BEGIN
+      LPF parse_ict_line STR_VAR line="%MATCH1%" RET dialog condition say do END
+      SET $ict_array_say("%linecount%")=say
+      SPRINT $ict_array_dialog("%linecount%") "%dialog%"
+      SPRINT $ict_array_condition("%linecount%") "%condition%"
+      SPRINT $ict_array_do("%linecount%") "%do%"
+      SET linecount +=1
+   END
+   ""
+   // do the actual processing of the main entries
+   SET lastline = linecount - 1
+   SPRINT stack ""
+   SPRINT current_condition $ict_array_condition("%lastline%")
+   CLEAR_ARRAY ict_array_dialog_temp
+   CLEAR_ARRAY ict_array_say_temp
+   CLEAR_ARRAY ict_array_do_temp
+   SET line_count_here=0
+   FOR (this_line=lastline; this_line>=0; this_line = this_line - 1) BEGIN
+         SPRINT new_condition $ict_array_condition("%this_line%")
+         PATCH_IF "%new_condition%" STRING_COMPARE_CASE "%current_condition%" BEGIN
+             LPF generate_interjection INT_VAR line_count_here STR_VAR dialog_main stack condition="%current_condition%" RET data final_do stack END
+             CLEAR_ARRAY ict_array_dialog_temp
+             CLEAR_ARRAY ict_array_say_temp
+             CLEAR_ARRAY ict_array_do_temp
+             SET line_count_here=0
+             SPRINT current_condition "%new_condition%"
+         END
+         SPRINT $ict_array_dialog_temp("%line_count_here%") $ict_array_dialog("%this_line%")
+         SPRINT $ict_array_say_temp("%line_count_here%") $ict_array_say("%this_line%")
+         SPRINT $ict_array_do_temp("%line_count_here%") $ict_array_do("%this_line%")
+         SET line_count_here +=1
+   END
+   LPF generate_interjection INT_VAR line_count_here STR_VAR dialog_main stack condition="%current_condition%" RET data final_do stack END
+   PATCH_PRINT "stack: %stack%"
+END
+
+DEFINE_PATCH_FUNCTION assess_main_state_do_commands
+    INT_VAR dialog_main_state=0
+    STR_VAR dialog_main=""
+    RET needs_passback
+        do_list
+BEGIN
+    SET needs_passback=0
+    SPRINT do_list null
+    INNER_ACTION BEGIN
+       COPY_EXISTING "%dialog_main%.dlg" "%workspace%"
+            READ_LONG 0x28 action_off
+            GET_OFFSET_ARRAY state_array 0xc 4 0x8 4 0 0 0x10
+            PHP_EACH state_array AS state_ind=>state_off BEGIN
+               PATCH_IF state_ind=dialog_main_state BEGIN
+                  GET_OFFSET_ARRAY2 response_array state_off 0x14 4 0x8 4 0x4 4 0x20
+                  PHP_EACH response_array AS response_ind=>response_off BEGIN
+                     READ_BYTE response_off bytes
+                     PATCH_IF (bytes BOR 0b11111011) = 0b11111111 BEGIN
+                        READ_LONG 0x10+response_off action_ind
+                        READ_LONG (0x8*action_ind+action_off) this_action_off
+                        READ_LONG (0x8*action_ind+action_off+4) this_action_length
+                        READ_ASCII this_action_off this_action_text (this_action_length)
+                        PATCH_IF "%do_list%" STRING_EQUAL null BEGIN
+                           SPRINT do_list "%this_action_text%"
+                        END ELSE BEGIN
+                           PATCH_IF "%do_list%" STRING_COMPARE_CASE "%this_action_text%" BEGIN
+                              SET needs_passback=1
+                           END
+                        END
+                     END ELSE BEGIN
+                        PATCH_IF "%do_list%" STRING_EQUAL null BEGIN
+                           SPRINT do_list ""
+                        END ELSE BEGIN
+                           PATCH_IF "%do_list%" STRING_COMPARE "" BEGIN
+                              SET needs_passback=1
+                           END
+                        END
+                     END
+                  END
+               END
+            END
+       BUT_ONLY
+    END
+    PATCH_IF INDEX ( "StartStore" "%do_list%"  )>=0 BEGIN
+       SET needs_passback=1
+    END
+END

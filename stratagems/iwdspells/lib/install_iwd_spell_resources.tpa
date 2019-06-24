@@ -205,12 +205,13 @@ BEGIN
           LAF get_spellcode STR_VAR input="%spellname%" RET resref_to_check=value END
           ACTION_IF FILE_EXISTS_IN_GAME "%resref_to_check%.spl" BEGIN
              OUTER_SET proceed=0
+             OUTER_SPRINT new_spell_resref "%resref_to_check%" // for scrolls
           END ELSE BEGIN
              OUTER_SET proceed=1
           END
         END
        END
-        // on SR installs, skip the whole MONSTER_SUMMONING bit
+        // on SR installs, we're hardcoded to skip the whole MONSTER_SUMMONING/CAUSE_WOUNDS bits
         ACTION_IF demivrgvs BEGIN
            ACTION_MATCH "%spellname%" WITH
            "WIZARD_MONSTER_SUMMONING.*" 
@@ -219,6 +220,7 @@ BEGIN
            BEGIN
               OUTER_SET proceed=0
               PRINT "Cancelling overwrite, SR version present"
+              OUTER_SPRINT new_spell_resref "%resref_to_check%" // for scrolls
            END
            DEFAULT
            END
@@ -328,30 +330,30 @@ BEGIN
                              LAF edit_creature STR_VAR creature="%new_resref%" locabs="%install_loc%" edits=patch_data END
                           END
                       DEFAULT END
-                 END
-               END
+                 END // end of the 'have we copied this over already?' loop
+               END // end of the sanity-check-fail loop
 
-            END
-            // scroll
-            ACTION_IF (!overwrite && make_scrolls && INDEX ("\(SPWI\|SPPR\)[1-9][0-9][0-9]$" "%new_spell_resref%")>=0 ) BEGIN
+            END // end of the resource ACTION_BASH_FOR
+       END    // end of proceed? loop
+       // scroll
+       ACTION_IF (!overwrite && make_scrolls && INDEX ("\(SPWI\|SPPR\)[1-9][0-9][0-9]$" "%new_spell_resref%")>=0 && !VARIABLE_IS_SET "%spellname%_SCROLL" ) BEGIN
                  ACTION_IF is_iwd BEGIN
                     OUTER_SPRINT name_func dw_scroll_name
                  END ELSE BEGIN
                     OUTER_SPRINT name_func cd_scroll_name
                  END
-                 ACTION_IF VARIABLE_IS_SET $scroll_prices("%old_spell_resref%") BEGIN
-                    OUTER_SET price=$scroll_prices("%old_spell_resref%")
+                 ACTION_IF VARIABLE_IS_SET $scroll_prices("%spellname%") BEGIN
+                    OUTER_SET price=$scroll_prices("%spellname%")
                  END ELSE BEGIN
                     OUTER_SET price="-1"
                  END
                  LAF make_scroll_of_spell INT_VAR price STR_VAR spell_loc="%install_loc%" resref="%new_spell_resref%" name_func RET scrollname END
                  OUTER_SPRINT "%spellname%_SCROLL" "%scrollname%"
-            END
-            ACTION_IF overwrite BEGIN
+        END
+        ACTION_IF overwrite BEGIN
                OUTER_SPRINT scrollname "%spellname%_SCROLL"
                OUTER_SPRINT scroll EVAL "%%scrollname%%"
                ACTION_IF FILE_EXISTS_IN_GAME "%scroll%.itm" BEGIN
-                    PRINT "...found it"
                     COPY "%install_loc%/%new_spell_resref%.spl" "%workspace%"
                         READ_LONG 0x8 name_strref
                         READ_LONG 0x50 desc_strref
@@ -361,13 +363,12 @@ BEGIN
                          WRITE_LONG 0x54 desc_strref
                     BUT_ONLY
                END
-            END
+        END
 
-       END    // end of install loop
-    END
+    END // end of outer loop
 
     // compile any scripts (do this last, so new entries have a chance to get into spell.ids)
-    
+
     CLEAR_IDS_MAP
     ACTION_BASH_FOR "%baf_loc%" ".*\.baf" BEGIN
        COPY "%BASH_FOR_FILESPEC%" "%install_loc%/%BASH_FOR_RES%.BCS"
