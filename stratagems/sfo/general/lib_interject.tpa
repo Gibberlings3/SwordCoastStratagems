@@ -1,16 +1,20 @@
 DEFINE_PATCH_FUNCTION generate_interjection
    INT_VAR line_count_here=0
+           passback_state_number="-1"
+           passback_needed=0
+           global_passback_say="-1"
    STR_VAR condition=""
            dialog_main=""
            stack=""
-   RET final_do
-       data
-       stack
+           stack_base=""
+   RET     stack
+           passback_state_number
 BEGIN
  INNER_ACTION BEGIN
    OUTER_SPRINT data ""
    OUTER_SPRINT marker1 ~Global("DW_substitute_var","GLOBAL",1)~
    OUTER_SPRINT marker2 ~Global("DW_substitute_var","GLOBAL",2)~
+   OUTER_SPRINT action_placeholder ~Global("DW_action_placeholder","GLOBAL",1)~
    OUTER_SET block_count=0
    OUTER_FOR (this_line = line_count_here - 1; this_line >=0; this_line = this_line - 1) BEGIN
        ACTION_IF this_line = line_count_here - 1 BEGIN
@@ -35,31 +39,42 @@ BEGIN
           END ELSE BEGIN
              OUTER_SPRINT do_line "DO ~%do%~"
           END
-          ACTION_IF "%next_dialog%" STRING_EQUAL_CASE "%dialog%" BEGIN
-             OUTER_SPRINT data "%data%IF ~~ THEN %do_line% GOTO block_%block_count% %WNL%END %WNL%END%WNL%"
-          END ELSE BEGIN
-             OUTER_SPRINT data "%data%IF ~~ THEN %do_line% EXTERN %next_dialog% block_%block_count% %WNL%END %WNL%END%WNL%"
+          OUTER_SPRINT data "%data%IF ~~ THEN %do_line% EXTERN %next_dialog% block_%block_count% %WNL%END %WNL%END%WNL%"
+       END
+       OUTER_SPRINT last_dialog_temp "%dialog%"
+       ACTION_IF needs_passback && "%last_dialog_temp%" STRING_COMPARE_CASE "%dialog_main%" BEGIN
+          ACTION_IF passback_state_number<0 BEGIN
+              LAF make_passback INT_VAR global_passback_say STR_VAR dialog_main stack_base RET passback_state_number END
           END
+          OUTER_SPRINT base_trans "IF ~~ THEN EXTERN %dialog_main% %passback_state_number%%WNL%"
+       END ELSE BEGIN
+          OUTER_SPRINT base_trans "%stack_base%"
        END
    END
    <<<<<<<< .../stratagems-inline/temp.d
    %data%
    >>>>>>>>
+   PRINT "blook"
    COMPILE ".../stratagems-inline/temp.d" EVALUATE_BUFFER
-   //COPY_EXISTING "%
+
 
    LAF FIND_DLG_BLOCK STR_VAR dialog="%initial_dialog_temp%" match="%marker1%" RET block_number END
-   ACTION_IF "%dialog_main%" STRING_EQUAL_CASE "%initial_dialog_temp%" BEGIN
-      OUTER_SPRINT trans_string "GOTO"
-   END ELSE BEGIN
-      OUTER_SPRINT trans_string "EXTERN %initial_dialog_temp%"
-   END
-   OUTER_SPRINT stack "%stack%IF ~%condition%~ THEN %trans_string% %block_number%%WNL%"
+   LAF EXTRACT_DLG_BLOCK INT_VAR block_number STR_VAR dialog="%initial_dialog_temp%" RET block END
    COPY_EXISTING "%initial_dialog_temp%.dlg" override
       DECOMPILE_AND_PATCH BEGIN
          REPLACE_TEXTUALLY "%marker1%" ""
+         REPLACE_TEXTUALLY "EXTERN %initial_dialog_temp%" "GOTO"
       END
    BUT_ONLY
+   COPY_EXISTING "%last_dialog_temp%.dlg" override
+      DECOMPILE_AND_PATCH BEGIN
+         REPLACE_TEXTUALLY "\(%WNL%\|%LNL%\|%MNL%\)" " "
+         REPLACE_TEXTUALLY "IF ~ *%marker2% *~ THEN EXIT" "%base_trans%%stack%"
+         REPLACE_TEXTUALLY "%action_placeholder%" ""
+         REPLACE_TEXTUALLY "EXTERN %last_dialog_temp%" "GOTO"
+      END
+   BUT_ONLY
+   OUTER_SPRINT stack "%stack%IF ~%condition%~ THEN DO ~%action_placeholder%~ EXTERN %initial_dialog_temp% %block_number%%WNL%"
  END
 END
 
@@ -77,7 +92,7 @@ BEGIN
          SPRINT do "%MATCH1%"
       END
       ""
-      REPLACE_EVALUATE "^ *?~\([^ ~]*\)?~ +IF +~\([^~]*\)~ +THEN @\([0-9]+\)" BEGIN
+      REPLACE_EVALUATE "^ *?~\([^ ~]*\)?~ *IF +~\([^~]*\)~ *THEN @\([0-9]+\)" BEGIN
          SET success=1
          SPRINT dialog "%MATCH1%"
          SPRINT condition "%MATCH2%"
@@ -109,6 +124,8 @@ BEGIN
    ""
    // assess whether we need a passback
    LPF assess_main_state_do_commands INT_VAR dialog_main_state STR_VAR dialog_main RET needs_passback do_list END
+   // get the initial transitions and add a placeholder
+   LPF process_main_state_transitions INT_VAR dialog_main_state needs_passback STR_VAR dialog_main RET stack_base END
    // prepare file for general read
    // remove comments
    REPLACE_TEXTUALLY "//.*\(%WNL%\|%MNL%\|%LNL%\)" ""
@@ -128,6 +145,7 @@ BEGIN
    ""
    // do the actual processing of the main entries
    SET lastline = linecount - 1
+   SET passback_state_number="-1"
    SPRINT stack ""
    SPRINT current_condition $ict_array_condition("%lastline%")
    CLEAR_ARRAY ict_array_dialog_temp
@@ -137,7 +155,7 @@ BEGIN
    FOR (this_line=lastline; this_line>=0; this_line = this_line - 1) BEGIN
          SPRINT new_condition $ict_array_condition("%this_line%")
          PATCH_IF "%new_condition%" STRING_COMPARE_CASE "%current_condition%" BEGIN
-             LPF generate_interjection INT_VAR line_count_here STR_VAR dialog_main stack condition="%current_condition%" RET data final_do stack END
+             LPF generate_interjection INT_VAR needs_passback passback_state_number line_count_here global_passback_say STR_VAR dialog_main stack stack_base condition="%current_condition%" RET passback_state_number stack END
              CLEAR_ARRAY ict_array_dialog_temp
              CLEAR_ARRAY ict_array_say_temp
              CLEAR_ARRAY ict_array_do_temp
@@ -149,8 +167,35 @@ BEGIN
          SPRINT $ict_array_do_temp("%line_count_here%") $ict_array_do("%this_line%")
          SET line_count_here +=1
    END
-   LPF generate_interjection INT_VAR line_count_here STR_VAR dialog_main stack condition="%current_condition%" RET data final_do stack END
-   PATCH_PRINT "stack: %stack%"
+   LPF generate_interjection INT_VAR needs_passback passback_state_number line_count_here global_passback_say STR_VAR dialog_main stack stack_base condition="%current_condition%" RET passback_state_number stack END
+   // put the original interjection in
+   SPRINT action_placeholder ~Global("DW_action_placeholder","GLOBAL",1)~
+   INNER_PATCH_SAVE stack "%stack%" BEGIN
+      REPLACE_TEXTUALLY ~%action_placeholder%~ ~SetGlobal("%control_var%","GLOBAL",1)%do_list%~
+      REPLACE_TEXTUALLY "IF ~\([^~]\)" ~~~~~IF ~Global("%control_var%","GLOBAL",0)\1~~~~~
+   END
+   SPRINT marker ~Global("dw_initial_block_placeholder","GLOBAL",1)~
+   INNER_ACTION BEGIN
+    COPY_EXISTING "%dialog_main%.dlg" override
+      DECOMPILE_AND_PATCH BEGIN
+         REPLACE_TEXTUALLY "\(%WNL%\|%LNL%\|%MNL%\)" " "
+         REPLACE_TEXTUALLY "IF ~ *%marker% *~ THEN EXIT" "%stack%"
+         READ_ASCII 0x0 data (BUFFER_LENGTH)
+      END
+    BUT_ONLY
+   END
+END
+
+DEFINE_ACTION_FUNCTION compile_with_ict_handling
+   STR_VAR dialog=""
+BEGIN
+   COPY "%dialog%.d" "%workspace%/temp_dialog.d"
+      EVALUATE_BUFFER
+      LPF decomment_code END
+      LPF handle_ict_blocks END
+   COMPILE "%workspace%/temp_dialog.d"
+
+
 END
 
 DEFINE_PATCH_FUNCTION assess_main_state_do_commands
@@ -188,6 +233,7 @@ BEGIN
                         END ELSE BEGIN
                            PATCH_IF "%do_list%" STRING_COMPARE "" BEGIN
                               SET needs_passback=1
+                              SPRINT do_list ""
                            END
                         END
                      END
@@ -199,4 +245,101 @@ BEGIN
     PATCH_IF INDEX ( "StartStore" "%do_list%"  )>=0 BEGIN
        SET needs_passback=1
     END
+END
+
+DEFINE_PATCH_FUNCTION process_main_state_transitions
+  INT_VAR needs_passback=0
+          dialog_main_state=0
+  STR_VAR dialog_main=""
+  RET stack_base
+BEGIN
+  SPRINT stack ""
+  INNER_ACTION BEGIN
+     LAF EXTRACT_DLG_BLOCK INT_VAR block_number=dialog_main_state STR_VAR dialog="%dialog_main%" RET block_old=block END
+  END
+  INNER_PATCH "%block_old%" BEGIN
+     REPLACE_TEXTUALLY "\(%WNL%\|%MNL%\|%LNL%\)" " "
+     REPLACE_EVALUATE "SAY #[0-9]+ +\(IF.*\)END *$" BEGIN
+       SPRINT stack_base "%MATCH1%"
+       INNER_PATCH_SAVE stack_base "%stack_base%" BEGIN
+          REPLACE_TEXTUALLY "GOTO +\([0-9]+\)\([^0-9]\)" "EXTERN %dialog_main% \1\2"
+       END
+     END
+     ""
+  END
+  SPRINT marker ~Global("dw_initial_block_placeholder","GLOBAL",1)~
+  INNER_PATCH_SAVE block_new "%block_old%" BEGIN
+     REPLACE_TEXTUALLY "END\(%WNL%\|%LNL%\|%MNL%\| \)*$" "IF ~%marker%~ THEN EXIT %WNL%END%WNL%"
+  END
+  INNER_ACTION BEGIN
+     COPY_EXISTING "%dialog_main%.dlg" override
+         DECOMPILE_AND_PATCH BEGIN
+            REPLACE_TEXTUALLY "%block_old%" "%block_new%"
+         END
+     BUT_ONLY
+  END
+  PATCH_IF !needs_passback BEGIN
+     INNER_PATCH_SAVE stack_base "%stack_base%" BEGIN
+        REPLACE_TEXTUALLY "DO ~[^~]*~" ""
+     END
+  END
+END
+
+DEFINE_ACTION_FUNCTION make_passback
+   INT_VAR global_passback_say="-1"
+   STR_VAR dialog_main=""
+           stack_base=""
+   RET passback_state_number
+BEGIN
+          ACTION_IF global_passback_say<0 BEGIN
+              OUTER_SET global_passback_say = RESOLVE_STR_REF ("")
+          END
+          <<<<<<<< .../stratagems-inline/temp.d
+          APPEND %dialog_main%
+          IF ~Global("dw_temp_marker","GLOBAL",1)~ THEN BEGIN passback
+          SAY #%global_passback_say%
+          %stack_base%
+          END
+          END
+          >>>>>>>>
+          PRINT "blook"
+          COMPILE ".../stratagems-inline/temp.d" EVALUATE_BUFFER
+          LAF FIND_DLG_BLOCK STR_VAR dialog="%dialog_main%" match="dw_temp_marker" RET passback_state_number=block_number END
+          COPY_EXISTING "%dialog_main%.dlg" override
+              DECOMPILE_AND_PATCH BEGIN
+               REPLACE_TEXTUALLY ~Global("dw_temp_marker","GLOBAL",1)~ ""
+              END
+          BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION decomment_code
+BEGIN
+   SET finished=0
+   WHILE INDEX_BUFFER ("/\*")>=0 && !finished BEGIN
+      SET start=INDEX_BUFFER ("/\*")
+      SET end=INDEX_BUFFER ("\*/")
+      PATCH_IF start>=end BEGIN
+          SET finished=1
+      END ELSE BEGIN
+          READ_ASCII start data (end + 2 - start)
+          DELETE_BYTES start (end + 2 - start)
+      END
+   END
+   REPLACE_TEXTUALLY "//.*" ""
+END
+
+DEFINE_PATCH_FUNCTION handle_ict_blocks
+BEGIN
+    SET start=INDEX_BUFFER ("I_C_T")
+    SET end = INDEX_BUFFER (CASE_SENSITIVE "END" start)
+    PATCH_IF end>start BEGIN
+       SET finished=0
+       READ_ASCII start block (end + 3 - start)
+       INNER_PATCH "%block%" BEGIN
+          LPF parse_ict_command END
+       END
+       DELETE_BYTES start (end + 3 - start)
+       LPF handle_ict_blocks END
+    END
+
 END
