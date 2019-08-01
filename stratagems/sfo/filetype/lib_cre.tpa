@@ -1,5 +1,5 @@
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////                                                                    
 /////////////               overarching clone
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -224,6 +224,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_fields BEGIN
    ac_effective     =>     ~0x48,SSHORT~
    morale           =>     ~0x23f,BYTE~
    morale_break     =>     ~0x240,BYTE~
+   nightmare_mode   =>     ~0x7d,BYTE~
 END
 
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=cre_fields function_prefix=CRE END
@@ -240,13 +241,13 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_rel_fields BEGIN
      effect_resource=>~0x28,ASCII~
      timing=>~0x1c,LONG~
      probability1=>~0x24,SHORT~
-  //   probability2=>~0x26,SHORT~
-     probability2=>~0x14,LONG~
+     probability2=>~0x26,SHORT~
      duration=>~0x20,LONG~
      parameter1 => ~0x14,LONG~
      parameter2 => ~0x18,LONG~
      item_slot => ~0x0,SHORT~
      memorized_spell => ~0x0,ASCII~
+     resist_dispel=>~0x54,LONG~
      memorization_level => ~0x0,SHORT~
      number_can_memorize => ~0x2,SHORT~
      number_has_memorized => ~0x4,SHORT~
@@ -255,6 +256,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_rel_fields BEGIN
      parent_resource=>~0x8c,ASCII~
      parent_item_slot=>~0x9c,LONG~
      mode=>~0x40,LONG~
+   power => ~0x18,LONG~
 END
 
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=cre_rel_fields offset_base=~offset_base~ function_prefix=CRE END
@@ -271,6 +273,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_bit_fields BEGIN
       original_class_thief=>"0x10,6"
       original_class_druid=>"0x10,7"
       original_class_ranger=>"0x11,0"
+      ignore_nightmare_mode=>"0x12,6"
       state_sleeping => ~0x20,0~
       state_berserk => ~0x20,1~
       state_panic  => ~0x20,2~
@@ -335,6 +338,11 @@ DEFINE_PATCH_FUNCTION CRE_hitpoints STR_VAR arguments="" BEGIN
    LAUNCH_PATCH_FUNCTION CRE_hp_current STR_VAR arguments= ~%arguments%~ END
 END
 
+
+DEFINE_PATCH_FUNCTION CRE_hitpointsGT STR_VAR arguments="" BEGIN
+   LAUNCH_PATCH_FUNCTION CRE_hp_maxGT STR_VAR arguments= ~%arguments%~ END
+   LAUNCH_PATCH_FUNCTION CRE_hp_currentGT STR_VAR arguments= ~%arguments%~ END
+END
 // all three levels
 
 DEFINE_PATCH_FUNCTION CRE_level_all STR_VAR arguments="" BEGIN
@@ -989,7 +997,7 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ~QUICK_ADD_SPELL~ 
+DEFINE_PATCH_FUNCTION ~QUICK_ADD_SPELL~
     INT_VAR as_known=0
     STR_VAR ~spellname~="" 
 BEGIN
@@ -1022,29 +1030,13 @@ BEGIN
          COPY_EXISTING ~%spell%.spl~ ~override~
                LPF SPL_read_spell_type RET spell_type=value END
                LPF SPL_read_level RET spell_level=value END
+               SET spell_level -= 1
          BUT_ONLY
        END
       END
     END
     PATCH_IF "%spell_type%" STRING_EQUAL_CASE innate BEGIN
        SET spell_level=0
-    END
-    PATCH_IF ~%spell_type%~ STRING_EQUAL_CASE hla BEGIN
-      INNER_ACTION BEGIN
-       COPY_EXISTING ~%spell%.spl~ ~override~
-            PATCH_MATCH SHORT_AT 0x1c WITH
-            1 BEGIN
-               SPRINT spell_type wizard
-            END
-            2 BEGIN
-               SPRINT spell_type priest
-            END
-            DEFAULT
-               SPRINT spell_type innate
-               SPRINT spell_level 0
-            END
-       BUT_ONLY
-      END
     END
     // yes, this is hideous, but if there's a way to send level to ADD_MEMORIZED_SPELL as a variable, I don't know it
     PATCH_IF as_known BEGIN
@@ -2556,13 +2548,13 @@ END
 ///        Returns 1 if creature is unintelligent
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION CRE_check_if_moron  // morons, by definition, are non-zombies, non-golems, and in one of the following categories: (i) general=HUMANOID,GIANTHUMANOID, or UNDEAD; (ii) race=DEMONIC, BEHOLDER or LYCANTHROPE; (iii) class=WOLF_VAMPIRIC, DOPPLEGANGER, or DRAGON
+DEFINE_PATCH_FUNCTION CRE_check_if_moron  // non-morons, by definition, are non-zombies, non-golems, non-gibberlings, and in one of the following categories: (i) general=HUMANOID,GIANTHUMANOID, or UNDEAD; (ii) race=DEMONIC, BEHOLDER or LYCANTHROPE; (iii) class=WOLF_VAMPIRIC, DOPPLEGANGER, or DRAGON
       RET value
 BEGIN
       LPF CRE_read_race RET race=value END
       TO_UPPER race
       PATCH_MATCH ~%race%~ WITH
-      ZOMBIE BEGIN
+      ZOMBIE GIBBERLING BEGIN
          SET value=1
       END
       DEMONIC DOPPLEGANGER LYCANTHROPE BEHOLDER BEGIN
@@ -2730,7 +2722,7 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////
-///       immunity to various elemental effects
+///       immunity to various elemental and other effects
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION CRE_immunity
@@ -2738,11 +2730,23 @@ STR_VAR arguments=""
 BEGIN
    PATCH_MATCH ~%arguments%~ WITH
     FIRE fire BEGIN
-        LPF CRE_immunity_to_spell STR_VAR arguments=~%RED_DRAGON_HIT% %WIZARD_METEOR_SWARM% %WIZARD_INCENDIARY_CLOUD% %CLERIC_FIRE_STORM% %WIZARD_FIREBALL% %WIZARD_DELAYED_BLAST_FIREBALL% %DEATHKNIGHT_FIREBALL% %WIZARD_SUN_FIRE%~ END
+        LPF CRE_immunity_to_spell STR_VAR arguments=~%WIZARD_METEOR_SWARM% %WIZARD_INCENDIARY_CLOUD% %CLERIC_FIRE_STORM% %WIZARD_FIREBALL% %WIZARD_DELAYED_BLAST_FIREBALL% %DEATHKNIGHT_FIREBALL% %WIZARD_SUN_FIRE%~ END
+        PATCH_IF is_bg2 BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%RED_DRAGON_HIT%" END
+        END
         LPF CRE_resist_fire STR_VAR arguments=100 END
     END
     COLD cold BEGIN
-        LPF CRE_immunity_to_spell STR_VAR arguments=~%WIZARD_ICE_STORM% %WIZARD_CONE_OF_COLD% %SILVER_DRAGON_BREATH_COLD%~ END
+        LPF CRE_immunity_to_spell STR_VAR arguments=~%WIZARD_ICE_STORM% %WIZARD_CONE_OF_COLD%~ END
+        PATCH_IF iwd_arcane BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%WIZARD_SNILLOCS_SNOWBALL_SWARM% %WIZARD_ICELANCE% %WIZARD_OTILUKES_FREEZING_SPHERE%" END
+        END
+        PATCH_IF is_iwd BEGIN
+             LPF CRE_immunity_to_spell STR_VAR arguments="%INNATE_DRAGON_BREATH%" END
+        END
+        PATCH_IF is_bg2 BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%SILVER_DRAGON_BREATH_COLD%" END
+        END
         LPF CRE_resist_cold STR_VAR arguments=100 END
     END
     ACID acid BEGIN
@@ -2750,16 +2754,32 @@ BEGIN
         LPF CRE_resist_acid STR_VAR arguments=100 END
     END
     ELECTRICITY LIGHTNING electricity lightning BEGIN
-        LPF CRE_immunity_to_spell STR_VAR arguments=~%WIZARD_LIGHTNING_BOLT% %WIZARD_CHAIN_LIGHTNING% %SILVER_DRAGON_BREATH_COLD% %CLERIC_CALL_LIGHTNING%~ END
+        LPF CRE_immunity_to_spell STR_VAR arguments=~%WIZARD_LIGHTNING_BOLT% %WIZARD_CHAIN_LIGHTNING% %CLERIC_CALL_LIGHTNING%~ END
+        PATCH_IF is_bg2 BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%BLUE_DRAGON_BREATH%" END
+        END
         LPF CRE_resist_electricity STR_VAR arguments=100 END
     END
     INSECTS insects INSECT insect BEGIN
-        LPF CRE_immunity_to_spell STR_VAR arguments=~%CLERIC_SUMMON_INSECTS% %CLERIC_INSECT_PLAGUE% %CLERIC_CREEPING_DOOM% %BLACK_DRAGON_INSECT%~ END
+        LPF CRE_immunity_to_spell STR_VAR arguments=~%CLERIC_SUMMON_INSECTS% %CLERIC_INSECT_PLAGUE% %CLERIC_CREEPING_DOOM%~ END
+        PATCH_IF is_bg2 BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%BLACK_DRAGON_INSECT%" END
+        END
     END
     POISON poison BEGIN
        LPF CRE_immunity_to_spell STR_VAR arguments=~%CLERIC_POISON% %WIZARD_CLOUDKILL%~ END
        LPF CRE_immunity_to_opcode STR_VAR arguments=25 END
+        PATCH_IF is_bg2 BEGIN
+           LPF CRE_immunity_to_spell STR_VAR arguments="%GREEN_DRAGON_BREATH%" END
+        END
+
        LPF add_entry_inline STR_VAR arguments=~opcode=>173 parameter1=>100~ type=effect file_ext=CRE END
+    END
+    leveldrain level_drain energydrain energy_drain BEGIN
+       LPF CRE_immunity_to_opcode STR_VAR arguments=216 END
+       LPF CRE_immunity_to_icon STR_VAR arguments=59 END
+       LPF CRE_immunity_to_string INT_VAR value STR_VAR arguments="41495 40968 40969 40979 41616" END
+
     END
     DEFAULT
        LPF warning STR_VAR warning=~Unrecognised immunity type %arguments% IN CRE_immunity~ END
@@ -3229,5 +3249,98 @@ BEGIN
 END
 
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               check that memorised spells are actually used
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION spell_use_script_check
+  INT_VAR type=0
+  STR_VAR script=""
+          log="spells_unused.txt"
+          filename=""
+BEGIN
+   INNER_ACTION BEGIN
+      COPY_EXISTING "%script%.bcs" "override"
+   END
+   PATCH_IF "%filename%" STRING_EQUAL "" BEGIN
+      SPRINT filename "%SOURCE_RES%"
+   END
+   GET_OFFSET_ARRAY spell_array CRE_V10_KNOWN_SPELLS
+   PHP_EACH spell_array AS ind=>spell_off BEGIN
+      READ_ASCII spell_off spell_resref
+      PATCH_MATCH "%spell_resref%" WITH
+      "SPPR.*" BEGIN
+         SET idscode=1
+      END
+      "SPWI.*" BEGIN
+         SET idscode=2
+      END
+      "SPIN.*" BEGIN
+         SET idscode=3
+      END
+      "SPCL.*" BEGIN
+         SET idscode=4
+      END
+      DEFAULT
+         SET idscode=0
+      END
+      PATCH_IF type=0 || idscode=0 BEGIN
+          SET found=0
+      END ELSE BEGIN
+          SET found=!(type=idscode)
+      END
+      PATCH_IF idscode>0 BEGIN
+         INNER_PATCH_SAVE res_num "%spell_resref%" BEGIN
+            DELETE_BYTES 0x0 4
+            INSERT_BYTES 0x0 1
+            WRITE_ASCII 0x0 "%idscode%" (1)
+         END
+         PATCH_IF FILE_CONTAINS "override/%script%.bcs" "%res_num%" BEGIN
+            SET found=1
+         END
+      END ELSE BEGIN
+      END
+      PATCH_IF !found BEGIN
+         PATCH_IF FILE_CONTAINS "override/%script%.bcs" "%spell_resref%" BEGIN
+            SET found=1
+         END
+      END
+      PATCH_IF !found BEGIN
+         PATCH_IF idscode>0 BEGIN
+            LPF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%spell_resref%" RET spell_name END
+            SPRINT input "%filename% %spell_name% (%spell_resref%)"
+         END ELSE BEGIN
+            SPRINT input "%filename% %spell_resref%"
+         END
+         LPF log_this STR_VAR file="%log%" input END
+      END
+
+   END
+END
+
+DEFINE_ACTION_FUNCTION spell_use_script_check_batch
+   INT_VAR type=0
+   STR_VAR prefix=""
+BEGIN
+    COPY_EXISTING_REGEXP ".*\.cre" override
+       SET match=0
+       FOR (offset=0x248;offset<0x270;offset+=8) BEGIN
+           READ_ASCII offset script_here
+           PATCH_MATCH "%script_here%" WITH
+           "%prefix%.*" BEGIN
+              SPRINT script "%script_here%"
+              SET match=1
+           END
+           DEFAULT
+           END
+       END
+       PATCH_IF match BEGIN
+          LPF spell_use_script_check INT_VAR type STR_VAR script filename="%SOURCE_RES%" END
+       END
+    BUT_ONLY
+END
 
 

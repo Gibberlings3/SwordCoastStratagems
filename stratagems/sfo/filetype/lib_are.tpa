@@ -10,7 +10,6 @@ DEFINE_ACTION_FUNCTION clone_area
            area=""
            edits=""
            editstring=""
-           allow_missing="no"
     BEGIN
          LAUNCH_ACTION_FUNCTION clone_template
                   INT_VAR allow_missing
@@ -271,9 +270,11 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY are_fields BEGIN
    trigger_name=>~0x0,ASCII20~
    destination=>~0x38,ASCII~
    trigger_type =>~0x20,SHORT~
+   trigger_cursor=>~0x34,LONG~
    trigger_info=>~0x64,LONG~
    trigger_script=>~0x7c,ASCII~
    trigger_dest=>~0x38,ASCII~
+   trigger_entrance=>~0x40,ASCII~
    trigger_bbleft=>~0x22,SHORT~
    trigger_bbtop=>~0x24,SHORT~
    trigger_bbright=>~0x26,SHORT~
@@ -307,6 +308,16 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY are_fields BEGIN
    animation_name=> ~0x0,ASCII20~
    animation_resource=> ~0x28,ASCII~
    animation_height=> ~0x38,SHORT~
+   animation_xloc=>"0x20,SHORT"
+   animation_yloc=>"0x22,SHORT"
+   animation_active=>"0x24,LONG"
+   ambient_name=> ~0x0,ASCII20~
+   ambient_xloc=>"0x20,SHORT"
+   ambient_yloc=>"0x22,SHORT"
+   ambient_radius=>"0x24,SHORT"
+   ambient_base_time=>"0x84,LONG"
+   ambient_time_deviation=>"0x88,LONG"
+   ambient_volume=>"0x2e,SHORT"
    ambient_sound1=>"0x30,ASCII"
    ambient_sound2=>"0x38,ASCII"
    ambient_sound3=>"0x40,ASCII"
@@ -317,6 +328,12 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY are_fields BEGIN
    ambient_sound8=>"0x68,ASCII"
    ambient_sound9=>"0x70,ASCII"
    ambient_sound10=>"0x78,ASCII"
+   ambient_sound_number=>"0x80,SHORT"
+   ambient_active=>"0x8c,LONG"
+   mapnote_xloc=>"0x0,SHORT"
+   mapnote_yloc=>"0x2,SHORT"
+   mapnote_text=>"0x4,LONG"
+   mapnote_color=>"0xa,SHORT"
 END
 LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=are_fields offset_base=~offset_base~ function_prefix=ARE END
 
@@ -340,6 +357,11 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY are_bit_fields BEGIN
       trap_set_off_by_NPC => ~0x60,6~
       trigger_deactivated => ~0x61,0~
       impassable_by_NPC => ~0x61,1~
+      // ambients
+      ambient_enabled=>~0x90,0~
+      ambient_looping=>~0x90,1~
+      ambient_ignore_radius=>~0x90,2~
+      ambient_random_order=>~0x90,3~
       // animations
       animation_enabled =>~0x34,0~
       animation_transparent_black=>~0x34,1~
@@ -353,6 +375,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY are_bit_fields BEGIN
       animation_palette=>~0x35,2~
       animation_mirrored=>~0x35,3~
       animation_show_in_combat=>~0x35,4~
+      // actors
       actor_present_0=>~0x40,0~
       actor_present_1=>~0x40,1~
       actor_present_2=>~0x40,2~
@@ -402,6 +425,23 @@ LAUNCH_ACTION_FUNCTION build_IDS_data_field_editors STR_VAR lookup_table=are_ids
 /////////////               composite data-field edits
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ARE_actor_defaults
+      INT_VAR offset_base=0
+      STR_VAR arguments=""
+BEGIN
+      LPF ARE_read_actor_resource INT_VAR offset_base RET actorname=value END
+      PATCH_IF FILE_EXISTS_IN_GAME "%actorname%.cre" BEGIN
+         INNER_ACTION BEGIN
+            COPY_EXISTING "%actorname%.cre" override
+                  READ_LONG 0x28 animation
+            BUT_ONLY
+         END
+         WRITE_LONG (0x30+offset_base) animation
+      END
+      LPF ARE_actor_present_always INT_VAR offset_base END
+      WRITE_LONG (offset_base+0x38) "-1"
+END
 
 DEFINE_PATCH_FUNCTION ARE_actor_x_coord
       INT_VAR offset_base=0
@@ -476,19 +516,17 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ARE_swap_scripts
-     STR_VAR arguments=""
-BEGIN
-   LPF patch_entry STR_VAR arguments="ARE_swap_script_core=>~%arguments%~ type=>actor" file_ext filename END
-END
 
-DEFINE_PATCH_FUNCTION ARE_swap_script_core
+DEFINE_PATCH_FUNCTION ARE_swap_scripts
      INT_VAR
         offset_base=0
      STR_VAR
         arguments=""
 BEGIN
-   LPF process_pair STR_VAR input= ~%arguments%~ RET oldscript=key newscript=value END
+   LPF return_first_pair STR_VAR list= ~%arguments%~ RET oldscript=key newscript=value END
+   PATCH_IF "%newscript%" STRING_EQUAL_CASE null BEGIN
+      SPRINT newscript ""
+   END
    PATCH_FOR_EACH script IN override class race general default specifics BEGIN
       LPF ~ARE_read_script_%script%~ INT_VAR offset_base=offset_base RET scriptvalue=value END
       PATCH_IF ~%scriptvalue%~ STRING_EQUAL_CASE ~%oldscript%~ BEGIN
@@ -496,6 +534,50 @@ BEGIN
       END
    END
 END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ARE_swap_scripts") ""
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////               reorders scripts so that identified script (which should be in the allocated scripts) is at the bottom
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ARE_move_script_to_bottom
+    STR_VAR arguments=""
+            filename=""
+BEGIN
+    CLEAR_ARRAY temp_array
+    WHILE "%arguments%" STRING_COMPARE_CASE "" BEGIN
+       LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+       TO_LOWER entry
+       SPRINT $temp_array("%entry%") ""
+    END
+    READ_ASCII offset_base actorname (0x20)
+    READ_ASCII (offset_base+0x80) actorresource
+    SET found_script=0
+    SET lowest_slot=0
+    SET last_slot=0
+    FOR (slot=0;slot<6;slot+=1) BEGIN
+      READ_ASCII (offset_base + 0x50 + 8*slot) script
+      TO_LOWER script
+      PATCH_IF "%script%" STRING_COMPARE_CASE "" BEGIN
+       PATCH_IF found_script BEGIN
+          WRITE_ASCIIE (offset_base + 0x50 + 8*last_slot) "%script%" (8)
+          WRITE_ASCIIE (offset_base + 0x50 + 8*slot) "%lower_script%" (8)
+          SET last_slot=slot
+       END ELSE BEGIN
+          PATCH_IF VARIABLE_IS_SET $temp_array("%script%") BEGIN
+             SET found_script=1
+             SET last_slot=slot
+             SPRINT lower_script "%script%"
+          END
+       END
+      END
+    END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("ARE_move_script_to_bottom") ""
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

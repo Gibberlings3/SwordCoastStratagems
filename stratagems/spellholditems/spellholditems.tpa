@@ -1,8 +1,10 @@
-DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // basically legacy code
+DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // mostly legacy code
+
+        //// define the difficulty
 
         LAF define_difficulty STR_VAR type=spellholditem RET difficulty_variable END
 
-//// read in familiars
+        //// read in familiars
 
         ACTION_IF FILE_EXISTS_IN_GAME "familiar.2da" BEGIN
               COPY_EXISTING "familiar.2da" "%workspace%"
@@ -12,171 +14,154 @@ DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // basically legacy code
 	COPY ~%workspace%/familiar.2da~ ~%workspace%~
 		COUNT_2DA_ROWS 2 ~rowcount~
 		FOR (i=1;i<~%rowcount%~;i=i+1) BEGIN
-			READ_2DA_ENTRY ~%i%~ 1 2 ~entry~
-			TO_LOWER ~entry~
-			SPRINT $item_name_familiars( ~%entry%~) ~~
+			READ_2DA_ENTRY i 1 2 entry
+			TO_LOWER entry
+			SPRINT $item_name_familiars(~%entry%~) ~~
 		END
-	BUT_ONLY_IF_IT_CHANGES
+	BUT_ONLY
+	
+	// go through all items in game and categorise them
+	
+	COPY_EXISTING_REGEXP GLOB ".*\.itm" "%workspace%"
+	      SPRINT entry "%SOURCE_RES%"
+	      PATCH_IF !VARIABLE_IS_SET $item_name_familiars("%entry%") BEGIN
+	         LPF ITM_read_droppable RET value END
+	         PATCH_IF value BEGIN
+                     LPF ITM_read_category RET cat=value END
+                     PATCH_IF cat=36 BEGIN //a bag
+                          SPRINT $container_list("%entry%") ""
+                     END ELSE BEGIN
+                          LPF ITM_is_stackable RET stackable=value END
+                          PATCH_IF stackable BEGIN
+                             SPRINT $stackable_list("%entry%") ""
+                          END ELSE BEGIN
+                             SPRINT $item_list("%entry%") ""
+                          END
+                     END
+                 END
+	      END
+	BUT_ONLY
+	
+	// make a stackable-item stealing script
 
-	OUTER_SET ~i~=0	
-	OUTER_SET ~j~=0
-	COPY_EXISTING_REGEXP GLOB ~.+\.itm$~ ~override~
-		PATCH_IF !VARIABLE_IS_SET $item_name_familiars( ~%magecheck%~) THEN BEGIN
-			PATCH_IF (SOURCE_SIZE>0x1) THEN BEGIN 
-				READ_BYTE 0x18 ~droppablebyte~
-                                PATCH_IF ((~%droppablebyte%~ BAND ~0b00000100~)=~0b00000100~) THEN BEGIN
-					READ_SHORT 0x1c ~containercheck~
-					PATCH_IF ~%containercheck%~=36 THEN BEGIN
-						SPRINT $containerlist(~%j%~) ~%SOURCE_RES%~
-						SET ~j~=~%j%~+1	
-					END ELSE BEGIN
-						SPRINT $itemlist(~%i%~) ~%SOURCE_RES%~
-						SET ~i~=~%i%~+1	
-					END
-				END   
-			END
-		END
-	BUT_ONLY_IF_IT_CHANGES
+	OUTER_SPRINT stackable_string ""
+	ACTION_PHP_EACH stackable_list AS entry=>discard BEGIN
+	   OUTER_SPRINT stackable_string ~%stackable_string%TakePartyItemAll("%entry%")~
+	END
 
-	OUTER_SET ~containercount~=~%j%~
-	OUTER_SET ~itemcount~=~%i%~
-
-<<<<<<<< .../stratagems-inline/blank.2da
-
->>>>>>>>
-
-	OUTER_SET ~bagcounter~=0
-	COPY ~.../stratagems-inline/blank.2da~ ~override/dw#bags.2da~
-		WHILE ~%bagcounter%~<~%containercount%~ BEGIN
-			SPRINT ~string~ $containerlist(~%bagcounter%~)
-			SET ~number~=~%bagcounter%~+10
-			SPRINT ~string~ ~%number%~^~  ~^~%string%~
-			INSERT_2DA_ROW ~%bagcounter%~ 0 ~%string%~
-			SET ~bagcounter~=~%bagcounter%~+1
-		END
-		INSERT_2DA_ROW 0 0 ~9 CDPOTIO2~
-		INSERT_2DA_ROW 0 0 ~8 CDAMMO2~
-		INSERT_2DA_ROW 0 0 ~7 CDAMMO~
-		INSERT_2DA_ROW 0 0 ~6 CDAMMOBT~
-		INSERT_2DA_ROW 0 0 ~5 CDPLBAG~
-		INSERT_2DA_ROW 0 0 ~4 CDPLCASE~
-		INSERT_2DA_ROW 0 0 ~3 CDPLQUIV~
-		INSERT_2DA_ROW 0 0 ~2 CDPOTBAG~
-		INSERT_2DA_ROW 0 0 ~1 CDPOTION~
-		INSERT_2DA_ROW 0 0 ~     ITEMS~
-		INSERT_2DA_ROW 0 0 ~XXX~
+	// make the bag-stealing file
+	
+	COPY ~.../stratagems-inline/blank~ ~override/dw#bags.2da~
 		INSERT_2DA_ROW 0 0 ~2DA V1.0~
+		INSERT_2DA_ROW 1 0 ~XXX~
+		INSERT_2DA_ROW 2 0 ~     ITEMS~
+		INSERT_2DA_ROW 3 0 ~1 CDPOTION~
+		INSERT_2DA_ROW 4 0 ~2 CDPOTBAG~
+		INSERT_2DA_ROW 5 0 ~3 CDPLQUIV~
+		INSERT_2DA_ROW 6 0 ~4 CDPLCASE~
+		INSERT_2DA_ROW 7 0 ~5 CDPLBAG~
+		INSERT_2DA_ROW 8 0 ~6 CDAMMOBT~
+		INSERT_2DA_ROW 9 0 ~7 CDAMMO~
+		INSERT_2DA_ROW 10 0 ~8 CDAMMO2~
+		INSERT_2DA_ROW 11 0 ~9 CDPOTIO2~
+		SET row=12
+		SET number=10
+		PHP_EACH container_list AS entry=>discard BEGIN
+		   INSERT_2DA_ROW row 0 "%number% %entry%"
+		   row+=1
+		   number+=1
+		END
+	BUT_ONLY
+	
+	// organise the items into list of 200 items
 
+        OUTER_SET item_index=0
+        OUTER_SET count=0
+        OUTER_SPRINT item_string ""
+        ACTION_PHP_EACH item_list AS item=>discard BEGIN
+           OUTER_SPRINT $item_index_here("%item%") ""
+           OUTER_SET count+=1
+           ACTION_IF count=200 BEGIN
+              OUTER_SET count=0
+              OUTER_SET item_index+=1
+              LAF spellhold_item_list_helper INT_VAR item_index STR_VAR item_string RET item_string END
+              ACTION_CLEAR_ARRAY item_index_here
+           END
+        END
+        // write the residue
+        ACTION_IF count>0 BEGIN
+            OUTER_SET item_index+=1
+            LAF spellhold_item_list_helper INT_VAR item_index STR_VAR item_string RET item_string END
+        END
 
-
-
-
-
-
-
-	OUTER_SET ~file_index~=0
-	OUTER_SET ~globalcounter~=0
-
-	OUTER_FOR (i=0;i<~%itemcount%~;i=i+200) BEGIN
-		OUTER_SET ~counter~=0
-		OUTER_SET ~file_index~=~%file_index%~+1
-		OUTER_SPRINT ~filename~ ~dw#spl~^~%file_index%~
-		COPY ~.../stratagems-inline/blank.2da~ ~override/%filename%.2da~
-			WHILE ~%counter%~<200 AND ~%globalcounter%~<~%itemcount%~ BEGIN
-				SPRINT ~string~ $itemlist(~%globalcounter%~)
-				SET ~number~=~%counter%~+1
-				SPRINT ~string~ ~%number%~^~  ~^~%string%~
-				INSERT_2DA_ROW ~%counter%~ 0 ~%string%~
-				SET ~counter~=~%counter%~+1
-				SET ~globalcounter~=~%globalcounter%~+1
-			END	
-			INSERT_2DA_ROW 0 0 ~     ITEMS~
-			INSERT_2DA_ROW 0 0 ~XXX~
-			INSERT_2DA_ROW 0 0 ~2DA V1.0~
-	END
-
+        // copy over extra items from Tweak Pack
 	COPY ~%scsroot%/spellholditems/dw#tpitm.2da~ ~override~
-	COPY ~%scsroot%/spellholditems/dw#dritm.2da~ ~override~
+	OUTER_SPRINT item_string ~%item_string%TakeItemListParty("dw#tpitm")~
 
+        // make the desk script that actually does all the stealing
+        
+        <<<<<<<< .../stratagems-inline/dw#shdsk.baf
+        IF
+          Global("DW_desk_steals","GLOBAL",1)
+        THEN
+            RESPONSE #100
+		     FadeToColor([0.0],0)
+                     SetGlobal("DW_desk_steals","GLOBAL",11)
+                     %stackable_string%
+                     Continue()
+        END
 
-	ACTION_IF !(FILE_EXISTS_IN_GAME ~cut41gbp.bcs~) THEN BEGIN // BP Improved Spellhold not installed
+        IF
+          Global("DW_desk_steals","GLOBAL",11)
+        THEN
+            RESPONSE #100
+		     FadeToColor([0.0],0)
+                   SetGlobal("DW_desk_steals","GLOBAL",12)
+                   TakeItemListParty("dw#bags")
+        END
 
+        IF
+          Global("DW_desk_steals","GLOBAL",12)
+        THEN
+            RESPONSE #100
+		     FadeToColor([0.0],0)
+                   SetGlobal("DW_desk_steals","GLOBAL",13)
+                   %item_string%
+        END
 
-		OUTER_SPRINT ~oldstring~ ~ActionOverride("ppireni2",DestroySelf())~
-		OUTER_SPRINT ~newstring~ ~%oldstring%~
-		OUTER_SPRINT ~newstring~ ~%newstring%~^~ActionOverride("Yoshimo",MakeUnselectable(1))ActionOverride("Yoshimo",LeaveParty())ActionOverride("Yoshimo",ChangeAIScript("",DEFAULT))ActionOverride("Yoshimo",SetDialog("yoshimox"))ActionOverride("Yoshimo",LeaveAreaLUA("AR1516","",[748.1064],6))~
-		OUTER_SPRINT ~newstring~ ~%newstring%~^~SetInterrupt(FALSE) ActionOverride("desk1",TakeItemListParty("dw#bags")) Wait(2)ActionOverride("desk1",TakeItemListParty("dw#tpitm"))~
-		OUTER_FOR (i=1;i<=~%file_index%~;i=i+1) BEGIN
-			OUTER_SPRINT ~supplement~ ~ActionOverride("desk1",TakeItemListParty("dw#spl~ ^ ~%i%~^~"))~
-			OUTER_SPRINT ~newstring~ ~%newstring%~^~%supplement%~
-		END
-		OUTER_SPRINT ~newstring~ ~%newstring%~^~Wait(4) SetInterrupt(TRUE)~
-		COPY_EXISTING ~cut41g.bcs~ ~override~
-			DECOMPILE_BCS_TO_BAF
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",MakeUnselectable(1))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",LeaveParty())~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",ChangeAIScript("",DEFAULT))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",SetDialog("yoshimox"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",LeaveAreaLUA("AR1516","",\[748.1064\],6))~ ~~
-			REPLACE_TEXTUALLY ~%oldstring%~ ~%newstring%~
-			COMPILE_BAF_TO_BCS
-		ACTION_IF FILE_EXISTS_IN_GAME ~u!cut41g.bcs~ THEN BEGIN
-			COPY_EXISTING ~u!cut41g.bcs~ ~override~
-			DECOMPILE_BCS_TO_BAF
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",MakeUnselectable(1))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",LeaveParty())~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",ChangeAIScript("",DEFAULT))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",SetDialog("yoshimox"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("Yoshimo",LeaveAreaLUA("AR1516","",\[748.1064\],6))~ ~~
-			REPLACE_TEXTUALLY ~%oldstring%~ ~%newstring%~
-			COMPILE_BAF_TO_BCS
-		END
+        IF
+          Global("DW_desk_steals","GLOBAL",13)
+        THEN
+            RESPONSE #100
+		     FadeToColor([0.0],0)
+                   SetGlobal("DW_desk_steals","GLOBAL",14)
+                   ApplySpell(Player1,NOHOLD_PARTY)
+                   ActionOverride(Player1,MakeUnselectable(1))
+                     StartCutSceneMode()
+                     StartCutScene("Cut41i")
+        END
+        >>>>>>>>
 
+        COMPILE ".../stratagems-inline/dw#shdsk.baf" EVALUATE_BUFFER
 
+        // install it into area file
+        
+        MAKE_PATCH
+           match=>"container_xloc=1689"
+           container_script=>dw#shdsk
+        END
+        LAF edit_area STR_VAR area=ar1515 editstring="patch_container=>patch_data" END
 
-		EXTEND_BOTTOM ~ar0028.bcs~ ~%scsroot%/spellholditems/ar0028add.baf~
+        // cosmetic tweak to cut41i
+        LAF swap_text STR_VAR file=cut41i.bcs swaps="\[20\.0\]=>[0.0]" END
 
-		EXTEND_TOP ~ar1512.bcs~ ~%scsroot%/spellholditems/ar1512add.baf~
+        // install the cutscene that teleports party back to AR1515 so the desk can steal their stuff
+        
+        LAF install STR_VAR file=dw#shcut.baf  END
 
-                LAF edit_creature STR_VAR creature="imoen10 imoen15 imoen211 imoen213" editstring="remove_spells=>~MINOR_GLOBE_OF_INVULNERABILITY~ add_spells=>~WIZARD_ENCHANTED_WEAPON~ add_known_spells=>~WIZARD_ENCHANTED_WEAPON WIZARD_REMOVE_CURSE~" END
-
-		LAF check_ini STR_VAR ini=spellhold_easycore RET value END
-		ACTION_IF value BEGIN
-                  COMPILE ~%scsroot%/spellholditems/cut41l.baf~
-		  COMPILE ~%scsroot%/spellholditems/dw#splct.baf~
-		  EXTEND_TOP ~ar1516.bcs~ ~%scsroot%/spellholditems/ar1516add.baf~
-
-                  COPY_EXISTING ~ar1515.bcs~ ~override~
-			DECOMPILE_AND_PATCH BEGIN
-			    REPLACE_TEXTUALLY ~GlobalGT("AsylumPlot","GLOBAL",54)~ ~Global("AsylumPlot","GLOBAL",54)~
-			END
-                  BUT_ONLY
-               END
-
-	END ELSE BEGIN
-
-		OUTER_SPRINT ~oldstring~ ~ActionOverride("desk1",TakeItemListParty("bpbags"))~
-		OUTER_SPRINT ~newstring~ ~ActionOverride("desk1",TakeItemListParty("dw#bags"))Wait(2)~
-		OUTER_FOR (i=1;i<=~%file_index%~;i=i+1) BEGIN
-			OUTER_SPRINT ~supplement~ ~ActionOverride("desk1",TakeItemListParty("dw#spl~ ^ ~%i%~^~"))~
-			OUTER_SPRINT ~newstring~ ~%newstring%~^~%supplement%~
-		END
-		COPY_EXISTING ~cut41gbp.bcs~ ~override~
-			DECOMPILE_BCS_TO_BAF
-			REPLACE_TEXTUALLY ~%oldstring%~ ~%newstring%~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM01"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM02"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM03"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM04"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM05"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM06"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM07"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM08"))~ ~~
-			REPLACE_TEXTUALLY ~ActionOverride("desk1",TakeItemListParty("BPITEM09"))~ ~~
-			COMPILE_BAF_TO_BCS
-
-
-	END
+        // patch it into Imoen's dream dialog
+        
+        LAF swap_text STR_VAR file=ppdrimo.dlg swaps="cut41i=>dw#shcut" END
 
 	// remove Clay Golem on Core or lower
 	
@@ -187,7 +172,7 @@ DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // basically legacy code
 	LAF edit_area STR_VAR area=ar1512 editstring="patch_actor=>patch_data" END
         LAF ssl_to_bcs STR_VAR script=dw#dsclg location=ssl END
 
-        // orog and minotaur spawns with extra gear, plus corpse with staff +1
+        // orog and minotaur spawns with extra gear
 
         LAF clone_creature STR_VAR creature="icmin01=>dw#sphmi" editstring="add_items=>chan01" END
         LAF clone_creature STR_VAR creature="orc05=>dw#spho1" editstring="add_items=>helm01" END
@@ -217,8 +202,8 @@ DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // basically legacy code
            add_item_inline'4=>~match=>"container_xloc=2656" item_resource=>bow03~
            add_item_inline'5=>~match=>"container_xloc=2656" item_resource=>bow05~
            add_item_inline'6=>~match=>"container_xloc=1483" item_resource=>slng01~
-           clone_actor_inline=>"match=>~actor_resource=ppbodhi4~ actor_x_coord=>1585 actor_y_coord=>1416 actor_name=>20323 actor_resource=>dw#sphco"
-           clone_actor_inline'=>"match=>~actor_resource=ppbodhi4~ actor_x_coord=>1585 actor_y_coord=>1416 actor_name=>20323 actor_resource=>dw#sphc2"
+           clone_actor_inline=>"match=>~actor_resource=ppbodhi4~ actor_x_coord=>2026 actor_y_coord=>1782 actor_name=>20323 actor_resource=>dw#sphco"
+           clone_actor_inline'=>"match=>~actor_resource=ppbodhi4~ actor_x_coord=>2026 actor_y_coord=>1782 actor_name=>20323 actor_resource=>dw#sphc2"
            patch_trigger_inline=>~match=>"trigger_script=spwnmon" trigger_script=>dw#sphmn~
         END
         LAF edit_area STR_VAR area=ar1512 edits=patch_data END
@@ -227,6 +212,29 @@ DEFINE_ACTION_FUNCTION ~spellholditems~ BEGIN  // basically legacy code
 
 
 END
+
+DEFINE_ACTION_FUNCTION spellhold_item_list_helper // not fully encapsulated, assumes item_index_here array
+      INT_VAR item_index=0
+      STR_VAR item_string=""
+      RET item_string
+BEGIN
+              COPY ".../stratagems-inline/blank" "override/dw#spl%item_index%.2da"
+			INSERT_2DA_ROW 0 0 ~2DA V1.0~
+			INSERT_2DA_ROW 1 0 ~XXX~
+                   	INSERT_2DA_ROW 2 0 ~     ITEMS~
+                   	SET row=3
+                   	SET number=1
+                   	PHP_EACH item_index_here AS item_here=>discard BEGIN
+                   	   INSERT_2DA_ROW row 0 "%number% %item_here%"
+                   	   row+=1
+                   	   number+=1
+                   	END
+              BUT_ONLY
+              OUTER_SPRINT item_string ~%item_string%TakeItemListParty("dw#spl%item_index%")~
+
+END
+
+
 
 DEFINE_ACTION_FUNCTION spellhold_legacy_bag BEGIN
 

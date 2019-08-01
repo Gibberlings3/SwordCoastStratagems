@@ -1,0 +1,234 @@
+///////////////////////////////////////////////////////////////////////////////////
+///
+/// This function adjusts the description text of antimagic spells (Ruby Ray, 
+/// Breach, etc) so as to accurately list the actual spells that they affect 
+/// (which, on a modded environment, may differ substantially from the baseline 
+/// spell).
+///
+/// String @1010 needs to read "The combat protections dispelled by Breach are" 
+/// or an appropriate translation
+///////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION correct_antimagic_descriptors BEGIN
+
+    // to ignore
+    
+    ACTION_FOR_EACH spell IN 
+    SPWI591 SPWI592 SPWI593 SPWI594 SPWI595 SPWI596 SPWI597 SPWI590
+    BEGIN
+       OUTER_SET $ignore_this_spell("%spell%")=1
+    END
+
+    // collect spells
+    
+    COPY_EXISTING_REGEXP GLOB "SP\(PR\|WI\)[1-9][0-9][0-9]\.spl" override
+         READ_BYTE 0x27 sectype
+         PATCH_MATCH "%sectype%" WITH
+         1 2 7 BEGIN
+              SPRINT resref "%SOURCE_RES%"
+              TO_UPPER resref
+              PATCH_IF !VARIABLE_IS_SET $ignore_this_spell("%resref%") BEGIN
+                READ_LONG 0x34 level
+                SET $sectype_list("%resref%")=sectype
+                SET $sectype_level("%resref%")=level
+                READ_STRREF 0x8 name
+                SPRINT $sectype_name("%resref%") "%name%"
+              END
+         END
+         DEFAULT
+         END
+    BUT_ONLY
+    
+    // add additional hardcoded entries (working around SR renamings)
+    //
+    // we include Improved Mantle, Spell Turning, Minor Spell Turning
+
+    ACTION_IF GAME_IS iwdee BEGIN
+       OUTER_SET old_improved_mantle_strref=35826
+       OUTER_SET old_spell_turning_strref=36680
+       OUTER_SET old_minor_spell_turning_strref=36637
+    END ELSE
+    ACTION_IF GAME_IS bgee BEGIN
+       OUTER_SET old_improved_mantle_strref=26637
+       OUTER_SET old_spell_turning_strref=25055
+       OUTER_SET old_minor_spell_turning_strref=26058
+    END ELSE BEGIN
+       OUTER_SET old_improved_mantle_strref=7617
+       OUTER_SET old_spell_turning_strref=10871
+       OUTER_SET old_minor_spell_turning_strref=10850
+    END
+    OUTER_SET $sectype_list("OLD_IMPROVED_MANTLE")=7
+    OUTER_SET $sectype_level("OLD_IMPROVED_MANTLE")=999
+    ACTION_GET_STRREF old_improved_mantle_strref string
+    OUTER_SPRINT $sectype_name("OLD_IMPROVED_MANTLE") "%string%"
+    
+    OUTER_SET $sectype_list("OLD_SPELL_TURNING")=1
+    OUTER_SET $sectype_level("OLD_SPELL_TURNING")=999
+    ACTION_GET_STRREF old_spell_turning_strref string
+    OUTER_SPRINT $sectype_name("OLD_SPELL_TURNING") "%string%"
+
+    OUTER_SET $sectype_list("OLD_MINOR_SPELL_TURNING")=1
+    OUTER_SET $sectype_level("OLD_MINOR_SPELL_TURNING")=999
+    ACTION_GET_STRREF old_minor_spell_turning_strref string
+    OUTER_SPRINT $sectype_name("OLD_MINOR_SPELL_TURNING") "%string%"
+    
+    // get the 'Magic Resistance' and 'Pierce Shield' strings
+    
+    COPY_EXISTING "%CLERIC_MAGIC_RESISTANCE%.spl" override
+          READ_STRREF 0x8 mr_string
+    BUT_ONLY
+    COPY_EXISTING "%WIZARD_PIERCE_SHIELD%.spl" override
+          READ_STRREF 0x8 ps_string
+    BUT_ONLY
+    // main edit on anti-spell spells
+
+    ACTION_FOR_EACH spell IN SPELL_THRUST SECRET_WORD PIERCE_MAGIC KHELBENS_WARDING_WHIP PIERCE_SHIELD RUBY_RAY_OF_REVERSAL SPELL_STRIKE BEGIN // can add any mod-added antimagic to this list
+      OUTER_SPRINT spell "WIZARD_%spell%"
+      ACTION_IF VARIABLE_IS_SET "%spell%" BEGIN
+         OUTER_SPRINT resref "%%spell%%"
+         LAF find_antimagic_level_max INT_VAR sectype=1 STR_VAR resref RET level_max END
+         ACTION_IF level_max>0 BEGIN
+            COPY_EXISTING "%resref%.spl" override
+                READ_LONG 0x50 desc_strref
+            BUT_ONLY
+            ACTION_GET_STRREF desc_strref desc_old
+            LAF return_effective_vs_string INT_VAR level_max sectype=1 RET string END
+            LAF substitute_antimagic_description INT_VAR level_max STR_VAR desc_old string RET desc_new END
+            STRING_SET_EVALUATE desc_strref "%desc_new%"
+         END
+      END
+    END
+
+    // breach is a special case, because the two lists in the vanilla description aren't properly
+    // segregated so we can't filter them separately.
+
+    LAF find_antimagic_level_max INT_VAR sectype=2 STR_VAR resref="%WIZARD_BREACH%" RET level_max_specific=level_max END
+    LAF find_antimagic_level_max INT_VAR sectype=7 STR_VAR resref="%WIZARD_BREACH%" RET level_max_combat=level_max END
+    COPY_EXISTING "%WIZARD_BREACH%.spl" override
+        READ_LONG 0x50 desc_strref
+    BUT_ONLY
+    ACTION_GET_STRREF desc_strref desc_old
+    LAF return_effective_vs_string INT_VAR level_max=level_max_specific sectype=2 RET string_specific=string END
+    LAF return_effective_vs_string INT_VAR level_max=level_max_combat sectype=7 RET string_combat=string END
+    OUTER_SPRINT string @1010
+    OUTER_SPRINT string "%string_specific%. %string% %string_combat%"
+    LAF substitute_antimagic_description INT_VAR level_max=5 STR_VAR desc_old string RET desc_new END
+    STRING_SET_EVALUATE desc_strref "%desc_new%"
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Secondary functions
+//
+// these functions violate encapsulation insofar as they use the arrays built above (but not otherwise)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// helper function to return a sorted string of spells of a certain type below a given level
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION return_effective_vs_string
+   INT_VAR level_max=0
+           sectype=0
+   RET string
+BEGIN
+   OUTER_SPRINT string ""
+   ACTION_CLEAR_ARRAY temp_array
+   OUTER_SET number_of_spells=0
+   ACTION_PHP_EACH sectype_list AS resref=>this_sectype BEGIN
+      ACTION_IF sectype=this_sectype BEGIN
+         OUTER_SET this_level=$sectype_level("%resref%")
+         ACTION_IF this_level<=level_max BEGIN
+            OUTER_SPRINT this_name $sectype_name("%resref%")
+            ACTION_IF !VARIABLE_IS_SET $temp_array("%this_name%") BEGIN
+               OUTER_SET number_of_spells +=1
+               OUTER_SET $temp_array("%this_name%")=1
+            END
+         END
+      END
+   END
+   ACTION_SORT_ARRAY_INDICES temp_array LEXICOGRAPHICALLY
+   OUTER_SET number_so_far=0
+   ACTION_PHP_EACH temp_array AS spell=>discard BEGIN
+        OUTER_SET number_so_far+=1
+        ACTION_IF number_so_far<number_of_spells BEGIN
+           OUTER_SPRINT string "%string%%spell%, "
+        END ELSE BEGIN
+           OUTER_SPRINT string "%string%and %spell%"
+        END
+   END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// helper function to extract the existing string from a description and substitute it
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION substitute_antimagic_description
+     INT_VAR level_max=0
+     STR_VAR desc_old=""
+             string=""
+     RET desc_new
+BEGIN
+     OUTER_INNER_PATCH_SAVE desc_new "%desc_old%" BEGIN
+        REPLACE_TEXTUALLY "%mr_string%" "DW_MAGIC_RESISTANCE_STRING"
+        REPLACE_TEXTUALLY "%ps_string%" "DW_PIERCE_SHYLD_STRING"
+        PHP_EACH sectype_list AS resref=>this_sectype BEGIN
+              SPRINT this_name $sectype_name("%resref%")
+              REPLACE_TEXTUALLY CASE_INSENSITIVE "%this_name%," "DW_PLACEHOLDER"
+              REPLACE_TEXTUALLY CASE_INSENSITIVE "%this_name%." "DW_PLACEHOLDER."
+        END
+     END
+     OUTER_INNER_PATCH_SAVE desc_new "%desc_new%" BEGIN
+        REPLACE_TEXTUALLY "DW_PLACEHOLDER.*\(%WNL\|%LNL%\|%MNL%\)*.*DW_PLACEHOLDER" DW_PLACEHOLDER
+        REPLACE_TEXTUALLY DW_PLACEHOLDER "%string%"
+        REPLACE_TEXTUALLY "DW_MAGIC_RESISTANCE_STRING" "%mr_string%"
+        REPLACE_TEXTUALLY "DW_PIERCE_SHYLD_STRING" "%ps_string%"
+     END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// helper function to find the maximum level associated with appropriate 221/230
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION find_antimagic_level_max
+    INT_VAR sectype=0
+    STR_VAR resref=""
+    RET level_max
+BEGIN
+    ACTION_CLEAR_ARRAY temp_array
+    OUTER_SET level_max="-1"
+    ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+       COPY_EXISTING "%resref%.spl" override
+               GET_OFFSET_ARRAY ab_array SPL_V10_HEADERS
+               PHP_EACH ab_array AS ind=>ab_off BEGIN
+                  GET_OFFSET_ARRAY2 fx_array ab_off ITM_V10_HEAD_EFFECTS
+                  PHP_EACH fx_array AS ind2=>fx_off BEGIN
+                     READ_SHORT fx_off opcode
+                     PATCH_MATCH "%opcode%" WITH
+                     221 230 BEGIN
+                        READ_LONG (fx_off+8) sectype_here
+                        PATCH_IF sectype_here=sectype BEGIN
+                           READ_LONG (fx_off+4) level_max
+                        END
+                     END
+                     146 148 BEGIN
+                         READ_ASCII (fx_off+ 0x14) resource
+                         SPRINT $temp_array("%resource%") ""
+                     END
+                     DEFAULT
+                     END
+                  END
+               END
+       BUT_ONLY
+       ACTION_IF level_max<0 BEGIN // if no result yet, iterate recursively through secondary spells
+          ACTION_PHP_EACH temp_array AS resref=>null BEGIN
+             ACTION_IF level_max<0 BEGIN
+                LAF find_antimagic_level_max INT_VAR sectype STR_VAR resref RET level_max END
+             END
+          END
+       END
+    END
+END

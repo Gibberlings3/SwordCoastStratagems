@@ -1,7 +1,7 @@
-INCLUDE ~%scsroot%/ds/ds.tph~
 
 
 DEFINE_ACTION_FUNCTION initial BEGIN
+
 
 ////////////////////////
 ///// BG1/BG2
@@ -12,6 +12,128 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    // configure tobex first, DS assumes it
    ACTION_IF !enhanced_edition BEGIN
        LAF configure_tobex END
+   END
+
+   // a (very) few bugfixes
+
+   // bizarrely, Shocking Grasp is listed as a Combat Protection 
+
+   LAF edit_spell STR_VAR spell=WIZARD_SHOCKING_GRASP editstring="secondary=>10" END
+
+   // the '15 hp damage' string for Enrage ought only to play for PCs
+   
+   CREATE EFF dw#rgstr // display the 'when rage ends, take 15 hp' string
+          WRITE_LONG 0x10 139
+          WRITE_LONG 0x14 1
+          WRITE_LONG 0x1c 20723
+          WRITE_LONG 0x24 1
+          WRITE_LONG 0x2c 100
+          
+    COPY_EXISTING spcl321.spl override
+          LPF ALTER_EFFECT INT_VAR match_opcode=139 opcode=177 parameter1=30 parameter2=2 STR_VAR resource=dw#rgstr END
+
+   // Fire Shield backlash should bypass MI
+
+   ACTION_FOR_EACH spell IN spcryod spimixd sppr951d sppr952d spwi403d spwi418d BEGIN
+     ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+       COPY_EXISTING "%spell%.spl" override
+         LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
+     END
+   END
+   
+   // Fire Shield has inconsistent power levels
+   
+   COPY_EXISTING 
+       "spwi403d.spl" override
+       "spwi418.spl" override
+           LPF ALTER_EFFECT INT_VAR power=4 END
+   
+   // these innate spells are marked as 'wizard' or 'priest
+
+   LAF edit_spell STR_VAR spell="BLACK_DRAGON_INSECT SHADOW_DRAGON_SHADOWS NYMPH_CONFUSION ABAZIGAL_SHOCKWAVE BURNING_MAN_CINDER_SHOWER BLUE_DRAGON_BREATH LAVA_BURST BEGUILE DEMOCHM SPYANC01" editstring="spell_type=>innate" allow_missing=1 END
+
+   // Protection from Magic scrolls don't remove undispellable buffs
+   
+   COPY_EXISTING "scrl07.itm" override
+       PATCH_FOR_EACH parameter2 IN 1 2 7 BEGIN
+       LPF CLONE_EFFECT INT_VAR match_opcode=142 opcode=221 timing=1 parameter1=10 parameter2 END
+       END
+       
+
+   ACTION_IF (is_bg2 && enhanced_edition) BEGIN
+
+     // on EE, certain weapons have been too-crudely given immunity to poison (they have multiple effects and the poison immunity
+     // blocks all of them)
+
+      ACTION_FOR_EACH item IN blun30 blun30c halb05 halb11 BEGIN
+           COPY_EXISTING "%item%.itm" override
+                LPF DELETE_EFFECT INT_VAR match_opcode=324 END
+                LPF CLONE_EFFECT INT_VAR match_opcode=12 match_parameter2b=32 opcode=324 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
+                LPF CLONE_EFFECT INT_VAR match_opcode=324 parameter2=77 END
+           BUT_ONLY
+      END
+      COPY_EXISTING marili.itm override
+                LPF DELETE_EFFECT INT_VAR match_opcode=318 END
+                LPF CLONE_EFFECT INT_VAR match_opcode=25 opcode=318 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
+                LPF CLONE_EFFECT INT_VAR match_opcode=318 parameter2=77 END
+      BUT_ONLY
+      COPY_EXISTING sw2h18.itm override
+               LPF DELETE_EFFECT INT_VAR match_opcode=324 END
+               LPF DELETE_EFFECT INT_VAR match_opcode=12 END
+               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=324 target=2 parameter2=55 STR_VAR resource="%SOURCE_RES%" END
+               LPF CLONE_EFFECT INT_VAR match_opcode=324 END
+               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=12 target=2 parameter2b=32 timing=9 probability1=10 dicenumber=2 dicesize=12 END
+      BUT_ONLY
+
+   END
+   
+   ACTION_IF enhanced_edition BEGIN
+
+      // also on EE, the default summoned-AI script gets confused if its target goes invisible
+      
+      LAF ALTER_SCRIPT_BLOCK 
+              STR_VAR script=bdsum00 
+                      match=AttackOneRound 
+                      swap_out1="!InParty(LastSeenBy(Myself))" 
+                      swap_in1="!InParty(LastSeenBy(Myself))See(LastSeenBy(Myself))" 
+                      swap_out2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)" 
+                      swap_in2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)See(LastSeenBy(Myself))" 
+      END
+
+
+   END
+
+   // on BG1, Clair De'lain should have a bow and doesn't. BGEE tries to fix this, but messes it up.
+   
+   ACTION_IF is_bg1 BEGIN
+     COPY_EXISTING "%tutu_var%claird.cre" override
+      REMOVE_CRE_ITEM "arow02 " "%tutu_var%arow02" "%tutu_var%bow04"
+      ADD_CRE_ITEM "%tutu_var%bow04" #0 #0 #0 NONE WEAPON EQUIP TWOHANDED
+      ADD_CRE_ITEM "%tutu_var%arow02" #10 #0 #0 NONE QUIVER
+     BUT_ONLY
+   END
+   
+   // a couple of problems in SR v4
+   
+   ACTION_IF demivrgvs BEGIN
+   
+      // Holy Smite blindness has the wrong duration
+
+      ACTION_IF FILE_EXISTS_IN_GAME "sppr313e.spl" BEGIN
+         OUTER_SPRINT file sppr313e
+      END ELSE BEGIN
+         OUTER_SPRINT file sppr313
+      END
+      COPY_EXISTING "%file%.spl" override
+         LPF ALTER_EFFECT INT_VAR match_opcode=74 duration=6 END
+      BUT_ONLY
+      
+      // summoned Death Knights ought to have their allegiance set to Match Target, else hostile ones get attacked
+      
+      COPY_EXISTING spcaco.eff override
+        WRITE_LONG 0x20 1
+      BUT_ONLY
+
    END
 
    // some general resources needed
@@ -26,9 +148,8 @@ DEFINE_ACTION_FUNCTION initial BEGIN
         LAF make_label STR_VAR label=dw#detectablespells END
         LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
    END
-   LAF detectable_spells INT_VAR fix_khelben=0 fix_old_ds=0 STR_VAR table = "%scsroot%/ds/ds_scs.2da" END  // additional SCS entries
-   LAF scs_ds_correction END // A couple of manual fixes
-
+   CLEAR_IDS_MAP // make sure any DS changes to splstate/stats are logged
+   
    LAF speed_debug STR_VAR string="Running Detectable Items" END
 
    LAF detectable_items END
@@ -65,17 +186,16 @@ DEFINE_ACTION_FUNCTION initial BEGIN
      END
      // some misc bugfixes
      LAF initial_bg2_misc END
-     LAF include STR_VAR file=stoneskin.tph END // eliminate a couple of stoneskins that are immune to breach
-     LAF initial_stoneskin END
+     // eliminate a couple of stoneskins that are immune to breach
+     LAF run STR_VAR file=initial_stoneskin END
 
      // some BG2-specific bits of Detectable X
-     LAF ds_detectable_weapon_enchantment END // weapon enchantment
+     
+     ACTION_IF !enhanced_edition BEGIN
+         LAF ds_detectable_weapon_enchantment END // weapon enchantment
+     END
      LAF include STR_VAR file=detecttrap.tph END
      LAF detect_trap END
-
-   END ELSE BEGIN
-   
-            LAF ds_resolve_stat INT_VAR index=109 STR_VAR id=~WEAPON_ENCHANTMENT~ END // since we use this occasionally even in BG1 scripts, we need it in stats.ids
 
    END
 ////////////////////////
@@ -92,6 +212,15 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    END
 
 ////////////////////////
+///// The old AI-initialise bit - do this before spells, so DS resources are available for scripts
+////////////////////////
+
+   OUTER_SPRINT component_loc caster_shared
+   LAF run STR_VAR file=ai_initialise END
+   OUTER_SPRINT component_loc initial
+   CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
+
+////////////////////////
 ///// Spell core
 ////////////////////////
 
@@ -100,11 +229,10 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    LAF install_spell_core END
 
 ////////////////////////
-///// The old AI-initialise bit
+///// Update antimagic descriptions to reflect any changes
 ////////////////////////
 
-   OUTER_SPRINT component_loc caster_shared
-   LAF run STR_VAR file=ai_initialise END
+  LAF run STR_VAR file=correct_antimagic_descriptors locbase=spell tra=spell END
 
 ////////////////////////
 ///// Easter egg
@@ -186,23 +314,27 @@ COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
    PATCH_IF value=0 BEGIN
       LPF FJ_CRE_EFF_V2 END
    END
-   LPF CRE_read_race RET race=value END
-   PATCH_MATCH ~%race%~ WITH
-   LYCANTHROPE DOPPLEGANGER BEGIN
+   // these edits are BG1/2 only
+   PATCH_IF !is_iwd BEGIN
+    LPF CRE_read_race RET race=value END
+    PATCH_MATCH ~%race%~ WITH
+    LYCANTHROPE DOPPLEGANGER BEGIN
        LPF CRE_general STR_VAR arguments=MONSTER END
-   END
-   DEFAULT END
-   LPF CRE_read_class RET class=value END
-   PATCH_MATCH ~%class%~ WITH
-   SKELETON SKELETON_WARRIOR BEGIN
+    END
+    DEFAULT END
+    LPF CRE_read_class RET class=value END
+    PATCH_MATCH ~%class%~ WITH
+    SKELETON SKELETON_WARRIOR BEGIN
       SPRINT skeleton ~%skeleton% %filename%~
-   END
-   DEFAULT END
-   // level adjustment - deals with the various BG1 creatures with Lev2=30
-   // hardcoded for speed
-   PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
+    END
+    DEFAULT END
+    // level adjustment - deals with the various BG1 creatures with Lev2=30
+    // hardcoded for speed
+    PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
       WRITE_BYTE 0x235 1
+    END
    END
+   // save and THAC0 fixes are in IWD too
    PATCH_IF !ignore_thac0 BEGIN
       LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
    END
@@ -219,7 +351,7 @@ BUT_ONLY
 VERBOSE
 
 // handle skeletons with weak resistances
-
+ACTION_IF "%skeleton%" STRING_COMPARE_CASE "" BEGIN
 ACTION_CLEAR_ARRAY patch_data
 ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
    match=>"class=SKELETON or class=SKELETON_WARRIOR"
@@ -239,6 +371,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data_sw BEGIN
 END
 LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data END
 LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data_sw END
+END
 
 END
 
@@ -261,32 +394,6 @@ DEFINE_ACTION_FUNCTION detectable_items BEGIN
   END ELSE BEGIN // need a blank autolib.slb
     COPY ~.../stratagems-inline/blank~ ~%workspace%/autolib.slb~
   END
-END
-
-////////////////////////////////////////////////////////////////////
-// Manual edits to some SCS detectable-spell effects
-////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION scs_ds_correction BEGIN
-   OUTER_SET opcode_stat= enhanced_edition? 328 : 318
-
-   // imprisonment and maze DS needs to be only a few seconds
-   MAKE_PATCH
-      match=>"opcode=%opcode_stat%"
-      timing=>0
-      duration=>3
-   END
-   LAF edit_spell STR_VAR spell="WIZARD_IMPRISONMENT DEMILICH_TRAP_SOUL WIZARD_MAZE PSIONIC_MAZE" editstring="patch_effect=>patch_data" END
-   
-   // a quirk in the Timestop opcode means its duration is half as long as stated (we'll fix an error with the sound effects at the same time)
-   
-   MAKE_PATCH
-      match=>"opcode is_in [%opcode_stat% 174]"
-      duration=>"duration / 2"
-   END
-   LAF edit_spell STR_VAR spell="WIZARD_TIME_STOP SPWISH17" editstring="patch_effect=>patch_data" allow_missing=1 END
-
-
 END
 
 ///////////////////////////////////////////////////////////////////////////
@@ -424,18 +531,9 @@ END
 DEFINE_ACTION_FUNCTION spell_shield BEGIN
   ACTION_IF !demivrgvs BEGIN
     
-    // externalise the spells cast by the Wand of Spell Striking
-
-    MAKE_PATCH
-       delete_effect=>"ability_icon is_in [spwi513b spwi608b]"
-       add_effect_inline=>"match=>~ability_icon=spwi513b~ opcode=>146 parameter2=>1 resource=>%WIZARD_BREACH% target=>2 timing=>1"
-       add_effect_inline'=>"match=>~ability_icon=spwi608b~ opcode=>146 parameter2=>1 resource=>%WIZARD_PIERCE_MAGIC% target=>2 timing=>1"
-    END
-    LAF edit_item STR_VAR item=wand18 edits=patch_data END
 
     LAF include STR_VAR file=~ardanis_spell_shield.tph~ END
     LAF ardanis_spell_shield END
-    LAF ds_altered_spell INT_VAR old_clone=226 new_clone=142 STR_VAR file=~spwi519.spl~ END // let other mods know spell is altered
   END
 END
 
@@ -471,36 +569,26 @@ ACTION_IF ( (MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0) && !enhanced_edition) BEG
                           ~%scsroot%/tra/ee/%LANGUAGE%/player1.tra~ END
 END
 
-// rudimentary scripting shift to make enemy-summoned Planetars and Devas avoid healing the party
+// rudimentary scripting shift to make enemy-summoned Planetars and Devas avoid healing the party and use their powers on allies instead
 
-DEFINE_PATCH_FUNCTION BCS_rep1
-STR_VAR trig_in=""  act_in=""
-RET trig_out act_out
-BEGIN
-   INNER_PATCH_SAVE trig_out "%trig_in%" BEGIN
-      REPLACE_TEXTUALLY "Allegiance(Myself,GOODCUTOFF)" "" // allow for EE
-      REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,GOODCUTOFF)See([PC])"
+ACTION_FOR_EACH script IN plangood devagood BEGIN
+   ACTION_IF !enhanced_edition BEGIN
+      COPY_EXISTING "%script%.bcs" override
+        DECOMPILE_AND_PATCH BEGIN
+           REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,GOODCUTOFF)See([PC])"
+        END
+      BUT_ONLY
    END
-   SPRINT act_out "%act_in%"
-END
-
-DEFINE_PATCH_FUNCTION BCS_rep2
-STR_VAR trig_in="" act_in=""
-RET trig_out act_out
-BEGIN
-   PATCH_IF INDEX ("See(\[PC\])" "%trig_in%") >=0 BEGIN
-      INNER_PATCH_SAVE trig_out "%trig_in%" BEGIN
-      REPLACE_TEXTUALLY "Allegiance(Myself,GOODCUTOFF)" "" // allow for EE
-      REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,EVILCUTOFF)See([EVILCUTOFF.HUMANOID])"
-   END
-   SPRINT act_out "%act_in%"
-   END ELSE BEGIN
-      SPRINT trig_out ""
-      SPRINT act_out ""
+   LAF CLONE_SCRIPT_BLOCK 
+          STR_VAR script
+                  match=~See(\[PC\])~
+                  swap_out1=~See(\[PC\])~
+                  swap_in1=~See([EVILCUTOFF.HUMANOID])~
+                  swap_out2=~Allegiance(Myself,GOODCUTOFF)~
+                  swap_in2=~Allegiance(Myself,EVILCUTOFF)~
    END
 END
 
-LAF edit_script STR_VAR script="plangood devagood" editstring="patch=>rep1 patch=>rep2" END
 
 END
 
@@ -514,6 +602,13 @@ END
 
 DEFINE_ACTION_FUNCTION install_spell_core BEGIN
 
+   // preamble piece: install BG2 version of Mordenkainen's Sword on IWD
+
+   ACTION_IF is_iwd BEGIN
+       OUTER_SPRINT component_loc iwdspells
+       LAF run STR_VAR files=bg2spells_morsword locbase=iwdspells END
+   END
+
    OUTER_SPRINT component_loc spell
    // definition blocks
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install BEGIN
@@ -521,6 +616,7 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            web_and_the_large => dw#web_large
            elemental_area_immunity=>dw#elem_area_immune
            fiend_summoning=>dw#fiend_summoning
+           npc_fiend_summoning_backup=>dw#fiend_summoning_backup
            bonus_spell_scrolls=>dw#extra_scrolls
            freedom_scrolls=>dw#freedomscroll
            elemental_arrows=>dw#elemental_arrows
@@ -545,26 +641,48 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            skull_trap=>dw#skulltrap
            clone_slots=>dw#clone_slots
            npc_symbols=>dw#npcsymbols
+        //   polymorph_tweaks=>dw#polymorphtweaks
    END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_divine BEGIN
            sanctity_of_mind=>dw#sanctity
            circle_of_bones_duration=>dw#circleofbones
            rebalance_lathander=>dw#rebalancelathander
            enhance_thorn_spray=>dw#thornspray
+           entropy_shield_abjuration=>dw#entropyshield
+           nerf_beetles=>dw#nerfbeetles
    END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_arcane BEGIN
            acid_storm_tonedown=>dw#acidstorm
            rebalance_force_missiles=>dw#forcemissiles
            create_boneguard=>dw#createboneguard
    END
+   ACTION_IF is_iwd BEGIN
+      OUTER_SPRINT $spell_install_iwd_divine("cure_cause_alignment") "dw#curecausealignment"
+   END
    // skip some, depending on install
    ACTION_IF !is_bg2 BEGIN
-      ACTION_FOR_EACH file IN fiend_summoning bonus_spell_scrolls freedom_scrolls spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
+      ACTION_FOR_EACH file IN bonus_spell_scrolls freedom_scrolls fiend_summoning BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF is_iwd BEGIN
+      LAF check_label STR_VAR label=dw#bg2spells_insect RET value END
+      ACTION_IF !value BEGIN
+         OUTER_SPRINT $skip_component("insect_plague") ""
+      END
+   END
+   ACTION_IF !(is_bg2 || is_iwd) BEGIN
+      ACTION_FOR_EACH file IN spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
          OUTER_SPRINT $skip_component("%file%") ""
       END
    END
    ACTION_IF !is_bg1 BEGIN
       ACTION_FOR_EACH file IN elemental_arrows extra_healing BEGIN
+         OUTER_SPRINT $skip_component("%file%") ""
+      END
+   END
+   ACTION_IF is_iwd BEGIN
+      ACTION_FOR_EACH file IN elemental_summoning BEGIN
          OUTER_SPRINT $skip_component("%file%") ""
       END
    END

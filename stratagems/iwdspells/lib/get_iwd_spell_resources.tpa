@@ -1,6 +1,7 @@
-DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" smtables_list="" proj_list="" location="" locbase="" locabs=""  BEGIN
+DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" smtables_list="" scroll_price_list="" proj_list="" location="" locbase="" locabs=""  BEGIN
 
 
+      ACTION_IF GAME_IS iwdee BEGIN
       // generate list of IWD resources not in BG2
       
       LAF spell_comparison END
@@ -15,6 +16,7 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
              SPRINT $not_in_bg2("%key%") "%value%"
           END
       BUT_ONLY
+      END
 
       // load in not-copy list
       
@@ -55,14 +57,15 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
        END
       END
 
-     // Multiple Force Missile projectile turns up multiple times on the list; need to be in order, I think
-     ACTION_IF "%proj_list%" STRING_EQUAL_CASE "arcane_proj.txt" BEGIN
-      LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="mfmiss 436" repeat=no END
-      OUTER_FOR (i=437;i<=446;i+=1) BEGIN
-          LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="mfmiss2 %i%" repeat=no END
+
+      // Multiple Force Missile projectile turns up multiple times on the list; need to be in order, I think
+      ACTION_IF ("%proj_list%" STRING_EQUAL_CASE "arcane_proj.txt" && enhanced_edition) BEGIN
+        LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="mfmiss 436" repeat=no END
+        OUTER_FOR (i=437;i<=446;i+=1) BEGIN
+            LAF log_this STR_VAR file="%proj_list%" locabs="%resource_loc%" input="mfmiss2 %i%" repeat=no END
+        END
       END
-     END
-      
+
       // Read in list of iterate overrides
       
       LAF read_in_assoc_array STR_VAR file="force_iterate_start.2da" location="%iwdspells_data%" RET list END
@@ -78,6 +81,9 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
       END
       COPY ".../stratagems-inline/blank" "%resource_loc%/%resref_list%"
       COPY ".../stratagems-inline/blank" "%resource_loc%/%smtables_list%"
+      COPY ".../stratagems-inline/blank" "%resource_loc%/%scroll_price_list%"
+      COPY ".../stratagems-inline/blank" "%data_loc%/scroll_prices.2da"
+      COPY ".../stratagems-inline/blank" "%data_loc%/smtable_entries.2da"
 
       <<<<<<<< .../stratagems-inline/spells_used.2da
       resref   spellname    parent   parent_ext
@@ -88,9 +94,13 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
 
       // quick ad hoc recording of strings needed
       
-      LAF log_this STR_VAR file=strings_used.txt input="119397" END // Cure Moderate Wounds temple string - includes the +100000
-      OUTER_FOR (input=121648;input<=121654;input+=1) BEGIN
+      ACTION_IF "%file%" STRING_EQUAL_CASE "iwd_divine.2da" BEGIN
+        LAF log_this STR_VAR file=strings_used.txt input="119397" END // Cure Moderate Wounds temple string - includes the +100000
+      END
+      ACTION_IF "%file%" STRING_EQUAL_CASE "iwd_arcane.2da" BEGIN
+        OUTER_FOR (input=121648;input<=121654;input+=1) BEGIN
               LAF log_this STR_VAR file=strings_used.txt input END // Seven Eyes strings - includes the +100000
+        END
       END
       // main install
 
@@ -122,6 +132,14 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
                   COPY_EXISTING "%resref%A.BAM" "%resource_loc%/%spellname%"
             END
             LAF iter_resource INT_VAR skip_payload_on_ignore=1 STR_VAR to_check func=iterfunc_get_resources ignore_func=ignore_wrapper immunity_func=iterfunc_log_immunities END
+            // get scroll data
+            OUTER_SPRINT scrollname "%spellname%_SCROLL"
+            ACTION_IF VARIABLE_IS_SET "%%scrollname%%" BEGIN
+                COPY_EXISTING "%%scrollname%%.itm" override
+                     READ_LONG 0x34 price
+                     LPF log_this STR_VAR file=scroll_prices.2da input="%spellname% %price%" END
+                BUT_ONLY
+            END
 
       END // end of copy routine
 
@@ -129,19 +147,24 @@ DEFINE_ACTION_FUNCTION get_iwd_spell_resources  STR_VAR file="" resref_list="" s
       // manual edits go here
 
 
+      ACTION_IF GAME_IS "iwdee" BEGIN
       // get animations/sounds for beetles
-
-      MKDIR "%resource_loc%/beetle/bam"
-      COPY_EXISTING_REGEXP "mbbm.*\.bam" "%resource_loc%/beetle/bam"
-      MKDIR "%resource_loc%/beetle/wav"
-      COPY_EXISTING_REGEXP "bomba.*\.wav" "%resource_loc%/beetle/wav"
-
+        MKDIR "%resource_loc%/beetle/bam"
+        COPY_EXISTING_REGEXP "mbbm.*\.bam" "%resource_loc%/beetle/bam"
+        MKDIR "%resource_loc%/beetle/wav"
+        COPY_EXISTING_REGEXP "bomba.*\.wav" "%resource_loc%/beetle/wav"
+      END
       // get entries for SMTABLES
 
       ACTION_IF FILE_EXISTS "%data_loc%/smtable_entries.2da" BEGIN
          COPY "%data_loc%/smtable_entries.2da" "%resource_loc%/%smtables_list%"
       END
 
+      // store scroll prices
+
+      ACTION_IF FILE_EXISTS "%data_loc%/scroll_prices.2da" BEGIN
+         COPY "%data_loc%/scroll_prices.2da" "%resource_loc%/%scroll_price_list%"
+      END
 
 END
 
@@ -261,11 +284,18 @@ BEGIN
             OUTER_SET $processed("%strref%")=1
          END
       END
-      COPY_EXISTING "%traloc%" "%traloc%"
+      
+      ACTION_PHP_EACH tra_output AS null=>line BEGIN
+         APPEND_OUTER "%traloc%" "%line%" KEEP_CRLF
+      END
+
+      /*
+      COPY "%traloc%" "%traloc%"
          PHP_EACH tra_output AS null=>line BEGIN
             INSERT_2DA_ROW 0 0 "%line%"
          END
       BUT_ONLY
+      */
       ACTION_IF make_lookup BEGIN
        COPY_EXISTING "%lookuploc%" "%lookuploc%"
          PHP_EACH tra_map AS strref=>tra_ind BEGIN
@@ -279,13 +309,17 @@ DEFINE_ACTION_FUNCTION process_tra_entries_all
 BEGIN
   ACTION_IF get_all_languages BEGIN
    ACTION_FOR_EACH language IN cs_CZ de_DE en_US es_ES fr_FR it_IT ko_KR pl_PL ru_RU tr_TR BEGIN // current list of IWD languages
+     ACTION_IF GAME_IS "bg2ee" && "%language%" STRING_EQUAL_CASE tr_TR BEGIN
+        OUTER_SPRINT language zh_CN
+     END
      ACTION_IF !("%language%" STRING_EQUAL_CASE "%EE_LANGUAGE%") BEGIN // do your current language last, so WEIDU doesn't save your change
        MKDIR "%resource_loc%/tra/%language%"
        COPY ".../stratagems-inline/blank" "%resource_loc%/tra/%language%/iwdspells.tra"
-       AT_NOW "setup-%scsroot% %scsroot%\%iwdspells_lib%\process_strref.tp2 --no-auto-tp2 --use-lang %language% --force-install 1000 --yes"
+       COPY "%scsroot%/%iwdspells_lib%/process_strref.tp2" "%workspace%" EVALUATE_BUFFER
+       AT_NOW "setup-%scsroot% %workspace%\process_strref.tp2 --no-auto-tp2 --use-lang %language% --force-install 1000 --yes"
      END
    END
-   AT_NOW "setup-%scsroot% --no-auto-tp2 --use-lang %EE_LANGUAGE% --yes"
+   AT_NOW "setup-%scsroot% --no-auto-tp2 --use-lang %EE_LANGUAGE% --yes" // reset original language
   END
   LAF include STR_VAR file=get_iwd_spell_resources.tpa location="%iwdspells_lib%" END
   LAF process_tra_entries STR_VAR tra="%EE_LANGUAGE%/iwdspells.tra" lookup="iwd_strref.txt" END

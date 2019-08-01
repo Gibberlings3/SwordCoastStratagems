@@ -1,0 +1,234 @@
+//////////////////////////////////////////
+/// Flip an area along its vertical axis
+///
+/// You need to supply (in 'file_loc') 
+/// a properly-named TIS file and associated
+/// PVRZ files, plus (for legacy use) a legacy
+/// TIS file with a 'v' name suffix, plus
+/// the height,search and light maps
+//////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION flip_area
+   STR_VAR area=""
+           file_loc=""
+BEGIN
+   // get the wed file
+   COPY_EXISTING "%area%.are" override
+           READ_ASCII 0x8 wed
+   BUT_ONLY
+   // edit the wed file
+   COPY_EXISTING "%wed%.wed" override
+        // get the width in pixels of the area
+        READ_LONG 0x10 overlay_off
+        READ_SHORT overlay_off num_tiles_x
+        READ_SHORT overlay_off+2 num_tiles_y
+        SET width_total=num_tiles_x*0x40
+        // get vertex, polygon offsets
+        READ_LONG 0x14 sec_header_off
+        READ_LONG (0x8+sec_header_off) initial_vertex_offset
+        READ_LONG sec_header_off wall_polygon_number
+        READ_LONG (0x4 + sec_header_off) initial_polygon_offset
+        // go through polygons
+        FOR (n=0;n<wall_polygon_number;n+=1) BEGIN
+           SET polygon_offset = initial_polygon_offset + 0x12 * n
+           READ_LONG polygon_offset initial_vertex_index
+           READ_LONG polygon_offset+4 vertex_number
+           // vertex inversion
+           LPF invert_vertex_sequence_order INT_VAR initial_vertex_offset initial_vertex_index vertex_number width_total END
+           // bounding box inversion
+           LPF flip_bounding_box INT_VAR layout=1 offset=polygon_offset+0xa width_total END
+        END
+        // invert overlay data in first overlay
+        SET tilemap_start=LONG_AT (0x10 + overlay_off)
+        FOR (h=0;h<num_tiles_y;h+=1) BEGIN
+           READ_ASCII (tilemap_start + 0xa * h * num_tiles_x) data (num_tiles_x * 0xa)
+           LPF invert_string INT_VAR block_size=0xa STR_VAR string="%data%" RET data_new=string END
+           WRITE_ASCIIE (tilemap_start + 0xa * h * num_tiles_x) "%data_new%"
+           // reindex
+           FOR (w=0;w<num_tiles_x;w+=1) BEGIN
+              WRITE_SHORT (tilemap_start + 0xa * (h * num_tiles_x + w)) (h * num_tiles_x + w) 
+           END
+        END
+
+   BUT_ONLY
+   // invert the area file
+   COPY_EXISTING "%area%.are" override
+      // invert all vertices
+      READ_LONG 0x7c vert_off
+      READ_SHORT 0x80 vert_num
+      FOR (n=0;n<vert_num;n+=1) BEGIN
+         LPF flip_vertex INT_VAR width_total offset=vert_off + 4*n END
+      END
+      // flip actor locations
+      GET_OFFSET_ARRAY act_arr ARE_V10_ACTORS
+      PHP_EACH act_arr AS ind=>act_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=act_off+0x20 END
+         LPF flip_vertex INT_VAR width_total offset=act_off+0x24 END
+         LPF flip_orientation INT_VAR offset=0x34+act_off END
+      END
+      // flip regions
+      GET_OFFSET_ARRAY reg_arr ARE_V10_REGIONS
+      PHP_EACH reg_arr AS ind=>reg_off BEGIN
+         LPF flip_bounding_box INT_VAR layout=2 width_total offset=reg_off+0x22 END
+         LPF flip_vertex INT_VAR width_total offset=reg_off+0x70 END
+         LPF flip_vertex INT_VAR width_total offset=reg_off+0x84 END
+      END
+      // flip spawn points
+      GET_OFFSET_ARRAY spawn_arr ARE_V10_SPAWN_POINTS
+      PHP_EACH spawn_arr AS ind=>spawn_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=spawn_off+0x20 END
+      END
+      // flip entrances
+      GET_OFFSET_ARRAY ent_arr ARE_V10_ENTRANCES
+      PHP_EACH ent_arr AS ind=>ent_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=ent_off+0x20 END
+         LPF flip_orientation INT_VAR offset=0x24+ent_off END
+      END
+      // flip containers
+      GET_OFFSET_ARRAY cont_arr ARE_V10_CONTAINERS
+      PHP_EACH cont_arr AS ind=>cont_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=cont_off+0x20 END
+         LPF flip_vertex INT_VAR width_total offset=cont_off+0x34 END
+         LPF flip_bounding_box INT_VAR layout=2 width_total offset=cont_off+0x38 END
+      END
+      // flip ambients
+      GET_OFFSET_ARRAY amb_arr ARE_V10_AMBIENTS
+      PHP_EACH amb_arr AS ind=>amb_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=amb_off+0x20 END
+      END
+      // flip doors
+      GET_OFFSET_ARRAY door_arr ARE_V10_DOORS
+      PHP_EACH door_arr AS ind=>door_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=door_off+0x74 END
+      END
+      // flip animations
+      GET_OFFSET_ARRAY anim_arr ARE_V10_ANIMATIONS
+      PHP_EACH anim_arr AS ind=>anim_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=anim_off+0x20 END
+      END
+      // flip automap notes
+      GET_OFFSET_ARRAY auto_arr 0xc4 4 0xc8 4 0 0 0x34
+      PHP_EACH auto_arr AS ind=>auto_off BEGIN
+         LPF flip_vertex INT_VAR width_total offset=auto_off END
+      END
+   BUT_ONLY
+   // copy over the inverted files
+   COPY "%file_loc%/%area%sr.bmp" override
+   COPY "%file_loc%/%area%ht.bmp" override
+   COPY "%file_loc%/%area%lm.bmp" override
+   
+   ACTION_IF GAME_IS "bg2ee iwdee eet bgee" BEGIN
+      COPY "%file_loc%/%area%.tis" override
+      ACTION_BASH_FOR "%file_loc%" ".*\.pvrz" BEGIN
+         COPY "%BASH_FOR_FILESPEC%" override
+      END
+   END ELSE BEGIN
+      COPY "%file_loc%/%area%v.tis" "override/%area%.tis"
+   END
+
+
+
+
+
+END
+//////////////////////////////////////////
+/// Take an orientation and flip it L-R
+//////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION flip_orientation
+  INT_VAR offset=0
+BEGIN
+  WRITE_SHORT offset (0x10 - SHORT_AT offset)
+END
+
+
+//////////////////////////////////////////
+/// Take a vertex and flip it L/R
+//////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION flip_vertex
+  INT_VAR width_total=0
+          offset=0
+BEGIN
+  WRITE_SHORT offset (width_total - SHORT_AT offset)
+END
+
+//////////////////////////////////////////
+/// Take a bounding box and flip it L/R
+///
+/// Multiple layouts. 1=LRTB, 2=LTRB
+///
+//////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION flip_bounding_box
+  INT_VAR width_total=0
+          offset=0
+          layout=0
+BEGIN
+  PATCH_MATCH "%layout%" WITH
+  1 BEGIN step=2 END
+  2 BEGIN step=4 END
+  DEFAULT
+     PATCH_FAIL "unknown bounding box layout"
+  END
+  READ_SHORT offset left
+  READ_SHORT (offset+step) right
+  WRITE_SHORT offset (width_total - right)
+  WRITE_SHORT (offset+step) (width_total - left)
+END
+
+//////////////////////////////////////////
+/// Take the sequence of vertices defining a polygon.
+/// Flip each element, then reverse the order, from
+/// 0 1 2 3 ... N to 0 N ... 3 2 1
+//////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION invert_vertex_sequence_order
+  INT_VAR initial_vertex_offset=0
+          initial_vertex_index=0
+          vertex_number=0
+          width_total=0
+BEGIN
+  // flip individual elements
+  FOR (n=0;n<vertex_number;n+=1) BEGIN
+     LPF flip_vertex INT_VAR width_total offset=initial_vertex_offset + 4*(initial_vertex_index + n) END
+  END
+  // do the inversion
+  READ_ASCII initial_vertex_offset + 4*(initial_vertex_index + 1) data
+  LPF invert_string INT_VAR block_size=4 STR_VAR string="%data%" RET data_new=string END
+  WRITE_ASCIIE initial_vertex_offset + 4*(initial_vertex_index + 1) "%data_new%"
+END
+
+//////////////////////////////////////////
+/// Take a string of M x N elements, treat
+/// it as M N-element-long substrings,
+/// and invert it
+//////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION invert_string
+    INT_VAR block_size=0
+    STR_VAR string=""
+    RET string
+BEGIN
+    SET number=(STRING_LENGTH "%string%") / block_size
+    SPRINT string_old "%string%"
+    SPRINT string ""
+    INNER_PATCH "%string_old%" BEGIN
+      FOR (n=0;n<number;n+=1) BEGIN
+          SET index=n*block_size
+          READ_ASCII index data (block_size)
+          SPRINT string "%data%"^"%string%"
+      END
+    END
+END
+
+DEFINE_ACTION_FUNCTION invert_string
+   INT_VAR block_size=0
+   STR_VAR string=""
+   RET string
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF invert_string INT_VAR block_size STR_VAR string RET string END
+   END
+END

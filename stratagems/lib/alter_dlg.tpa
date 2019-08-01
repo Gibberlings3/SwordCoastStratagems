@@ -1,0 +1,244 @@
+///////////////////////////////////////////////////////////////////////////////
+////Find the index number of the first dlg block matching a certain string
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION FIND_DLG_BLOCK
+   INT_VAR debug=0
+           multiple=0
+   STR_VAR dialog=""
+           match=""
+           match1=""
+           match2=""
+           match3=""
+           match4=""
+           match5=""
+   RET block_number
+BEGIN
+ COPY_EXISTING "%dialog%.dlg" override
+  DECOMPILE_AND_PATCH BEGIN
+   PATCH_IF debug BEGIN
+      READ_ASCII 0x0 all_data (BUFFER_LENGTH)
+      PATCH_PRINT "%all_data%"
+   END
+   PATCH_IF multiple BEGIN
+      SPRINT block_number ""
+   END ELSE BEGIN
+      SET block_number="-1"
+   END
+   SET current_index=0
+   SET finished=0
+   WHILE !finished BEGIN
+       SET end_point= INDEX_BUFFER ("IF \(WEIGHT #[0-9]+ +\)?~[^~]*~ THEN BEGIN [0-9]+" (current_index+1) )
+       PATCH_IF end_point<0 BEGIN
+          SET finished=1
+          SET end_point=BUFFER_LENGTH - 1
+       END
+       SET length=(end_point - current_index)
+       READ_ASCII current_index current_block (length)
+       SET found_match=1
+       PATCH_FOR_EACH variable IN match match1 match2 match3 match4 match5 BEGIN
+          SPRINT this_var EVAL "%%variable%%"
+          PATCH_IF "%this_var%"  STRING_COMPARE "" BEGIN
+                 PATCH_IF INDEX ("%this_var%" "%current_block%") <0 BEGIN
+                    SET found_match=0
+                 END
+          END
+       END
+       PATCH_IF found_match BEGIN
+           PATCH_IF block_number>=0 && !multiple BEGIN
+              PATCH_WARN "multiple matches found by 'find_dlg_block' function in script %SOURCE_RES%"
+           END ELSE BEGIN
+              INNER_PATCH "%current_block%" BEGIN
+                 REPLACE_EVALUATE "IF \(WEIGHT #[-0-9]+ +\)?~[^~]*~ THEN BEGIN \([0-9]+\)[^0-9]" BEGIN
+                   PATCH_IF multiple BEGIN
+                      SPRINT block_number "%block_number% %MATCH2%"
+                   END ELSE BEGIN
+                      SET block_number="%MATCH2%"
+                   END
+                 END
+                 ""
+
+              END
+
+           END
+       END
+       SET current_index=end_point
+   END
+  END
+ BUT_ONLY
+END
+
+
+
+DEFINE_ACTION_FUNCTION ALTER_DLG_BLOCK
+   INT_VAR debug=0
+           silent=0
+           multiple=1
+   STR_VAR match=""
+           match1=""
+           match2=""
+           match3=""
+           match4=""
+           match5=""
+           swap_out="null_ignore_no_match"
+           swap_out1="null_ignore_no_match"
+           swap_out2="null_ignore_no_match"
+           swap_out3="null_ignore_no_match"
+           swap_out4="null_ignore_no_match"
+           swap_out5="null_ignore_no_match"
+           swap_in=""
+           swap_in1=""
+           swap_in2=""
+           swap_in3=""
+           swap_in4=""
+           swap_in5=""
+           function=""
+BEGIN
+ OUTER_SET value=0
+ OUTER_SPRINT output_data ""
+ COPY_EXISTING "%dialog%.dlg" override
+  DECOMPILE_AND_PATCH BEGIN
+   PATCH_IF debug BEGIN
+      READ_ASCII 0x0 all_data (BUFFER_LENGTH)
+      PATCH_PRINT "%all_data%"
+   END
+   SET matched=0
+   SET current_index=0
+   SET finished=0
+   SET block_counter=0
+   WHILE !finished BEGIN
+       SET end_point= INDEX_BUFFER ("IF \(WEIGHT #[-0-9]+ \)?~[^~]*~ THEN BEGIN [0-9]+" (current_index+1) )
+       PATCH_IF end_point<0 BEGIN
+          SET finished=1
+          SET end_point=BUFFER_LENGTH - 1
+       END
+       SET length=(end_point - current_index)
+       READ_ASCII current_index current_block (length)
+       PATCH_IF debug BEGIN
+              PATCH_PRINT "-----------------"
+              PATCH_PRINT "%current_block%"
+              PATCH_PRINT "-----------------"
+       END
+       SET found_match=1
+       PATCH_FOR_EACH variable IN match match1 match2 match3 match4 match5 BEGIN
+          SPRINT this_var EVAL "%%variable%%"
+          PATCH_IF "%this_var%"  STRING_COMPARE "" BEGIN
+                 PATCH_IF INDEX ("%this_var%" "%current_block%") <0 BEGIN
+                    SET found_match=0
+                 END
+          END
+       END
+       PATCH_IF found_match BEGIN
+           PATCH_IF debug BEGIN
+              PATCH_PRINT "MATCH!"
+           END
+           PATCH_IF matched &&!multiple BEGIN
+              PATCH_WARN "multiple matches found by 'alter_dlg_block' function in script %SOURCE_RES%"
+           END ELSE BEGIN
+              SET matched=1
+              SET block_counter +=1
+              SPRINT $old_block("%block_counter%") "%current_block%"
+              INNER_PATCH_SAVE new_block "%current_block%" BEGIN
+                 REPLACE_TEXTUALLY "%swap_out%" "%swap_in%"
+                 REPLACE_TEXTUALLY "%swap_out1%" "%swap_in1%"
+                 REPLACE_TEXTUALLY "%swap_out2%" "%swap_in2%"
+                 REPLACE_TEXTUALLY "%swap_out3%" "%swap_in3%"
+                 REPLACE_TEXTUALLY "%swap_out4%" "%swap_in4%"
+                 REPLACE_TEXTUALLY "%swap_out5%" "%swap_in5%"
+                 PATCH_IF "%function%" STRING_COMPARE_CASE "" BEGIN
+                    LPF "%function%" END
+                 END
+              END
+              SPRINT $new_block("%block_counter%") "%new_block%"
+              PATCH_IF debug BEGIN
+                 PATCH_PRINT "%new_block%"
+              END
+           END
+       END
+       SET current_index=end_point
+   END
+   PATCH_IF matched BEGIN
+     FOR (i=1;i<=block_counter;i+=1) BEGIN
+        SPRINT old $old_block("%i%")
+        SPRINT new $new_block("%i%")
+        REPLACE_TEXTUALLY "%old%" "%new%"
+     END
+   END ELSE BEGIN
+      PATCH_IF !silent BEGIN
+         PATCH_WARN "failed to find match in %dialog%.dlg"
+      END
+   END
+  END
+ BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION EXTRACT_DLG_BLOCK
+   INT_VAR debug=0
+           silent=0
+           block_number="-1"
+   STR_VAR match=""
+           match1=""
+           match2=""
+           match3=""
+           match4=""
+           match5=""
+   RET block
+BEGIN
+ OUTER_SET value=0
+ OUTER_SPRINT output_data ""
+ COPY_EXISTING "%dialog%.dlg" override
+  DECOMPILE_AND_PATCH BEGIN
+   PATCH_IF debug BEGIN
+      READ_ASCII 0x0 all_data (BUFFER_LENGTH)
+      PATCH_PRINT "%all_data%"
+   END
+   SET matched=0
+   SET current_index=0
+   SET finished=0
+   SET block_counter=0
+   WHILE !finished BEGIN
+       SET end_point= INDEX_BUFFER ("IF \(WEIGHT #[-0-9]+ \)?~[^~]*~ THEN BEGIN [0-9]+" (current_index+1) )
+       PATCH_IF end_point<0 BEGIN
+          SET finished=1
+          SET end_point=BUFFER_LENGTH - 1
+       END
+       SET length=(end_point - current_index)
+       READ_ASCII current_index current_block (length)
+       PATCH_IF debug BEGIN
+              PATCH_PRINT "-----------------"
+              PATCH_PRINT "%current_block%"
+              PATCH_PRINT "-----------------"
+       END
+       PATCH_IF block_number>=0 BEGIN
+         INNER_PATCH "%current_block%" BEGIN
+            SET this_block_number = "-99"
+            REPLACE_EVALUATE "THEN BEGIN \([0-9]+\)" BEGIN
+              SET this_block_number = "%MATCH1%"
+            END
+            ""
+         END
+         SET found_match = this_block_number=block_number? 1 : 0
+       END ELSE BEGIN
+         SET found_match=1
+         PATCH_FOR_EACH variable IN match match1 match2 match3 match4 match5 BEGIN
+          SPRINT this_var EVAL "%%variable%%"
+          PATCH_IF "%this_var%"  STRING_COMPARE "" BEGIN
+                 PATCH_IF INDEX ("%this_var%" "%current_block%") <0 BEGIN
+                    SET found_match=0
+                 END
+          END
+         END
+       END
+       PATCH_IF found_match BEGIN
+           PATCH_IF debug BEGIN
+              PATCH_PRINT "MATCH!"
+           END
+           SPRINT block "%current_block%"
+           SET finished=1
+       END
+       SET current_index=end_point
+   END
+  END
+ BUT_ONLY
+END
+

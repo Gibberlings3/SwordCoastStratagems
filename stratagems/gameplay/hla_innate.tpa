@@ -1,405 +1,114 @@
+DEFINE_ACTION_FUNCTION hla_innate BEGIN
+    LAF read_in_2da STR_VAR file=luabbr RET_ARRAY luabbr_data=array_data END
+    ACTION_PHP_EACH luabbr_data AS var=>val BEGIN
+       OUTER_SPRINT filename "lu%val%"
+       ACTION_IF FILE_EXISTS_IN_GAME "%filename%.2da" BEGIN
+          COPY_EXISTING "%filename%.2da" override
+               LPF get_table_column_coordinate STR_VAR column=NUM_ALLOWED RET num_allowed_column=colnum END
+               COUNT_2DA_COLS colcount
+               READ_2DA_ENTRIES_NOW lua_entries colcount
+               FOR (row=0;row<lua_entries;row+=1) BEGIN
+                  SET check=0
+                  READ_2DA_ENTRY_FORMER lua_entries row 1 ability
+                  TO_UPPER ability
+                  // preliminary patch: Paladin/Blackguard summoning should be limited to one use
+                  PATCH_MATCH "%ability%" WITH
+                     "GA_%PALADIN_SUMMON_DEVA%" "GA_%BLACKGUARD_SUMMON_FALLEN_DEVA%" BEGIN
 
-DEFINE_ACTION_FUNCTION ~hla_innate~ BEGIN    // legacy
-
-  COPY_EXISTING ~luabbr.2da~ ~override~
-    READ_2DA_ENTRIES_NOW ~luabbr_grid~ 0
-    FOR (j=3;j<~luabbr_grid~;j=j+1) BEGIN
-          READ_2DA_ENTRY_FORMER ~luabbr_grid~ j 1 ~abbr_value~
-          INNER_ACTION BEGIN
-                OUTER_SPRINT ~filename~ ~lu%abbr_value%.2da~
-                ACTION_IF FILE_EXISTS_IN_GAME ~%filename%~ BEGIN
-                   COPY_EXISTING ~%filename%~ ~override~
-                         COUNT_2DA_ROWS  10 ~rowcount~
-                         FOR (i=0;i<~rowcount~;i=i+1) BEGIN
-                            READ_2DA_ENTRY i 1 10 ~ability~
-                            // paladins only get 1 deva
-                            PATCH_IF ~%ability%~ STRING_EQUAL_CASE GA_SPCL923 BEGIN
-                               SET_2DA_ENTRY i 6 10 1
-                            END
-
-                            PATCH_IF ~%ability%~ STRING_COMPARE_CASE ~*~ BEGIN
-                              INNER_PATCH_SAVE ~ability~ ~%ability%~ BEGIN
-                                READ_ASCII 0x0 ~type~ (3)
-                                SET ~patchme~=0
-                                PATCH_IF ~%type%~ STRING_EQUAL_CASE ~GA_~ BEGIN
-                                   DELETE_BYTES 0x0 3
-                                   SET ~patchme~=1
-                                END
-                              END
-                              PATCH_IF ~patchme~=1 BEGIN
-                                   SET ~abtype~=4
-                                   INNER_ACTION BEGIN
-                                      ACTION_IF FILE_EXISTS_IN_GAME ~%ability%.spl~ BEGIN
-                                         OUTER_INNER_PATCH ~~ BEGIN
-                                            TO_LOWER ~ability~
-                                         END
-                                         OUTER_SPRINT $is_hla_innate_spell( ~%ability%~) ~~
-                                         COPY_EXISTING ~%ability%.spl~ ~override~
-                                               READ_SHORT 0x1c ~abtype~
-                                               PATCH_IF (~abtype~=1 OR ~abtype~=2) BEGIN
-                                                  WRITE_SHORT 0x1c 4
-                                                  WRITE_LONG  0x34 1
-                                                  INNER_ACTION BEGIN
-                                                      COPY_EXISTING 
-                                                                ~simulacr.spl~ ~override~
-                                                                ~projimag.spl~ ~override~
-                                                         LAUNCH_PATCH_FUNCTION ~ADD_SPELL_EFFECT~
-                                                            INT_VAR opcode=172
-                                                                    target=1
-                                                                    timing=1
-                                                            STR_VAR resource= ~%ability%~
-                                                         END
-                                                      BUT_ONLY
-                                                  END
-                                               END
-                                         BUT_ONLY
-                                      END
-                                   END
-                                END
-
-                              PATCH_FOR_EACH ~checkme~ IN FM0 FT0 MT0 CM0 CT0 FD0 CR0 FMT FMC BEGIN
-                                      PATCH_IF ~%checkme%~ STRING_EQUAL_CASE ~%abbr_value%~ BEGIN
-                                         PATCH_IF ~abtype~=1 BEGIN
-                                              SET_2DA_ENTRY i 4 10 32
-                                         END
-                                         PATCH_IF ~abtype~=2 BEGIN
-                                              SET_2DA_ENTRY i 4 10 16
-                                         END
-                                      END
-                              END
-                            END
-                         END
-                   BUT_ONLY
-                END
-       END
-    END
-
-
-    COPY_EXISTING_REGEXP ~.*\.cre~ ~override~
-//    COPY_EXISTING ~amlich01.cre~ ~override~
-             GET_OFFSET_ARRAY ~spell_known_array~ 0x2a0 4 0x2a4 4 0 0 0xc
-             PHP_EACH spell_known_array AS int => spl_off BEGIN
-                    READ_ASCII spl_off ~spellcheck~
-                    TO_LOWER ~spellcheck~
-                    PATCH_IF VARIABLE_IS_SET $is_hla_innate_spell( ~%spellcheck%~) BEGIN
-                             WRITE_SHORT 0x8+spl_off 0 // level 1
-                             WRITE_SHORT 0xa+spl_off 2 // innate
-                    END
-             END
-             SET ~spells_to_remove~=0
-             GET_OFFSET_ARRAY ~spell_mem_array~ 0x2b0 4 0x2b4 4 0 0 0xc
-             PHP_EACH spell_mem_array AS int => spl_off BEGIN
-                      READ_ASCII spl_off ~spellcheck~
-                    TO_LOWER ~spellcheck~
-                      PATCH_IF VARIABLE_IS_SET $is_hla_innate_spell( ~%spellcheck%~) BEGIN
-                              SPRINT $spells_to_remove_array(~%spells_to_remove%~) ~%spellcheck%~
-                              SET ~spells_to_remove~=~spells_to_remove~+1
-                      END
-             END
-             PATCH_IF ~spells_to_remove~>0 BEGIN
-                 FOR (i=0;i<~spells_to_remove~;i=i+1) BEGIN
-                     SPRINT ~thespell~  $spells_to_remove_array(~%i%~)
-                     REMOVE_MEMORIZED_SPELL ~%thespell%~
-                 END
-                 FOR (i=0;i<~spells_to_remove~;i=i+1) BEGIN
-                     ADD_MEMORIZED_SPELL ~%thespell%~ #0 ~innate~
-                 END
-             END
-    BUT_ONLY
-
-END
-
- /*
- 
- probably-unnecessary rewrite
- 
- DEFINE_ACTION_FUNCTION hla_innate BEGIN
-
-       // collect all BCS files that might have references to HLAs (don't worry about false positives)
-       
-   /*    MKDIR "%workspace%\hla_innate_bcs"
-       COPY_EXISTING_REGEXP GLOB ".*\.bcs" "%workspace%\hla_innate_bcs"
-       ACTION_BASH_FOR "%workspace%\hla_innate_bcs" ".*\.bcs" BEGIN
-          ACTION_IF FILE_CONTAINS_EVALUATED ("%BASH_FOR_FILESPEC%" "\(17[0-9][0-9]\|29[0-9][0-9]\)") BEGIN
-             COPY "%BASH_FOR_FILESPEC%" "%workspace%\hla_innate_bcs\%BASH_FOR_RES%.baf"
-               DECOMPILE_BCS_TO_BAF
-          END
-       END
-             */
-       // get list of all lua files
-       OUTER_SPRINT lualist ""
-       COPY_EXISTING luabbr.2da "%workspace%"
-             COUNT_2DA_ROWS 2 rowcount
-             FOR (i=1;i<rowcount;i+=1) BEGIN
-                READ_2DA_ENTRY i 1 2 lua
-                SPRINT lualist "%lualist% lu%lua%"
-             END
-       BUT_ONLY
-
-       // initialise map
-       
-       COPY ".../stratagems-inline/blank" "%workspace%/hla_innate_map.txt"
-
-       // first pass through LUA files making changes and listing them
-       OUTER_SPRINT list "%lualist%"
-       OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
-          LAF return_first_entry STR_VAR list RET lua=entry list END
-          LAF hla_innate_lua STR_VAR lua END
-       END
-       
-       // read in full set of changes to the associative array "hla_map"
-
-       OUTER_SPRINT array_to_read hla_innate_map.txt
-       OUTER_SPRINT read_array_location "%workspace%"
-       OUTER_SPRINT array_name hla_map
-       LAM read_in_assoc_array
-       
-       // second pass through lua files, correcting dependencies and exclusions
-       
-       OUTER_SPRINT list "%lualist%"
-       OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
-          LAF return_first_entry STR_VAR list RET lua=entry list END
-          LAF hla_innate_lua2 STR_VAR lua END
-       END
-
-       // recompile BAF files
-       
-    /*   ACTION_BASH_FOR "%workspace%\hla_innate_bcs" ".*\.baf" BEGIN
-          COMPILE "%BASH_FOR_FILESPEC%"
-       END
-
-       // make needed changes in CRE files
-       
-       LAF hla_innate_cre END
-                                */
-END
-
-
-/////////////////////////////////////////////////////////////////////////
-///    First pass through each LUA file, changing spells
-///    as appropriate. We need to go through a second time to actually edit the file
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_lua
-    STR_VAR lua=""
-BEGIN
- ACTION_IF FILE_EXISTS_IN_GAME "%lua%.2da" BEGIN
-   // read in hla_map entries so far
-   OUTER_SPRINT array_to_read hla_innate_map.txt
-   OUTER_SPRINT read_array_location "%workspace%"
-   OUTER_SPRINT array_name hla_map
-   LAM read_in_assoc_array
-   COPY_EXISTING "%lua%.2da" override
-       COUNT_2DA_COLS colcount
-       COUNT_2DA_ROWS colcount rowcount
-       FOR (i=0;i<rowcount;i+=1) BEGIN
-          READ_2DA_ENTRY i 1 colcount ability
-          PATCH_IF !"%ability%" STRING_CONTAINS_REGEXP "GA_" BEGIN
-               INNER_PATCH_SAVE spell "%ability%" BEGIN
-                    DELETE_BYTES 0x0 3
-               END
-               // if we haven't already edited it, check it
-               TO_LOWER spell
-               PATCH_IF !VARIABLE_IS_SET $hla_map("%spell%") BEGIN
-                  INNER_ACTION BEGIN
-                      LAF hla_innate_spell STR_VAR spell lua RET spell_new already_innate END
+                           SET_2DA_ENTRY row num_allowed_column colcount 1
+                     END
+                     DEFAULT
                   END
-                  PATCH_IF !already_innate BEGIN
-                     SPRINT $hla_map("%spell%") "%spell_new%"
+                  
+                  // main patch
+                  SET edit=0
+                  INNER_PATCH "%ability%" BEGIN
+                     REPLACE_EVALUATE "^GA_\(.*\)$" BEGIN
+                        SPRINT resref "%MATCH1%"
+                        TO_UPPER resref
+                        PATCH_IF VARIABLE_IS_SET $hla_resref_map("%resref%") BEGIN
+                           SPRINT new_resref $hla_resref_map("%resref%")
+                           SET edit=1
+                        END ELSE
+                        PATCH_IF VARIABLE_IS_SET $hla_no_change_map("%resref%") BEGIN
+                           // do nothing, no change
+                           END ELSE BEGIN
+                           INNER_ACTION BEGIN
+                                COPY_EXISTING "%resref%.spl" "%workspace%"
+                                     SET type= SHORT_AT 0x1c
+                                BUT_ONLY
+                           END
+                           PATCH_IF (type=1||type=2) BEGIN
+                               SET edit=1
+                               INNER_ACTION BEGIN
+                                   LAF make_hla_innate STR_VAR resref RET new_resref END
+                               END
+                               TO_UPPER new_resref
+                               SPRINT $hla_resref_map("%resref%") "%new_resref%"
+                           END ELSE BEGIN
+                               SPRINT $hla_no_change_map("%resref%") ""
+                               SPRINT new_resref "%resref%"
+                           END
+                        END
+                     END
+                     ""
                   END
-               END
-               // if (now) there's a hla_map entry, process changes
-               PATCH_IF VARIABLE_IS_SET $hla_map("%spell%") BEGIN
-                    SPRINT spell_new $hla_map("%spell%")
-                      // change the entry
-                      TO_UPPER spell_new
-                      SET_2DA_ENTRY i 1 colcount "GA_%spell_new%"
-                      // usable only once
-                      SET_2DA_ENTRY i 6 colcount 1
-               END
-          END
-       END
-   BUT_ONLY
-   // write hla_map
-   COPY ".../stratagems-inline/blank" "%workspace%/hla_innate_map.txt"
-      PHP_EACH hla_map AS old=>new BEGIN
-         INSERT_2DA_ROW 0 2 "%old% %new%"
-      END
- END
-END
-
-/////////////////////////////////////////////////////////////////////////
-///    Second pass through each LUA file, handling dependencies and exclusions
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_lua2
-    STR_VAR lua=""
-BEGIN
- ACTION_IF FILE_EXISTS_IN_GAME "%lua%.2da" BEGIN
-   COPY_EXISTING "%lua%.2da" override
-       COUNT_2DA_COLS colcount
-       COUNT_2DA_ROWS colcount rowcount
-       FOR (i=0;i<rowcount;i+=1) BEGIN
-            FOR (j=7;j<9;j+=1) BEGIN
-               READ_2DA_ENTRY i j colcount ability
-               PATCH_IF !"%ability%" STRING_CONTAINS_REGEXP "GA_" BEGIN
-                  INNER_PATCH_SAVE spell "%ability%" BEGIN
-                     DELETE_BYTES 0x0 3
-                  END
-                  TO_LOWER spell
-                  PATCH_IF VARIABLE_IS_SET $hla_map("%spell%") BEGIN
-                     SPRINT spell_new $hla_map("%spell%")
-                     PATCH_IF "%spell_new%" STRING_COMPARE "%spell%" BEGIN
-                        TO_UPPER spell_new
-                        SET_2DA_ENTRY i j colcount "GA_%spell_new%"
+                  PATCH_IF edit BEGIN
+                     SET_2DA_ENTRY row num_allowed_column colcount 1
+                     PATCH_IF "%resref%" STRING_COMPARE_CASE "%new_resref%" BEGIN
+                         SET_2DA_ENTRY row 1 colcount "GA_%new_resref%"
                      END
                   END
-
                END
-            END
+          BUT_ONLY
        END
-       PRETTY_PRINT_2DA
+    END
+    COPY "%data_loc_root%/dw_shared/dw#hla_feat.2da" "%data_loc_root%/dw_shared"
+         PHP_EACH hla_resref_map AS old=>new BEGIN
+            REPLACE_TEXTUALLY CASE_INSENSITIVE "%old%" "%new%"
+         END
     BUT_ONLY
-  END
-END
-
-/////////////////////////////////////////////////////////////////////////
-///    Edit a spell to make it innate and return its new name & whether it already was
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_spell
-   STR_VAR spell="" lua=""
-   RET spell_new already_innate
-BEGIN
-   ACTION_IF !FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-        LAF warning STR_VAR warning="HLA spell %spell%, referenced in LUA file %lua%.2da, does not exist" END
-        OUTER_SPRINT spell_new "%spell%"
-   END ELSE BEGIN
-        COPY_EXISTING "%spell%.spl" "override"
-              READ_SHORT 0x1c oldtype
-              PATCH_IF oldtype=4 BEGIN
-                 SET already_innate=1
-              END ELSE BEGIN
-                 SET already_innate=0
-                 WRITE_SHORT 0x1c 4
-                 WRITE_LONG 0x34 1 // level - *may* not be necessary, but why take chances?
-              END
-        BUT_ONLY
-        ACTION_IF already_innate BEGIN
-            OUTER_SPRINT spell_new "%spell%"
-        END ELSE BEGIN
-            OUTER_PATCH "%spell%" BEGIN
-               READ_ASCII 0x0 type (4)
-            END
-            ACTION_MATCH "%type%" WITH
-            SPWI SPPR BEGIN
-               LAF hla_innate_rename STR_VAR spell RET spell_new END
-            END
-            DEFAULT
-               OUTER_SPRINT spell_new "%spell%"
-            END
-            LAF hla_innate_simulacra STR_VAR spell="%spell_new%" END
+    COPY_EXISTING_REGEXP "lu.*\.2da$" override  // this sorts out prerequisites and exclusions
+        PHP_EACH hla_resref_map AS old=>new BEGIN
+           REPLACE_TEXTUALLY "GA_%old%" "GA_%new%"
         END
-
-   END
-   ACTION_TO_LOWER spell
-   ACTION_TO_LOWER spell_new
-END
-
-/////////////////////////////////////////////////////////////////////////
-///    If the spell is of form SPWI or SPPR, it needs to be renamed and
-///    the spell.ids entry needs to be remapped. (Blame EE, though probably
-///    it's good practice in any case.)
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_rename 
-     STR_VAR spell="" 
-     RET spell_new
-BEGIN
-     // find the old IDS entry, if any
-     LAF spell_to_idscode STR_VAR resref="%spell%" RET idscode END
-     OUTER_PATCH "" BEGIN
-        LOOKUP_IDS_SYMBOL_OF_INT idsname spell idscode
-     END
-     ACTION_IF "%idsname%" STRING_EQUAL_CASE "%idscode%" BEGIN
-        LAF warning STR_VAR warning="No spell.ids entry for %spell%" END
-        OUTER_SPRINT idsname "ORIGINAL_RESREF_%spell%"
-     END ELSE BEGIN
-        // remove the old entry
-        COPY_EXISTING spell.ids override
-             LPF get_table_row_coordinate INT_VAR lookup_column=1 STR_VAR row="%idsname%" RET rownum END
-             REMOVE_2DA_ROW rownum 2
-        BUT_ONLY
-     END
-     // add the spell in
-     LAF add_spell_to_ids INT_VAR level=1 STR_VAR typename=class idsname RET spell_new=newname END
-     COPY_EXISTING "%spell%.spl" "override/%spell_new%.spl"
-END
-
-/////////////////////////////////////////////////////////////////////////
-///    Simulacra shouldn't have use of HLAs
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_simulacra
-    STR_VAR spell=""
-BEGIN
-     OUTER_SPRINT resource "%spell%"
-     LAF edit_spell STR_VAR spell="simulacr projimag" editstring="add_effect_inline=>~opcode=>172 target=>1 timing=>1 resource=>%resource%~" END
-END
-
-/////////////////////////////////////////////////////////////////////////
-///    Spells need to be remapped and reslotted
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION hla_innate_cre
-BEGIN
-   COPY_EXISTING_REGEXP GLOB ".*\.cre" override
-        SPRINT to_remove ""
-        SPRINT to_add ""
-        LPF return_high_level_spells RET list END
-        WHILE "%list%" STRING_COMPARE "" BEGIN
-           LPF return_first_entry STR_VAR list RET spell=entry list END
-           TO_LOWER spell
-           PATCH_IF VARIABLE_IS_SET $hla_map("%spell%") BEGIN
-              SPRINT to_remove "%to_remove% %spell%"
-              SPRINT to_add "%to_add% %spell%"
-           END
-        END
-        PATCH_IF "%to_remove%" STRING_COMPARE "" BEGIN
-          LPF CRE_remove_spells STR_VAR arguments="%to_remove%" END
-          LPF CRE_add_spells STR_VAR arguments="%to_add%" END
-          LPF CRE_add_known_spells STR_VAR arguments="%to_add%" END
-       END
    BUT_ONLY
+
 END
 
-/////////////////////////////////////////////////////////////////////////
-///    Return current creature's 9th level wizard spells and 7th level cleric spells
-//////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION return_high_level_spells 
-RET list
+DEFINE_ACTION_FUNCTION make_hla_innate
+   STR_VAR resref=""
+   RET new_resref
 BEGIN
-    READ_LONG 0x2a8 mem_info_off
-    READ_LONG 0x68+mem_info_off priest_ind
-    READ_LONG 0x6c+mem_info_off priest_count
-    READ_LONG 0xe8+mem_info_off mage_ind
-    READ_LONG 0xec+mem_info_off mage_count
-    SPRINT list ""
-    SPRINT file_ext CRE
-    SPRINT entry_type memorized_spell
-    LPM get_offset_array
-    FOR (i=priest_ind;i<priest_ind+priest_count;i+=1) BEGIN
-        READ_ASCII $offset_array("%i%") spell
-        SPRINT list "%list% %spell%"
-    END
-    FOR (i=mage_ind;i<mage_ind+mage_count;i+=1) BEGIN
-        READ_ASCII $offset_array("%i%") spell
-        SPRINT list "%list% %spell%"
-    END
+   ACTION_TO_UPPER resref
+   OUTER_SPRINT new_resref "%resref%"
+   ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+      COPY_EXISTING "%resref%.spl" "%workspace%"
+            SET type= SHORT_AT 0x1c
+      BUT_ONLY
+      ACTION_IF (type=1 || type=2) BEGIN
+        ACTION_MATCH "%resref%" WITH
+         "SPWI.*" "SPPR.*" BEGIN
+            LAF return_spellname STR_VAR resref RET spellname END
+            OUTER_SPRINT idsname "HLA_%spellname%"
+            LAF add_spell_to_ids INT_VAR type=4 STR_VAR idsname filename="%resref%" RET new_resref=newname END
+         END
+         DEFAULT
+               OUTER_SPRINT new_resref "%resref%"
+         END
+         COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl"
+             WRITE_SHORT 0x1c 4
+         BUT_ONLY
+         ACTION_FOR_EACH copy_spell IN projimag simualcr BEGIN
+            ACTION_IF FILE_EXISTS_IN_GAME "%copy_spell%.spl" BEGIN
+               COPY_EXISTING "%copy_spell%.spl" override
+                   LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%resref_new%" END
+               BUT_ONLY
+            END
+         END
+      END
+   END ELSE BEGIN
+      LAF warning STR_VAR warning="Missing HLA in the LUA tables: %resref%" repeat=no END
+   END
 END
 
-
-
-
- */

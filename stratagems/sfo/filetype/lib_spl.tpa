@@ -747,10 +747,10 @@ BEGIN
        OUTER_SPRINT ~spellcode~ EVALUATE_BUFFER ~%%spell_ID%%~
        ACTION_IF FILE_EXISTS_IN_GAME "%spellcode%.spl" BEGIN
         OUTER_INNER_PATCH_SAVE ~newcode~ ~%spellcode%~ BEGIN
-          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPWI~ ~dw#sw~
-          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPPR~ ~dw#sp~
-          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPIN~ ~dw#si~
-          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPCL~ ~dw#sc~
+          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPWI~ ~dwsw~
+          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPPR~ ~dwsp~
+          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPIN~ ~dwsi~
+          REPLACE_TEXTUALLY CASE_INSENSITIVE ~SPCL~ ~dwsc~
         END
         ACTION_IF !FILE_EXISTS_IN_GAME ~%newcode%.spl~ BEGIN
          COPY_EXISTING ~%spellcode%.spl~ ~override/%newcode%.spl~
@@ -1072,6 +1072,8 @@ END
 //// just return the existing result (and log a warning).
 ////
 //// If it's there but in the wrong category and/or level, delete it first
+////
+////
 //////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION add_spell_to_ids
@@ -1508,7 +1510,6 @@ DEFINE_ACTION_FUNCTION list_wizard_spells BEGIN
    COPY_EXISTING hidespl.2da override
        FOR (i=101;i<1000;i+=1) BEGIN
           PATCH_IF INDEX_BUFFER ("SPWI%i%")>=0 BEGIN
-               PATCH_PRINT "hiding SPWI%i%"
                SPRINT $hidden("SPWI%i%") ""
           END
        END
@@ -1596,6 +1597,8 @@ DEFINE_ACTION_FUNCTION make_innate_repeating_spell
    INT_VAR cooldown=0
            overwrite=0
            allow_missing=0
+           desc_strref_cd = 100404 // the string to be appended to the description, with "99999" replaced by the actual repeat time. Default value is from SCS shared.tra
+           desc_strref_atwill = 100405 // this string says 'use at will' and gets appended instead if cooldown=0
    STR_VAR arguments=""
 BEGIN
    ACTION_IF "%arguments%" STRING_COMPARE "" BEGIN
@@ -1613,9 +1616,18 @@ BEGIN
        END
        ACTION_CLEAR_ARRAY patch_data
        OUTER_SET timing = cooldown >0 ? 4 : 1
+       OUTER_SPRINT extra_string (AT desc_strref_cd)
+       ACTION_IF cooldown>0 BEGIN
+        OUTER_INNER_PATCH_SAVE extra_string "%extra_string%" BEGIN
+          REPLACE_TEXTUALLY 99999 "%cooldown%"
+        END 
+       END ELSE BEGIN
+          OUTER_SPRINT extra_string (AT desc_strref_atwill)
+       END
        ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
        level=>1
        spell_type=>innate
+       append_description=>"%extra_string%"
        patch_ability_inline=>"ability_icon_loc=>4"
        add_effect_inline'=>"opcode=>171 target=>1 timing=>%timing% duration=>%cooldown% resource=>%newname%"
        add_effect_inline=>"opcode=>172 target=>1 timing=>1  resource=>%newname%"
@@ -1623,6 +1635,7 @@ BEGIN
        ACTION_IF overwrite BEGIN
          LAF edit_spell STR_VAR spell="%newname%" edits=patch_data END
        END ELSE BEGIN
+         OUTER_SPRINT $patch_data("add_effect_inline''") "match=>~resource=%oldname%~ resource=>%newname%"
          LAF clone_spell STR_VAR spell="%oldname%=>%newname%" edits=patch_data END
        END
       END
@@ -1720,12 +1733,35 @@ BEGIN
        COPY_EXISTING "%resref%.spl" "%workspace%"
            LPF "SPL_read_unusable_%kit%" RET value END
        BUT_ONLY
-     END 
+     END
      DEFAULT
         OUTER_SET value=0
      END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             make an aura power
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+DEFINE_ACTION_FUNCTION make_aura
+   STR_VAR spell=""
+           payload=""
+           effect=""
+BEGIN
+   ACTION_IF "%effect%" STRING_EQUAL_CASE "" BEGIN
+      LAF find_unique_filename STR_VAR extension=eff RET effect=filename END
+   END
+   ACTION_CLEAR_ARRAY patch_data
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>272 target=>1 timing=>1 parameter1=>1 parameter2=>3 resource=>%effect%"
+   END
+   LAF make_spell STR_VAR spell edits=patch_data END
+   LAF make_casting_effect STR_VAR spell="%payload%" effect END
+
+END
 
 

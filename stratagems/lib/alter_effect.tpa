@@ -1,0 +1,1536 @@
+// These are edited versions of Cam's DELETE/CLONE/ALTER_EFFECT (shipped with WEIDU)
+// that allows for finer control on the savingthrow and special fields, and also to 
+// check the value of a function and apply one.
+//
+// Changes consist of (i) new INT_VAR variables; (ii) two functions and one macro, at
+// end; (iii) calls to those functions and macro inserted into the code; (iv) a
+// small insert into the big AND loop that checks if a match is found; (v) allowing parameter1
+// and parameter2 to take negative values up to -10
+//
+// 4/21/19: we now include the ADD_SPELL_EFFECT and ADD_ITEM_EFFECT functions from g_functions (as functions only)
+//
+// 6/1/19: we now include the new MATCH_EFFECT function. It returns 'value', which is set to 1 if at least one
+// effect matches the condition and to 0 otherwise.
+
+
+DEFINE_PATCH_FUNCTION ADD_SPELL_EFFECT
+  INT_VAR opcode = 0
+          target = 0
+          timing = 0
+          parameter1 = 0
+          parameter2 = 0
+          power = 0
+          resist_dispel = 0
+          duration = 0
+          probability1 = 100
+          probability2 = 0
+          dicenumber = 0
+          dicesize = 0
+          savingthrow = 0
+          savebonus = 0
+          header = 0
+          insert_point = "-1"
+          special = 0
+
+    // DavidW's additional variables for the new effect
+  
+          parameter2a         = "-1"
+          parameter2b         = "-1"
+          save_vs_spell       = "-1"
+          save_vs_breath      = "-1"
+          save_vs_poison      = "-1"
+          save_vs_wand        = "-1"
+          save_vs_polymorph   = "-1"
+          ignore_primary      = "-1"
+          ignore_secondary    = "-1"
+          bypass_mirror_image = "-1"
+          ignore_difficulty   = "-1"
+          drain_hp_to_caster  = "-1"
+          transfer_hp_to_target = "-1"
+          fist_damage_only    = "-1"
+          drain_to_max_hp     = "-1"
+          suppress_feedback   = "-1"
+          save_for_half       = "-1"
+          made_save           = "-1"
+          does_not_wake       = "-1"
+
+  STR_VAR resource = ~~
+
+BEGIN
+  LPM dw_internal_initialise_bit
+  PATCH_IF (BUFFER_LENGTH > 0x71) THEN BEGIN
+    READ_LONG  0x64 ___#abil_off
+    READ_SHORT 0x68 ___#abil_num
+    READ_LONG  0x6a ___#fx_off
+
+    FOR (___#index1 = 0 ; ___#index1 < ___#abil_num ; ___#index1 = ___#index1 + 1) BEGIN
+
+      PATCH_IF (___#index1 = (header - 1)) OR (header = 0) BEGIN //header=1 means ___#index1=0
+        READ_SHORT  (___#abil_off + 0x1e + (0x28 * ___#index1)) ___#abil_fx_num
+        READ_SHORT  (___#abil_off + 0x20 + (0x28 * ___#index1)) ___#abil_fx_idx
+
+        ___#insert_point = !VARIABLE_IS_SET insert_point OR !IS_AN_INT insert_point OR insert_point < 0 OR insert_point > ___#abil_fx_num ? ___#abil_fx_num : insert_point
+
+        INSERT_BYTES (___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx))) 0x30
+
+        WRITE_SHORT  (___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx))) opcode
+        WRITE_BYTE   (___#fx_off + 0x02 + (0x30 * (___#insert_point + ___#abil_fx_idx))) target
+        WRITE_BYTE   (___#fx_off + 0x03 + (0x30 * (___#insert_point + ___#abil_fx_idx))) power
+        WRITE_LONG   (___#fx_off + 0x04 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter1
+        WRITE_LONG   (___#fx_off + 0x08 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2
+        WRITE_BYTE   (___#fx_off + 0x0c + (0x30 * (___#insert_point + ___#abil_fx_idx))) timing
+        WRITE_BYTE   (___#fx_off + 0x0d + (0x30 * (___#insert_point + ___#abil_fx_idx))) resist_dispel
+        WRITE_LONG   (___#fx_off + 0x0e + (0x30 * (___#insert_point + ___#abil_fx_idx))) duration
+        WRITE_BYTE   (___#fx_off + 0x12 + (0x30 * (___#insert_point + ___#abil_fx_idx))) probability1
+        WRITE_BYTE   (___#fx_off + 0x13 + (0x30 * (___#insert_point + ___#abil_fx_idx))) probability2
+        WRITE_EVALUATED_ASCII (___#fx_off + 0x14 + (0x30 * (___#insert_point + ___#abil_fx_idx))) ~%resource%~ #8
+        WRITE_LONG   (___#fx_off + 0x1c + (0x30 * (___#insert_point + ___#abil_fx_idx))) dicenumber
+        WRITE_LONG   (___#fx_off + 0x20 + (0x30 * (___#insert_point + ___#abil_fx_idx))) dicesize
+        WRITE_LONG   (___#fx_off + 0x24 + (0x30 * (___#insert_point + ___#abil_fx_idx))) savingthrow
+        WRITE_LONG   (___#fx_off + 0x28 + (0x30 * (___#insert_point + ___#abil_fx_idx))) savebonus
+        WRITE_LONG (___#fx_off + 0x2c + (0x30 * (___#insert_point + ___#abil_fx_idx))) special
+
+        // DW addition
+        PATCH_IF parameter2a>=0 BEGIN
+            WRITE_SHORT  (___#fx_off + 0x08 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2a
+        END
+        PATCH_IF parameter2b>=0 BEGIN
+            WRITE_SHORT  (___#fx_off + 0x0a + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2b
+        END
+        SET base=(___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx)))
+        SET fx_type=0
+        LPF dw_internal_set_bit END
+
+        //correcting effects number
+        WRITE_SHORT (___#abil_off + 0x1e + (0x28 * ___#index1)) (___#abil_fx_num + 1)
+
+        //correcting 1st effect indexes
+        FOR (___#index2 = 0 ; ___#index2 < ___#abil_num ; ___#index2 = ___#index2 + 1) BEGIN
+          READ_SHORT (___#abil_off + ___#index2 * 0x28 + 0x20) ___#1effect_index
+          PATCH_IF (___#1effect_index > ___#abil_fx_idx) //if abilility after current effect
+                OR ((___#1effect_index = ___#abil_fx_idx)
+                AND (___#abil_fx_num = 0)
+                AND (___#index2 != ___#index1)) BEGIN
+            WRITE_SHORT (___#abil_off + ___#index2 * 0x28 + 0x20) (___#1effect_index + 1) //increase 1 effect ___#index1 by 1
+          END
+        END
+        //no offsets to correct
+      END
+    END
+  END
+END
+
+
+
+DEFINE_PATCH_FUNCTION ADD_ITEM_EFFECT 
+  INT_VAR opcode = 0
+          target = 0
+          timing = 0
+          parameter1 = 0
+          parameter2 = 0
+          power = 0
+          resist_dispel = 0
+          duration = 0
+          probability1 = 100
+          probability2 = 0
+          dicenumber = 0
+          dicesize = 0
+          savingthrow = 0
+          savebonus = 0
+          header = 0
+		  type = 3
+		  insert_point = "-1"
+          special = 0
+
+    // DavidW's additional variables for the new effect
+  
+          parameter2a         = "-1"
+          parameter2b         = "-1"
+          save_vs_spell       = "-1"
+          save_vs_breath      = "-1"
+          save_vs_poison      = "-1"
+          save_vs_wand        = "-1"
+          save_vs_polymorph   = "-1"
+          ignore_primary      = "-1"
+          ignore_secondary    = "-1"
+          bypass_mirror_image = "-1"
+          ignore_difficulty   = "-1"
+          drain_hp_to_caster  = "-1"
+          transfer_hp_to_target = "-1"
+          fist_damage_only    = "-1"
+          drain_to_max_hp     = "-1"
+          suppress_feedback   = "-1"
+          save_for_half       = "-1"
+          made_save           = "-1"
+          does_not_wake       = "-1"
+
+  STR_VAR resource = ~~
+
+BEGIN
+  LPM dw_internal_initialise_bit
+  PATCH_IF (BUFFER_LENGTH > 0x71) THEN BEGIN // protects against invalid files
+    READ_LONG   0x64 ___#abil_off //ability offset
+    READ_SHORT  0x68 ___#abil_num //number of abilities
+    READ_LONG   0x6a ___#fx_off //effects offset
+    FOR (___#index1 = 0 ; ___#index1 < ___#abil_num ; ___#index1 = ___#index1 + 1) BEGIN // looks for magical ability header
+      READ_BYTE  (___#abil_off +        (___#index1 * 0x38)) ___#type //ability type
+      PATCH_IF ((!(VARIABLE_IS_SET type AND IS_AN_INT type) && ___#type = 3) OR (VARIABLE_IS_SET type AND IS_AN_INT type AND ((___#type = type) OR type = 99))) AND ((___#index1 = (header - 1)) OR (header = 0)) BEGIN //ability is correct or unspecified and header matches
+        READ_SHORT  (___#abil_off + 0x1e + (0x38 * ___#index1)) ___#abil_fx_num
+        READ_SHORT  (___#abil_off + 0x20 + (0x38 * ___#index1)) ___#abil_fx_idx
+
+        ___#insert_point = !VARIABLE_IS_SET insert_point OR !IS_AN_INT insert_point OR insert_point < 0 OR insert_point > ___#abil_fx_num ? ___#abil_fx_num : insert_point
+
+        INSERT_BYTES (___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx))) 0x30
+
+        WRITE_SHORT  (___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx))) opcode
+        WRITE_BYTE   (___#fx_off + 0x02 + (0x30 * (___#insert_point + ___#abil_fx_idx))) target
+        WRITE_BYTE   (___#fx_off + 0x03 + (0x30 * (___#insert_point + ___#abil_fx_idx))) power
+        WRITE_LONG   (___#fx_off + 0x04 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter1
+        WRITE_LONG   (___#fx_off + 0x08 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2
+        WRITE_BYTE   (___#fx_off + 0x0c + (0x30 * (___#insert_point + ___#abil_fx_idx))) timing
+        WRITE_BYTE   (___#fx_off + 0x0d + (0x30 * (___#insert_point + ___#abil_fx_idx))) resist_dispel
+        WRITE_LONG   (___#fx_off + 0x0e + (0x30 * (___#insert_point + ___#abil_fx_idx))) duration
+        WRITE_BYTE   (___#fx_off + 0x12 + (0x30 * (___#insert_point + ___#abil_fx_idx))) probability1
+        WRITE_BYTE   (___#fx_off + 0x13 + (0x30 * (___#insert_point + ___#abil_fx_idx))) probability2
+        WRITE_EVALUATED_ASCII (___#fx_off + 0x14 + (0x30 * (___#insert_point + ___#abil_fx_idx))) ~%resource%~ #8
+        WRITE_LONG   (___#fx_off + 0x1c + (0x30 * (___#insert_point + ___#abil_fx_idx))) dicenumber
+        WRITE_LONG   (___#fx_off + 0x20 + (0x30 * (___#insert_point + ___#abil_fx_idx))) dicesize
+        WRITE_LONG   (___#fx_off + 0x24 + (0x30 * (___#insert_point + ___#abil_fx_idx))) savingthrow
+        WRITE_LONG   (___#fx_off + 0x28 + (0x30 * (___#insert_point + ___#abil_fx_idx))) savebonus
+        WRITE_LONG (___#fx_off + 0x2c + (0x30 * (___#insert_point + ___#abil_fx_idx))) special
+
+        // DW addition
+        PATCH_IF parameter2a>=0 BEGIN
+            WRITE_SHORT  (___#fx_off + 0x08 + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2a
+        END
+        PATCH_IF parameter2b>=0 BEGIN
+            WRITE_SHORT  (___#fx_off + 0x0a + (0x30 * (___#insert_point + ___#abil_fx_idx))) parameter2b
+        END
+        SET base=(___#fx_off +        (0x30 * (___#insert_point + ___#abil_fx_idx)))
+        SET fx_type=0
+        LPF dw_internal_set_bit END
+
+        //correcting effects number
+        WRITE_SHORT (___#abil_off + 0x1e + (0x38 * ___#index1)) (___#abil_fx_num + 1)
+
+        //correcting 1st effect ___#index1es
+        FOR (___#index2 = 0 ; ___#index2 < ___#abil_num ; ___#index2 = ___#index2 + 1) BEGIN
+          READ_SHORT (___#abil_off + ___#index2 * 0x38 + 0x20) ___#1effect_index
+          PATCH_IF (___#1effect_index > ___#abil_fx_idx) //if next abilility
+                OR ((___#1effect_index = ___#abil_fx_idx)
+                AND (___#abil_fx_num = 0)
+                AND (___#index2 != ___#index1)) BEGIN
+            WRITE_SHORT (___#abil_off + ___#index2 * 0x38 + 0x20) (___#1effect_index + 1) //increase 1 effect ___#index1 by 1
+          END
+        END
+        //no offsets to correct
+      END
+    END //end of cycle
+  END
+END
+
+
+
+
+
+DEFINE_PATCH_FUNCTION CLONE_EFFECT
+
+  // defines what we're going to check
+  INT_VAR check_globals       = 1
+          check_headers       = 1
+          header              = "-1"
+          header_type         = "-1"
+          multi_match         = 999
+          verbose             = 0
+          silent              = 0
+
+  // variables for finding the effect to match
+          match_opcode        = "-1"
+          match_target        = "-1"
+          match_power         = "-1"
+          match_parameter1    = "-1"
+          match_parameter2    = "-1"
+          match_timing        = "-1"
+          match_resist_dispel = "-1"
+          match_duration      = "-1"
+          match_duration_high = "-1"
+          match_probability1  = "-1"
+          match_probability2  = "-1"
+          match_dicenumber    = "-1"
+          match_dicesize      = "-1"
+          match_savingthrow   = "-1"
+          match_savebonus     = "-11"
+          match_special       = "-1"
+          
+  // DavidW's additional variables for matching
+
+          match_parameter2a         = "-1"
+          match_parameter2b         = "-1"
+          match_save_vs_spell       = "-1"
+          match_save_vs_breath      = "-1"
+          match_save_vs_poison      = "-1"
+          match_save_vs_wand        = "-1"
+          match_save_vs_polymorph   = "-1"
+          match_ignore_primary      = "-1"
+          match_ignore_secondary    = "-1"
+          match_bypass_mirror_image = "-1"
+          match_ignore_difficulty   = "-1"
+          match_drain_hp_to_caster  = "-1"
+          match_transfer_hp_to_target = "-1"
+          match_fist_damage_only    = "-1"
+          match_drain_to_max_hp     = "-1"
+          match_suppress_feedback   = "-1"
+          match_save_for_half       = "-1"
+          match_made_save           = "-1"
+          match_does_not_wake       = "-1"
+
+  // variables for the new effect
+          opcode              = "-1"
+          target              = "-1"
+          power               = "-1"
+          parameter1          = "-11"
+          parameter2          = "-11"
+          timing              = "-1"
+          resist_dispel       = "-1"
+          duration            = "-1"
+          duration_high       = "-1"
+          probability1        = "-1"
+          probability2        = "-1"
+          dicenumber          = "-1"
+          dicesize            = "-1"
+          savingthrow         = "-1"
+          savebonus           = "-11"
+          special             = "-1"
+          
+  // DavidW's additional variables for the new effect
+
+          parameter2a         = "-1"
+          parameter2b         = "-1"
+          save_vs_spell       = "-1"
+          save_vs_breath      = "-1"
+          save_vs_poison      = "-1"
+          save_vs_wand        = "-1"
+          save_vs_polymorph   = "-1"
+          ignore_primary      = "-1"
+          ignore_secondary    = "-1"
+          bypass_mirror_image = "-1"
+          ignore_difficulty   = "-1"
+          drain_hp_to_caster  = "-1"
+          transfer_hp_to_target = "-1"
+          fist_damage_only    = "-1"
+          drain_to_max_hp     = "-1"
+          suppress_feedback   = "-1"
+          save_for_half       = "-1"
+          made_save           = "-1"
+          does_not_wake       = "-1"
+          
+
+  // same for match and new STR_VAR
+  STR_VAR match_resource      = "SAME"
+          resource            = "SAME"
+          insert              = "above"
+
+  // DavidW's additional functional variables
+
+          match_function      = ""
+          function            = ""
+BEGIN
+
+  LPM dw_internal_initialise_bit
+  PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.1" = 0) BEGIN // iwd2, are v9.1
+    READ_LONG  0x78 ent_off
+    READ_LONG  0x7c ent_num
+  END ELSE BEGIN
+    READ_LONG  0x68 ent_off
+    READ_LONG  0x6c ent_num
+  END
+
+  // set variables and offsets based on the file type
+  SET new_fx = 0
+  READ_ASCII 0 sig ELSE "fail" (4)
+  READ_ASCII 0x04 version (4)
+  PATCH_MATCH "%sig%" WITH
+    "SPL "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
+        SET min_size       = 0x82
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x28
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "ITM "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.1" = 0) BEGIN // pst, itm v1.1
+        SET min_size       = 0x9a
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x38
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "CRE "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+        SET min_size       = 0x378
+        READ_LONG  0x368 fx_off
+        SET counter_offset = 0x36c
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+        SET min_size       = 0x62e
+        READ_LONG  0x61e fx_off
+        SET counter_offset = 0x622
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+        SET min_size       = 0x33c
+        READ_LONG  0x32c fx_off
+        SET counter_offset = 0x330
+      END ELSE BEGIN                                               // everything else, cre v1.0
+        SET min_size = 0x2d4
+        READ_LONG  0x2c4 fx_off
+        SET counter_offset = 0x2c8
+      END
+      SET abil_off = 0 // basically prevents the ability effect loop
+      SET abil_num = 0
+      SET abil_length = 0
+      SET check_globals = 1
+      READ_BYTE 0x33 fx_type ELSE 2
+    END
+
+    "fail"
+    BEGIN
+      PATCH_FAIL "ERROR: CLONE_EFFECT does not think %SOURCE_FILE% appears to be a valid file"
+    END
+
+    DEFAULT
+      SET min_size = "-1" // kill macro as the file type is not recognized
+      PATCH_FAIL "ERROR: CLONE_EFFECT does not support file type %sig%"
+  END
+
+  PATCH_IF (BUFFER_LENGTH >= min_size) BEGIN // sanity check
+    FOR (index = (0 - check_globals) ; index < abil_num ; ++index) BEGIN // we start at -1 for global effects
+      PATCH_IF (index < 0) BEGIN // if loop through globals needed
+        SET abil_fx_idx = 0  // start with effect 0 since we're in the global loop
+        SET abil_type = "-1" // basically, ignore header type checks for global loop
+      END ELSE BEGIN // otherwise normal ability
+        READ_SHORT  (abil_off +        (abil_length * index)) abil_type
+        SET counter_offset = (abil_off + 0x1e + (abil_length * index))
+        WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + new_fx) // update index with previously added effects
+        READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+      END
+      READ_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+      PATCH_IF (((abil_type = header_type) OR (abil_type < 0) OR (header_type < 0)) AND // only look on the right header types, if specified...
+                ((header = index) OR (header < 0)) AND                                  // and only on the right # header, if specified
+                ((index < 0) OR (check_headers))) BEGIN                                 // if check headers = 0, only re-index
+        SET last = 0                              // and only on the right # header, if specified
+        SET local_multi = multi_match
+        FOR (index2 = 0 ; index2 < (counter - last) ; ++index2) BEGIN
+
+          // read the variables from the current effect
+          READ_SHORT (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_opcode
+          READ_BYTE  (fx_off + 0x02 + (0x0a * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_target
+          READ_BYTE  (fx_off + 0x03 + (0x0d * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_power
+          READ_LONG  (fx_off + 0x04 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter1
+          READ_LONG  (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2
+          READ_SHORT (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2a
+          READ_SHORT (fx_off + 0x0a + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2b
+          READ_BYTE  (fx_off + 0x0c + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_timing
+          READ_BYTE  (fx_off + 0x0d + (0x47 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resist_dispel
+          READ_LONG  (fx_off + 0x0e + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_duration
+          READ_BYTE  (fx_off + 0x12 + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability1
+          READ_BYTE  (fx_off + 0x13 + (0x13 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability2
+          READ_ASCII (fx_off + 0x14 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resource
+          READ_LONG  (fx_off + 0x1c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicenumber
+          READ_LONG  (fx_off + 0x20 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicesize
+          READ_LONG  (fx_off + 0x24 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savingthrow
+          READ_LONG  (fx_off + 0x28 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savebonus
+          READ_LONG  (fx_off + 0x2c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_special
+
+          LPF dw_internal_check_bit RET bit_test_passed END
+          LPF dw_internal_evaluate_function RET function_test_passed END
+
+          // match ALL these variables, if specified
+          PATCH_IF ( bit_test_passed                                                       AND
+                     function_test_passed                                                  AND
+                    ((match_opcode        = o_opcode)        OR (match_opcode < 0))        AND
+                    ((match_target        = o_target)        OR (match_target < 0))        AND
+                    ((match_power         = o_power)         OR (match_power < 0))         AND
+                    ((match_parameter1    = o_parameter1)    OR (match_parameter1 < 0))    AND
+                    ((match_parameter2    = o_parameter2)    OR (match_parameter2 < 0))    AND
+                    ((match_parameter2a    = o_parameter2a)  OR (match_parameter2a < 0))   AND
+                    ((match_parameter2b    = o_parameter2b)  OR (match_parameter2b < 0))   AND
+                    ((match_timing        = o_timing)        OR (match_timing < 0))        AND
+                    ((match_resist_dispel = o_resist_dispel) OR (match_resist_dispel < 0)) AND
+                    ((match_duration      = o_duration)      OR (match_duration < 0))      AND
+                    ((match_probability1  = o_probability1)  OR (match_probability1 < 0))  AND
+                    ((match_probability2  = o_probability2)  OR (match_probability2 < 0))  AND
+                    ((match_dicenumber    = o_dicenumber)    OR (match_dicenumber < 0))    AND
+                    ((match_dicesize      = o_dicesize)      OR (match_dicesize < 0))      AND
+                    ((match_savingthrow   = o_savingthrow)   OR (match_savingthrow < 0))   AND
+                    ((match_savebonus     = o_savebonus)     OR (match_savebonus < "-10")) AND
+                    ((match_special       = o_special)       OR (match_special < 0))       AND
+                    (("%match_resource%" STRING_COMPARE_CASE "%o_resource%" = 0) OR ("%match_resource%" STRING_COMPARE_CASE "SAME" = 0)))
+          BEGIN
+            // now that we've got a match, read-and-clone it:
+            READ_ASCII   (fx_off        + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) clone (0x30 + (0xd8 * fx_type))
+            PATCH_IF ("%insert%" STRING_COMPARE_CASE "below" = 0) BEGIN
+              SET base = (fx_off        + ((abil_fx_idx + index2 + 1) * (0x30 + (0xd8 * fx_type))))
+            END ELSE
+            PATCH_IF ("%insert%" STRING_COMPARE_CASE "first" = 0) BEGIN
+              SET base = (fx_off        + (abil_fx_idx * (0x30 + (0xd8 * fx_type))))
+            END ELSE
+            PATCH_IF ("%insert%" STRING_COMPARE_CASE "last" = 0) BEGIN
+              SET base = (fx_off        + ((abil_fx_idx + counter) * (0x30 + (0xd8 * fx_type))))
+            END ELSE BEGIN
+              SET base = (fx_off        + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type))))
+            END
+            INSERT_BYTES base (0x30 + (0xd8 * fx_type))
+            WRITE_ASCIIE base "%clone%"
+
+            // overwrite the cloned effect with the new variables, if specified
+            PATCH_IF (opcode >= 0)        BEGIN WRITE_SHORT (base        + (0x08 * fx_type)) opcode        END
+            PATCH_IF (target >= 0)        BEGIN WRITE_BYTE  (base + 0x02 + (0x0a * fx_type)) target        END
+            PATCH_IF (power >= 0)         BEGIN WRITE_BYTE  (base + 0x03 + (0x0d * fx_type)) power         END
+            PATCH_IF (parameter1 >= "-10")    BEGIN WRITE_LONG  (base + 0x04 + (0x10 * fx_type)) parameter1    END
+            PATCH_IF (parameter2 >= "-10")    BEGIN WRITE_LONG  (base + 0x08 + (0x10 * fx_type)) parameter2    END
+            PATCH_IF (parameter2a >= 0)   BEGIN WRITE_SHORT (base + 0x08 + (0x10 * fx_type)) parameter2a    END
+            PATCH_IF (parameter2b >= 0)   BEGIN WRITE_SHORT (base + 0x0a + (0x10 * fx_type)) parameter2b    END
+            PATCH_IF (timing >= 0)        BEGIN WRITE_BYTE  (base + 0x0c + (0x10 * fx_type)) timing        END
+            PATCH_IF (resist_dispel >= 0) BEGIN WRITE_BYTE  (base + 0x0d + (0x47 * fx_type)) resist_dispel END
+            PATCH_IF (duration >= 0)      BEGIN WRITE_LONG  (base + 0x0e + (0x12 * fx_type)) duration      END
+            PATCH_IF (probability1 >= 0)  BEGIN WRITE_BYTE  (base + 0x12 + (0x12 * fx_type)) probability1  END
+            PATCH_IF (probability2 >= 0)  BEGIN WRITE_BYTE  (base + 0x13 + (0x13 * fx_type)) probability2  END
+            PATCH_IF (dicenumber >= 0)    BEGIN WRITE_LONG  (base + 0x1c + (0x14 * fx_type)) dicenumber    END
+            PATCH_IF (dicesize >= 0)      BEGIN WRITE_LONG  (base + 0x20 + (0x14 * fx_type)) dicesize      END
+            PATCH_IF (savingthrow >= 0)   BEGIN WRITE_LONG  (base + 0x24 + (0x14 * fx_type)) savingthrow   END
+            PATCH_IF (savebonus >= "-10") BEGIN WRITE_LONG  (base + 0x28 + (0x14 * fx_type)) savebonus     END
+            PATCH_IF (special >= 0)       BEGIN WRITE_LONG  (base + 0x2c + (0x14 * fx_type)) special       END
+            PATCH_IF ("%resource%" STRING_COMPARE_CASE "SAME" != 0) BEGIN
+              WRITE_ASCIIE (base + 0x14 + (0x14 * fx_type)) "%resource%" #8
+            END
+            LPF dw_internal_set_bit END
+            LPF dw_internal_apply_function END
+            // update the tracking vars
+            SET new_fx += 1
+            SET counter += 1
+            PATCH_IF (local_multi < 2) BEGIN  // kill loop if we only want one match
+              SET index2 = counter
+            END ELSE BEGIN // otherwise bump vars and keep going
+              SET local_multi  -= 1
+              PATCH_IF ("%insert%" STRING_COMPARE_CASE "last" = 0) BEGIN
+                SET last += 1
+              END ELSE BEGIN
+                SET index2 += 1
+              END
+            END
+
+          END // end patch_if for a matched effect
+        END // end of the for loop through effects
+      END // end patch_if for matched/specified headers
+      WRITE_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+    END // end loop through effects on ability
+  END // end ability loop
+
+  // now adjust offsets for creature files
+  PATCH_IF (("%sig%" STRING_EQUAL "CRE ") AND (new_fx > 0)) BEGIN // fix offsets for cre files if fx inserted
+    SET inserted = ((0x30 + (0xd8 * fx_type)) * new_fx)
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+      PATCH_FOR_EACH offset IN 0x294 0x344 0x34c 0x354 0x35c 0x360 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+      PATCH_FOR_EACH offset IN 0x5fa 0x602 0x60a 0x612 0x616 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+      FOR (offset = 0x3ba ; offset < 0x4b3 ; offset = offset + 0x04) BEGIN // all of the spell offsets
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+      FOR (offset = 0x5b2 ; offset < 0x5d3 ; offset = offset + 0x04) BEGIN // domain spell offsets
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+      PATCH_FOR_EACH offset IN 0x308 0x310 0x318 0x320 0x324 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE BEGIN                                               // everything else, cre v1.0
+      PATCH_FOR_EACH offset IN 0x2a0 0x2a8 0x2b0 0x2b8 0x2bc BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END
+  END
+
+  PATCH_IF (new_fx = 0 && !silent) BEGIN
+    PATCH_WARN "WARNING: no effects added to %SOURCE_FILE%"
+  END ELSE PATCH_IF (verbose && !silent) BEGIN
+    READ_LONG 0x0c strref
+    PATCH_IF ((strref > 0) AND (strref < 200000)) BEGIN
+      READ_STRREF 0x0c name
+    END ELSE BEGIN
+      READ_STRREF 0x08 name
+    END
+    PATCH_PRINT "              ~%SOURCE_FILE%~   ~override~ // %name%, %new_fx% effect(s) added"
+  END
+
+END
+
+DEFINE_PATCH_FUNCTION DELETE_EFFECT
+
+  // defines what we're going to check
+  INT_VAR check_globals       = 1
+          check_headers       = 1
+          header              = "-1"
+          header_type         = "-1"
+          multi_match         = 999
+          verbose             = 0
+
+  // variables for finding the effect to match
+          match_opcode        = "-1"
+          match_target        = "-1"
+          match_power         = "-1"
+          match_parameter1    = "-1"
+          match_parameter2    = "-1"
+          match_timing        = "-1"
+          match_resist_dispel = "-1"
+          match_duration      = "-1"
+          match_duration_high = "-1"
+          match_probability1  = "-1"
+          match_probability2  = "-1"
+          match_dicenumber    = "-1"
+          match_dicesize      = "-1"
+          match_savingthrow   = "-1"
+          match_savebonus     = "-11"
+          match_special       = "-1"
+          
+  // DavidW's additional variables for matching
+
+          match_parameter2a         = "-1"
+          match_parameter2b         = "-1"
+          match_save_vs_spell       = "-1"
+          match_save_vs_breath      = "-1"
+          match_save_vs_poison      = "-1"
+          match_save_vs_wand        = "-1"
+          match_save_vs_polymorph   = "-1"
+          match_ignore_primary      = "-1"
+          match_ignore_secondary    = "-1"
+          match_bypass_mirror_image = "-1"
+          match_ignore_difficulty   = "-1"
+          match_drain_hp_to_caster  = "-1"
+          match_transfer_hp_to_target = "-1"
+          match_fist_damage_only    = "-1"
+          match_drain_to_max_hp     = "-1"
+          match_suppress_feedback   = "-1"
+          match_save_for_half       = "-1"
+          match_made_save           = "-1"
+          match_does_not_wake       = "-1"
+
+  // same for match and new STR_VAR
+  STR_VAR match_resource      = "SAME"
+  
+  // DavidW's additional functional variable
+
+          match_function      = ""
+
+BEGIN
+  
+  LPM dw_internal_initialise_bit
+  // set variables and offsets based on the file type
+  SET new_fx = 0
+  READ_ASCII 0 sig ELSE "fail" (4)
+  READ_ASCII 0x04 version (4)
+  PATCH_MATCH "%sig%" WITH
+    "SPL "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
+        SET min_size       = 0x82
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x28
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "ITM "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.1" = 0) BEGIN // pst, itm v1.1
+        SET min_size       = 0x9a
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x38
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "CRE "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+        SET min_size       = 0x378
+        READ_LONG  0x368 fx_off
+        SET counter_offset = 0x36c
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+        SET min_size       = 0x62e
+        READ_LONG  0x61e fx_off
+        SET counter_offset = 0x622
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+        SET min_size       = 0x33c
+        READ_LONG  0x32c fx_off
+        SET counter_offset = 0x330
+      END ELSE BEGIN                                               // everything else, cre v1.0
+        SET min_size = 0x2d4
+        READ_LONG  0x2c4 fx_off
+        SET counter_offset = 0x2c8
+      END
+      SET abil_off = 0 // basically prevents the ability effect loop
+      SET abil_num = 0
+      SET abil_length = 0
+      SET check_globals = 1
+      READ_BYTE 0x33 fx_type ELSE 2
+    END
+
+    "fail"
+    BEGIN
+      PATCH_WARN "WARNING: DELETE_EFFECT does not think %SOURCE_FILE% appears to be a valid file"
+    END
+
+    DEFAULT
+      SET min_size = "-1" // kill macro as the file type is not recognized
+      PATCH_WARN "WARNING: DELETE_EFFECT does not support file type %sig%"
+  END
+
+  PATCH_IF (BUFFER_LENGTH >= min_size) BEGIN // sanity check
+    FOR (index = (0 - check_globals) ; index < abil_num ; ++index) BEGIN // we start at -1 for global effects
+      PATCH_IF (index < 0) BEGIN // if loop through globals needed
+        SET abil_fx_idx = 0  // start with effect 0 since we're in the global loop
+        SET abil_type = "-1" // basically, ignore header type checks for global loop
+      END ELSE BEGIN // otherwise normal ability
+        READ_SHORT  (abil_off +        (abil_length * index)) abil_type
+        SET counter_offset = (abil_off + 0x1e + (abil_length * index))
+        WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + new_fx) // update index with previously added effects
+        READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+      END
+      READ_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+      PATCH_IF (((abil_type = header_type) OR (abil_type < 0) OR (header_type < 0)) AND // only look on the right header types, if specified...
+                ((header = index) OR (header < 0)) AND                                  // and only on the right # header, if specified
+                ((index < 0) OR (check_headers))) BEGIN                                 // if check headers = 0, only re-index
+        SET local_multi = multi_match
+        FOR (index2 = 0 ; index2 < counter ; ++index2) BEGIN
+
+          // read the variables from the current effect
+          READ_SHORT (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_opcode
+          READ_BYTE  (fx_off + 0x02 + (0x0a * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_target
+          READ_BYTE  (fx_off + 0x03 + (0x0d * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_power
+          READ_LONG  (fx_off + 0x04 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter1
+          READ_LONG  (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2
+          READ_SHORT (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2a
+          READ_SHORT (fx_off + 0x0a + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2b
+          READ_BYTE  (fx_off + 0x0c + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_timing
+          READ_BYTE  (fx_off + 0x0d + (0x47 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resist_dispel
+          READ_LONG  (fx_off + 0x0e + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_duration
+          READ_BYTE  (fx_off + 0x12 + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability1
+          READ_BYTE  (fx_off + 0x13 + (0x13 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability2
+          READ_ASCII (fx_off + 0x14 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resource
+          READ_LONG  (fx_off + 0x1c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicenumber
+          READ_LONG  (fx_off + 0x20 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicesize
+          READ_LONG  (fx_off + 0x24 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savingthrow
+          READ_LONG  (fx_off + 0x28 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savebonus
+          READ_LONG  (fx_off + 0x2c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_special
+
+          LPF dw_internal_check_bit RET bit_test_passed END
+          LPF dw_internal_evaluate_function RET function_test_passed END
+
+          // match ALL these variables, if specified
+          PATCH_IF ( bit_test_passed                                                       AND
+                     function_test_passed                                                  AND
+                    ((match_opcode        = o_opcode)        OR (match_opcode < 0))        AND
+                    ((match_target        = o_target)        OR (match_target < 0))        AND
+                    ((match_power         = o_power)         OR (match_power < 0))         AND
+                    ((match_parameter1    = o_parameter1)    OR (match_parameter1 < 0))    AND
+                    ((match_parameter2    = o_parameter2)    OR (match_parameter2 < 0))    AND
+                    ((match_parameter2a    = o_parameter2a)  OR (match_parameter2a < 0))   AND
+                    ((match_parameter2b    = o_parameter2b)  OR (match_parameter2b < 0))   AND
+                    ((match_timing        = o_timing)        OR (match_timing < 0))        AND
+                    ((match_resist_dispel = o_resist_dispel) OR (match_resist_dispel < 0)) AND
+                    ((match_duration      = o_duration)      OR (match_duration < 0))      AND
+                    ((match_probability1  = o_probability1)  OR (match_probability1 < 0))  AND
+                    ((match_probability2  = o_probability2)  OR (match_probability2 < 0))  AND
+                    ((match_dicenumber    = o_dicenumber)    OR (match_dicenumber < 0))    AND
+                    ((match_dicesize      = o_dicesize)      OR (match_dicesize < 0))      AND
+                    ((match_savingthrow   = o_savingthrow)   OR (match_savingthrow < 0))   AND
+                    ((match_savebonus     = o_savebonus)     OR (match_savebonus < "-10")) AND
+                    ((match_special       = o_special)       OR (match_special < 0))       AND
+                    (("%match_resource%" STRING_COMPARE_CASE "%o_resource%" = 0) OR ("%match_resource%" STRING_COMPARE_CASE "SAME" = 0))) BEGIN
+
+            // now that we've got a match, read-and-clone it:
+            DELETE_BYTES   (fx_off        + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) (0x30 + (0xd8 * fx_type))
+
+            // update the tracking vars
+            SET new_fx -= 1
+            SET counter -= 1
+            SET index2 -= 1
+            PATCH_IF (local_multi < 2) BEGIN  // kill loop if we only want one match
+              SET index2 = counter
+            END ELSE BEGIN // otherwise bump vars and keep going
+              SET local_multi  -= 1
+            END
+
+          END // end patch_if for a matched effect
+        END // end of the for loop through effects
+      END // end patch_if for matched/specified headers
+      WRITE_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+    END // end loop through effects on ability
+  END // end ability loop
+
+  // now adjust offsets for creature files
+  PATCH_IF (("%sig%" STRING_EQUAL "CRE ") AND (new_fx != 0)) BEGIN // fix offsets for cre files if #fx changed
+    SET inserted = ((0x30 + (0xd8 * fx_type)) * new_fx)
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+      PATCH_FOR_EACH offset IN 0x294 0x344 0x34c 0x354 0x35c 0x360 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+      PATCH_FOR_EACH offset IN 0x5fa 0x602 0x60a 0x612 0x616 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+      FOR (offset = 0x3ba ; offset < 0x4b3 ; offset = offset + 0x04) BEGIN // all of the spell offsets
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+      FOR (offset = 0x5b2 ; offset < 0x5d3 ; offset = offset + 0x04) BEGIN // domain spell offsets
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE
+    PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+      PATCH_FOR_EACH offset IN 0x308 0x310 0x318 0x320 0x324 BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END ELSE BEGIN                                               // everything else, cre v1.0
+      PATCH_FOR_EACH offset IN 0x2a0 0x2a8 0x2b0 0x2b8 0x2bc BEGIN
+        READ_LONG offset off
+        PATCH_IF (fx_off < off) BEGIN
+          WRITE_LONG offset (off + inserted)
+        END
+      END
+    END
+  END
+
+  PATCH_IF (verbose) BEGIN
+    READ_LONG 0x0c strref
+    PATCH_IF ((strref > 0) AND (strref < 200000)) BEGIN
+      READ_STRREF 0x0c name
+    END ELSE BEGIN
+      READ_STRREF 0x08 name
+    END
+    PATCH_PRINT "              ~%SOURCE_FILE%~   ~override~ // %name%, %new_fx% effect(s) deleted"
+  END
+
+END
+
+DEFINE_PATCH_FUNCTION ALTER_EFFECT
+
+  // defines what we're going to check
+  INT_VAR check_globals       = 1
+          check_headers       = 1
+          header              = "-1"
+          header_type         = "-1"
+          multi_match         = 999
+          verbose             = 0
+          silent              = 0
+
+  // variables for finding the effect to match
+          match_opcode        = "-1"
+          match_target        = "-1"
+          match_power         = "-1"
+          match_parameter1    = "-1"
+          match_parameter2    = "-1"
+          match_timing        = "-1"
+          match_resist_dispel = "-1"
+          match_duration      = "-1"
+          match_duration_high = "-1"
+          match_probability1  = "-1"
+          match_probability2  = "-1"
+          match_dicenumber    = "-1"
+          match_dicesize      = "-1"
+          match_savingthrow   = "-1"
+          match_savebonus     = "-11"
+          match_special       = "-1"
+          
+  // DavidW's additional variables for matching
+
+          match_parameter2a         = "-1"
+          match_parameter2b         = "-1"
+          match_save_vs_spell       = "-1"
+          match_save_vs_breath      = "-1"
+          match_save_vs_poison      = "-1"
+          match_save_vs_wand        = "-1"
+          match_save_vs_polymorph   = "-1"
+          match_ignore_primary      = "-1"
+          match_ignore_secondary    = "-1"
+          match_bypass_mirror_image = "-1"
+          match_ignore_difficulty   = "-1"
+          match_drain_hp_to_caster  = "-1"
+          match_transfer_hp_to_target = "-1"
+          match_fist_damage_only    = "-1"
+          match_drain_to_max_hp     = "-1"
+          match_suppress_feedback   = "-1"
+          match_save_for_half       = "-1"
+          match_made_save           = "-1"
+          match_does_not_wake       = "-1"
+
+  // variables for the new effect
+          opcode              = "-1"
+          target              = "-1"
+          power               = "-1"
+          parameter1          = "-11"
+          parameter2          = "-11"
+          timing              = "-1"
+          resist_dispel       = "-1"
+          duration            = "-1"
+          duration_high       = "-1"
+          probability1        = "-1"
+          probability2        = "-1"
+          dicenumber          = "-1"
+          dicesize            = "-1"
+          savingthrow         = "-1"
+          savebonus           = "-11"
+          special             = "-1"
+          
+  // DavidW's additional variables for the new effect
+
+          parameter2a         = "-1"
+          parameter2b         = "-1"
+          save_vs_spell       = "-1"
+          save_vs_breath      = "-1"
+          save_vs_poison      = "-1"
+          save_vs_wand        = "-1"
+          save_vs_polymorph   = "-1"
+          ignore_primary      = "-1"
+          ignore_secondary    = "-1"
+          bypass_mirror_image = "-1"
+          ignore_difficulty   = "-1"
+          drain_hp_to_caster  = "-1"
+          transfer_hp_to_target = "-1"
+          fist_damage_only    = "-1"
+          drain_to_max_hp     = "-1"
+          suppress_feedback   = "-1"
+          save_for_half       = "-1"
+          made_save           = "-1"
+          does_not_wake       = "-1"
+
+  // same for match and new STR_VAR
+  STR_VAR match_resource      = "SAME"
+          resource            = "SAME"
+          
+  // DavidW's additional functional variables
+
+          match_function      = ""
+          function            = ""
+
+BEGIN  
+  LPM dw_internal_initialise_bit
+  // set variables and offsets based on the file type
+  SET alter = 0
+  READ_ASCII 0 sig ELSE "fail" (4)
+  READ_ASCII 0x04 version (4)
+  PATCH_MATCH "%sig%" WITH
+    "SPL "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
+        SET min_size       = 0x82
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x28
+      SET fx_type        = 0
+      PATCH_IF (check_headers = 0) BEGIN
+        SET abil_num = 0
+      END ELSE BEGIN
+        READ_LONG   0x64 abil_off ELSE 0
+        READ_SHORT  0x68 abil_num ELSE 0
+      END
+    END
+
+    "ITM "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.1" = 0) BEGIN // pst, itm v1.1
+        SET min_size       = 0x9a
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x38
+      SET fx_type        = 0
+      PATCH_IF (check_headers = 0) BEGIN
+        SET abil_num = 0
+      END ELSE BEGIN
+        READ_LONG   0x64 abil_off ELSE 0
+        READ_SHORT  0x68 abil_num ELSE 0
+      END
+    END
+
+    "CRE "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+        SET min_size       = 0x378
+        READ_LONG  0x368 fx_off ELSE 0
+        SET counter_offset = 0x36c
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+        SET min_size       = 0x62e
+        READ_LONG  0x61e fx_off ELSE 0
+        SET counter_offset = 0x622
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+        SET min_size       = 0x33c
+        READ_LONG  0x32c fx_off ELSE 0
+        SET counter_offset = 0x330
+      END ELSE BEGIN                                               // everything else, cre v1.0
+        SET min_size = 0x2d4
+        READ_LONG  0x2c4 fx_off ELSE 0
+        SET counter_offset = 0x2c8
+      END
+      SET abil_off = 0 // basically prevents the ability effect loop
+      SET abil_num = 0
+      SET abil_length = 0
+      SET check_globals = 1
+      READ_BYTE 0x33 fx_type ELSE 2
+    END
+
+    "fail"
+    BEGIN
+      PATCH_WARN "WARNING: ALTER_EFFECT does not think %SOURCE_FILE% appears to be a valid file"
+    END
+
+    DEFAULT
+      SET min_size = "-1" // kill macro as the file type is not recognized
+      PATCH_WARN "WARNING: ALTER_EFFECT does not support file type %sig%"
+  END
+
+  PATCH_IF (BUFFER_LENGTH >= min_size) BEGIN // sanity check
+    FOR (index = (0 - check_globals) ; index < abil_num ; ++index) BEGIN // we start at -1 for global effects
+      PATCH_IF (index < 0) BEGIN // if loop through globals needed
+        SET abil_fx_idx = 0  // start with effect 0 since we're in the global loop
+        SET abil_type = "-1" // basically, ignore header type checks for global loop
+      END ELSE BEGIN // otherwise normal ability
+        READ_SHORT  (abil_off +        (abil_length * index)) abil_type
+        SET counter_offset = (abil_off + 0x1e + (abil_length * index))
+        READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+      END
+      READ_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+      PATCH_IF (((abil_type = header_type) OR (abil_type < 0) OR (header_type < 0)) AND // only look on the right header types, if specified...
+                ((header = index) OR (header < 0))) BEGIN                               // and only on the right # header, if specified
+        SET local_multi = multi_match
+        FOR (index2 = 0 ; index2 < counter ; ++index2) BEGIN
+
+          // read the variables from the current effect
+          READ_SHORT (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_opcode
+          READ_BYTE  (fx_off + 0x02 + (0x0a * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_target
+          READ_BYTE  (fx_off + 0x03 + (0x0d * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_power
+          READ_LONG  (fx_off + 0x04 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter1
+          READ_LONG  (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2
+          READ_SHORT (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2a
+          READ_SHORT (fx_off + 0x0a + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2b
+          READ_BYTE  (fx_off + 0x0c + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_timing
+          READ_BYTE  (fx_off + 0x0d + (0x47 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resist_dispel
+          READ_LONG  (fx_off + 0x0e + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_duration
+          READ_BYTE  (fx_off + 0x12 + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability1
+          READ_BYTE  (fx_off + 0x13 + (0x13 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability2
+          READ_ASCII (fx_off + 0x14 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resource
+          READ_LONG  (fx_off + 0x1c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicenumber
+          READ_LONG  (fx_off + 0x20 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicesize
+          READ_LONG  (fx_off + 0x24 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savingthrow
+          READ_LONG  (fx_off + 0x28 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savebonus
+          READ_LONG  (fx_off + 0x2c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_special
+
+          LPF dw_internal_check_bit RET bit_test_passed END
+          LPF dw_internal_evaluate_function RET function_test_passed END
+
+          // match ALL these variables, if specified
+          PATCH_IF ( bit_test_passed                                                       AND
+                     function_test_passed                                                  AND
+                    ((match_opcode        = o_opcode)        OR (match_opcode < 0))        AND
+                    ((match_target        = o_target)        OR (match_target < 0))        AND
+                    ((match_power         = o_power)         OR (match_power < 0))         AND
+                    ((match_parameter1    = o_parameter1)    OR (match_parameter1 < 0))    AND
+                    ((match_parameter2    = o_parameter2)    OR (match_parameter2 < 0))    AND
+                    ((match_parameter2a    = o_parameter2a)  OR (match_parameter2a < 0))   AND
+                    ((match_parameter2b    = o_parameter2b)  OR (match_parameter2b < 0))   AND
+                    ((match_timing        = o_timing)        OR (match_timing < 0))        AND
+                    ((match_resist_dispel = o_resist_dispel) OR (match_resist_dispel < 0)) AND
+                    ((match_duration      = o_duration)      OR (match_duration < 0))      AND
+                    ((match_probability1  = o_probability1)  OR (match_probability1 < 0))  AND
+                    ((match_probability2  = o_probability2)  OR (match_probability2 < 0))  AND
+                    ((match_dicenumber    = o_dicenumber)    OR (match_dicenumber < 0))    AND
+                    ((match_dicesize      = o_dicesize)      OR (match_dicesize < 0))      AND
+                    ((match_savingthrow   = o_savingthrow)   OR (match_savingthrow < 0))   AND
+                    ((match_savebonus     = o_savebonus)     OR (match_savebonus < "-10")) AND
+                    ((match_special       = o_special)       OR (match_special < 0))       AND
+                    (("%match_resource%" STRING_COMPARE_CASE "%o_resource%" = 0) OR ("%match_resource%" STRING_COMPARE_CASE "SAME" = 0))) BEGIN
+
+            // lazily re-use code
+            SET base = (fx_off        + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type))))
+
+            // overwrite the cloned effect with the new variables, if specified
+            PATCH_IF (opcode >= 0)        BEGIN WRITE_SHORT (base        + (0x08 * fx_type)) opcode        END
+            PATCH_IF (target >= 0)        BEGIN WRITE_BYTE  (base + 0x02 + (0x0a * fx_type)) target        END
+            PATCH_IF (power >= 0)         BEGIN WRITE_BYTE  (base + 0x03 + (0x0d * fx_type)) power         END
+            PATCH_IF (parameter1 >= "-10") BEGIN WRITE_LONG  (base + 0x04 + (0x10 * fx_type)) parameter1    END
+            PATCH_IF (parameter2 >= "-10")    BEGIN WRITE_LONG  (base + 0x08 + (0x10 * fx_type)) parameter2    END
+            PATCH_IF (parameter2a >= 0)   BEGIN WRITE_SHORT (base + 0x08 + (0x10 * fx_type)) parameter2a    END
+            PATCH_IF (parameter2b >= 0)   BEGIN WRITE_SHORT (base + 0x0a + (0x10 * fx_type)) parameter2b    END
+            PATCH_IF (timing >= 0)        BEGIN WRITE_BYTE  (base + 0x0c + (0x10 * fx_type)) timing        END
+            PATCH_IF (resist_dispel >= 0) BEGIN WRITE_BYTE  (base + 0x0d + (0x47 * fx_type)) resist_dispel END
+            PATCH_IF (duration >= 0)      BEGIN WRITE_LONG  (base + 0x0e + (0x12 * fx_type)) duration      END
+            PATCH_IF (probability1 >= 0)  BEGIN WRITE_BYTE  (base + 0x12 + (0x12 * fx_type)) probability1  END
+            PATCH_IF (probability2 >= 0)  BEGIN WRITE_BYTE  (base + 0x13 + (0x13 * fx_type)) probability2  END
+            PATCH_IF (dicenumber >= 0)    BEGIN WRITE_LONG  (base + 0x1c + (0x14 * fx_type)) dicenumber    END
+            PATCH_IF (dicesize >= 0)      BEGIN WRITE_LONG  (base + 0x20 + (0x14 * fx_type)) dicesize      END
+            PATCH_IF (savingthrow >= 0)   BEGIN WRITE_LONG  (base + 0x24 + (0x14 * fx_type)) savingthrow   END
+            PATCH_IF (savebonus >= "-10") BEGIN WRITE_LONG  (base + 0x28 + (0x14 * fx_type)) savebonus     END
+            PATCH_IF (special >= 0)       BEGIN WRITE_LONG  (base + 0x2c + (0x14 * fx_type)) special       END
+            PATCH_IF ("%resource%" STRING_COMPARE_CASE "SAME" != 0) BEGIN
+              WRITE_ASCIIE (base + 0x14 + (0x14 * fx_type)) "%resource%" #8
+            END
+            LPF dw_internal_set_bit END
+            LPF dw_internal_apply_function END
+            // update the tracking vars
+            SET alter += 1
+            PATCH_IF (local_multi < 2) BEGIN  // kill loop if we only want one match
+              SET index2 = counter
+            END ELSE BEGIN // otherwise bump vars and keep going
+              SET local_multi  -= 1
+            END
+
+          END // end patch_if for a matched effect
+        END // end of the for loop through effects
+      END // end patch_if for matched/specified headers
+    END // end loop through effects on ability
+  END // end ability loop
+
+  PATCH_IF (alter = 0 && !silent) BEGIN
+    PATCH_WARN "WARNING: no effects altered on %SOURCE_FILE%"
+  END
+
+  PATCH_IF (verbose && !silent) BEGIN
+    READ_LONG 0x0c strref
+    PATCH_IF ((strref > 0) AND (strref < 200000)) BEGIN
+      READ_STRREF 0x0c name
+    END ELSE BEGIN
+      READ_STRREF 0x08 name
+    END
+    PATCH_PRINT "              ~%SOURCE_FILE%~   ~override~ // %name%, %alter% effect(s) altered"
+  END
+
+END
+
+
+DEFINE_PATCH_FUNCTION MATCH_EFFECT
+
+  // defines what we're going to check
+  INT_VAR check_globals       = 1
+          check_headers       = 1
+          header              = "-1"
+          header_type         = "-1"
+          multi_match         = 999
+          verbose             = 0
+
+  // variables for finding the effect to match
+          match_opcode        = "-1"
+          match_target        = "-1"
+          match_power         = "-1"
+          match_parameter1    = "-1"
+          match_parameter2    = "-1"
+          match_timing        = "-1"
+          match_resist_dispel = "-1"
+          match_duration      = "-1"
+          match_duration_high = "-1"
+          match_probability1  = "-1"
+          match_probability2  = "-1"
+          match_dicenumber    = "-1"
+          match_dicesize      = "-1"
+          match_savingthrow   = "-1"
+          match_savebonus     = "-11"
+          match_special       = "-1"
+          
+  // DavidW's additional variables for matching
+
+          match_parameter2a         = "-1"
+          match_parameter2b         = "-1"
+          match_save_vs_spell       = "-1"
+          match_save_vs_breath      = "-1"
+          match_save_vs_poison      = "-1"
+          match_save_vs_wand        = "-1"
+          match_save_vs_polymorph   = "-1"
+          match_ignore_primary      = "-1"
+          match_ignore_secondary    = "-1"
+          match_bypass_mirror_image = "-1"
+          match_ignore_difficulty   = "-1"
+          match_drain_hp_to_caster  = "-1"
+          match_transfer_hp_to_target = "-1"
+          match_fist_damage_only    = "-1"
+          match_drain_to_max_hp     = "-1"
+          match_suppress_feedback   = "-1"
+          match_save_for_half       = "-1"
+          match_made_save           = "-1"
+          match_does_not_wake       = "-1"
+
+  // same for match and new STR_VAR
+  STR_VAR match_resource      = "SAME"
+  
+  // DavidW's additional functional variable
+
+          match_function      = ""
+
+  // The return value
+  
+  RET value
+
+BEGIN
+
+  SET value=0
+  LPM dw_internal_initialise_bit
+  // set variables and offsets based on the file type
+  SET new_fx = 0
+  READ_ASCII 0 sig ELSE "fail" (4)
+  READ_ASCII 0x04 version (4)
+  PATCH_MATCH "%sig%" WITH
+    "SPL "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
+        SET min_size       = 0x82
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x28
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "ITM "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.1" = 0) BEGIN // pst, itm v1.1
+        SET min_size       = 0x9a
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x38
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "CRE "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+        SET min_size       = 0x378
+        READ_LONG  0x368 fx_off
+        SET counter_offset = 0x36c
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+        SET min_size       = 0x62e
+        READ_LONG  0x61e fx_off
+        SET counter_offset = 0x622
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+        SET min_size       = 0x33c
+        READ_LONG  0x32c fx_off
+        SET counter_offset = 0x330
+      END ELSE BEGIN                                               // everything else, cre v1.0
+        SET min_size = 0x2d4
+        READ_LONG  0x2c4 fx_off
+        SET counter_offset = 0x2c8
+      END
+      SET abil_off = 0 // basically prevents the ability effect loop
+      SET abil_num = 0
+      SET abil_length = 0
+      SET check_globals = 1
+      READ_BYTE 0x33 fx_type ELSE 2
+    END
+
+    "fail"
+    BEGIN
+      PATCH_WARN "WARNING: MATCH_EFFECT does not think %SOURCE_FILE% appears to be a valid file"
+    END
+
+    DEFAULT
+      SET min_size = "-1" // kill macro as the file type is not recognized
+      PATCH_WARN "WARNING: MATCH_EFFECT does not support file type %sig%"
+  END
+
+  PATCH_IF (BUFFER_LENGTH >= min_size) BEGIN // sanity check
+    FOR (index = (0 - check_globals) ; index < abil_num ; ++index) BEGIN // we start at -1 for global effects
+      PATCH_IF (index < 0) BEGIN // if loop through globals needed
+        SET abil_fx_idx = 0  // start with effect 0 since we're in the global loop
+        SET abil_type = "-1" // basically, ignore header type checks for global loop
+      END ELSE BEGIN // otherwise normal ability
+        READ_SHORT  (abil_off +        (abil_length * index)) abil_type
+        SET counter_offset = (abil_off + 0x1e + (abil_length * index))
+        WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + new_fx) // update index with previously added effects
+        READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+      END
+      READ_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+      PATCH_IF (((abil_type = header_type) OR (abil_type < 0) OR (header_type < 0)) AND // only look on the right header types, if specified...
+                ((header = index) OR (header < 0)) AND                                  // and only on the right # header, if specified
+                ((index < 0) OR (check_headers))) BEGIN                                 // if check headers = 0, only re-index
+        SET local_multi = multi_match
+        FOR (index2 = 0 ; index2 < counter ; ++index2) BEGIN
+
+          // read the variables from the current effect
+          READ_SHORT (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_opcode
+          READ_BYTE  (fx_off + 0x02 + (0x0a * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_target
+          READ_BYTE  (fx_off + 0x03 + (0x0d * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_power
+          READ_LONG  (fx_off + 0x04 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter1
+          READ_LONG  (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2
+          READ_SHORT (fx_off + 0x08 + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2a
+          READ_SHORT (fx_off + 0x0a + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_parameter2b
+          READ_BYTE  (fx_off + 0x0c + (0x10 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_timing
+          READ_BYTE  (fx_off + 0x0d + (0x47 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resist_dispel
+          READ_LONG  (fx_off + 0x0e + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_duration
+          READ_BYTE  (fx_off + 0x12 + (0x12 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability1
+          READ_BYTE  (fx_off + 0x13 + (0x13 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_probability2
+          READ_ASCII (fx_off + 0x14 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_resource
+          READ_LONG  (fx_off + 0x1c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicenumber
+          READ_LONG  (fx_off + 0x20 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_dicesize
+          READ_LONG  (fx_off + 0x24 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savingthrow
+          READ_LONG  (fx_off + 0x28 + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_savebonus
+          READ_LONG  (fx_off + 0x2c + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_special
+
+          LPF dw_internal_check_bit RET bit_test_passed END
+          LPF dw_internal_evaluate_function RET function_test_passed END
+
+          // match ALL these variables, if specified
+          PATCH_IF ( bit_test_passed                                                       AND
+                     function_test_passed                                                  AND
+                    ((match_opcode        = o_opcode)        OR (match_opcode < 0))        AND
+                    ((match_target        = o_target)        OR (match_target < 0))        AND
+                    ((match_power         = o_power)         OR (match_power < 0))         AND
+                    ((match_parameter1    = o_parameter1)    OR (match_parameter1 < 0))    AND
+                    ((match_parameter2    = o_parameter2)    OR (match_parameter2 < 0))    AND
+                    ((match_parameter2a    = o_parameter2a)  OR (match_parameter2a < 0))   AND
+                    ((match_parameter2b    = o_parameter2b)  OR (match_parameter2b < 0))   AND
+                    ((match_timing        = o_timing)        OR (match_timing < 0))        AND
+                    ((match_resist_dispel = o_resist_dispel) OR (match_resist_dispel < 0)) AND
+                    ((match_duration      = o_duration)      OR (match_duration < 0))      AND
+                    ((match_probability1  = o_probability1)  OR (match_probability1 < 0))  AND
+                    ((match_probability2  = o_probability2)  OR (match_probability2 < 0))  AND
+                    ((match_dicenumber    = o_dicenumber)    OR (match_dicenumber < 0))    AND
+                    ((match_dicesize      = o_dicesize)      OR (match_dicesize < 0))      AND
+                    ((match_savingthrow   = o_savingthrow)   OR (match_savingthrow < 0))   AND
+                    ((match_savebonus     = o_savebonus)     OR (match_savebonus < "-10")) AND
+                    ((match_special       = o_special)       OR (match_special < 0))       AND
+                    (("%match_resource%" STRING_COMPARE_CASE "%o_resource%" = 0) OR ("%match_resource%" STRING_COMPARE_CASE "SAME" = 0))) BEGIN
+
+            SET value=1
+
+          END // end patch_if for a matched effect
+        END // end of the for loop through effects
+      END // end patch_if for matched/specified headers
+      WRITE_SHORT counter_offset counter // fx_num on global loop, otherwise abil_fx_num
+    END // end loop through effects on ability
+  END // end ability loop
+
+
+END
+
+
+
+
+DEFINE_PATCH_MACRO dw_internal_initialise_bit BEGIN
+   //  DavidW: once and for all set the variables used by bit checks
+  CLEAR_ARRAY bit_array_binary
+  DEFINE_ASSOCIATIVE_ARRAY bit_array_binary BEGIN
+             save_vs_spell         =>   0b11111110
+             save_vs_breath        =>   0b11111101
+             save_vs_poison        =>   0b11111011
+             save_vs_wand          =>   0b11110111
+             save_vs_polymorph     =>   0b11101111
+             ignore_primary        =>   0b11111011
+             ignore_secondary      =>   0b11110111
+             bypass_mirror_image   =>   0b11111110
+             ignore_difficulty     =>   0b11111101
+             drain_hp_to_caster    =>   0b11111110
+             transfer_hp_to_target =>   0b11111101
+             fist_damage_only      =>   0b11111011
+             drain_to_max_hp       =>   0b11110111
+             suppress_feedback     =>   0b11011111
+             save_for_half         =>   0b11111110
+             made_save             =>   0b11111101
+             does_not_wake         =>   0b11111011
+
+  END
+  CLEAR_ARRAY bit_array
+  DEFINE_ASSOCIATIVE_ARRAY bit_array BEGIN
+            save_vs_spell            =>   0x24
+            save_vs_breath           =>   0x24
+            save_vs_poison           =>   0x24
+            save_vs_wand             =>   0x24
+            save_vs_polymorph        =>   0x24
+            ignore_primary           =>   0x25
+            ignore_secondary         =>   0x25
+            ignore_difficulty        =>   0x27
+            bypass_mirror_image      =>   0x27
+            drain_hp_to_caster       =>   0x2c   
+            transfer_hp_to_target    =>   0x2c
+            fist_damage_only         =>   0x2c
+            drain_to_max_hp          =>   0x2c
+            suppress_feedback        =>   0x2c
+            save_for_half            =>   0x2d
+            made_save                =>   0x2d
+            does_not_wake            =>   0x2d
+
+  END
+END
+
+DEFINE_PATCH_FUNCTION dw_internal_check_bit // not really encapsulated
+    RET bit_test_passed
+BEGIN
+      SET bit_test_passed=1
+      PHP_EACH bit_array AS bit_var=>bit_loc BEGIN
+             SET bit_val=EVAL "match_%bit_var%"
+             PATCH_IF (bit_val>=0 && bit_test_passed=1) BEGIN // if we've already failed, don't bother
+                  SET bit_binary = $bit_array_binary("%bit_var%")
+                  READ_BYTE  (fx_off + bit_loc + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) o_bit_value
+                  PATCH_IF bit_val=0 BEGIN
+                     PATCH_IF ! ( ((BNOT bit_binary) BAND o_bit_value) = 0b00000000) BEGIN
+                        SET bit_test_passed=0
+                     END
+                  END ELSE BEGIN
+                     PATCH_IF ! ( (bit_binary BOR o_bit_value) = 0b11111111) BEGIN
+                        SET bit_test_passed=0
+                     END
+                  END
+             END
+      END
+END
+
+DEFINE_PATCH_FUNCTION dw_internal_set_bit // not really encapsulated
+BEGIN
+            PHP_EACH bit_array AS bit_var=>bit_loc BEGIN
+             SET bit_val=EVAL "%bit_var%"
+             PATCH_IF bit_val>=0 BEGIN
+                SET bit_binary =$bit_array_binary("%bit_var%")
+                READ_BYTE (base + bit_loc + (0x14 * fx_type)) bit_value
+                PATCH_IF bit_val=0 BEGIN
+                    SET bit_value = (bit_value BAND bit_binary )
+                END ELSE BEGIN
+                    SET bit_value = (bit_value BOR (BNOT bit_binary) )
+                END
+                WRITE_BYTE (base + bit_loc + (0x14 * fx_type)) bit_value
+             END
+            END
+END
+
+DEFINE_PATCH_FUNCTION dw_internal_evaluate_function // not really encapsulated
+           RET function_test_passed
+BEGIN
+  // initialise
+  SET function_test_passed=1
+
+  // is there a function?
+  PATCH_IF "%match_function%" STRING_COMPARE "" BEGIN
+
+   // get the function and arguments
+   SPRINT arguments ""
+   INNER_PATCH_SAVE match_function "%match_function%" BEGIN
+      REPLACE_EVALUATE "\(.*\)(\([^)]*\))$" BEGIN
+         SPRINT arguments "%MATCH2%"
+      END
+      "%MATCH1%"
+   END
+   // get the data
+   READ_ASCII (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) dw_data (0x30)
+   // apply the function
+   INNER_PATCH "%dw_data%" BEGIN
+      LPF "%match_function%" STR_VAR arguments RET function_test_passed=value END
+   END
+
+  END
+END
+
+DEFINE_PATCH_FUNCTION dw_internal_apply_function // not really encapsulated
+BEGIN
+
+  // is there a function?
+  PATCH_IF "%function%" STRING_COMPARE "" BEGIN
+
+   // get the function and arguments
+   SPRINT arguments ""
+   INNER_PATCH_SAVE function "%function%" BEGIN
+      REPLACE_EVALUATE "\(.*\)(\([^)]*\))$" BEGIN
+         SPRINT arguments "%MATCH2%"
+      END
+      "%MATCH1%"
+   END
+   // get the data
+   READ_ASCII (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) dw_data (0x30)
+   // apply the function
+   INNER_PATCH_SAVE dw_data "%dw_data%" BEGIN
+      LPF "%function%" STR_VAR arguments END
+   END
+   // write the data
+   WRITE_ASCIIE (fx_off        + (0x08 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) "%dw_data%" (0x30)
+
+  END
+END

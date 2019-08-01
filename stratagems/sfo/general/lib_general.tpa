@@ -51,7 +51,7 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
              LAF warning STR_VAR warning= ~SSL call with variables %sslvariables%, library %ssllibrary%, booleans %booleanstring%~ END
              PRINT ~~~~~actual SSL string is ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~ ~~~~~
           END
-          
+          DELETE "%workspace%/ssl_out/%script%.baf"
           ACTION_IF ~%WEIDU_OS%~ STRING_COMPARE_CASE ~WIN32~ THEN BEGIN
                 OUTER_INNER_PATCH_SAVE scsargs "%full_loc%/%script%" BEGIN
                      REPLACE_TEXTUALLY "\" "/"
@@ -59,17 +59,23 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
 		AT_NOW ~chmod 755 %scsroot%/%ssl_loc%/ssl.pl~
                 AT_NOW ~/usr/bin/perl %scsroot%/%ssl_loc%/ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%/autolib %booleanstring%~ EXACT	  
           END ELSE BEGIN
-		AT_NOW ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
+                LAF check_ini STR_VAR ini=Use_Perl_Natively RET value END
+                ACTION_IF value BEGIN
+                   AT_NOW ~perl %scsroot%\%ssl_loc%\ssl.pl %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
+		END ELSE BEGIN
+                   AT_NOW ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
+		END
 	  END
 	  COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out~ EVALUATE_BUFFER
 	     PATCH_IF  !enhanced_edition BEGIN
                 LPF ssl_ee_to_vanilla END
              END
+             LPF ssl_hotkey_swap END
              LPF implement_line_if END
           BUT_ONLY
 	  ACTION_IF skip_bcs=0 BEGIN
 	   ACTION_IF ~%rename_to%~ STRING_COMPARE_CASE ~~ BEGIN
-	     COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out\%rename_to%.baf~
+	     COPY + ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out\%rename_to%.baf~
              COMPILE EVALUATE_BUFFER ~%workspace%\ssl_out\%rename_to%.baf~
            END ELSE BEGIN
              COMPILE EVALUATE_BUFFER ~%workspace%\ssl_out\%script%.baf~
@@ -243,6 +249,7 @@ END
 
 DEFINE_ACTION_FUNCTION extend
          INT_VAR tv=0
+                 allow_missing=0
          STR_VAR file=""
                  files=""
                  script=""
@@ -772,7 +779,7 @@ BEGIN
            SPRINT fixed_loc "0x24"
            SPRINT ext_loc "area=>0x40 area=>0x44"
         END
-        wav bam vvc pro baf bcs 2da BEGIN
+        wav bam vvc baf bcs 2da BEGIN
            SPRINT fixed_loc ""
            SPRINT ext_loc ""
         END
@@ -780,6 +787,10 @@ BEGIN
            SPRINT fixed_loc ""
            SPRINT ext_loc ""
            LPF warning STR_VAR warning="apply_to_strref has skipped %filename%.eff, which might be a problem in the vanishingly unlikely event it's got a strref in it" END
+        END
+        pro BEGIN
+           SPRINT fixed_loc "0x30"
+           SPRINT ext_loc ""
         END
         DEFAULT
            SPRINT fixed_loc ""
@@ -1107,6 +1118,8 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////  Sort out a SPLPROT entry
+/////
+/////  through stupid design choices, this uses 'value' both as input and output. Too many uses to change now.
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION resolve_splprot_entry 
@@ -1116,6 +1129,7 @@ DEFINE_ACTION_FUNCTION resolve_splprot_entry
       STR_VAR relation=""
       RET value
 BEGIN
+      OUTER_SET splprot_value=value
       ACTION_MATCH "%relation%" WITH
          equals equal BEGIN 
             OUTER_SET relation_number=1
@@ -1148,14 +1162,14 @@ BEGIN
                    READ_2DA_ENTRY_FORMER splprot_array i 2 this_value
                    READ_2DA_ENTRY_FORMER splprot_array i 3 this_relation
                    PATCH_IF (IS_AN_INT this_stat && IS_AN_INT this_value && IS_AN_INT this_relation) BEGIN
-                     PATCH_IF (stat=this_stat && value=this_value && relation_number=this_relation) BEGIN
+                     PATCH_IF (stat=this_stat && splprot_value=this_value && relation_number=this_relation) BEGIN
                       SET value=i
                       SET i=splprot_array
                      END
                    END
             END
             PATCH_IF value<0 BEGIN
-               INSERT_2DA_ROW splprot_array 4 "%splprot_array% %stat% %value% %relation_number%"
+               INSERT_2DA_ROW splprot_array 4 "%splprot_array% %stat% %splprot_value% %relation_number%"
                SET value=splprot_array
             END
       BUT_ONLY
@@ -1218,4 +1232,79 @@ DEFINE_ACTION_FUNCTION sort_ids STR_VAR ids="" BEGIN
        REPLACE_TEXTUALLY "DW_SORT_IDS_PLACEHOLDER" "%top_row%"
 END
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Read a file into an array
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION read_file_into_array
+   STR_VAR file=""
+           location=""
+           locbase=""
+           locabs=""
+           inline="no"
+   RET file_length
+   RET_ARRAY file_contents
+BEGIN
+      PRINT "Reading in file %file% to array..."
+      ACTION_IF "%inline%" STRING_EQUAL_CASE "yes" BEGIN
+        COPY ".../stratagems-inline/%file%" "%workspace%/file_to_read.txt" EVALUATE_BUFFER
+      END ELSE BEGIN
+        LAF get_directory STR_VAR location locabs locbase RET full_loc=directory END
+        ACTION_IF "%full_loc%" STRING_EQUAL_CASE "override" BEGIN
+         COPY_EXISTING "%file%" "%workspace%/file_to_read.txt" EVALUATE_BUFFER
+        END ELSE BEGIN
+         COPY "%full_loc%/%file%" "%workspace%/file_to_read.txt" EVALUATE_BUFFER
+        END
+      END
+      APPEND_OUTER "%workspace%/file_to_read.txt" "" // ensure final line break
+      OUTER_SPRINT $file_contents("0") "" // make sure the array exists even if file is empty
+      COPY "%workspace%/file_to_read.txt" "%workspace%"
+         SET index=0
+         REPLACE_EVALUATE "\(.*%WNL%\)"
+         BEGIN
+            SPRINT $file_contents("%index%") "%MATCH1%"
+            index +=1
+         END
+         ""
+      BUT_ONLY
+      OUTER_SET file_length=index - 1
+      PRINT "...done"
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Write an array into a file
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION write_array_into_file
+   STR_VAR file=""
+           file_contents=""
+BEGIN  
+
+      PRINT "Outputting array to file %file%..."
+      OUTER_SPRINT outputstring ""
+      ACTION_PHP_EACH "%file_contents%" AS ind=>line BEGIN
+         OUTER_SPRINT outputstring "%outputstring%%line%"
+      END
+      COPY ".../stratagems-inline/blank" "%file%"
+      APPEND_OUTER "%file%" "%outputstring%" KEEP_CRLF
+      PRINT "...done"
+END
+
+///////////////////////////////////////////////////////////////////////////////
+////Add a sectype with no associated string
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION add_silent_sectype 
+   STR_VAR sectype=""
+   RET sectype_value
+BEGIN
+   ADD_SECTYPE "%sectype%" ""
+   OUTER_SET sectype_value="%sectype%"
+   COPY_EXISTING "msectype.2da" override
+       REPLACE_TEXTUALLY "%sectype%\( \|%TAB%\)+[0-9]+\(%WNL%\|%LNL%\|%MNL%\)" "%sectype% -1"
+   BUT_ONLY
+END
 

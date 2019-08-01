@@ -1,0 +1,82 @@
+DEFINE_ACTION_FUNCTION ~insect_plague~ BEGIN
+
+   ADD_SECTYPE Insects @5019
+   
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY insect_spell_array BEGIN
+          ~%CLERIC_INSECT_PLAGUE%~=>5
+          ~%CLERIC_CREEPING_DOOM%~=>7
+   END
+   ACTION_PHP_EACH insect_spell_array AS insectspell=>level BEGIN
+
+   // copy the original spell to a "payload" spell with a 6-second duration
+
+      MAKE_PATCH
+         name1_string=>~-1~
+         flags=>0
+         patch_ability_inline=>"projectile=>1"
+         patch_effect_inline=>"duration=>6"
+         secondary=>~%Insects%~
+      END
+      LAF clone_spell STR_VAR spell= ~%insectspell%=>%insectspell%b~ edits=patch_data END
+
+   // make new spell that casts the payload spell 1/rd for 6 rds
+
+      MAKE_PATCH
+         secondary => ~%Insects%~
+         add_basic_ability=>null
+         add_effect_inline=>~opcode=>146 target=>2 parameter2=>1 timing=>1 resist_dispel=>3 resource=>%insectspell%b~
+         clone_effect_inline=>~match=>"opcode=146" number_to_add=>6 timing=>4 duration=>(1+entry_index)*6~
+      END
+      LAF make_spell STR_VAR spell=~%insectspell%a~ edits=patch_data END
+      
+    //  change original spell to just cast the intermediate spell
+    
+      MAKE_PATCH
+         delete_effect=>1
+         add_effect_inline=>~opcode=>146 target=>2 power=>%level% parameter2=>1 timing=>1 resist_dispel=>2 resource=>%insectspell%a~
+      END
+      LAF edit_spell STR_VAR spell=~%insectspell%~ edits=patch_data END
+   END
+
+   OUTER_SPRINT plague_desc @5000
+   OUTER_SPRINT creeping_desc @5001
+   LAF edit_spell STR_VAR spell=CLERIC_INSECT_PLAGUE editstring=~say_description=>5000~ END
+   LAF edit_spell STR_VAR spell=CLERIC_CREEPING_DOOM editstring=~say_description=>5001~ END
+
+   LAF edit_spell STR_VAR spell=CLERIC_SUMMON_INSECTS editstring=~secondary=>%Insects%~ END
+
+   LAUNCH_ACTION_MACRO read_insect_plague_patch
+   LAF edit_spell STR_VAR spell=~WIZARD_FIRE_SHIELD_RED WIZARD_FIRE_SHIELD_BLUE spimixd CLERIC_AURA_OF_FLAMING_DEATH~ edits=insect_plague_patch allow_missing=1 END
+   LAF edit_item STR_VAR item=~dw#shsal dw#shfir balor SUN_SOUL_GREATER_SUN~ edits=insect_plague_patch allow_missing=1 END
+   
+
+<<<<<<<<...inline/ds/my_table.2da
+sppr517b.spl   233     2     120   54     n     a          //  Insect Plague
+sppr717b.spl   233     3     120   54     n     a          //  Creeping Doom
+>>>>>>>>
+INCLUDE ~%scsroot%/ds/ds.tph~
+LAF detectable_spells STR_VAR path=~...inline/ds~ table = ~my_table.2da~ END
+
+END
+
+//// this is a macro, so it can be used elsewhere
+
+
+DEFINE_ACTION_MACRO read_insect_plague_patch BEGIN
+   ACTION_CLEAR_ARRAY insect_plague_patch
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY insect_plague_patch BEGIN   // note that, for reasons that escape me, opcodes 216 and 206 must PRECEDE 232
+        clone_effect_inline=>~match=>"opcode=232"
+                             opcode=>206
+                             parameter1=>0
+                             number_to_add=>2
+                             clone_above=>1
+                             resource=>"entry_index from [sppr517a sppr717a]~
+        clone_effect_inline'=>~match=>"opcode=232"
+                             opcode=>221
+                             parameter1=>10
+                             parameter2=>%Insects%
+                             clone_above=>1
+                             resource=>null~
+   END
+END

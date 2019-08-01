@@ -92,7 +92,7 @@ COPY - "%mod_root%/%ini_file%" "%workspace%"
    BEGIN
        SET debug_variable=MATCH1
    END
-   "doesn't matter, this is COPY -"
+   "" // doesn't matter, this is COPY -
 BUT_ONLY
 END
 
@@ -143,14 +143,15 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "checking for game type: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
   OUTER_SET enhanced_edition = ( GAME_IS ~bgee bg2ee eet iwdee~ ? 1 : 0)
   OUTER_SET is_bg1 = ( GAME_IS ~bgee tutu tutu_totsc bgt eet~ ? 1 : 0)
-  OUTER_SET is_bg2 = ( GAME_IS ~tutu tutu_totsc bgee~ ? 0 : 1)
+  OUTER_SET is_bg2 = ( GAME_IS ~tutu tutu_totsc bgee iwdee~ ? 0 : 1)
   OUTER_SET is_iwd = ( GAME_IS iwdee ? 1 : 0)
   OUTER_SET is_tutu = ( GAME_IS ~tutu tutu_totsc~ ? 1 : 0)
-  OUTER_SET is_eet = ( GAME_IS ~tutu tutu_totsc~ ? 1 : 0)
+  OUTER_SET is_eet = ( GAME_IS ~eet~ ? 1 : 0)
 
   ACTION_IF !VARIABLE_IS_SET tutu_var BEGIN
      ACTION_IF is_tutu BEGIN
@@ -179,6 +180,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "Fixing KENSAI: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 COPY_EXISTING clabfi04.2da override
@@ -200,6 +202,7 @@ BUT_ONLY
   ACTION_IF debug_variable=3 BEGIN
      PRINT "systematising ids files: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 ACTION_IF !FILE_EXISTS "override/soundoff.ids" BEGIN
@@ -218,6 +221,38 @@ ACTION_PHP_EACH soundoff_ids_missing AS code=>name BEGIN
       ACTION_IF !FILE_CONTAINS_EVALUATED ("override/soundoff.ids" "%code%[ %TAB%]+%name%") BEGIN
          APPEND "soundoff.ids" "%code% %name%"
       END
+END
+
+ACTION_IF enhanced_edition BEGIN
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY object_ids_missing BEGIN
+      94 => LastKilled
+      95 => NearestAllyOf
+      96 => SecondNearestAllyOf
+      97 => ThirdNearestAllyOf
+      98 => FourthNearestAllyOf
+      99 => FifthNearestAllyOf
+      100 => SixthNearestAllyOf
+      101 => SeventhNearestAllyOf
+      102 => EighthNearestAllyOf
+      103 => NinthNearestAllyOf
+      104 => TenthNearestAllyOf
+      105 => FarthestEnemyOf
+      106 => SecondFarthestEnemyOf
+      107 => ThirdFarthestEnemyOf
+      108 => FourthFarthestEnemyOf
+      109 => FifthFarthestEnemyOf
+      110 => SixthFarthestEnemyOf
+      111 => SeventhFarthestEnemyOf
+      112 => EighthFarthestEnemyOf
+      113 => NinthFarthestEnemyOf
+      114 => TenthFarthestEnemyOf
+  END
+  ACTION_PHP_EACH object_ids_missing AS code=>name BEGIN
+      ACTION_IF !FILE_CONTAINS_EVALUATED ("override/object.ids" "%code%[ %TAB%]+%name%") BEGIN
+         APPEND "object.ids" "%code% %name%"
+      END
+  END
+
 END
 
 ACTION_IF !FILE_EXISTS "override/spell.ids" BEGIN
@@ -248,7 +283,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
    3105=>INNATE_HORROR
    3106=>INNATE_VAMPIRIC_TOUCH
    4212=>PALADIN_DETECT_EVIL
-   4212=>PALADIN_PROTECTION_FROM_EVIL
+   4213=>PALADIN_PROTECTION_FROM_EVIL
    4721=>TALOS_STORMSHIELD
    4722=>TALOS_LIGHTNING_BOLT
    2921=>WIZARD_IMPROVED_ALACRITY
@@ -256,14 +291,36 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
    2723=>WIZARD_IMPROVED_CHAOS_SHIELD
    1718=>CLERIC_SYMBOL_STUN
    1719=>CLERIC_SYMBOL_DEATH
-
+   3996=>TANARI_DEATH_GAZE
+   3997=>TANARI_VAMPIRIC_TOUCH
+   3998=>TANARI_SILENCE
+   3999=>TANARI_PARALYZE
+   3701=>DEATHKNIGHT_FIREBALL
+   2931=>SUCCUBUS_TELEPORT
+   2985=>RED_HOLY_MIGHT
+   3890=>DEMON_FEAR
 END
-
+ACTION_IF GAME_IS iwdee BEGIN
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing BEGIN
+      1716=>CLERIC_SYMBOL_HOPELESSNESS
+      1714=>CLERIC_SYMBOL_PAIN
+      3137=>BEHOLDER_ANTIMAGIC_RAY
+      3141=>BEHOLDER_CHARM_PERSON
+      3142=>BEHOLDER_SLEEP
+      3143=>BEHOLDER_FLESH_TO_STONE
+      3144=>BEHOLDER_DISINTEGRATE
+      3145=>BEHOLDER_FEAR
+      3146=>BEHOLDER_SLOW
+      3147=>BEHOLDER_CAUSE_SERIOUS_WOUNDS
+      3148=>BEHOLDER_DEATH_RAY
+   END
+END
 ACTION_PHP_EACH spell_ids_missing AS code=>name BEGIN
       ACTION_IF !FILE_CONTAINS_EVALUATED ("override/spell.ids" "%code%[ %TAB%]+%name%") BEGIN
          APPEND "spell.ids" "%code% %name%"
       END
 END
+
 
 ACTION_IF enhanced_edition BEGIN
  ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ids_missing_ee BEGIN
@@ -276,6 +333,22 @@ ACTION_IF enhanced_edition BEGIN
          APPEND "spell.ids" "%code% %name%"
       END
  END
+ 
+ // do a few systematic fixes:
+ // remove IWDification/IWDEE non-BG2-style SYMBOLS
+ // eliminate M&G's pathological WIZARD_ references to SPCL spells
+
+ COPY_EXISTING "spell.ids" override
+     REPLACE_TEXTUALLY "SYMBOL_OF_" "SYMBOL_"
+     SET index=0
+     REPLACE_EVALUATE
+     "\(4[0-9][0-9][0-9]\) +\(WIZARD\|CLERIC\)_.*"
+     BEGIN
+       SET index +=1
+     END
+     "%MATCH1% BROKEN_REFERENCE_%index%"
+ BUT_ONLY
+
 
  // don't sort it, because (a) sorting spell.ids takes nontrivial time, and (b) we'll do it in DS anyway
 
@@ -287,6 +360,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "Remapping DISPEL_MAGIC: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 ACTION_IF enhanced_edition BEGIN
@@ -302,6 +376,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "Disabling broken stuff: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 
@@ -337,6 +412,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "SFO setup done, starting core library install (general files): press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
   ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/general~ ~lib_.*\.tpa~ BEGIN
          ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
@@ -351,6 +427,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "Continuing core library install (filetype-specific files): press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
   ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/filetype~ ~lib_.*\.tpa~ BEGIN
          ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
@@ -358,6 +435,16 @@ END
          END
   END
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// If appropriate, copy over autofunc library
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ACTION_IF !FILE_EXISTS "%scsroot%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
+   ACTION_IF FILE_EXISTS "%workspace%/SFO_autofunc.tpa" BEGIN
+      COPY + "%workspace%/SFO_autofunc.tpa" "%scsroot%/%sfo_loc%/SFO_autofunc.tpa"
+   END
+END
 
 
 ///////////////////////////////////////////////////
@@ -367,6 +454,7 @@ END
   ACTION_IF debug_variable=3 BEGIN
      PRINT "Reading in INI: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 
@@ -386,6 +474,27 @@ END
 
 OUTER_SPRINT ~sslvariables~ ~%percentage%scsroot%percentage%=%scsroot%&%percentage%tutu_var%percentage%=%tutu_var%~
 OUTER_SPRINT ssllibrary ""
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Define hotkey code
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  ACTION_FOR_EACH hotkey IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+     LAF check_ini STR_VAR ini="hot_key_%hotkey%" RET value END
+     ACTION_IF "%value%" STRING_EQUAL_CASE "0" BEGIN
+            OUTER_SPRINT "hot_key_%hotkey%" "%hotkey%"
+     END ELSE BEGIN
+            OUTER_SPRINT "hot_key_%hotkey%" "%value%"
+     END
+  END
+
+  DEFINE_PATCH_FUNCTION ssl_hotkey_swap BEGIN
+     REPLACE_EVALUATE "HotKey(\([A-Z]\))" 
+     BEGIN
+         SPRINT value EVAL "%hot_key_%MATCH1%%"
+     END
+     ~HotKey(%value%)~
+  END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Define swap code to move between EE and vanilla SSL
@@ -414,6 +523,7 @@ OUTER_SPRINT ssllibrary ""
   ACTION_IF debug_variable=3 BEGIN
      PRINT "SFO installed: press a key to continue"
      ACTION_READLN blook
+     SILENT
   END
 
 

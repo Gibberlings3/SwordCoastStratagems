@@ -1,78 +1,3 @@
-                                                                  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               overarching clone
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION clone_bam
-    STR_VAR
-           bam=""
-           edits=""
-           editstring=""
-    BEGIN
-         LAUNCH_ACTION_FUNCTION clone_template
-                  STR_VAR file_list= ~%bam%~
-                          file_ext=~BAM~
-                          edits= ~%edits%~
-                          editstring= ~%editstring%~
-         END
-END
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               overarching edit
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION edit_bam
-    STR_VAR
-           bam=""
-           edits=""
-           editstring=""
-    BEGIN
-
-         LAUNCH_ACTION_FUNCTION edit_template
-                  STR_VAR file_list= ~%bam%~
-                          file_ext=~BAM~
-                          edits= ~%edits%~
-                          editstring= ~%editstring%~
-         END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               offsets
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-<<<<<<<< bam_offsets.2da
-TYPE       offset_loc      offset_length       entrynum_loc  entrynum_length   entry_length
-frame         0xc            4                   0x8          2                 0xc
->>>>>>>>
-OUTER_SPRINT ~offset_readin_lookup_2da~ ~bam_offsets~
-OUTER_SPRINT ~offset_readin_file_ext~ ~BAM~
-LAUNCH_ACTION_MACRO read_in_offsets
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               simple data-field edits
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-ACTION_DEFINE_ASSOCIATIVE_ARRAY bam_fields BEGIN
-   sig => ~0x0,ASCII~
-END
-
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=bam_fields function_prefix=BAM END
-
-ACTION_DEFINE_ASSOCIATIVE_ARRAY bam_frame_fields BEGIN
-   width=>~0x0,SHORT~
-   height=>~0x2,SHORT~
-   xloc=>~0x4,SHORT~
-   yloc=>~0x6,SHORT~
-END
-
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR offset_base=~offset_base~ lookup_table=bam_frame_fields function_prefix=BAM END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -111,13 +36,7 @@ DEFINE_PATCH_FUNCTION patch_colors
     STR_VAR condition=""
             action=""
 BEGIN
-   SET compressed=0
-   READ_ASCII 0x0 sg (4) //Signature
-   PATCH_IF ~%sg%~ STRING_EQUAL_CASE ~BAMC~  BEGIN
-       SET compressed=1
-       READ_LONG 0x8 dl //Uncompressed data length
-       DECOMPRESS_REPLACE_FILE 0xc (SOURCE_SIZE - 0xc) dl
-   END
+   LPF decompress_bam RET was_compressed dl END
    READ_LONG 0x10 pal_off
    FOR (i=1;i<256;i+=1) BEGIN // skip top left
         SET offset= pal_off + i*4
@@ -132,18 +51,14 @@ BEGIN
            LPF write_color INT_VAR offset red blue green END
         END
    END
-   PATCH_IF compressed BEGIN
-    COMPRESS_REPLACE_FILE 0 dl 9
-    INSERT_BYTES 0x0 0xc
-    WRITE_ASCII 0x0 ~BAMCV1  ~
-    WRITE_LONG 0x8 dl
-   END
+   LPF compress_bam INT_VAR was_compressed dl END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION read_color
    INT_VAR offset=0
-   RET red green blue 
+   RET red green blue
 BEGIN
     READ_BYTE offset blue
     READ_BYTE (offset+1) green
@@ -165,3 +80,162 @@ DEFINE_PATCH_FUNCTION legal_byte INT_VAR input=0 RET output BEGIN
    output = input>0x100 ? 0x100 : input
    output = output<0 ? 0 : output
 END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION decompress_bam RET was_compressed dl BEGIN
+   SET was_compressed=0
+   SET dl=0
+   READ_ASCII 0x0 sg (4) //Signature
+   PATCH_IF ~%sg%~ STRING_EQUAL_CASE ~BAMC~  BEGIN
+       SET was_compressed=1
+       READ_LONG 0x8 dl //Uncompressed data length
+       DECOMPRESS_REPLACE_FILE 0xc (SOURCE_SIZE - 0xc) dl
+   END
+END
+
+DEFINE_PATCH_FUNCTION compress_bam INT_VAR dl=0 was_compressed=0 BEGIN
+   PATCH_IF was_compressed BEGIN
+    COMPRESS_REPLACE_FILE 0 dl 9
+    INSERT_BYTES 0x0 0xc
+    WRITE_ASCII 0x0 ~BAMCV1  ~
+    WRITE_LONG 0x8 dl
+   END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION length_of_frame_lookup_table
+RET lookup_num
+BEGIN
+   READ_SHORT 0x8 frame_num
+   READ_BYTE 0xa cycle_num
+   READ_LONG 0xc frame_off
+   READ_LONG 0x10 palette_off
+   READ_LONG 0x14 frame_lookup_off
+   SET cycle_off=frame_off + 0xc * frame_num
+   SET lookup_num=0
+   FOR (ind=0;ind<cycle_num;ind+=1) BEGIN
+      SET cycle_off_here=cycle_off + ind * 0x4
+      READ_SHORT cycle_off_here num_here
+      READ_SHORT (cycle_off_here + 0x2) ind_here
+      SET max_here=ind_here + num_here 
+      SET lookup_num = (lookup_num > max_here)? lookup_num : max_here
+   END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION delete_cycle_data
+INT_VAR dl=0
+RET dl
+BEGIN
+   // get offsets
+   READ_SHORT 0x8 frame_num
+   READ_BYTE 0xa cycle_num
+   READ_LONG 0xc frame_off
+   READ_LONG 0x10 palette_off
+   READ_LONG 0x14 lookup_off
+   SET cycle_off=frame_off + 0xc * frame_num
+   LPF length_of_frame_lookup_table RET lookup_num END
+   // initialise
+   SET palette_delta = 0
+   SET lookup_delta = 0
+   SET data_delta = 0
+   // determine length of excisions and work out deltas
+   SET cycle_length = cycle_num * 4 
+   SET lookup_length = lookup_num * 2
+   SET palette_delta = 0 - cycle_length
+   SET lookup_delta = 0 - cycle_length
+   SET data_delta = 0 - cycle_length - lookup_length
+   // carry out excisions
+   DELETE_BYTES lookup_off lookup_length
+   DELETE_BYTES cycle_off cycle_length
+   // update indices
+   WRITE_BYTE 0xa 0
+   SET palette_off += palette_delta
+   WRITE_LONG 0x10 palette_off
+   SET lookup_off += lookup_delta
+   WRITE_LONG 0x14 lookup_off
+   FOR (ind=0;ind<frame_num;ind+=1) BEGIN
+      SET offset = frame_off + (ind * 0xc) + 0x8
+      READ_LONG offset data
+      SET data += data_delta
+      WRITE_LONG offset data
+   END
+   SET dl = dl - (lookup_length + cycle_length)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION extract_cycle_data
+   RET cycle_data
+       lookup_data
+       cycle_num
+BEGIN
+   // get offsets
+   READ_SHORT 0x8 frame_num
+   READ_BYTE 0xa cycle_num
+   READ_LONG 0xc frame_off
+   READ_LONG 0x10 palette_off
+   READ_LONG 0x14 lookup_off
+   SET cycle_off=frame_off + 0xc * frame_num
+   LPF length_of_frame_lookup_table RET lookup_num END
+   // initialise
+   SET palette_delta = 0
+   SET lookup_delta = 0
+   SET data_delta = 0
+   // determine length of excisions
+   SET cycle_length = cycle_num * 4 
+   SET lookup_length = lookup_num * 2
+   // carry out excisions
+   READ_ASCII lookup_off lookup_data (lookup_length)
+   READ_ASCII cycle_off cycle_data (cycle_length)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION insert_cycle_data
+INT_VAR cycle_num=0
+        dl=0
+STR_VAR cycle_data=""
+        lookup_data=""
+RET
+        dl
+BEGIN
+   // get data lengths
+   SET cycle_length = STRING_LENGTH "%cycle_data%"
+   SET sanity=cycle_num*4
+   SET lookup_length = STRING_LENGTH "%lookup_data%"
+   // get offsets
+   READ_SHORT 0x8 frame_num
+   READ_LONG 0xc frame_off
+   READ_LONG 0x10 palette_off
+   READ_LONG 0x14 lookup_off
+   SET cycle_off=frame_off + 0xc * frame_num
+   LPF length_of_frame_lookup_table RET lookup_num END
+   // make lookup insertions
+   INSERT_BYTES lookup_off lookup_length
+   WRITE_ASCIIE lookup_off "%lookup_data%"
+   // make cycle insertions
+   INSERT_BYTES cycle_off cycle_length
+   WRITE_ASCIIE cycle_off "%cycle_data%"
+   // work out deltas
+   SET palette_delta = cycle_length
+   SET lookup_delta = cycle_length
+   SET data_delta = cycle_length + lookup_length
+   // update indices
+   WRITE_BYTE 0xa cycle_num
+   SET palette_off += palette_delta
+   WRITE_LONG 0x10 palette_off
+   SET lookup_off += lookup_delta
+   WRITE_LONG 0x14 lookup_off
+   FOR (ind=0;ind<frame_num;ind+=1) BEGIN
+      SET offset = frame_off + (ind * 0xc) + 0x8
+      READ_LONG offset data
+      SET data += data_delta
+      WRITE_LONG offset data
+   END
+   SET dl=dl+cycle_length + lookup_length
+END
+

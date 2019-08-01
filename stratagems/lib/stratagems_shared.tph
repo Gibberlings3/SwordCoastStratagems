@@ -236,8 +236,9 @@ DEFINE_ACTION_FUNCTION build_marker_spell
     STR_VAR marker_name=""
             splstate=""
 BEGIN
+   LAF ds_resolve_stat STR_VAR id="%splstate%" RET code=stat_ind END
    ACTION_IF enhanced_edition BEGIN
-     LAF ds_resolve_stat INT_VAR ids=1 STR_VAR id="%splstate%" RET code=stat_ind END
+     ACTION_CLEAR_ARRAY patch_data
      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
         parameter2=>"%code%"
         parameter1=>1
@@ -248,7 +249,6 @@ BEGIN
         mode=>1
      END
    END ELSE BEGIN
-     LAF ds_resolve_stat INT_VAR ids=2 STR_VAR id="%splstate%" RET code=stat_ind END
      ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
         parameter2a=>"%code%"
         parameter2b=>1
@@ -266,8 +266,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION return_detectable_string STR_VAR type="" RET string BEGIN
-   OUTER_SET ids=enhanced_edition? 1: 2
-   LAF ds_resolve_stat INT_VAR ids STR_VAR id="%type%" RET stat_ind END
+   LAF ds_resolve_stat STR_VAR id="%type%" RET stat_ind END
    ACTION_IF enhanced_edition BEGIN
       OUTER_SPRINT string "opcode=>328 parameter1=>1 parameter2=>%stat_ind% mode=>1 target=>2"
    END ELSE BEGIN
@@ -275,86 +274,6 @@ DEFINE_ACTION_FUNCTION return_detectable_string STR_VAR type="" RET string BEGIN
    END
 END
 
-//////////////////////////////////////////////////////////////////////////////////////
-// duplicate of version in ds.tph
-
-DEFINE_ACTION_FUNCTION ds_resolve_stat INT_VAR ids=2 index=0 delete=0 STR_VAR id="" RET stat_ind BEGIN
-
-OUTER_SPRINT ids_file stats OUTER_SET min_new=401
-
-ACTION_IF ids=0 BEGIN OUTER_SPRINT ids_file extstate OUTER_SET min_new=0 END
-ACTION_IF ids=1 BEGIN OUTER_SPRINT ids_file splstate OUTER_SET min_new=0 END
-
-COPY_EXISTING ~%ids_file%.ids~ override
-  stat_ind=0
-  found=0
-
-  READ_2DA_ENTRIES_NOW stats 2
-  FOR (row=0;row<stats;row+=1) BEGIN
-    READ_2DA_ENTRY_FORMER stats row 0 ind
-    READ_2DA_ENTRY_FORMER stats row 1 str
-    SET $stat("%row%") = ind
-    PATCH_IF index BEGIN
-      PATCH_IF ind=index BEGIN
-        REMOVE_2DA_ROW row 2
-        found=1
-        PATCH_IF delete=0 BEGIN
-          INSERT_2DA_ROW row 2 ~%index% %id%~
-        END
-        row=stats
-      END
-    END ELSE BEGIN
-      PATCH_IF ~%str%~ STRING_EQUAL_CASE ~%id%~ BEGIN
-        stat_ind=ind
-        found=1
-     /* row=stats */ // don't stop looking, the same ID may be assigned to a greater index, which takes priority when compiling
-      END
-    END
-  END
-
-  PATCH_IF found=0 BEGIN
-    stat_ind=min_new
-    PHP_EACH stat AS row => ind BEGIN
-      PATCH_IF found=0 && (row+1 < stats) BEGIN // not at the end of file
-        next_row = row+1
-        next_ind = EVAL $stat("%next_row%")
-        PATCH_IF index BEGIN
-          PATCH_IF index<next_ind && index>ind BEGIN
-            INSERT_2DA_ROW next_row 2 ~%index% %id%~
-            found=1
-          END
-        END ELSE BEGIN
-          PATCH_IF stat_ind<next_ind BEGIN
-            PATCH_IF ind<stat_ind BEGIN
-              INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
-              found=1
-            END ELSE BEGIN
-              stat_ind+=1
-              PATCH_IF stat_ind<next_ind BEGIN
-                INSERT_2DA_ROW next_row 2 ~%stat_ind% %id%~
-                found=1
-              END
-            END
-          END
-        END
-      END ELSE BEGIN // at the end of file
-        PATCH_IF found=0 BEGIN
-          PATCH_IF index BEGIN
-            INSERT_2DA_ROW stats 2 ~%index% %id%~
-          END ELSE BEGIN
-            PATCH_IF stat_ind>ind BEGIN
-              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
-            END ELSE BEGIN
-              stat_ind+=1
-              INSERT_2DA_ROW stats 2 ~%stat_ind% %id%~
-            END
-          END
-        END
-      END
-    END // PHP_EACH
-  END
-
-END
 
 //////////////////////////////////////////////////////////////////////////////////////
 // make spells that grant/remove instant uninterruptible casting
@@ -413,7 +332,7 @@ DEFINE_ACTION_FUNCTION innate_see_invisible_effects BEGIN
          secondary=>~%Innate_See_Invisible%~
          add_basic_ability=>null
          add_effect_inline'0=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Innate_See_Invisible%"~
-         add_effect_inline=>~opcode=>101 timing=>1 target=>1 parameter2=>38 at_end=>1~
+         add_effect_inline=>~opcode=>193 timing=>1 target=>1 parameter2=>1 at_end=>1~
       END
       LAF make_spell STR_VAR spell=dw#sinat edits=patch_data END
 
@@ -447,7 +366,7 @@ BEGIN
          secondary=>~%Hitpoint_Bonus%~
          add_basic_ability=>null
          add_effect_inline=>~opcode=>221 timing=>1 target=>1 parameter1=>10 parameter2=>"%Hitpoint_Bonus%"~
-         add_effect_inline'=>~opcode=>18 timing=>0 duration=>60 target=>1 parameter1=>%mult% parameter2=>2 at_end=>1~
+         add_effect_inline'=>~opcode=>18 timing=>0 duration=>300000 target=>1 parameter1=>%mult% parameter2=>2 at_end=>1~
        END
        LAF make_spell STR_VAR spell edits=patch_data END
       END
@@ -509,6 +428,7 @@ DEFINE_ACTION_FUNCTION define_difficulty
     STR_VAR type=""
     RET difficulty_variable
 BEGIN
+  ACTION_IF FILE_EXISTS_IN_GAME "dw#diffi.dlg" BEGIN
     // read the table to get out the actual difficulty variable
     LAF read_table_entry_external INT_VAR colnum=1 STR_VAR file="difficulty_controls.2da" locbase=lib row="%type%" RET difficulty_variable=value END
     // check to see if it's been installed in the dlg file already
@@ -518,7 +438,121 @@ BEGIN
       LAF make_label STR_VAR label="dw#%type%_difficulty" END
       LAF swap_text STR_VAR files="dw#diffi.dlg" swaps=~Global("DW_%type%_disable","GLOBAL",99)=>null~ END
     END
+  END ELSE BEGIN
+     LAF warning STR_VAR warning="Cannot set difficulty variable: difficulty system not initialised" END
+     OUTER_SPRINT difficulty_variable DMWW_placeholder_difficulty
+  END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+/// return a unique combat-script name
+/////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION dw_unique_name
+STR_VAR old_name="" suffix=""
+RET name
+BEGIN
+     INNER_PATCH "" BEGIN
+        INSERT_BYTES 0x0 10
+        WRITE_ASCII 0x0 dw (2)
+        WRITE_ASCIIE 0x2 "%old_name%" (8)
+        READ_ASCII 0x0 name (6)
+     END
+     extra=0
+     WHILE FILE_EXISTS_IN_GAME "%name%%extra%.%suffix%" BEGIN
+        extra +=1
+     END
+     SPRINT name "%name%%extra%"
+END
+
+DEFINE_ACTION_FUNCTION dw_unique_name
+STR_VAR old_name="" suffix=""
+RET name
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF dw_unique_name STR_VAR old_name suffix RET name END
+   END
 END
 
 
+/////////////////////////////////////////////////////////////////////////////
+/// swap vanilla difficulty settings for SCS ones.
+///
+/// (not especially robust: doesn't work through OR() blocks
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_PATCH_FUNCTION scs_difficulty_swap
+      STR_VAR difficulty_variable=""
+BEGIN
+           DECOMPILE_AND_PATCH BEGIN
+           // these first substitutions eliminate ! checks for difficulty (which are never used specifically to exclude one difficulty)
+               REPLACE_TEXTUALLY
+                      ~!Difficulty(EASIEST)~
+                      ~DifficultyGT(EASIEST)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyLT(EASY)~
+                      ~DifficultyGT(EASIEST)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyLT(NORMAL)~
+                      ~DifficultyGT(EASY)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyLT(HARD)~
+                      ~DifficultyGT(NORMAL)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyLT(HARDEST)~
+                      ~DifficultyGT(HARD)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyGT(EASIEST)~
+                      ~DifficultyLT(EASY)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyGT(EASY)~
+                      ~DifficultyLT(NORMAL)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyGT(NORMAL)~
+                      ~DifficultyLT(HARD)~
+               REPLACE_TEXTUALLY
+                      ~!DifficultyGT(HARD)~
+                      ~DifficultyLT(HARDEST)~
+               REPLACE_TEXTUALLY
+                      ~!Difficulty(HARDEST)~
+                      ~DifficultyLT(HARDEST)~
+           // these are the main substitutions
+               REPLACE_EVALUATE
+                      ~DifficultyGT(\([^)]*\))~ 
+                      BEGIN
+                         SET diff_num=IDS_OF_SYMBOL (difflev "%MATCH1%")
+                         SPRINT diff_name "%MATCH1%"
+                      END
+                      ~OR(2)
+                      Global("%difficulty_variable%","GLOBAL",0)
+                      GlobalGT("%difficulty_variable%","GLOBAL",%diff_num%)
+                      OR(2)
+                      DifficultyGT(%diff_name%)
+                      GlobalGT("%difficulty_variable%","GLOBAL",%diff_num%)~
+               REPLACE_EVALUATE
+                      ~DifficultyLT(\([^)]*\))~
+                      BEGIN
+                         SET diff_num=IDS_OF_SYMBOL (difflev "%MATCH1%")
+                         SPRINT diff_name "%MATCH1%"
+                      END
+                      ~GlobalLT("%difficulty_variable%","GLOBAL",%diff_num%)
+                      OR(2)
+                      DifficultyLT(%diff_name%)
+                      !Global("%difficulty_variable%","GLOBAL",0)~
+               REPLACE_EVALUATE
+                      ~Difficulty(\([^)]*\))~
+                      BEGIN
+                         SET diff_num=IDS_OF_SYMBOL (difflev "%MATCH1%")
+                         SPRINT diff_name "%MATCH1%"
+                      END
+                      ~OR(2)
+                        Global("%difficulty_variable%","GLOBAL",0)
+                        Global("%difficulty_variable%","GLOBAL",%diff_num%)
+                      OR(2)
+                        Difficulty(%diff_name%)
+                        Global("%difficulty_variable%","GLOBAL",%diff_num%)~
+           END
+END
 

@@ -1,6 +1,28 @@
 DEFINE_ACTION_FUNCTION difficulty_controls BEGIN
 
     OUTER_SPRINT component_loc lib
+
+    // check if we're using the widget
+    
+    ACTION_IF enhanced_edition BEGIN
+       OUTER_SET ui_integration=1
+       LAF check_ini STR_VAR ini=Force_Difficulty_Widget RET value END
+       ACTION_IF value BEGIN
+          OUTER_SET ui_integration=0
+       END
+    END ELSE BEGIN
+       OUTER_SET ui_integration=0
+    END
+    
+    // if not, try fixing the interface
+    
+    ACTION_IF ui_integration BEGIN
+       LAF difficulty_ui RET abort END
+       ACTION_IF abort BEGIN 
+          OUTER_SET ui_integration=0
+       END
+    END
+ 
 // define commonly-held strings
 
    ACTION_DEFINE_ASSOCIATIVE_ARRAY "diff_report_strings" BEGIN
@@ -58,10 +80,21 @@ COPY ".../stratagems-inline/difficulty_dialog.d" "%workspace%"
 
 // finish the block, add exit block and acknowledgement blocks
 
-<<<<<<<< .../stratagems-inline/difficulty_dialog_add.txt
+
+<<<<<<<< .../stratagems-inline/difficulty_dialog_integration.txt
 IF ~~ THEN REPLY @1031 GOTO exit
+END
+
+IF ~~ THEN BEGIN exit
+SAY @1032
+IF ~~ THEN DO ~DestroySelf()~ EXIT
+END
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/difficulty_dialog_no_integration.txt
 IF ~Global("DW_difficulty_control_inactive","GLOBAL",0)~ THEN REPLY @1033 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",1)~ GOTO control_off
 IF ~Global("DW_difficulty_control_inactive","GLOBAL",1)~ THEN REPLY @1034 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",0)~ GOTO control_on
+IF ~~ THEN REPLY @1031 GOTO exit
 END
 
 IF ~~ THEN BEGIN control_off
@@ -72,7 +105,7 @@ END
 IF ~~ THEN BEGIN control_on
 SAY @1036
 IF ~~ THEN GOTO initial
-END
+END 
 
 IF ~~ THEN BEGIN exit
 SAY @1032
@@ -88,7 +121,11 @@ END
 >>>>>>>>
 
 COPY "%workspace%/difficulty_dialog.d" "%workspace%"
-    APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_add.txt"
+    PATCH_IF ui_integration BEGIN
+       APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_integration.txt"
+    END ELSE BEGIN
+       APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_no_integration.txt"
+    END
     FOR (var=0;var<=7;var+=1) BEGIN
         SET string=$diff_response_strings("%var%")
         APPEND_FILE_EVALUATE TEXT ".../stratagems-inline/difficulty_acknowledge.txt"
@@ -100,11 +137,19 @@ LAF process_table STR_VAR table=difficulty_controls.2da function=difficulty_help
 
 /// compile the dialog file
 
+
 COMPILE "%workspace%/difficulty_dialog.d" EVALUATE_BUFFER
 
 // make the accompanying bits
 
-LAF install STR_VAR file=dw#diffi.cre location=resource END // basically a tweaked copy of cutspy
+LAF install STR_VAR file="dw#diffi.cre" location=resource END // basically a tweaked copy of cutspy
+
+LAF check_ini STR_VAR ini=difficulty_icon RET value END
+ACTION_IF FILE_EXISTS "%scsroot%/lib/diff_icons/%value%.bam" BEGIN
+   COPY "%scsroot%/lib/diff_icons/%value%.bam" "override/dw#diffi.bam"
+END ELSE BEGIN
+   COPY "%scsroot%/lib/diff_icons/v6.bam" "override/dw#diffi.bam"  // default
+END
 
 <<<<<<<< .../stratagems-inline/dw#diffi.baf
 IF
@@ -118,10 +163,11 @@ END
 COMPILE ".../stratagems-inline/dw#diffi.baf"
 
 
+
 MAKE_PATCH
    say_name=>1018
    add_basic_ability=>null
-   patch_ability_inline=>~ability_icon=>spwi417c ability_target=>5 ability_icon_loc=>4~
+   patch_ability_inline=>~ability_icon=>dw#diffi ability_target=>5 ability_icon_loc=>4~
    spell_type=>innate
    add_effect_inline=>"opcode=>67 target=>1 duration=>60 resource=>dw#diffi"
    add_effect_inline'=>"opcode=>172 target=>1 timing=>1 resource=>dw#diff1"
@@ -134,7 +180,9 @@ MAKE_PATCH
 END
 LAF make_spell STR_VAR spell=dw#diff2 edits=patch_data END
 
-// install it in starting areas
+// install it in starting areas if we don't have integration
+
+ACTION_IF !ui_integration BEGIN
 
 <<<<<<<< .../stratagems-inline/diff_install.baf
 IF
@@ -142,7 +190,7 @@ IF
 THEN
     RESPONSE #100
              SetGlobal("DW_initialise_difficulty_widget","GLOBAL",1)
-             ActionOverride(Player1,ApplySpellRES("dw#diff2",Myself))
+             ApplySpellRES("dw#diff2",Player1)
              Continue()
 END
 >>>>>>>>
@@ -152,6 +200,11 @@ ACTION_IF is_bg2 BEGIN
 END
 ACTION_IF is_bg1 BEGIN
     LAF extend_area_script STR_VAR area="%Candlekeep%" top=diff_install inline=yes END
+END
+ACTION_IF is_iwd BEGIN
+    LAF extend_area_script STR_VAR area="ar1006 ar9100" top=diff_install inline=yes END
+END
+
 END
 
 
@@ -238,7 +291,7 @@ END
 
    // default the difficulty-damage setting to turn off difficulty-based changes
   
-  LAF check_ini STR_VAR ini="enable_damage_based_difficulty_changes" RET value END
+  LAF check_ini STR_VAR ini="enable_difficulty_based_damage_changes" RET value END
   ACTION_IF !value BEGIN
    ACTION_IF enhanced_edition BEGIN
       ACTION_IF FILE_EXISTS "%USER_DIRECTORY%/baldur.lua" BEGIN
@@ -325,3 +378,308 @@ BEGIN
 
 
 END
+
+DEFINE_ACTION_FUNCTION difficulty_ui
+   RET abort
+BEGIN
+           // first sort out what 3/4-size BAM we should use (if we have to resize):
+           
+           OUTER_SET x_rescale=1  // at present everything rescales in the x direction too
+           // if one of Lefreut's enhanced UIs is installed, use that to determine the button
+           ACTION_IF MOD_IS_INSTALLED "leui-bg1ee/leui-bg1ee.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam bg1_button_resized
+           END ELSE
+           ACTION_IF (MOD_IS_INSTALLED "leui-sod/leui-sod.tp2" 0 || MOD_IS_INSTALLED "dragonspear_ui++/dragonspear_ui++.tp2" 0 ) BEGIN
+              OUTER_SPRINT smaller_bam sod_button_resized
+           END ELSE
+           ACTION_IF MOD_IS_INSTALLED "leui-iwdee/leui-iwdee.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam iwd_button_resized
+           END ELSE
+           ACTION_IF MOD_IS_INSTALLED "leui/leui.tp2" 0 BEGIN
+              OUTER_SPRINT smaller_bam bg2_button_resized
+           END ELSE 
+           // otherwise, guess on the basis of the game
+           ACTION_IF GAME_IS IWDEE BEGIN
+              OUTER_SPRINT smaller_bam iwd_button_resized
+           END ELSE
+           ACTION_IF GAME_INCLUDES SOD BEGIN
+              OUTER_SPRINT smaller_bam sod_button_resized
+           END ELSE
+           ACTION_IF GAME_IS BGEE BEGIN
+              OUTER_SPRINT smaller_bam bg1_button_resized
+           END ELSE
+           BEGIN
+              OUTER_SPRINT smaller_bam bg2_button_resized
+           END
+
+           OUTER_SET abort=0
+           // get the parameters from the existing menu
+           // we assume that the Assign Keys, Auto-Pause and Feedback buttons are in a vertical stack. We don't assume anything about what order they're in (Dragonspear++ breaks
+           // the normal order)
+           COPY_EXISTING ui.menu override
+                LPF UI_analyze_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name patch=get_feedback_ui_coordinates RET_ARRAY feedback=patch_output END
+                LPF UI_analyze_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name patch=get_assign_keys_ui_coordinates RET_ARRAY keys=patch_output END
+                LPF UI_analyze_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name patch=get_auto_pause_ui_coordinates RET_ARRAY auto=patch_output END
+                PATCH_IF (keys_yloc<feedback_yloc && keys_yloc<auto_yloc) BEGIN
+                   SPRINT upper_choice keys
+                   PATCH_IF (feedback_yloc<auto_yloc) BEGIN
+                      SPRINT lower_choice feedback
+                   END ELSE BEGIN
+                      SPRINT lower_choice auto
+                   END
+                END ELSE BEGIN
+                   PATCH_IF (feedback_yloc<auto_yloc) BEGIN
+                      SPRINT upper_choice feedback
+                      PATCH_IF (keys_yloc<auto_yloc) BEGIN
+                         SPRINT lower_choice keys
+                      END ELSE BEGIN
+                         SPRINT lower_choice auto
+                      END
+                   END ELSE BEGIN
+                      SPRINT upper_choice auto
+                      PATCH_IF (keys_yloc<feedback_yloc) BEGIN
+                         SPRINT lower_choice keys
+                      END ELSE BEGIN
+                         SPRINT lower_choice feedback
+                      END
+                   END
+                END
+                PATCH_FOR_EACH ind IN xloc yloc width height BEGIN
+                   SET "lower_%ind%"=EVAL "%lower_choice%_%ind%"
+                   SET "upper_%ind%"=EVAL "%upper_choice%_%ind%"
+                END
+
+
+                PATCH_IF !(upper_xloc=lower_xloc) || !(upper_width=lower_width) BEGIN
+                   SET abort=1 // in this case the setup is too different from what we're used to
+                END
+           BUT_ONLY
+           ACTION_IF !abort BEGIN
+             COPY_EXISTING ui.menu override
+                //main patch
+                SET delta=lower_yloc - upper_yloc
+                SET new_yloc=upper_yloc - delta
+                SPRINT area_string "%lower_xloc% %new_yloc% %lower_width% %lower_height%"
+                LPF UI_insert_into_object STR_VAR object=OPTIONS_GAMEPLAY object_type=menu object_name_field=name insert=".../stratagems-inline/diff_button" END
+                LPF UI_add_function STR_VAR function=".../stratagems-inline/diff_func" END
+                LPF UI_alter_object STR_VAR object=ESC_MENU object_type=menu object_name_field=name patch="ui_sub_true" END
+                LPF UI_alter_object STR_VAR object=START_OPTIONS object_type=menu object_name_field=name patch="ui_sub_false" END
+                // tweaks
+                PATCH_IF (GAME_IS BGEE && !GAME_INCLUDES SOD) BEGIN
+                  //   REPLACE_TEXTUALLY "area 44 190 360 262" "area 44 190 360 192"
+                  END
+             BUT_ONLY
+
+             // add the identifying string
+             LAF UI_add_string INT_VAR tra_entry=1128 STR_VAR string_id="SCS_DIFFICULTY_BUTTON" END
+
+
+
+             // check if we have a space problem and if so, adjust
+             COPY_EXISTING "ui.menu" "%workspace%"
+                           LPF UI_return_object STR_VAR object=OPTIONS_GAMEPLAY object_name_field=name object_type=menu RET object_data END
+             BUT_ONLY
+             OUTER_SET xmin=upper_xloc
+             OUTER_SET width=upper_width
+             OUTER_SET height=upper_height
+             OUTER_SET xmax=xmin+width
+             OUTER_SET ymax=upper_yloc
+             OUTER_INNER_PATCH "%object_data%" BEGIN
+                  LPF check_clearance RET clearance END
+             END
+             ACTION_IF clearance>(height * 11)/10  BEGIN
+                  OUTER_SET space=1
+             END ELSE BEGIN
+                  OUTER_SET space=0
+             END
+             ACTION_IF !space BEGIN
+                 PRINT "smaller_bam is %smaller_bam%"
+                 COPY "%scsroot%/%component_loc%/resource/%smaller_bam%.bam" "override/dwostcl.bam"
+                 COPY_EXISTING ui.menu override
+                           LPF UI_alter_object
+                               STR_VAR object=OPTIONS_GAMEPLAY
+                                       object_type=menu
+                                       object_name_field=name
+                                       patch=rescale_buttons
+                           END
+                 BUT_ONLY
+             END
+
+
+
+        END
+
+
+
+END
+
+
+
+
+/// resources and helper functions for the UI edit
+
+
+
+
+DEFINE_PATCH_FUNCTION get_feedback_ui_coordinates
+    RET_ARRAY patch_output
+BEGIN
+    LPF UI_analyze_object
+        STR_VAR object=FEEDBACK_BUTTON 
+                object_type=BUTTON 
+                object_name_field=text 
+                patch=UI_get_coordinates
+        RET_ARRAY patch_output
+    END
+END
+
+DEFINE_PATCH_FUNCTION get_assign_keys_ui_coordinates
+    RET_ARRAY patch_output
+BEGIN
+    LPF UI_analyze_object
+        STR_VAR object=ASSIGN_KEYS_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=UI_get_coordinates
+        RET_ARRAY patch_output
+    END
+END
+
+DEFINE_PATCH_FUNCTION get_auto_pause_ui_coordinates
+    RET_ARRAY patch_output
+BEGIN
+    LPF UI_analyze_object
+        STR_VAR object=AUTO_PAUSE_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=UI_get_coordinates
+        RET_ARRAY patch_output
+    END
+END
+
+
+DEFINE_PATCH_FUNCTION check_clearance
+   RET clearance
+BEGIN
+SET clearance=9999
+REPLACE_EVALUATE "area +\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)[^0-9]*"
+              BEGIN
+                SET xloc_here="%MATCH1%"
+                SET yloc_here="%MATCH3%" + "%MATCH7%"
+                SET width="%MATCH5%"
+                SET xmin_here=xloc_here
+                SET xmax_here=xloc_here + width
+                PATCH_IF (xmin_here<=xmax && xmax_here>=xmin) BEGIN
+                   SET clearance_here= ymax - yloc_here
+                   PATCH_IF clearance_here<0 BEGIN
+                      SET clearance_here=9999
+                   END
+                   SET clearance = clearance < clearance_here ? clearance : clearance_here
+                END
+              END
+              ""
+
+END
+
+DEFINE_PATCH_FUNCTION difficulty_lower
+BEGIN
+     LPF shared_lower INT_VAR number=4 END
+END
+
+DEFINE_PATCH_FUNCTION assign_keys_lower
+BEGIN
+     LPF shared_lower INT_VAR number=3 END
+END
+
+
+DEFINE_PATCH_FUNCTION auto_feedback_lower
+BEGIN
+     LPF shared_lower INT_VAR number=2 END
+END
+
+DEFINE_PATCH_FUNCTION autopause_lower
+BEGIN
+     LPF shared_lower INT_VAR number=1 END
+END
+
+DEFINE_PATCH_FUNCTION shared_lower
+   INT_VAR number=0
+BEGIN
+     REPLACE_EVALUATE "\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\( \|%TAB%\)+\([0-9]+\)\([^0-9]*\)"
+     BEGIN
+         SET xloc="%MATCH1%"
+         SET yloc="%MATCH3%"
+         SET width="%MATCH5%"
+         SET height="%MATCH7%"
+         SET yloc +=(number * height) / 4
+         SET height= (3* height) / 4
+         PATCH_IF x_rescale BEGIN
+            SET xloc += (width / 8)
+            SET width = (3* width) / 4
+         END
+     END
+     " %xloc% %yloc% %width% %height%%MATCH8%"
+     REPLACE_TEXTUALLY "bam\( \|%TAB%\)+.*\(%WNL%\|%LNL%\|%MNL%\)" "bam dwostcl\2"
+
+
+END
+
+
+DEFINE_PATCH_FUNCTION rescale_buttons
+BEGIN
+    LPF UI_alter_object
+        STR_VAR object=SCS_DIFFICULTY_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=difficulty_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=ASSIGN_KEYS_BUTTON
+                object_type=BUTTON
+                object_name_field=text
+                patch=assign_keys_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=AUTO_PAUSE_BUTTON
+                object_type=BUTTON 
+                object_name_field=text
+                patch=autopause_lower
+    END
+    LPF UI_alter_object
+        STR_VAR object=FEEDBACK_BUTTON
+                object_type=BUTTON 
+                object_name_field=text
+                patch=auto_feedback_lower
+    END
+END
+
+DEFINE_PATCH_FUNCTION ui_sub_true BEGIN
+   REPLACE_TEXTUALLY "Infinity_PushMenu( *'OPTIONS_GAMEPLAY' *)" "%WNL%scsInGameVar=true%WNL%Infinity_PushMenu( 'OPTIONS_GAMEPLAY' )%WNL%"
+END
+
+DEFINE_PATCH_FUNCTION ui_sub_false BEGIN
+   REPLACE_TEXTUALLY "Infinity_PushMenu( *'OPTIONS_GAMEPLAY' *)" "%WNL%scsInGameVar=false%WNL%Infinity_PushMenu( 'OPTIONS_GAMEPLAY' )%WNL%"
+END
+
+   <<<<<<<< .../stratagems-inline/diff_button
+	button
+        {
+		enabled         scsInGameVar
+                bam		%feedback_bam%
+		sequence	0
+		area		%area_string%
+		text		"SCS_DIFFICULTY_BUTTON"
+		text style	"button"
+		action
+		"
+			scsSummonWidget()
+			Infinity_PopMenu()
+                        e:SelectEngine(worldScreen)
+		"
+	}
+   >>>>>>>>
+   <<<<<<<< .../stratagems-inline/diff_func
+function scsSummonWidget()
+	  C:Eval('CreateCreatureObject("dw#diffi",Player1,0,0,0)')
+end
+   >>>>>>>>
