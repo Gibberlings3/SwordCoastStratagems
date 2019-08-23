@@ -6,12 +6,18 @@
 /// PVRZ files, plus (for legacy use) a legacy
 /// TIS file with a 'v' name suffix, plus
 /// the height,search and light maps
+///
+/// You can also pass the program an array
+/// of scripts (in the form $[script_array]("[script]")="")
+/// whose coordinates need to be
+/// inverted
 //////////////////////////////////////////
 
 
 DEFINE_ACTION_FUNCTION flip_area
    STR_VAR area=""
            file_loc=""
+           script_array=""
 BEGIN
    // get the wed file
    COPY_EXISTING "%area%.are" override
@@ -126,6 +132,26 @@ BEGIN
    END ELSE BEGIN
       COPY "%file_loc%/%area%v.tis" "override/%area%.tis"
    END
+   
+   // invert any scripts
+   ACTION_IF "%script_array%" STRING_COMPARE "" BEGIN
+      ACTION_PHP_EACH "%script_array%" AS script=>discard BEGIN
+         COPY_EXISTING "%script%.bcs" override
+               DECOMPILE_AND_PATCH BEGIN
+                  REPLACE_EVALUATE "\[\([0-9]+\)\.\([0-9]+\)\],\([NSEW]\)+)" BEGIN
+                     SET xnew=width_total - "%MATCH1%"
+                     SET ynew="%MATCH2%"
+                     INNER_PATCH_SAVE orientation "%MATCH3%" BEGIN
+                        REPLACE_TEXTUALLY E Q
+                        REPLACE_TEXTUALLY W E
+                        REPLACE_TEXTUALLY Q W
+                     END
+                  END
+                  "[%xnew%.%ynew%],%orientation%)"
+               END
+         BUT_ONLY
+      END
+   END
 
 
 
@@ -151,7 +177,9 @@ DEFINE_PATCH_FUNCTION flip_vertex
   INT_VAR width_total=0
           offset=0
 BEGIN
-  WRITE_SHORT offset (width_total - SHORT_AT offset)
+  PATCH_IF SHORT_AT offset>0 BEGIN
+     WRITE_SHORT offset (width_total - SHORT_AT offset)
+  END
 END
 
 //////////////////////////////////////////
