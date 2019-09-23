@@ -1,6 +1,19 @@
 LAF include STR_VAR locbase=caster_shared file=caster_shared.tph END
 DEFINE_ACTION_FUNCTION innate_triggers BEGIN
 
+   // for Contingency, make a shell spell that casts the original 
+   // (this keeps the original as a Wizard spell, which avoids screwyness for its caster
+   // level with MC/DC characters)
+
+   MAKE_PATCH
+      name1_string=>"-1"
+      name2_string=>"-1"
+      delete_ability=>"ability_min_level>1"
+      delete_effect=>null
+      patch_ability_inline=>"casting_time=>0"
+      add_effect_inline=>"opcode=>146 target=>2 parameter2=>0 timing=>1 resource=>%WIZARD_CONTINGENCY%"
+   END
+   LAF clone_spell STR_VAR spell="%WIZARD_CONTINGENCY%=>dw#cnss" edits=patch_data END
 
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_trigger_array BEGIN
       CONTINGENCY=>null
@@ -11,7 +24,7 @@ DEFINE_ACTION_FUNCTION innate_triggers BEGIN
    END
 
    // rename sequencers
-   
+
    OUTER_SPRINT prepare_string @1004
    ACTION_FOR_EACH spell IN SPELL_SEQUENCER SPELL_TRIGGER MINOR_SEQUENCER BEGIN
        OUTER_SPRINT spell "WIZARD_%spell%"
@@ -30,6 +43,18 @@ DEFINE_ACTION_FUNCTION innate_triggers BEGIN
    ACTION_PHP_EACH spell_trigger_array AS spell=>icon BEGIN
       OUTER_SPRINT spell "WIZARD_%spell%"
       OUTER_SPRINT resref EVAL "%%spell%%"
+      OUTER_SET level=EVAL "%%spell%_LEVEL%"  + 1 // because of how we code level, 0-8
+     
+      // remove it from sorcerer and wizard spell lists
+      ACTION_IF enhanced_edition BEGIN
+          APPEND "hidespl.2da" "%resref% 1 0"
+      END ELSE BEGIN
+          APPEND "hidespl.2da" "%resref% ****"
+      END
+      ACTION_IF "%spell%" STRING_EQUAL_CASE WIZARD_CONTINGENCY BEGIN
+         OUTER_SPRINT spell dw#cnss
+         OUTER_SPRINT resref dw#cnss
+      END
       // for sequencers, add the modified icons
       ACTION_IF "%icon%" STRING_COMPARE_CASE null BEGIN
          LAF install STR_VAR file="%icon%.bam" location=resource END
@@ -39,12 +64,7 @@ DEFINE_ACTION_FUNCTION innate_triggers BEGIN
       END
       // make the spell itself innate
       LAF edit_spell STR_VAR spell editstring="spell_type_num=>4 not_in_combat=>1 patch_ability_inline=>~ability_icon_loc=>4 %icon_patch%~" END
-      // remove it from sorcerer and wizard spell lists
-      ACTION_IF enhanced_edition BEGIN
-          APPEND "hidespl.2da" "%resref% 1 0"
-      END ELSE BEGIN
-          APPEND "hidespl.2da" "%resref% ****"
-      END
+
       // make a spell to grant it and record getting it // we have to do it this way, because memorised spells in the SPWI spellspace seem to get stripped away in the character-creation process.
       OUTER_SET desc_ind +=1
       OUTER_SPRINT desc_spell "dwsqds%desc_ind%"
@@ -61,9 +81,9 @@ DEFINE_ACTION_FUNCTION innate_triggers BEGIN
       LAF make_spell STR_VAR spell="%desc_spell%" edits=patch_data END
 
       // purely for aesthetic reasons...
-      
-      ACTION_MATCH "%spell%" WITH 
-      WIZARD_SPELL_SEQUENCER WIZARD_SPELL_TRIGGER BEGIN
+
+      ACTION_MATCH "%spell%" WITH
+      WIZARD_SPELL_SEQUENCER WIZARD_SPELL_TRIGGER BEGIN 
          MAKE_PATCH
             add_effect_inline=>"opcode=>172 target=>2 timing=>4 duration=>1 resource=>%WIZARD_CONTINGENCY%"
             add_effect_inline'=>"opcode=>171 target=>2 timing=>4 duration=>1 resource=>%WIZARD_CONTINGENCY% at_end=>1"
@@ -73,16 +93,14 @@ DEFINE_ACTION_FUNCTION innate_triggers BEGIN
       DEFAULT END
 
       // work out what level to apply it
-      OUTER_SET level=EVAL "%%spell%_LEVEL%"  + 1 // because of how we code level, 0-8
       OUTER_SET clev = $spell_level_to_caster_level("mage" "%level%")
-   //   OUTER_SPRINT kit_edit_mage "%kit_edit_mage% grant_power=>~%spell% %clev%~ apply_power=>~%desc_spell% %clev%~"
    OUTER_SPRINT kit_edit_mage "%kit_edit_mage% apply_power=>~%desc_spell% %clev%~"
       ACTION_IF VARIABLE_IS_SET $spell_level_to_caster_level("bard" "%level%") BEGIN
          OUTER_SET clev = $spell_level_to_caster_level("bard" "%level%")
-         OUTER_SPRINT kit_edit_bard "%kit_edit_bard% grant_power=>~%spell% %clev%~ apply_power=>~%desc_spell% %clev%~"
+         OUTER_SPRINT kit_edit_bard "%kit_edit_bard% apply_power=>~%desc_spell% %clev%~"
       END
    END
-   
+
 
 
    // patch innates into kits and update the class text to describe the new innate powers

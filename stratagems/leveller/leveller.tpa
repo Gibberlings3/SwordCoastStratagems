@@ -5,12 +5,16 @@
 DEFINE_ACTION_FUNCTION leveller
     INT_VAR level_max=40
 BEGIN
-
      // the current (2-5) BGEE xplevel.2da is slightly malformed
      ACTION_IF GAME_IS bgee BEGIN
         COPY_EXISTING xplevel.2da override
-           REPLACE_TEXTUALLY 13000000 ""
+           COUNT_2DA_COLS colcount
+           PATCH_IF colcount=42 BEGIN // slightly crude check to see if it's already been fixed, e.g. by cdtweaks levelcap removal
+              REPLACE_TEXTUALLY 13000000 ""
+           END
      END
+
+     LAF add_silent_sectype STR_VAR sectype=autoleveller RET autoleveller_sectype=sectype_value END
 
      //set the stat variable we use to track main levels (overload of DS stat)
      OUTER_SET main_level_stat=165 // WIZARD_IMPROVED_ALACRITY - needs to be a scripting state, not a proficiency, else dualclassing breaks
@@ -21,6 +25,11 @@ BEGIN
      // provide spell choices for mages
 
      LAF run STR_VAR file=mage_spell_choices END
+
+     // make all the levelling scripts
+     
+     LAF build_all_levelling_scripts RET_ARRAY levelling_scripts END
+     LAF build_levelling_script_assigner END
 
      // make customiser resources
      
@@ -38,9 +47,6 @@ BEGIN
      
      LAF make_level_setters END
      LAF NPCs_for_levelling END
-
-     
-
 
      // tool
 
@@ -106,6 +112,7 @@ BEGIN
         CLERIC_MAGE=>dwlvlclr
         FIGHTER_MAGE=>dwlvlftr
         MAGE_THIEF=>dwlv2thf
+        SORCERER=>dwlvlmag
     END
     ACTION_DEFINE_ASSOCIATIVE_ARRAY leveller_map_oc_cleric BEGIN
         CLERIC=>dwlvlclr
@@ -512,12 +519,14 @@ END
 DEFINE_ACTION_FUNCTION multiclass_labeller BEGIN
 
     LAF resolve_splprot_entry INT_VAR stat=269 value="-1" STR_VAR relation=equal RET splprot_num=value END
+    LAF resolve_splprot_entry INT_VAR stat=268 value="-1" STR_VAR relation=equal RET splprot_num_race=value END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_FIGHTER RET stat_ind_from_fighter=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_CLERIC RET stat_ind_from_cleric=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_MAGE RET stat_ind_from_mage=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_RANGER RET stat_ind_from_ranger=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_THIEF RET stat_ind_from_thief=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_DRUID RET stat_ind_from_druid=stat_ind END
+
     ACTION_DEFINE_ASSOCIATIVE_ARRAY multiclass_labeller BEGIN
          cleric=>dw#lbmcc
          fighter=>dw#lbmcf
@@ -546,6 +555,8 @@ DEFINE_ACTION_FUNCTION multiclass_labeller BEGIN
          LPF multiclass_labeller_helper STR_VAR multiclass=fighter_druid blocked_class=druid END
          LPF multiclass_labeller_helper STR_VAR multiclass=cleric_ranger blocked_class=cleric END
          LPF multiclass_labeller_helper STR_VAR multiclass=cleric_mage blocked_class=mage END
+  //       LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=321 timing=1 STR_VAR resource=dwmucllb END
+        LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=318 duration=1 parameter1=IDS_OF_SYMBOL (race human) parameter2=splprot_num_race STR_VAR resource=dwmucllb END
     BUT_ONLY
   END
 
@@ -555,90 +566,70 @@ DEFINE_PATCH_FUNCTION multiclass_labeller_helper
 BEGIN
     SET parameter1=IDS_OF_SYMBOL (class "%multiclass%")
     SPRINT resource $multiclass_labeller("%blocked_class%")
+    LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=1 STR_VAR resource END
     LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1 parameter2=splprot_num special=1 STR_VAR resource END
 END
 
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///
-///   Much of this is now obsolete, since we autoset creatures' levels to match player's. But we'll keep it in, as it's pretty
-///   quick to run and goals might change.
+///   Make required changes to the creature file
 ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION set_real_npc_level
-     INT_VAR level=0
-             level_original=0
+DEFINE_ACTION_FUNCTION handle_cre_file_for_levelling
      STR_VAR creature=""
-             original_class=""
-             final_class=""
 BEGIN
-    OUTER_SET num_classes=1
-    OUTER_SET is_ranger=0 // needed for hardcoded proficiency bonus
-    OUTER_SET main_level_stat=165 // WIZARD_IMPROVED_ALACRITY
-    OUTER_SET main_level_stat_adjusted = main_level_stat - 156
+    // parameter
     OUTER_SET dualclass_level_stat=164 // WIZARD_SPELL_TRAP
-    OUTER_SET dualclass_level_stat_adjusted = dualclass_level_stat - 156
-    LOAD_TRA "%scs_tra_loc%/leveller.tra"
-    // if 'level' is 0, try to work out the details from the CRE file
-    ACTION_IF level=0 BEGIN
-     COPY_EXISTING "%creature%.cre" override
+
+    COPY_EXISTING "%creature%.cre" override
          LPF CRE_read_original_class RET original_class=value END
          LPF CRE_read_class RET class=value END
-         LPF CRE_read_xp_total RET xp=value END
-     BUT_ONLY
-     ACTION_IF "%original_class%" STRING_EQUAL "none" BEGIN
-       OUTER_SET num_classes=0
-       OUTER_SPRINT primary_class ""
+    BUT_ONLY
+    // identify rangers
+    ACTION_MATCH "%original_class%" WITH
+    ranger BEGIN
+       OUTER_SET is_ranger=1
+    END
+    none BEGIN
+       ACTION_MATCH "%class%" WITH
+       ranger cleric_ranger BEGIN
+          OUTER_SET is_ranger=1
+       END
+       DEFAULT
+          OUTER_SET is_ranger=0
+       END
+    END
+    DEFAULT
+       OUTER_SET is_ranger=0
+    END
+
+    // label multiclass
+    ACTION_IF "%original_class%" STRING_EQUAL_CASE none && !("%class%" STRING_CONTAINS_REGEXP "_") BEGIN
+       OUTER_SET multiclass=1
+    END ELSE BEGIN
+       OUTER_SET multiclass=0
+    END
+    // identify dualclass parameters
+    ACTION_IF !("%original_class%" STRING_EQUAL_CASE none) BEGIN
+       OUTER_SET dualclass=1
+       // find final class & ensure dualclassing is legal
+       OUTER_SPRINT final_class ""
        OUTER_WHILE "%class%" STRING_COMPARE_CASE "" BEGIN
           LAF return_first_entry STR_VAR list="%class%" separator="_" RET entry class=list END
-          OUTER_SET num_classes += 1
-          ACTION_IF "%entry%" STRING_EQUAL_CASE ranger BEGIN
-             OUTER_SET is_ranger=1
+          ACTION_IF "%entry%" STRING_COMPARE_CASE "%original_class%" BEGIN
+                OUTER_SPRINT final_class "%entry%"
           END
-          ACTION_MATCH "%entry%" WITH
-          THIEF BEGIN
-             OUTER_SPRINT primary_class THIEF
-          END
-          FIGHTER RANGER BEGIN
-             ACTION_MATCH "%primary_class%" WITH
-             THIEF BEGIN END
-             DEFAULT
-                OUTER_SPRINT primary_class "%entry%"
-             END
-          END
-          CLERIC DRUID BEGIN
-             ACTION_MATCH "%primary_class%" WITH
-               FIGHTER THIEF RANGER BEGIN END
-               DEFAULT
-                  OUTER_SPRINT primary_class "%entry%"
-               END
-          END
-          MAGE BEGIN
-              ACTION_MATCH "%primary_class%" WITH
-                  FIGHTER THIEF CLERIC BEGIN
-                  
-                  END
-                  DEFAULT
-                     OUTER_SPRINT primary_class "%entry%"
-                  END
-          END
-          DEFAULT
-                  OUTER_SPRINT primary_class "%entry%"
-          END
-       END  
-       LAF level_at_xp INT_VAR xp num_classes STR_VAR class="%primary_class%" RET level END
-       OUTER_SPRINT class "%primary_class%"
-     END ELSE BEGIN
+       END
+       LAF make_dualclass_legal STR_VAR original_class final_class creature END
+       OUTER_SPRINT class "%final_class%"
+       // get original level
        COPY_EXISTING "%creature%.cre" override
            LPF CRE_class STR_VAR arguments="%original_class%" END
            LPF CRE_read_level RET level1=value END
            LPF CRE_read_level2 RET level2=value END
        BUT_ONLY
-       ACTION_IF "%original_class%" STRING_EQUAL_CASE ranger BEGIN
-          OUTER_SET is_ranger=1
-       END
        ACTION_MATCH "%original_class%" WITH
        FIGHTER BEGIN
           OUTER_SET level_original=level1
@@ -665,88 +656,9 @@ BEGIN
           END
        END
        DEFAULT END
-       OUTER_SPRINT final_class ""
-       OUTER_WHILE "%class%" STRING_COMPARE_CASE "" BEGIN
-          LAF return_first_entry STR_VAR list="%class%" separator="_" RET entry class=list END
-          ACTION_IF "%entry%" STRING_COMPARE_CASE "%original_class%" BEGIN
-                OUTER_SPRINT final_class "%entry%"
-          END
-       END
-       LAF level_at_xp INT_VAR xp num_classes=1 STR_VAR class="%final_class%" RET level END
-       LAF make_dualclass_legal STR_VAR original_class final_class creature END
-       OUTER_SPRINT class "%final_class%"
-     END
+    END ELSE BEGIN
+       OUTER_SET dualclass=0
     END
-    /// end of auto-identifying bit
-
-
-    ACTION_MATCH "%final_class%" WITH
-    MAGE BEGIN
-        OUTER_SET dualclass_id=1
-    END
-    CLERIC BEGIN
-        OUTER_SET dualclass_id=2
-    END
-    FIGHTER BEGIN
-        OUTER_SET dualclass_id=3
-    END
-    THIEF BEGIN
-        OUTER_SET dualclass_id=4
-    END
-    RANGER BEGIN
-        OUTER_SET dualclass_id=5
-    END
-    DRUID BEGIN
-        OUTER_SET dualclass_id=6
-    END
-    DEFAULT
-        OUTER_SET dualclass_id=0
-    END
-
-    // get rid of any levelling content in the existing override script;
-    // check wildmage status
-
-    COPY_EXISTING "%creature%.cre" override
-        READ_ASCII 0x248 script_override
-        TO_UPPER script_override
-        LPF CRE_read_kit RET kit=value END
-        PATCH_IF "%kit%" STRING_EQUAL_CASE wildmage BEGIN
-           SET is_wildmage=1
-        END ELSE BEGIN
-           SET is_wildmage=0
-        END
-    BUT_ONLY
-
-    ACTION_IF FILE_EXISTS_IN_GAME "%script_override%.bcs" BEGIN
-      ACTION_IF !FILE_EXISTS "override/%script_override%.bcs" BEGIN
-         COPY_EXISTING "%script_override%.bcs"  override
-      END
-      ACTION_IF !FILE_CONTAINS "override/%script_override%.bcs" "dwaulb" BEGIN
-        // strip XP-increasing content
-        LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~ChangeStat(Myself,XP~ END
-        LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~AddXPObject(Myself~ END
-        // get levelling script name (and if necessary make it)
-        LAF make_levelling_script INT_VAR num_classes dualclass_id STR_VAR class RET script END
-        EXTEND_TOP "%script_override%.bcs" "override/%script%.bcs"
-        ACTION_IF is_wildmage BEGIN
-           OUTER_SET strref=RESOLVE_STR_REF (@45)
-       <<<<<<<< .../stratagems-inline/wildmage.baf
-       IF
-         !Global("wildmage_message","LOCALS",1)
-         InPartyAllowDead(Myself)
-       THEN
-            RESPONSE #100
-                 SetGlobal("wildmage_message","LOCALS",1)
-                 DisplayStringHead(Myself,%strref%)
-                 Continue()
-       END
-       >>>>>>>>
-             LAF extend STR_VAR script="%script_override%" top=wildmage inline=yes END
-        END
-      END
-    END
-
-    // creature patch
     LAF ds_resolve_stat STR_VAR id=MARKED_FOR_AUTOLEVEL RET stat_ind END
     LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_HIT_POINTS RET stat_ind_hp=stat_ind END
     MAKE_PATCH
@@ -781,23 +693,214 @@ BEGIN
     DEFAULT
        OUTER_SPRINT $patch_data("add_spells") dw#cust
     END
-    ACTION_IF num_classes>1 BEGIN
+    ACTION_IF multiclass BEGIN
        OUTER_SPRINT $patch_data("add_effect_inline''") "target=>2 timing=>1 opcode=>326 resource=>dwmucllb parent_resource=>DW#AULEL"
     END
-    ACTION_IF dualclass_id>0 BEGIN
+    ACTION_IF dualclass BEGIN
+          OUTER_SET dualclass_level_stat_adjusted = dualclass_level_stat - 156
           OUTER_SPRINT $patch_data("add_effect_inline'") "target=>2 timing=>1 opcode=>282 parameter1=>%level_original% parameter2=>%dualclass_level_stat_adjusted% parent_resource=>DW#DUALC"
     END
     LAF edit_creature STR_VAR creature edits=patch_data END
     COPY_EXISTING "%creature%.cre" override
        LPF CRE_remove_spell_of_type INT_VAR skip_hidden=1 STR_VAR arguments=SPPR END
        LPF CRE_remove_spell_of_type INT_VAR skip_hidden=1 STR_VAR arguments=SPWI END
+
     // ranger 2-weapon hardcoded proficiency
-    
     ACTION_IF is_ranger BEGIN
        COPY_EXISTING "%creature%.cre" override
           SET_BG2_PROFICIENCY PROFICIENCY2WEAPON 2
     END
+
+    // script
+    
+    LAF handle_cre_script_for_levelling 
+       STR_VAR creature original_class final_class
+    END
+
+
 END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///
+///   Make required changes to the creature script
+///
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION handle_cre_script_for_levelling
+     STR_VAR creature=""
+             original_class=""
+             final_class=""
+BEGIN
+
+    // get rid of any levelling content in the existing override script;
+    // check wildmage status
+
+    COPY_EXISTING "%creature%.cre" override
+        READ_ASCII 0x248 script_override
+        TO_UPPER script_override
+        LPF CRE_read_kit RET kit=value END
+        PATCH_IF "%kit%" STRING_EQUAL_CASE wildmage BEGIN
+           SET is_wildmage=1
+        END ELSE BEGIN
+           SET is_wildmage=0
+        END
+    BUT_ONLY
+
+    ACTION_IF FILE_EXISTS_IN_GAME "%script_override%.bcs" BEGIN
+      ACTION_IF !FILE_EXISTS "override/%script_override%.bcs" BEGIN
+         COPY_EXISTING "%script_override%.bcs"  override
+      END
+      ACTION_IF !FILE_CONTAINS "override/%script_override%.bcs" "dwaulb" BEGIN
+        // strip XP-increasing content
+        LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~ChangeStat(Myself,XP~ END
+        LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~AddXPObject(Myself~ END
+        ACTION_IF is_wildmage BEGIN
+           OUTER_SET strref=RESOLVE_STR_REF (@45)
+       <<<<<<<< .../stratagems-inline/wildmage.baf
+       IF
+         !Global("wildmage_message","LOCALS",1)
+         InPartyAllowDead(Myself)
+       THEN
+            RESPONSE #100
+                 SetGlobal("wildmage_message","LOCALS",1)
+                 DisplayStringHead(Myself,%strref%)
+                 Continue()
+       END
+       >>>>>>>>
+             LAF extend STR_VAR script="%script_override%" top=wildmage inline=yes END
+        END // end of is_wildmage
+      END // end of general stripdown
+      ACTION_IF !FILE_CONTAINS "override/%script_override%.bcs" dwassnlv BEGIN
+       LAF extend STR_VAR script="%script_override%" top=dw_level_assigner locabs="%workspace%" END
+
+
+      ACTION_IF "%original_class%" STRING_COMPARE_CASE none BEGIN
+          ACTION_MATCH "%final_class%" WITH
+             MAGE BEGIN
+                 OUTER_SET dualclass_id=1
+             END
+             CLERIC BEGIN
+                 OUTER_SET dualclass_id=2
+             END
+             FIGHTER BEGIN
+                 OUTER_SET dualclass_id=3
+             END
+             THIEF BEGIN
+                 OUTER_SET dualclass_id=4
+             END
+             RANGER BEGIN
+                 OUTER_SET dualclass_id=5
+             END
+             DRUID BEGIN
+                 OUTER_SET dualclass_id=6
+             END
+             DEFAULT
+                 OUTER_SET dualclass_id=0
+             END
+          OUTER_SPRINT string1 (AT dualclass_id)
+          OUTER_SPRINT string2 @7
+          OUTER_SPRINT string "%string1% %string2%"
+          OUTER_SET strref=RESOLVE_STR_REF ("%string%")
+          OUTER_SPRINT script_here $levelling_scripts("%final_class%")
+    <<<<<<<< .../stratagems-inline/dualclass.baf
+       IF
+         !Global("dual_class_message","LOCALS",1)
+         InParty(Myself)
+       THEN
+            RESPONSE #100
+                 SetGlobal("dual_class_message","LOCALS",1)
+                 SetGlobal("dw_dualclass_id","LOCALS",%dualclass_id%)
+                 DisplayStringHead(Myself,%strref%)
+       END
+       
+   IF
+       Global("dwassnlv","LOCALS",0)
+       !Global("dw_dualclass_id","LOCALS",0)
+       InParty(Myself)
+   THEN
+       RESPONSE #100
+            SetGlobal("dwassnlv","LOCALS",1)
+            ChangeAIScript("%script_here%","GENERAL")
+            Continue()
+   END
+       >>>>>>>>
+
+          LAF extend STR_VAR script="%script_override%" top=dualclass inline=yes END
+
+      END
+     END
+    END
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION build_levelling_script_assigner
+BEGIN
+   <<<<<<<< .../stratagems-inline/dw_level_assigner.baf
+    IF
+      !InPartyAllowDead(Myself)
+      Global("auto_levelled","LOCALS",1)
+    THEN
+        RESPONSE #100
+           SetGlobal("auto_levelled","LOCALS",0)
+           Continue()
+    END
+   >>>>>>>>
+   <<<<<<<< .../stratagems-inline/level_extend.baf
+   IF
+       Global("dwassnlv","LOCALS",0)
+       Global("dw_dualclass_id","LOCALS",0)
+       InParty(Myself)
+       Class(Myself,%my_class%)
+   THEN
+       RESPONSE #100
+            SetGlobal("dwassnlv","LOCALS",1)
+            ChangeAIScript("%my_script%","GENERAL")
+            Continue()
+   END
+   >>>>>>>>
+      <<<<<<<< .../stratagems-inline/level_final.baf
+   IF
+       Global("dwassnlv","LOCALS",0)
+       InParty(Myself)
+       !OriginalClass(Myself,0)
+       Global("dw_dualclass_id","LOCALS",0)
+   THEN
+      RESPONSE #100
+           SetGlobal("dwassnlv","LOCALS",1)
+            ChangeAIScript("","GENERAL")
+           Continue()
+   END
+   
+   IF
+     Global("dwassnlv","LOCALS",1)
+     !InParty(Myself)
+   THEN
+      RESPONSE #100
+           SetGlobal("dwassnlv","LOCALS",0)
+           Continue()
+   END
+
+   >>>>>>>>
+
+   COPY ".../stratagems-inline/dw_level_assigner.baf" "%workspace%"
+
+
+
+    PHP_EACH levelling_scripts AS my_class=>my_script BEGIN
+      APPEND_FILE_EVALUATE ".../stratagems-inline/level_extend.baf"
+    END
+
+
+
+      APPEND_FILE_EVALUATE ".../stratagems-inline/level_final.baf"
+
+   // end of COPY
+
+END
+
 
 ///////////////////////////////////////////////////////////////////////////////////
 ////    The spell that boosts thief skills, to allow for missing level-0 points
@@ -1191,7 +1294,7 @@ DEFINE_ACTION_FUNCTION NPCs_for_levelling BEGIN
     BUT_ONLY
     OUTER_SET initial=0 // this is for the innate-ability remapper
     ACTION_PHP_EACH pc_list AS creature=>discard BEGIN
-         LAF set_real_npc_level STR_VAR creature END
+         LAF handle_cre_file_for_levelling STR_VAR creature END
          LAF remove_known_innate_spells STR_VAR creature END
     END
     
@@ -1221,9 +1324,11 @@ DEFINE_ACTION_FUNCTION make_level_setters
 BEGIN
   OUTER_FOR (level=1;level<=40;level+=1) BEGIN
    MAKE_PATCH
+      secondary=>"%autoleveller_sectype%"
       add_basic_ability=>null
       name_if_debugging=>null
       add_effect_inline=>"opcode=>282 target=>2 parameter1=>%level% parameter2=>%main_level_stat_adjusted% timing=>1"
+      add_effect_inline'=>"opcode=>221 target=>2 parameter1=>10 parameter2=>%autoleveller_sectype% timing=>1"
    END
    LAF make_spell STR_VAR spell="dwaulb%level%" edits=patch_data END
   END
@@ -1303,14 +1408,7 @@ BEGIN
          Continue()
     END
 
-    IF
-      !InPartyAllowDead(Myself)
-      Global("auto_levelled","LOCALS",1)
-    THEN
-        RESPONSE #100
-           SetGlobal("auto_levelled","LOCALS",0)
-           Continue()
-    END
+
         IF
             !Global("auto_levelled","LOCALS",1)
             InPartyAllowDead(Myself)
@@ -1364,7 +1462,6 @@ BEGIN
                  SetGlobal("dual_class_message","LOCALS",1)
                  SetGlobal("dw_dualclass_id","LOCALS",%dualclass_id%)
                  DisplayStringHead(Myself,%strref%)
-                 Continue()
        END
        >>>>>>>>
        LAF extend STR_VAR script top=dualclass inline=yes END
@@ -1419,7 +1516,69 @@ BEGIN
 
 END
 
+///////////////////////////////////////////////////
+//// Build all of the levelling scripts (+related resource)
+////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION build_all_levelling_scripts
+RET_ARRAY levelling_scripts
+BEGIN
+   ACTION_FOR_EACH full_class IN 
+   FIGHTER CLERIC MAGE THIEF PALADIN RANGER MONK SORCERER BARD DRUID 
+   FIGHTER_MAGE FIGHTER_CLERIC CLERIC_MAGE FIGHTER_THIEF CLERIC_THIEF
+   MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER FIGHTER_MAGE_CLERIC FIGHTER_MAGE_THIEF
+   BEGIN
+       ACTION_MATCH "%full_class%" WITH
+          FIGHTER_MAGE
+          FIGHTER_CLERIC BEGIN
+              OUTER_SPRINT class fighter
+              OUTER_SET level_slot=1
+              OUTER_SET num_classes=2
+          END
+          CLERIC_MAGE BEGIN
+              OUTER_SPRINT class cleric
+              OUTER_SET level_slot=1
+              OUTER_SET num_classes=2
+          END
+          FIGHTER_THIEF
+          CLERIC_THIEF
+          MAGE_THIEF BEGIN
+              OUTER_SPRINT class thief
+              OUTER_SET level_slot=2
+              OUTER_SET num_classes=2
+          END
+          FIGHTER_DRUID BEGIN
+              OUTER_SPRINT class fighter
+              OUTER_SET level_slot=1
+              OUTER_SET num_classes=2
+          END
+          CLERIC_RANGER BEGIN
+              OUTER_SPRINT class fighter
+              OUTER_SET level_slot=2
+              OUTER_SET num_classes=2
+          END
+          FIGHTER_MAGE_CLERIC BEGIN
+              OUTER_SPRINT class fighter
+              OUTER_SET level_slot=1
+              OUTER_SET num_classes=3
+          END
+          FIGHTER_MAGE_THIEF BEGIN
+              OUTER_SPRINT class thief
+              OUTER_SET level_slot=3
+              OUTER_SET num_classes=3
+          END
+       DEFAULT
+          OUTER_SPRINT class "%full_class%"
+          OUTER_SET level_slot=1
+          OUTER_SET num_classes=1
+       END
+       LAF make_levelling_script INT_VAR level_slot num_classes STR_VAR class RET script END
+       OUTER_SPRINT $levelling_scripts("%full_class%") "%script%"
+   END
+   
+
+
+END
 
 ///////////////////////////////////////////////////
 //// Innate spells remapper (so they're not wiped on
