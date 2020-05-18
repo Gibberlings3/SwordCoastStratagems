@@ -1,3 +1,4 @@
+
 ////////////////////////////////////////////////
 //  Transcribe the wall polygons with the associated
 //  numbers from one wed file to another, adjusting
@@ -245,6 +246,11 @@ END
 /// After doing it, you might want to rebuild
 /// the TIS in NI, as it's quite inefficiently
 /// stored in this algorithm
+///
+/// *Mostly* polygons need to be ordered with the
+/// lowest point first (as per IESDP). But this is
+/// NOT always correct and I can't work out the true
+/// algorithm. 
 ///
 /// EE only
 ////////////////////////////////////////////////
@@ -675,6 +681,7 @@ BEGIN
           END
       END
 
+
       /// also check if we need to delete a door because of its tiles
       
       FOR (ind2=0;ind2<tile_count_here;ind2+=1) BEGIN
@@ -818,6 +825,11 @@ DEFINE_PATCH_FUNCTION remove_tiles
              xlen=0
              ylen=0
 BEGIN
+// sanity check
+			LPF check_wed_for_multiples RET value END
+			PATCH_IF value BEGIN
+				PATCH_WARN "Wed file %SOURCE_RES% uses multiple primary tiles; crop_area probably won't work for it"
+			END
 // delete the unwanted tiles
            SPRINT this_file "%SOURCE_RES%"
            SET bytes_deleted=0
@@ -989,6 +1001,28 @@ END
 
 
 //////////////////////////////////////////
+/// Check if a WED file uses the multiple-tile
+/// functionality (used for things like flapping flags
+/// in Candlekeep and some fireplaces; not currently
+/// supported in crop_area
+///////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION check_wed_for_multiples
+	RET value
+BEGIN
+	value=0
+	tile_count = (SHORT_AT 0x20) * (SHORT_AT 0x22)
+	READ_LONG 0x30 tile_off
+	FOR (ind=0;ind<tile_count;ind+=1) BEGIN
+		READ_BYTE (tile_off + ind*0xa + 2) count
+		PATCH_IF count>1 BEGIN
+			value=1
+		END
+	END
+END
+
+
+//////////////////////////////////////////
 /// Move the vertices in to the top left
 /// corner (x,y are in tiles)
 ///////////////////////////////////////////
@@ -1068,7 +1102,7 @@ DEFINE_PATCH_FUNCTION insert_polygon_block
      STR_VAR polygons=""
              vertices=""
 BEGIN
-     LPF delete_wallgroups END
+	 LPF delete_wallgroups END
      SET polygon_length=STRING_LENGTH "%polygons%"
      SET vertex_length=STRING_LENGTH "%vertices%"
      SET polygon_count=polygon_length / 0x12
@@ -1153,7 +1187,8 @@ BEGIN
        SET hovering_wall= ( (flags BOR 0b11111011) = 0b11111111)
 
        // get polygon vertex data
-       // in string form
+       // in string form (assuming there are any vertices)
+	   PATCH_IF count_ind>0 BEGIN
        INNER_PATCH "%vertices_in%" BEGIN
           PATCH_IF hovering_wall BEGIN
                READ_ASCII 4*start_ind hovering_wall_vertices (8)
@@ -1164,7 +1199,8 @@ BEGIN
           READ_ASCII 4*start_ind vertices_here (4*count_ind)
           READ_ASCII 4*start_ind hovering_wall_vertices (8)
        END
-       PATCH_IF hovering_wall BEGIN
+	   END
+       PATCH_IF hovering_wall && count_ind>0 BEGIN
           LPF truncate_wall
                   INT_VAR xmin=x
                           ymin=y
@@ -1176,12 +1212,15 @@ BEGIN
           SET in_bounds=1
        END
        // is the polygon in bounds?
-       PATCH_IF (xmax>x) &&(ymax>y) && (xmin < (x + xlen)) && (ymin < (y + ylen)) BEGIN
-           LPF truncate_polygon
+       PATCH_IF (xmax>x) &&(ymax>y) && (xmin < (x + xlen)) && (ymin < (y + ylen)) && count_ind>0 BEGIN
+           
+		   SET bb_ymax=ymax
+		   LPF truncate_polygon
                   INT_VAR xmin=x
                           ymin=y
                           xmax=x + xlen
                           ymax=y + ylen
+						  bb_ymax
                   STR_VAR vertices="%vertices_here%"
                   RET vertices_here=vertices
                       xmin=bb_xmin
@@ -1321,9 +1360,12 @@ BEGIN
            READ_ASCII 0x8 wed
    BUT_ONLY
    // edit the wed file
+   ACTION_IF !FILE_EXISTS_IN_GAME "%wed%.wed" BEGIN
+		FAIL "The WED file %wed%.wed does not exist"
+   END
    COPY_EXISTING 
    "%wed%.wed" override
-   "%wedn%.wed" override
+   "%wed%n.wed" override
         // get the width in pixels of the area
         READ_LONG 0x10 overlay_off
         READ_SHORT overlay_off num_tiles_x
@@ -1336,25 +1378,72 @@ BEGIN
         READ_LONG (0x4 + sec_header_off) initial_polygon_offset
         // go through polygons
         FOR (n=0;n<wall_polygon_number;n+=1) BEGIN
-           PATCH_PRINT "working on polygon %n%"
            SET polygon_offset = initial_polygon_offset + 0x12 * n
            READ_LONG polygon_offset initial_vertex_index
            READ_LONG polygon_offset+4 vertex_number
            // vertex inversion
-           FOR (ind=initial_vertex_index;ind<initial_vertex_index + vertex_number; ind +=1) BEGIN
+		   FOR (ind=initial_vertex_index;ind<initial_vertex_index + vertex_number; ind +=1) BEGIN
               LPF flip_vertex INT_VAR width_total offset=ind*4+initial_vertex_offset END
            END
            // bounding box inversion
            LPF flip_bounding_box INT_VAR layout=1 offset=polygon_offset+0xa width_total END
         END
         SET tilemap_start=LONG_AT (0x10 + overlay_off)
+		SET tile_lookup_start = LONG_AT (0x14 + overlay_off)
+		new_tile_ind=0
+		new_tile_lookup_ind=0
+		// go through existing primary tileset and work out the new tileset (store in arrays)
+		FOR (y=0;y<num_tiles_y;y+=1) BEGIN
+			FOR (x=0;x<num_tiles_x;x+=1) BEGIN
+				offset_old=tilemap_start + 0xa*(y*num_tiles_x + (num_tiles_x - x - 1) ) // go R to L through existing array
+					READ_SHORT offset_old first_tile_here
+					READ_SHORT (offset_old + 2) tile_count_here
+					SET $new_ind_arr("%new_tile_ind%")=new_tile_lookup_ind
+					SET $new_count_arr("%new_tile_ind%")=tile_count_here
+					FOR (i=first_tile_here;i<first_tile_here + tile_count_here;i+=1) BEGIN
+						READ_SHORT (tile_lookup_start + 2*i) tile_number
+						LPF flip_tile INT_VAR height=num_tiles_y width=num_tiles_x tile_number RET new_number END
+						SET $new_lookup_arr("%new_tile_lookup_ind%")=new_number
+						new_tile_lookup_ind +=1
+					END
+					READ_SSHORT (offset_old + 4) tile_number
+					PATCH_IF tile_number>=0 BEGIN
+						LPF flip_tile INT_VAR height=num_tiles_y width=num_tiles_x tile_number RET new_number END	
+						SET $new_secondary_arr("%new_tile_ind%")=new_number	
+					END ELSE BEGIN
+						SET $new_secondary_arr("%new_tile_ind%") = "-1"
+					END
+					READ_BYTE (offset_old + 6) flags
+					SET $new_flags_arr("%new_tile_ind%")=flags				
+				// move on to next index
+				new_tile_ind+=1
+			END
+		END
+		// write the new tileset
+		FOR (ind=0;ind<num_tiles_x * num_tiles_y; ind+=1) BEGIN
+			offset_here=tilemap_start + 0xa*ind
+			tile_ind_here=$new_ind_arr("%ind%")
+			tile_count_here=$new_count_arr("%ind%")
+			secondary_here=$new_secondary_arr("%ind%")
+			flags_here=$new_flags_arr("%ind%")
+			WRITE_SHORT offset_here tile_ind_here
+			WRITE_SHORT (offset_here + 2) tile_count_here
+			WRITE_SHORT (offset_here + 4) secondary_here
+			WRITE_BYTE (offset_here + 6) flags_here
+		END
+		// write the new lookups
+		FOR (ind=0;ind<new_tile_lookup_ind;ind+=1) BEGIN
+			lookup_here=$new_lookup_arr("%ind%")
+			WRITE_SHORT (tile_lookup_start + 2*ind) lookup_here
+		END
 
+
+		/*
         // go through the primary array and build an array of which tiles get remapped to which
-        FOR (ind=0;ind<num_tiles_x*num_tiles_y;ind+=1) BEGIN
+		FOR (ind=0;ind<num_tiles_x*num_tiles_y;ind+=1) BEGIN
            READ_SSHORT (tilemap_start + ind*0xa + 0x4) sec_tile
            PATCH_IF sec_tile>=0 BEGIN
               SET $sec_tiles("%ind%")=sec_tile
-              PATCH_PRINT "establishing map %ind%->%sec_tile%"
            END
            READ_BYTE (tilemap_start + ind*0xa + 0x6) overlay_flags
            PATCH_IF overlay_flags>0 BEGIN
@@ -1362,6 +1451,10 @@ BEGIN
               WRITE_BYTE (tilemap_start + ind*0xa + 0x6) 0
               WRITE_SHORT (tilemap_start + ind*0xa + 0x4)  "-1"
            END
+		   READ_SHORT (tilemap_start + ind*0xa + 0x2) num_tiles
+		   PATCH_IF num_tiles>0 BEGIN
+				
+		   END
         END
 
         // go through and make changes
@@ -1375,7 +1468,7 @@ BEGIN
            flags = $tile_overlay_flags("%primary_ind%")
            WRITE_BYTE (tilemap_start + new_primary*0xa + 0x6) flags
         END
-
+		*/
 
         // remap doors
         
@@ -1389,7 +1482,6 @@ BEGIN
            FOR (ind2=0;ind2<door_tile_count;ind2+=1) BEGIN 
               READ_SHORT ( (ind2 + door_tile_ind)*2 + door_tile_off) tile_number
               LPF flip_tile INT_VAR height=num_tiles_y width=num_tiles_x tile_number RET new_number END
-              PATCH_PRINT "mapping door tile %tile_number% to %new_number%"
               WRITE_SHORT ((ind2 + door_tile_ind)*2 + door_tile_off) new_number
            END
            // flip polygons
@@ -1419,10 +1511,9 @@ BEGIN
         END
         // rebuild wall groups
         LPF rebuild_wall_groups END
-
-
    BUT_ONLY
    IF_EXISTS
+   
    // invert the area file
    COPY_EXISTING "%area%.are" override
       // invert all vertices
@@ -1438,7 +1529,6 @@ BEGIN
       // flip regions
       GET_OFFSET_ARRAY reg_arr ARE_V10_REGIONS
       PHP_EACH reg_arr AS ind=>reg_off BEGIN
-      PATCH_PRINT "flipping region %ind%"
          LPF flip_bounding_box INT_VAR layout=2 width_total offset=reg_off+0x22 END
          LPF flip_vertex INT_VAR width_total offset=reg_off+0x70 END
          LPF flip_vertex INT_VAR width_total offset=reg_off+0x84 END
@@ -1476,7 +1566,6 @@ BEGIN
       // flip doors
       GET_OFFSET_ARRAY door_arr ARE_V10_DOORS
       PHP_EACH door_arr AS ind=>door_off BEGIN
-       PATCH_PRINT "doing door %ind%"
          LPF flip_vertex INT_VAR width_total offset=door_off+0x74 END
          LPF flip_vertex INT_VAR width_total offset=door_off+0x90 END
          LPF flip_vertex INT_VAR width_total offset=door_off+0x94 END
@@ -1490,10 +1579,10 @@ BEGIN
          LPF invert_vertex_sequence_order INT_VAR initial_vertex_offset=vert_off initial_vertex_index vertex_number width_total END
          READ_LONG door_off+0x48 initial_vertex_index
          READ_SHORT door_off+0x4c vertex_number
-         LPF invert_vertex_sequence_order INT_VAR initial_vertex_offset=vert_off initial_vertex_index vertex_number width_total END
+         LPF invert_vertex_sequence_order INT_VAR is_searchmap=1 initial_vertex_offset=vert_off initial_vertex_index vertex_number width_total END
          READ_LONG door_off+0x50 initial_vertex_index
          READ_SHORT door_off+0x4e vertex_number
-         LPF invert_vertex_sequence_order INT_VAR initial_vertex_offset=vert_off initial_vertex_index vertex_number width_total END
+         LPF invert_vertex_sequence_order INT_VAR is_searchmap=1 initial_vertex_offset=vert_off initial_vertex_index vertex_number width_total END
 
       END
       // flip animations
@@ -1518,7 +1607,7 @@ BEGIN
    END
 
    ACTION_IF GAME_IS "bg2ee iwdee eet bgee" BEGIN
-      COPY "%file_loc%/%area%.tis" override
+	  COPY "%file_loc%/%area%.tis" override
       COPY "%file_loc%/%area%N.tis" override IF_EXISTS
       ACTION_BASH_FOR "%file_loc%" ".*\.pvrz" BEGIN
          COPY "%BASH_FOR_FILESPEC%" override
@@ -1589,8 +1678,12 @@ END
 DEFINE_PATCH_FUNCTION flip_vertex
   INT_VAR width_total=0
           offset=0
+		  is_searchmap=0
 BEGIN
-  PATCH_IF SHORT_AT offset>0 BEGIN
+  PATCH_IF is_searchmap BEGIN
+	width_total = (width_total * 4) / 64
+  END
+  PATCH_IF SHORT_AT offset>=0 BEGIN
      WRITE_SHORT offset (width_total - SHORT_AT offset)
   END
 END
@@ -1630,10 +1723,11 @@ DEFINE_PATCH_FUNCTION invert_vertex_sequence_order
           initial_vertex_index=0
           vertex_number=0
           width_total=0
+		  is_searchmap=0
 BEGIN
   // flip individual elements
   FOR (n=0;n<vertex_number;n+=1) BEGIN
-     LPF flip_vertex INT_VAR width_total offset=initial_vertex_offset + 4*(initial_vertex_index + n) END
+     LPF flip_vertex INT_VAR is_searchmap width_total offset=initial_vertex_offset + 4*(initial_vertex_index + n) END
   END
   // do the inversion
   PATCH_IF vertex_number>2 BEGIN
@@ -1758,6 +1852,12 @@ Step 2:
 
 Then go through again. Any transitions between faces get replaced by the associated corner
 
+To complicate matters, polygons *mostly* need to be listed with the highest-y-value (i.e. lowest) point first. 
+But this is not *always* true, and sometimes forcing the order breaks the polygon. What the actual rule is, I don't know,
+despite an afternoon's research.
+
+So: the plan is, ain't broke don't fix. *If* the first polygon obeys the rule, *and* it gets truncated, then we'll reorder. Otherwise, not.
+
 This generates duplicates, so deduplicate it at the end.
 */
 
@@ -1766,6 +1866,7 @@ DEFINE_PATCH_FUNCTION truncate_polygon
            ymax=0
            xmin=0
            ymin=0
+		   bb_ymax=0
    STR_VAR vertices=""
    RET vertices
        bb_xmin
@@ -1781,6 +1882,19 @@ BEGIN
    SET bb_ymin=99999
    SET bb_ymax=0
    SET count=(STRING_LENGTH "%vertices_old%") / 4
+   // check if we need to reorder
+   LPF get_vertex INT_VAR ind=0 STR_VAR vertices="%vertices_old%" RET x y END
+   PATCH_IF y=bb_ymax BEGIN
+       LPF find_quadrant INT_VAR x y xmin xmax ymin ymax RET quadrant END
+	   PATCH_IF "%quadrant%" STRING_EQUAL_CASE null BEGIN
+		   try_reordering=0
+	   END ELSE BEGIN
+	       try_reordering=1
+	   END
+   END ELSE BEGIN
+       try_reordering=0
+   END
+   
    // start going through pairs
    SET ind=0
    WHILE ind<count BEGIN
@@ -1788,7 +1902,6 @@ BEGIN
         SET next=ind+1
         SET next=next<count ? next : 0
         LPF get_vertex INT_VAR ind=next STR_VAR vertices="%vertices_old%" RET x y END
-      //  PATCH_PRINT "considering (%xlast%,%ylast%)->(%x%,%y%)"
         // see if first point is in bounds
         LPF find_quadrant INT_VAR x=xlast y=ylast xmin xmax ymin ymax RET quadrant END
         PATCH_MATCH "%quadrant%" WITH
@@ -1864,7 +1977,9 @@ BEGIN
    END
    // get rid of duplicates
    LPF deduplicate_vertices STR_VAR vertices RET vertices END
-   LPF order_wall_vertices STR_VAR vertices RET vertices END
+   PATCH_IF try_reordering BEGIN
+      LPF order_wall_vertices STR_VAR vertices RET vertices END
+   END
 END
 
 
@@ -1978,6 +2093,8 @@ BEGIN
        END
      END
 END
+
+
 
 //////////////////////////////////////////
 /// Assess whether a given (x,y) pair is
@@ -2425,6 +2542,10 @@ BEGIN
       vertex_xloc =>~vertex_xloc in slide_x~
       vertex_yloc =>~vertex_yloc in slide_y~
    END
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY searchmap_vertex_shift BEGIN
+      vertex_xloc =>~vertex_xloc in searchmap_slide_x~
+      vertex_yloc =>~vertex_yloc in searchmap_slide_y~
+   END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY main_patch BEGIN
         patch_actor=>actor_shift 
         patch_mapnote=>mapnote_shift 
@@ -2437,8 +2558,8 @@ BEGIN
         patch_door_inline=>~slide_door=>null~
         patch_door_vertex_open=>vertex_shift
         patch_door_vertex_closed=>vertex_shift
-        patch_door_vertex_open_impeded=>vertex_shift
-        patch_door_vertex_closed_impeded=>vertex_shift
+        patch_door_vertex_open_impeded=>searchmap_vertex_shift
+        patch_door_vertex_closed_impeded=>searchmap_vertex_shift
         patch_trigger_vertex=>vertex_shift
         patch_container_vertex=>vertex_shift
 
@@ -2713,3 +2834,158 @@ BEGIN
    BUT_ONLY
    LAF log_this STR_VAR file="%output_file%" input="%output%" END
 END
+
+DEFINE_ACTION_FUNCTION duplicate_area
+	STR_VAR area_old=""
+			area_new=""
+BEGIN
+
+	OUTER_INNER_PATCH_SAVE pvrz_old "%area_old%" BEGIN
+		DELETE_BYTES 0x1 1
+	END
+
+	OUTER_INNER_PATCH_SAVE pvrz_new "%area_new%" BEGIN
+		DELETE_BYTES 0x1 1
+	END
+
+
+	COPY_EXISTING "%area_old%.are" "override/%area_new%.are" 
+		WRITE_ASCII 0x8 "%area_new%"
+	
+	COPY_EXISTING "%area_old%.wed" "override/%area_new%.wed"
+		WRITE_ASCII 0x24 "%area_new%"
+		
+	COPY_EXISTING "%area_old%.tis" "override/%area_new%.tis"
+	
+	OUTER_FOR (ind=0;ind<100;ind+=1) BEGIN
+		ACTION_IF ind<10 BEGIN
+			OUTER_SPRINT digits "0%ind%"
+		END ELSE BEGIN
+			OUTER_SPRINT digits "%ind%"
+		END
+		ACTION_IF FILE_EXISTS_IN_GAME "%pvrz_old%%digits%.pvrz" BEGIN
+			COPY_EXISTING "%pvrz_old%%digits%.pvrz" "override/%pvrz_new%%digits%.pvrz"
+		END
+	END
+
+				  
+	COPY_EXISTING 	"%area_old%sr.bmp" "override/%area_new%sr.bmp"			
+					"%area_old%lm.bmp" "override/%area_new%lm.bmp"
+					"%area_old%ht.bmp" "override/%area_new%ht.bmp"
+
+
+END
+
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION add_wed_door 
+	STR_VAR name=""
+			tiles=""
+BEGIN
+	READ_LONG 0xc door_count
+	READ_LONG 0x18 door_off
+	READ_LONG 0x1c door_tilemap_lookup_off
+	READ_LONG 0x9c wall_poly_off
+	READ_LONG 0xa0 vertex_off
+	READ_LONG 0xa4 wallgroup_off
+	READ_LONG 0xa9 wall_poly_lookup_off
+	READ_LONG 0x10 overlay_off
+	READ_LONG 0x8 overlay_count
+	
+	// get tile data
+	
+	tile_count=0
+	PATCH_CLEAR_ARRAY tile_data
+	WHILE "%tiles%" STRING_COMPARE "" BEGIN
+		LPF return_first_pair STR_VAR list="%tiles%" RET key value tiles=list END
+		SPRINT $tile_data("%key%") "%value%"
+		tile_count +=1
+	END
+
+	
+	// clone last door
+	
+	READ_ASCII (door_off + 0x1a* (door_count - 1) ) data (0x1a)
+	INSERT_BYTES (door_off + 0x1a*door_count) 0x1a
+	WRITE_ASCIIE (door_off + 0x1a*door_count) "%data%"
+	WRITE_ASCII (door_off + 0x1a*door_count)  "%name%" (8)
+	READ_SHORT (door_off +0x1a*door_count + 0xc) last_tile_count
+	READ_SHORT (door_off +0x1a*door_count + 0xa) last_tile_off
+	new_tile_off=last_tile_off + last_tile_count
+	WRITE_SHORT (door_off +0x1a*door_count + 0xa) new_tile_off
+	WRITE_SHORT (door_off +0x1a*door_count + 0xc) tile_count
+	WRITE_SHORT (door_off +0x1a*door_count + 0xe) 0
+	WRITE_SHORT (door_off +0x1a*door_count + 0x10) 0
+	
+	
+	delta= 0x1a
+
+	// adjust main offsets (assumes doors are first)
+	
+	PATCH_FOR_EACH address IN 0x1c 0x9c 0xa0 0xa4 0xa8 BEGIN
+	   WRITE_LONG address  ((LONG_AT address)+delta)
+	END
+
+
+	// adjust overlay offsets
+	
+	FOR (overlay_ind=0;overlay_ind<overlay_count;overlay_ind +=1) BEGIN
+		offset=overlay_off + overlay_ind*0x18
+		WRITE_LONG (offset+0x10) ((LONG_AT (offset+0x10)) + delta)
+		WRITE_LONG (offset+0x14) ((LONG_AT (offset+0x14)) + delta)
+	END
+	
+	// adjust door offsets
+
+	FOR (door_ind=0;door_ind<door_count;door_ind +=1) BEGIN
+		offset=door_off + door_ind*0x1a
+		WRITE_LONG (offset+0x12) ((LONG_AT (offset+0x12)) + delta)
+		WRITE_LONG (offset+0x16) ((LONG_AT (offset+0x16)) + delta)
+	END
+	
+	// add 1 to door count
+	
+	door_count +=1
+	WRITE_LONG 0xc door_count 
+
+	
+	delta2=2*tile_count // this is the extra-tiles delta
+	
+	door_tilemap_lookup_off +=delta
+	offset=new_tile_off*2 + door_tilemap_lookup_off
+	INSERT_BYTES offset 2*tile_count
+	ind=0
+	PHP_EACH tile_data AS tile=>discard BEGIN
+		WRITE_SHORT offset+2*ind tile
+		ind+=1
+	END
+
+
+	// adjust offsets again
+	PATCH_FOR_EACH address IN 0x9c 0xa0 0xa4 0xa8 BEGIN
+	   WRITE_LONG address  ((LONG_AT address)+delta2)
+	END
+	FOR (overlay_ind=0;overlay_ind<overlay_count;overlay_ind +=1) BEGIN
+		offset=overlay_off + overlay_ind*0x18
+		WRITE_LONG (offset+0x14) ((LONG_AT (offset+0x14)) + delta2)
+	END
+	FOR (door_ind=0;door_ind<door_count;door_ind +=1) BEGIN
+		offset=door_off + door_ind*0x1a
+		WRITE_LONG (offset+0x12) ((LONG_AT (offset+0x12)) + delta2)
+		WRITE_LONG (offset+0x16) ((LONG_AT (offset+0x16)) + delta2)
+	END
+	
+	// edit tiles
+	
+	READ_LONG 0x30 tilemap_off
+	PHP_EACH tile_data AS tile=>alt_tile BEGIN
+		WRITE_SHORT (4 + tilemap_off + 0xa * tile) alt_tile
+	END
+
+
+
+
+
+END
+
+

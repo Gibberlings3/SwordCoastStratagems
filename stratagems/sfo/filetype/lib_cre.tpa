@@ -82,7 +82,7 @@ DEFINE_ACTION_FUNCTION install_creature
            allow_missing=0
            tv=0
     STR_VAR
-           creatire=""
+           creature=""
            edits=""
            editstring=""
            location=""
@@ -153,6 +153,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_fields BEGIN
    name2_string=> ~0xc,LONG~
    xp_value=> ~0x14,LONG~
    xp_total=> ~0x18,LONG~
+   gold=> ~0x1c,LONG~
    color_metal => ~0x2c,BYTE~
    color_minor => ~0x2d,BYTE~
    color_major => ~0x2e,BYTE~
@@ -441,9 +442,15 @@ BEGIN
     SET value = IDS_OF_SYMBOL (gender "%arguments%")
     PATCH_IF value>0 BEGIN
             WRITE_BYTE 0x275 value
-            PATCH_IF ~%arguments%~ STRING_EQUAL_CASE ~FEMALE~ BEGIN
+			PATCH_MATCH "%arguments%" WITH
+			male BEGIN
+               WRITE_BYTE 0x237 1			
+			END
+			female BEGIN 
                WRITE_BYTE 0x237 2
             END
+			DEFAULT
+			END
     END ELSE BEGIN
             LPF warning STR_VAR warning= "tried to set nonexistent %idsfile% entry %arguments%" END
    END
@@ -1430,6 +1437,24 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_immunity_to_spell") ""
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////              give immunity to an animation (opcode 296)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_immunity_to_animation
+       STR_VAR arguments=""
+BEGIN
+       PATCH_IF ~%arguments%~ STRING_COMPARE_CASE ~~ BEGIN
+          LPF return_first_entry STR_VAR list= ~%arguments%~ RET entry=entry arguments=list END
+         LPF add_entry_inline STR_VAR arguments =~opcode=>296 timing=>9 resource=>%entry%~ type=effect file_ext=CRE END
+          LPF CRE_immunity_to_string STR_VAR arguments END
+       END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_immunity_to_animation") ""
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////              give immunity to a string (opcode 267)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1758,6 +1783,35 @@ BEGIN
             LPF warning STR_VAR warning= ~Tried to steal colors from %arguments%.cre, but it doesn't exist~ END
       END
 END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////// quick colourscheme
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION CRE_colors
+      STR_VAR arguments=""
+BEGIN
+      LPF return_first_entry STR_VAR list="%arguments%" RET entry list END
+      WRITE_BYTE 0x2c entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x2d entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x2e entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x2f entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x30 entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x31 entry
+      LPF return_first_entry STR_VAR list RET entry list END
+      WRITE_BYTE 0x32 entry
+END
+
+
+OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_colors") ""
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////// hand out a soundset
@@ -1779,6 +1833,14 @@ BEGIN
           attack2=>0xe0
           damage=>0xec
           dying=>0xf0
+          select_common1=>0x10c
+          select_common2=>0x110
+          select_common3=>0x114
+          select_common4=>0x118
+          select_common5=>0x11c
+          select_common6=>0x120
+          picked_pocket=>0x1b8
+
       END
       SET loc=$sound_map("%key%")
       SET val=RESOLVE_STR_REF ( ( AT "%value%"))
@@ -1788,6 +1850,47 @@ BEGIN
 END
 
 OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_say_sounds") ""
+
+DEFINE_PATCH_FUNCTION CRE_say_sounds_literal
+   STR_VAR arguments=""
+BEGIN
+   PATCH_IF "%arguments%" STRING_COMPARE "" BEGIN
+      LPF return_first_pair STR_VAR list="%arguments%" RET key=key value=value arguments=list END
+      DEFINE_ASSOCIATIVE_ARRAY sound_map BEGIN
+          initial_meeting=>0xa4
+          morale=>0xa8
+          happy=>0xac
+		  unhappy_breaking_point=>0xb8
+          battle_cry1=>0xc8
+          battle_cry2=>0xcc
+          attack1=>0xdc
+          attack2=>0xe0
+          damage=>0xec
+          dying=>0xf0
+          select_common1=>0x10c
+          select_common2=>0x110
+          select_common3=>0x114
+          select_common4=>0x118
+          select_common5=>0x11c
+          select_common6=>0x120
+          picked_pocket=>0x1b8
+
+      END
+      SET loc=$sound_map("%key%")
+      WRITE_LONG loc value
+      LPF CRE_say_sounds_literal STR_VAR arguments END
+   END
+END
+
+DEFINE_PATCH_FUNCTION wipe_soundset 
+   STR_VAR arguments=""
+BEGIN
+   FOR (i=0xa4;i<0x234;i+=4) BEGIN
+      WRITE_LONG i "-1"
+   END
+END
+
+OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_say_sounds_literal") ""
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1843,7 +1946,6 @@ BEGIN
           SET twohanded=0
           LPF return_first_entry STR_VAR list= ~%arguments%~ RET entry=entry arguments=list END
           LPF return_function_and_argument STR_VAR input= ~%entry%~ RET item=function properties=argument END
-          TO_LOWER ~item~
           WHILE ~%properties%~ STRING_COMPARE ~~ BEGIN
             LPF return_first_entry STR_VAR list= ~%properties%~ separator = "," RET arg_entry=entry properties=list END
             LPF return_first_letter STR_VAR input= ~%arg_entry%~ RET firstletter=firstletter rest=rest END
@@ -2778,9 +2880,13 @@ BEGIN
     leveldrain level_drain energydrain energy_drain BEGIN
        LPF CRE_immunity_to_opcode STR_VAR arguments=216 END
        LPF CRE_immunity_to_icon STR_VAR arguments=59 END
-       LPF CRE_immunity_to_string INT_VAR value STR_VAR arguments="41495 40968 40969 40979 41616" END
-
+       LPF CRE_immunity_to_string STR_VAR arguments="41495 40968 40969 40979 41616" END
     END
+	fear FEAR BEGIN
+	   LPF CRE_immunity_to_opcode STR_VAR arguments="23 24 106" END
+	   LPF CRE_immunity_to_string STR_VAR arguments="14007 17427" END
+	   LPF CRE_immunity_to_animation STR_VAR arguments="cdhorror" END
+	END
     DEFAULT
        LPF warning STR_VAR warning=~Unrecognised immunity type %arguments% IN CRE_immunity~ END
     END
@@ -3341,6 +3447,56 @@ BEGIN
           LPF spell_use_script_check INT_VAR type STR_VAR script filename="%SOURCE_RES%" END
        END
     BUT_ONLY
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Deal with the issue where a file multiply references the same item
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION CRE_deduplicate_items
+BEGIN
+	abort=0
+	READ_LONG 0x2b8 item_slot_off
+	CLEAR_ARRAY item_array
+	CLEAR_ARRAY slot_item_map
+	CLEAR_ARRAY all_items
+	CLEAR_ARRAY item_repeated
+	FOR (offset=item_slot_off + 0x24; offset<item_slot_off + 0x4a; offset +=2) BEGIN
+		READ_SSHORT offset item
+		PATCH_IF item>=0 BEGIN
+			PATCH_IF VARIABLE_IS_SET $item_array("%item%") BEGIN 
+				SET $item_array("%item%") +=1
+			END ELSE BEGIN
+				SET $item_array("%item%") =1
+			END
+		END	
+	END
+	GET_OFFSET_ARRAY item_resref_array CRE_V10_ITEMS
+	PHP_EACH item_resref_array AS ind=>offset BEGIN
+		READ_ASCII offset resref
+		TO_LOWER resref
+		SPRINT $slot_item_map("%ind%") "%resref%"
+		PATCH_IF VARIABLE_IS_SET $all_items("%resref%") BEGIN
+			SET $item_repeated("%resref%")=1
+		END ELSE BEGIN
+			SET $all_items("%resref%")=1
+		END
+	END
+	PHP_EACH item_array AS slot=>num BEGIN
+		PATCH_IF num>1 BEGIN
+			SPRINT resref $slot_item_map("%slot%")
+			PATCH_IF !VARIABLE_IS_SET $item_repeated("%resref%") BEGIN
+			 REMOVE_CRE_ITEM "%resref%"
+		     FOR (i=0;i<num;i+=1) BEGIN
+				ADD_CRE_ITEM "%resref%" #0 #0 #0 ~NONE~ ~INV~
+			 END
+			END
+		END
+	END
+
+
 END
 
 

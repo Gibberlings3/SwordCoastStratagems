@@ -1,0 +1,49 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             Installer for v2 MOSs
+/////////////
+/////////////             uses helper functions in lib_bam
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION install_v2_mos
+  INT_VAR lowest_mos_index=0
+  STR_VAR mos_name=""
+          mos_loc=""
+          pvrz_loc=""
+BEGIN
+   ACTION_IF "%pvrz_loc%" STRING_EQUAL "" BEGIN
+      OUTER_SPRINT pvrz_loc "%mos_loc%"
+   END
+   // get initial list of PVRZ indices
+   ACTION_CLEAR_ARRAY pvrz_ind_list
+   COPY "%mos_loc%/%mos_name%.mos" override
+     GET_OFFSET_ARRAY bam_array 0x14 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SPRINT $pvrz_ind_list("%ref%") ""
+     END
+   // end of COPY
+   // go through and sort out the PVRZs' new indices
+   OUTER_SET current=lowest_mos_index
+   ACTION_PHP_EACH pvrz_ind_list AS ind=>discard BEGIN
+      LAF get_available_mos_index INT_VAR current RET new_index=value END
+      LAF pad_to_four INT_VAR arguments=ind RET padded_old=value END
+      LAF pad_to_four INT_VAR arguments=new_index RET padded_new=value END
+      COPY "%pvrz_loc%/mos%padded_old%.pvrz" "override/mos%padded_new%.pvrz"
+
+      OUTER_SET $pvrz_ind_list("%ind%")=new_index
+      OUTER_SET current=new_index+1
+   END
+   // update the mos file
+   COPY_EXISTING "%mos_name%.mos" override
+     GET_OFFSET_ARRAY bam_array 0x14 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SET ref_new=$pvrz_ind_list("%ref%")
+        WRITE_LONG offset ref_new
+     END
+
+
+
+END

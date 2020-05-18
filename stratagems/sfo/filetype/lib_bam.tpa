@@ -239,3 +239,86 @@ BEGIN
    SET dl=dl+cycle_length + lookup_length
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////             Installer for v2 BAMs
+/////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION install_v2_bam
+  INT_VAR lowest_mos_index=0
+  STR_VAR bam_name=""
+          bam_loc=""
+          pvrz_loc=""
+BEGIN
+   ACTION_IF "%pvrz_loc%" STRING_EQUAL "" BEGIN
+      OUTER_SPRINT pvrz_loc "%bam_loc%"
+   END
+   // get initial list of PVRZ indices
+   ACTION_CLEAR_ARRAY pvrz_ind_list
+   COPY "%bam_loc%/%bam_name%.bam" override
+     GET_OFFSET_ARRAY bam_array 0x1c 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SPRINT $pvrz_ind_list("%ref%") ""
+     END
+   // end of COPY
+   // go through and sort out the PVRZs' new indices
+   OUTER_SET current=lowest_mos_index
+   ACTION_PHP_EACH pvrz_ind_list AS ind=>discard BEGIN
+      LAF get_available_mos_index INT_VAR current RET new_index=value END
+      LAF pad_to_four INT_VAR arguments=ind RET padded_old=value END
+      LAF pad_to_four INT_VAR arguments=new_index RET padded_new=value END
+      COPY "%pvrz_loc%/mos%padded_old%.pvrz" "override/mos%padded_new%.pvrz"
+
+      OUTER_SET $pvrz_ind_list("%ind%")=new_index
+      OUTER_SET current=new_index+1
+   END
+   // update the bam file
+   COPY_EXISTING "%bam_name%.bam" override
+     GET_OFFSET_ARRAY bam_array 0x1c 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SET ref_new=$pvrz_ind_list("%ref%")
+        WRITE_LONG offset ref_new
+     END
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION pad_to_four
+   INT_VAR arguments=0
+   RET value
+BEGIN
+   ACTION_IF arguments>9999 BEGIN
+      FAIL "pad_to_four requires an argument <=9999"
+   END
+   ACTION_IF arguments<10 BEGIN
+      OUTER_SPRINT value "000%arguments%"
+   END ELSE
+   ACTION_IF arguments<100 BEGIN
+      OUTER_SPRINT value "00%arguments%"
+   END ELSE
+   ACTION_IF arguments<1000 BEGIN
+      OUTER_SPRINT value "0%arguments%"
+   END ELSE BEGIN
+      OUTER_SPRINT value "%arguments%"
+   END
+END
+
+DEFINE_ACTION_FUNCTION get_available_mos_index
+    INT_VAR current=0
+    RET value
+BEGIN
+    LAF pad_to_four INT_VAR arguments=current RET padded=value END
+    ACTION_IF FILE_EXISTS_IN_GAME "mos%padded%.pvrz" BEGIN
+       OUTER_SET current +=1
+       LAF get_available_mos_index INT_VAR current RET value END
+    END ELSE BEGIN
+       OUTER_SET value=current
+    END
+END
+
+
