@@ -365,7 +365,7 @@ BEGIN
     LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=equal RET splprot_splstate=value END
     LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=not_equal RET splprot_splstate_notequal=value END
     LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=equal RET splprot_splstate_equal=value END
-    LAF resolve_splprot_entry INT_VAR stat=main_level_stat value="-1" STR_VAR relation=equal RET splprot_tracker=value END
+    LAF resolve_splprot_entry INT_VAR stat=main_level_stat value="-1" STR_VAR relation=less_than_equal RET splprot_tracker=value END
     LAF resolve_splprot_entry INT_VAR stat=dualclass_level_stat value="-1" STR_VAR relation=equal RET splprot_dualclass=value END
     LAF ds_resolve_stat STR_VAR id=MARKED_FOR_AUTOLEVEL RET stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_FIGHTER RET stat_ind_from_fighter=stat_ind END
@@ -575,10 +575,12 @@ END
 ///
 ///   Make required changes to the creature file
 ///
+///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION handle_cre_file_for_levelling
-     STR_VAR creature=""
+     INT_VAR script_only=0
+	 STR_VAR creature=""
 BEGIN
     // parameter
     OUTER_SET dualclass_level_stat=164 // WIZARD_SPELL_TRAP
@@ -700,16 +702,18 @@ BEGIN
           OUTER_SET dualclass_level_stat_adjusted = dualclass_level_stat - 156
           OUTER_SPRINT $patch_data("add_effect_inline'") "target=>2 timing=>1 opcode=>282 parameter1=>%level_original% parameter2=>%dualclass_level_stat_adjusted% parent_resource=>DW#DUALC"
     END
-    LAF edit_creature STR_VAR creature edits=patch_data END
-    COPY_EXISTING "%creature%.cre" override
+	ACTION_IF !script_only BEGIN
+     LAF edit_creature STR_VAR creature edits=patch_data END
+     COPY_EXISTING "%creature%.cre" override
        LPF CRE_remove_spell_of_type INT_VAR skip_hidden=1 STR_VAR arguments=SPPR END
        LPF CRE_remove_spell_of_type INT_VAR skip_hidden=1 STR_VAR arguments=SPWI END
 
-    // ranger 2-weapon hardcoded proficiency
-    ACTION_IF is_ranger BEGIN
+     // ranger 2-weapon hardcoded proficiency
+     ACTION_IF is_ranger BEGIN
        COPY_EXISTING "%creature%.cre" override
           SET_BG2_PROFICIENCY PROFICIENCY2WEAPON 2
-    END
+     END
+	END
 
     // script
     
@@ -850,18 +854,20 @@ BEGIN
            SetGlobal("dwassnlv","LOCALS",0)
            Continue()
     END  
-
-    IF
-      OR(2)
-		OnCreation()
-		!Global("dw_autolevel_sanity","LOCALS",1)
-	  CheckSpellState(Myself,MARKED_FOR_AUTOLEVEL)	
+	
+	IF
+      !Global("auto_level_hostile","LOCALS",1)
+      !InPartyAllowDead(Myself)
+      Allegiance(Myself,ENEMY)
     THEN
-        RESPONSE #100
-		   SetGlobal("dw_autolevel_sanity","LOCALS",1)
-		   ApplySpellRES("dwaulb1",Myself) // make sure no combination of circumstances can lead to the infinite-levelling bug!
-           Continue()
-    END  
+      RESPONSE #100
+         SetGlobal("auto_level_hostile","LOCALS",1)
+         ApplySpellRES("dw#auhos",Myself)
+         Wait(1)
+         ApplySpellRES("dw#aule2",Myself)
+         Continue()
+    END
+
 	  >>>>>>>>
          LAF extend STR_VAR script="%script_override%" top=init inline=yes END
 	  
@@ -1305,6 +1311,10 @@ END
 
 DEFINE_ACTION_FUNCTION NPCs_for_levelling BEGIN
 
+	// read in the list of NPCs who don't get set to level zero
+	
+	LAF read_in_list STR_VAR file=level_zero_exclude.2da force_case=lower RET_ARRAY exclude_array=array END
+
     COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
           SPRINT filename ~%SOURCE_RES%~
           LPF CRE_is_PC STR_VAR filename RET value END
@@ -1314,12 +1324,22 @@ DEFINE_ACTION_FUNCTION NPCs_for_levelling BEGIN
               END
               DEFAULT
                   SPRINT $pc_list(~%filename%~) ""
+				  READ_ASCII DEATHVAR dv
+				  TO_LOWER dv
+				  PATCH_IF VARIABLE_IS_SET $exclude_array("%dv%") BEGIN
+					SPRINT $pc_script_only(~%filename%~) ""
+				  END
               END
           END
     BUT_ONLY
     OUTER_SET initial=0 // this is for the innate-ability remapper
     ACTION_PHP_EACH pc_list AS creature=>discard BEGIN
-         LAF handle_cre_file_for_levelling STR_VAR creature END
+		 ACTION_IF VARIABLE_IS_SET $pc_script_only("%creature%") BEGIN
+			OUTER_SET script_only=1
+		 END ELSE BEGIN
+			OUTER_SET script_only=0
+		 END
+         LAF handle_cre_file_for_levelling INT_VAR script_only STR_VAR creature END
          LAF remove_known_innate_spells STR_VAR creature END
     END
     
@@ -1428,18 +1448,6 @@ BEGIN
 			Continue()
 	END
 	
-	IF
-      !Global("auto_level_hostile","LOCALS",1)
-      !InPartyAllowDead(Myself)
-      Allegiance(Myself,ENEMY)
-    THEN
-      RESPONSE #100
-         SetGlobal("auto_level_hostile","LOCALS",1)
-         ApplySpellRES("dw#auhos",Myself)
-         Wait(1)
-         ApplySpellRES("dw#aule2",Myself)
-         Continue()
-    END
 
 
         IF
