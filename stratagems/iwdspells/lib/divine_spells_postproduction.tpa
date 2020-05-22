@@ -17,6 +17,8 @@ DEFINE_ACTION_FUNCTION divine_spells_postproduction STR_VAR tra="" BEGIN
           LAF clearair_divine END
           LAF hide_old_cause_wounds END
           LAF pc_spells END
+		  LAF bg2ify_cure_moderate_wounds END
+		  LAF entropy_shield_flame_strike END
 
 
 END
@@ -196,6 +198,35 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION bg2ify_cure_moderate_wounds BEGIN
+  
+	COPY_EXISTING "%CLERIC_CURE_MODERATE_WOUNDS%.spl" "override"
+		READ_LONG 0x8 name_new
+	BUT_ONLY
+	COPY_EXISTING "%CLERIC_CURE_MEDIUM_WOUNDS%.spl" "override/%CLERIC_CURE_MODERATE_WOUNDS%.spl"
+		READ_STRREF 0x8 name_old
+		WRITE_LONG 0x8 "%name_new%"
+		WRITE_LONG 0x34 2
+		READ_STRREF 0x50 desc
+		INNER_PATCH_SAVE desc "%desc%" BEGIN
+			REPLACE_TEXTUALLY 14 11
+			REPLACE_TEXTUALLY 3 2
+			REPLACE_TEXTUALLY "%name_old%" "%name_new%"
+		END
+		SAY_EVALUATED 0x50 "%desc%"
+		WRITE_ASCIIE 0x3a "%CLERIC_CURE_MODERATE_WOUNDS%C" (8)
+		WRITE_ASCIIE 0x76 "%CLERIC_CURE_MODERATE_WOUNDS%B" (8)
+		LPF ALTER_EFFECT INT_VAR power=2 END
+		LPF ALTER_EFFECT INT_VAR match_opcode=17 parameter1=11 END
+	BUT_ONLY
+ 
+ 
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
 DEFINE_ACTION_FUNCTION hide_old_cause_wounds BEGIN
   
   ACTION_IF !demivrgvs BEGIN
@@ -206,3 +237,54 @@ DEFINE_ACTION_FUNCTION hide_old_cause_wounds BEGIN
   END
 
 END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION entropy_shield_flame_strike BEGIN
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY flame_strike_map BEGIN
+	sppr503=>sppr503d
+	sppr985=>sppr985d
+	spin799=>spin799d
+	ohbeflam=>"dw#ohbef"
+	spimix01=>"dw#spimi"
+	END
+	ACTION_PHP_EACH flame_strike_map AS spell=>helper BEGIN
+		LAF externalise_flame_strike_damage STR_VAR spell helper END
+	END 
+
+
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION externalise_flame_strike_damage
+	STR_VAR spell=""
+			helper=""
+BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+		// make duplicate of spell that only does damage
+		  ACTION_IF !FILE_EXISTS_IN_GAME "%helper%.spl" BEGIN
+			COPY_EXISTING "%spell%.spl" "override/%helper%.spl"
+				LPF DELETE_EFFECT STR_VAR match_function=opcode_is_not_damage END
+				LPF ALTER_SPELL_HEADER INT_VAR projectile=0 END
+				WRITE_LONG 0x8 "-1"
+		// replace damage effects in spell with casting of new spell
+			COPY_EXISTING "%spell%.spl" override
+				LPF ALTER_EFFECT INT_VAR match_opcode=12 dicenumber=0 dicesize=0 opcode=146 savingthrow=0 savebonus=0 parameter1=0 parameter2=2 STR_VAR resource="%helper%" END
+			BUT_ONLY
+		  END
+		// alter protection from Entropy Shield to protect against helper
+			COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
+				REPLACE_TEXTUALLY "%spell%" "%helper%" (8)
+		END
+END
+
+DEFINE_PATCH_FUNCTION opcode_is_not_damage
+RET value
+BEGIN
+	READ_SHORT 0x0 opcode
+	value= (opcode=12)? 0: 1
+END
+

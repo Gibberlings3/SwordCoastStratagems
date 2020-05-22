@@ -165,13 +165,19 @@ EXIT
 CHAIN
 IF WEIGHT #-999 ~Global("DMWWKaishasChat","GLOBAL",1)Gender(Player1,Male)~ THEN ~%tutu_var%marale2~ okaythen1
 @21632 == %tutu_var%kaish2 @21633 = @21634 == %tutu_var%marale2 @21635 == %tutu_scriptd%elainy2 @21636
+END
+IF ~~ THEN
 DO ~SetGlobal("DMWWNoKillKaishas","GLOBAL",1)~
+SOLVED_JOURNAL @22000
 EXIT
 
 CHAIN
 IF WEIGHT #-999 ~Global("DMWWKaishasChat","GLOBAL",1)Gender(Player1,Female)~ THEN ~%tutu_var%marale2~ okaythen2
 @21632 == %tutu_var%kaish2 @21633 = @21634 == %tutu_var%marale2 @21635 == %tutu_scriptd%urlyle2 @21636
+END
+IF ~~ THEN
 DO ~SetGlobal("DMWWNoKillKaishas","GLOBAL",1)~
+SOLVED_JOURNAL @22000
 EXIT
 
 APPEND ~%tutu_var%menda4~ 
@@ -191,7 +197,7 @@ END
 
 IF ~~ THEN BEGIN dielikedogs
 SAY @21647 
-IF ~~ THEN DO ~Enemy() ActionOverride("baresh",Enemy())~
+IF ~~ THEN DO ~Enemy() ActionOverride("baresh",Enemy())%ee_erase_string%~
 JOURNAL @21648 EXIT END
 
 IF ~~ THEN BEGIN nosailor
@@ -202,7 +208,7 @@ END
 
 IF ~~ THEN BEGIN wontliftgift
 SAY @21651
-IF ~~ THEN DO ~Enemy() ActionOverride("baresh",Enemy())~
+IF ~~ THEN DO ~Enemy() ActionOverride("baresh",Enemy())%ee_erase_string%~
 JOURNAL @21648 EXIT END
 END
 
