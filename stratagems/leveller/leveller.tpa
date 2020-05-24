@@ -15,6 +15,7 @@ BEGIN
      END
 
      LAF add_silent_sectype STR_VAR sectype=autoleveller RET autoleveller_sectype=sectype_value END
+     LAF add_silent_sectype STR_VAR sectype=autoleveller2 RET autoleveller2_sectype=sectype_value END
 
      //set the stat variable we use to track main levels (overload of DS stat)
      OUTER_SET main_level_stat=165 // WIZARD_IMPROVED_ALACRITY - needs to be a scripting state, not a proficiency, else dualclassing breaks
@@ -47,6 +48,7 @@ BEGIN
      
      LAF make_level_setters END
      LAF NPCs_for_levelling END
+	 LAF leveller_imoen END
 
      // tool
 
@@ -428,10 +430,13 @@ BEGIN
 
     MAKE_PATCH
        name_if_debugging=>null
+       secondary=>"%autoleveller2_sectype%"
        add_basic_ability=>null
        add_effect_inline=>"opcode=>328 target=>2 timing=>1 parameter2=>%stat_ind% mode=>1"
+      add_effect_inline'=>"opcode=>221 target=>2 parameter1=>10 parameter2=>%autoleveller2_sectype% timing=>1"
     END
     LAF make_spell STR_VAR spell=dw#aulel edits=patch_data END
+
 
     // primary spell
 
@@ -774,6 +779,13 @@ BEGIN
        >>>>>>>>
              LAF extend STR_VAR script="%script_override%" top=wildmage inline=yes END
         END // end of is_wildmage
+		
+		// introduce a very short pause into ToB NPC conversations, so levelling script has a chance to run after the Fate Spirit summons them
+
+		LAF ALTER_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~Summoned~ match1=~StartDialogNoSet(Player1)~  patch=wait_for_autolevel END
+
+
+		
       END // end of general stripdown
       ACTION_IF !FILE_CONTAINS "override/%script_override%.bcs" dwassnlv BEGIN
        LAF extend STR_VAR script="%script_override%" top=dw_level_assigner locabs="%workspace%" END
@@ -842,22 +854,35 @@ BEGIN
       END
 	  
     <<<<<<<< .../stratagems-inline/init.baf
-    IF
-      OR(2)
-		OnCreation()
-		!GlobalTimerNotExpired("leveller_check_levels","LOCALS")
-	  !InPartyAllowDead(Myself)
-    THEN
-        RESPONSE #100
-		   SetGlobalTimer("leveller_check_levels","LOCALS",ONE_MINUTE) 	
-           SetGlobal("auto_levelled","LOCALS",0)
-           SetGlobal("dwassnlv","LOCALS",0)
-           Continue()
-    END  
-	
+IF
+	!GlobalTimerNotExpired("leveller_check_levels","LOCALS")
+	!InPartyAllowDead(Myself)
+THEN
+	RESPONSE #100
+		SetGlobalTimer("leveller_check_levels","LOCALS",ONE_MINUTE)
+		SetGlobal("leveller_in_party_check","LOCALS",0)
+		SetGlobal("auto_levelled","LOCALS",0)
+		SetGlobal("dwassnlv","LOCALS",0)
+		Continue()
+END
+
+IF
+	Global("leveller_in_party_check","LOCALS",0)
+	InPartyAllowDead(Myself)
+THEN
+	RESPONSE #100
+		SetGlobal("leveller_in_party_check","LOCALS",1)
+		SetGlobal("auto_levelled","LOCALS",0)
+		SetGlobal("dwassnlv","LOCALS",0)
+		Continue()
+END
+
+
 	IF
       !Global("auto_level_hostile","LOCALS",1)
-      !InPartyAllowDead(Myself)
+	  OR(2)
+		!InPartyAllowDead(Myself)
+		Global("leveller_first_check","LOCALS",0)
       Allegiance(Myself,ENEMY)
     THEN
       RESPONSE #100
@@ -873,10 +898,16 @@ BEGIN
 	  
      END
     END
+	
 
 
 END
 
+// helper function for the above
+
+DEFINE_PATCH_FUNCTION wait_for_autolevel BEGIN
+	REPLACE_TEXTUALLY CASE_SENSITIVE "IF\( \|%TAB%\|%WNL%\|%LNL%\|%MNL%\)" ~IF Global("auto_levelled","LOCALS",1)~
+END
 
 DEFINE_ACTION_FUNCTION build_levelling_script_assigner
 BEGIN
@@ -1316,6 +1347,7 @@ DEFINE_ACTION_FUNCTION NPCs_for_levelling BEGIN
 	LAF read_in_list STR_VAR file=level_zero_exclude.2da force_case=lower RET_ARRAY exclude_array=array END
 
     COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+		PATCH_TRY
           SPRINT filename ~%SOURCE_RES%~
           LPF CRE_is_PC STR_VAR filename RET value END
           PATCH_IF value BEGIN
@@ -1331,6 +1363,9 @@ DEFINE_ACTION_FUNCTION NPCs_for_levelling BEGIN
 				  END
               END
           END
+		WITH DEFAULT
+			LPF regexp_warning STR_VAR parent=NPCs_for_levelling END
+		END
     BUT_ONLY
     OUTER_SET initial=0 // this is for the innate-ability remapper
     ACTION_PHP_EACH pc_list AS creature=>discard BEGIN
@@ -1617,6 +1652,29 @@ BEGIN
 
 
 END
+
+///////////////////////////////////////////////////
+//// Imoen needs special treatment. She (a) can have too
+//// few XP to reactivate her thief class, and (b) can
+//// join the party before the script has had a chance to
+//// sort out her level
+////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION leveller_imoen BEGIN
+
+	COPY_EXISTING "imoen10.dlg" override
+	   DECOMPILE_AND_PATCH BEGIN
+			REPLACE_TEXTUALLY "JoinParty()" ~ApplySpellRES("dw#aulel",Myself)ApplySpellRES("dwaulb8",Myself)ApplySpellRES("dw#level",Myself)JoinParty()~
+		END
+	BUT_ONLY
+	
+	COPY_EXISTING startare.2da override
+		REPLACE_TEXTUALLY 89000 90000
+	BUT_ONLY
+
+END
+
 
 ///////////////////////////////////////////////////
 //// Innate spells remapper (so they're not wiped on
