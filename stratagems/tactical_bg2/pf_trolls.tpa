@@ -2,16 +2,69 @@ DEFINE_ACTION_FUNCTION pf_trolls BEGIN
      // make every fire/acid/cold spell cast power-removal spell (do this first, to avoid editing the troll spells themselves)
 
      ACTION_CLEAR_ARRAY troll_spells
-     COPY_EXISTING_REGEXP
-     ".*\.spl" override
-     ".*\.itm" override
+	 
+	 // initial pass-through spells/items to get data, for speed
+	 
+	 COPY_EXISTING_REGEXP 
+	 ".*\.spl" override
 	   PATCH_TRY
-         LPF CLONE_EFFECT INT_VAR dicenumber=0 dicesize=0 savingthrow=0 special=0 silent=1 match_opcode=12 opcode=177 STR_VAR match_function=troll_damage_match function=troll_damage_patch END
-       WITH DEFAULT
-			LPF regexp_warning STR_VAR parent=pf_trolls END
+		has_damage_opcode=0
+		GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_num=>fx_off BEGIN
+				PATCH_IF !has_damage_opcode BEGIN
+					PATCH_IF SHORT_AT fx_off=12 BEGIN
+					   has_damage_opcode=1
+					END
+				END
+			END
+		END
+		PATCH_IF has_damage_opcode BEGIN
+			SPRINT $troll_fire_resref_list("%SOURCE_FILE%") ""
+		END
+	   WITH DEFAULT
+			LPF regexp_warning STR_VAR parent=pf_trolls END	   
 	   END
-     BUT_ONLY
-
+	 BUT_ONLY
+	 
+	 COPY_EXISTING_REGEXP 
+	 ".*\.itm" override
+	   PATCH_TRY
+		has_damage_opcode=0
+		GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_num=>fx_off BEGIN
+				PATCH_IF !has_damage_opcode BEGIN
+					PATCH_IF SHORT_AT fx_off=12 BEGIN
+					   has_damage_opcode=1
+					END
+				END
+			END
+		END
+		GET_OFFSET_ARRAY gl_fx_arr ITM_V10_GEN_EFFECTS
+		PHP_EACH gl_fx_arr AS fx_num=>fx_off BEGIN
+				PATCH_IF !has_damage_opcode BEGIN
+					PATCH_IF SHORT_AT fx_off=12 BEGIN
+					   has_damage_opcode=1
+					END
+				END		
+		END
+		PATCH_IF has_damage_opcode BEGIN
+			SPRINT $troll_fire_resref_list("%SOURCE_FILE%") ""
+		END
+	   WITH DEFAULT
+			LPF regexp_warning STR_VAR parent=pf_trolls END	   
+	   END
+	 BUT_ONLY
+	 
+	 ACTION_PHP_EACH troll_fire_resref_list AS file=>discard BEGIN
+		COPY_EXISTING "%file%" override
+			LPF CLONE_EFFECT INT_VAR dicenumber=0 dicesize=0 savingthrow=0 special=0 silent=1 match_opcode=12 opcode=177 STR_VAR match_function=troll_damage_match function=troll_damage_patch END		
+		BUT_ONLY
+	 END
+	 
      // strip min-hp item from trolls; apply regeneration spell (do this second, so all relevant troll-regeneration powers are visible to subsequent code)
      
      COPY_EXISTING_REGEXP ".*\.cre" override
