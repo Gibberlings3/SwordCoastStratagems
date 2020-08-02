@@ -1,3 +1,27 @@
+// Detectable Spells v 4.01
+// August 2020 - DavidW
+//
+// Changes:
+//	- we now keep our own local copy of stats.ids and splstate.ids data, to avoid having to run CLEAR_IDS_MAP a bazillion times
+//  - removed the need for AUTO_EVAL_STRINGS
+//  - restored this text!
+//	- rather belatedly started a v4.xx chain (really 3.96 ought to have been 4.0, since it was rewritten pretty much from scratch, but I don't want to rewrite history by changing it now)
+
+// Detectable Spells v3.96
+//  January 2019 - David Wallace ('DavidW')
+//
+//  Changes:
+//  - Now incorporate flexible handling of TOBEX stats using BGEE splstate baseline
+//  - if filename has no .spl suffix, try looking it up in SPELL.ids (and skip if not found)
+//  - general revamp of the interface to apply detection
+//  - added function to apply it directly to an individual spell
+//  - use new 'ds_sort_ids' (exported from SCS's function library 'sort_ids') to sort stats.ids, rather than native ds_sort_stats_ids.
+//    (sort_ids preserves duplicates, inter alia helpful with CDTweaks proficiencies)
+
+// Detectable Spells v3.95
+// February 3rd, 2016 - Yaroslav "Ardanis/GeN1e" Kalyuzhnyy
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //// The main function
@@ -7,13 +31,17 @@
 DEFINE_ACTION_FUNCTION detectable_spells 
    INT_VAR fix_khelben=1
 BEGIN
-
+	// make sure stats.ids is properly set
    LAF ds_stat_entries END
+   // load current contents of stats.ids and splstate.ids
+ 	LAF ds_load_ids STR_VAR ids=stats RET_ARRAY ds_ids_map_stats=ids_map END
+	LAF ds_load_ids STR_VAR ids=splstate RET_ARRAY ds_ids_map_splstate=ids_map END
+   // process main tables
    ACTION_FOR_EACH table_name IN ds_simple ds_142_variable ds_other_clone buff_misc BEGIN
-      LAF ds_process_table INT_VAR complain=0 STR_VAR table=".../ds-inline/%table_name%.2da" END
+      LAF ds_process_table INT_VAR complain=0 STR_VAR table=EVAL ".../ds-inline/%table_name%.2da" RET_ARRAY ds_ids_map_stats ds_ids_map_splstate END
    END
    ACTION_FOR_EACH table_name IN BUFF_PRO_WEAPONS BUFF_PRO_DAMAGE BUFF_PRO_SPELLS BUFF_PRO_EFFECTS BUFF_ENHANCEMENT STATE_ENRAGED BEGIN
-      LAF ds_process_table INT_VAR complain=0 STR_VAR table=".../ds-inline/%table_name%.2da" default_stat="%table_name%" END
+      LAF ds_process_table INT_VAR complain=0 STR_VAR table=EVAL ".../ds-inline/%table_name%.2da" default_stat=EVAL "%table_name%" RET_ARRAY ds_ids_map_stats ds_ids_map_splstate END
    END
    ACTION_IF fix_khelben BEGIN
       LAF ds_fix_khelben END
@@ -373,13 +401,22 @@ DEFINE_ACTION_FUNCTION ds_process_table
            default_opcode=142
    STR_VAR table=""
            default_stat=""
+   RET_ARRAY ds_ids_map_stats ds_ids_map_splstate
 BEGIN
+	// load IDS, if not already done
+	ACTION_IF !VARIABLE_IS_SET $ds_ids_map_stats("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=stats RET_ARRAY ds_ids_map_stats=ids_map END
+	END
+	ACTION_IF !VARIABLE_IS_SET $ds_ids_map_splstate("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=splstate RET_ARRAY ds_ids_map_splstate=ids_map END
+	END
+
    COPY - "%table%" override
         // remove comments
         REPLACE_TEXTUALLY "//.*" ""
         // read in the data
         PATCH_FOR_EACH column IN resource stat stat_value match_opcode match_parameter2 match_resource duration BEGIN
-           SET "%column%_col"=0 - 1
+           SET EVAL "%column%_col"=0 - 1
         END
         COUNT_2DA_COLS colcount
         READ_2DA_ENTRIES_NOW ds_table_data colcount
@@ -388,7 +425,7 @@ BEGIN
            READ_2DA_ENTRY_FORMER ds_table_data 0 this_col colname
            PATCH_MATCH "%colname%" WITH
            resource stat stat_value match_opcode match_parameter2 match_resource duration BEGIN
-              SET "%colname%_col" = this_col
+              SET EVAL "%colname%_col" = this_col
            END
            DEFAULT
            END
@@ -404,13 +441,13 @@ BEGIN
               SPRINT match_resource "SAME"
               SET duration="-1"
               PATCH_FOR_EACH entry IN stat stat_value match_opcode match_parameter2 match_resource duration BEGIN
-                 PATCH_IF "%entry%_col">=0 BEGIN
-                    READ_2DA_ENTRY_FORMER ds_table_data this_row "%entry%_col" temp
-                    SPRINT "%entry%" "%temp%"
+                 PATCH_IF (EVAL "%entry%_col")>=0 BEGIN
+                    READ_2DA_ENTRY_FORMER ds_table_data this_row EVAL "%entry%_col" temp
+                    SPRINT EVAL "%entry%" "%temp%"
                  END
               END
               INNER_ACTION BEGIN
-                 LAF ds_make_detectable INT_VAR complain match_opcode match_parameter2 stat_value duration STR_VAR id="%stat%" resource match_resource END
+                 LAF ds_make_detectable INT_VAR complain match_opcode match_parameter2 stat_value duration STR_VAR id=EVAL "%stat%" resource match_resource RET_ARRAY ds_ids_map_stats ds_ids_map_splstate END
               END
            END
         END ELSE BEGIN
@@ -433,7 +470,18 @@ DEFINE_ACTION_FUNCTION ds_make_detectable
    STR_VAR id=""
            resource=""
            match_resource="SAME"
+   RET_ARRAY ds_ids_map_stats
+			 ds_ids_map_splstate
 BEGIN
+  	  // load IDS, if not already done
+	  ACTION_IF !VARIABLE_IS_SET $ds_ids_map_stats("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=stats RET_ARRAY ds_ids_map_stats=ids_map END
+	  END
+	  ACTION_IF !VARIABLE_IS_SET $ds_ids_map_splstate("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=splstate RET_ARRAY ds_ids_map_splstate=ids_map END
+	  END
+
+
    // identify the resource
    ACTION_IF !"%resource%" STRING_CONTAINS_REGEXP  "\." BEGIN // it's a full resource
       OUTER_SPRINT filespec "%resource%"
@@ -464,7 +512,7 @@ BEGIN
    // if we succeeded in finding filespec...
    ACTION_IF VARIABLE_IS_SET filespec BEGIN
    // get the data for the stat
-      LAF ds_resolve_stat STR_VAR id RET stat_param stat_opcode END
+      LAF ds_resolve_stat STR_VAR id RET stat_param stat_opcode RET_ARRAY ds_ids_map_stats ds_ids_map_splstate END
    // patch
       ACTION_IF stat_opcode>=0 BEGIN // return value of -1 means we can't patch this (probably because TOBEX is missing)
         COPY_EXISTING "%filespec%" override
@@ -492,7 +540,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-// having already checked it's not , add an entry to a 2da
+// having already checked it's not, add an entry to a 2da
 
 DEFINE_ACTION_FUNCTION ds_add_entry
   INT_VAR min=0
@@ -531,13 +579,21 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ds_resolve_stat STR_VAR id="" RET stat_ind stat_param stat_opcode stat_type
+DEFINE_PATCH_FUNCTION ds_resolve_stat STR_VAR id="" RET stat_ind stat_param stat_opcode stat_type RET_ARRAY ds_ids_map_stats ds_ids_map_splstate
 BEGIN
    // initialise
    INNER_ACTION BEGIN
-      CLEAR_IDS_MAP
       LAF ds_set_vars RET is_tobex enhanced_edition END
+  	  // load IDS, if not already done
+	  ACTION_IF !VARIABLE_IS_SET $ds_ids_map_stats("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=stats RET_ARRAY ds_ids_map_stats=ids_map END
+	  END
+	  ACTION_IF !VARIABLE_IS_SET $ds_ids_map_splstate("DS_IDS_MAP_LOADED") BEGIN
+		LAF ds_load_ids STR_VAR ids=splstate RET_ARRAY ds_ids_map_splstate=ids_map END
+	  END
+
    END
+   
    // see if it's forced
    SET enforce_splstate=0
 
@@ -554,6 +610,12 @@ BEGIN
       ""
    END
    // first, see if it's in stats.ids
+   TO_UPPER id
+   PATCH_IF VARIABLE_IS_SET $ds_ids_map_stats("%id%") BEGIN
+    SET check_stats=$ds_ids_map_stats("%id%")
+   END ELSE BEGIN
+	SET check_stats="-1"
+   END
    SET check_stats = IDS_OF_SYMBOL (stats "%id%")
    PATCH_IF (!enforce_splstate && ( check_stats >=89 && (check_stats<=134 || check_stats>=156) && ( check_stats<256 || is_tobex ) )) BEGIN
        SET stat_ind=check_stats
@@ -577,13 +639,13 @@ BEGIN
    // if it's not in stats.ids, check if we're EE or not
        PATCH_IF enhanced_edition BEGIN
            // is it in SPLSTATE?
-           SET check_stats = IDS_OF_SYMBOL (splstate "%id%")
-           PATCH_IF check_stats>=0 BEGIN
-               // if it's there already, just use it
-               SET stat_ind=check_stats
+           PATCH_IF VARIABLE_IS_SET $ds_ids_map_splstate("%id%") BEGIN
+			   // if it's there already, just use it
+			   SET stat_ind = $ds_ids_map_splstate("%id%")
            END ELSE BEGIN
                // get a new value
                LPF ds_add_entry STR_VAR id file=splstate RET stat_ind END
+			   SET $ds_ids_map_splstate("%id%")=stat_ind
            END
            SPRINT stat_type splstate
            SET stat_opcode=328
@@ -593,7 +655,8 @@ BEGIN
           PATCH_IF is_tobex BEGIN
              // get a new value
              LPF ds_add_entry INT_VAR min=401 STR_VAR id file=stats RET stat_ind END
-             SPRINT stat_type stats
+             SET $ds_ids_map_stats("%id%")=stat_ind
+			 SPRINT stat_type stats
              SET stat_opcode=318
              SET stat_param=stat_ind + 0x10000
           END ELSE BEGIN
@@ -610,9 +673,10 @@ END
 
 DEFINE_ACTION_FUNCTION ds_resolve_stat STR_VAR id=""
 RET stat_ind stat_param stat_opcode stat_type
+RET_ARRAY ds_ids_map_stats ds_ids_map_splstate
 BEGIN
    OUTER_INNER_PATCH "" BEGIN
-      LPF ds_resolve_stat STR_VAR id RET stat_ind stat_param stat_opcode stat_type END
+      LPF ds_resolve_stat STR_VAR id RET stat_ind stat_param stat_opcode stat_type RET_ARRAY ds_ids_map_stats ds_ids_map_splstate END
    END
 END
 
@@ -747,7 +811,8 @@ END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////  Sort an IDS file into numerical order (copy of function in stratagems/sfo/general/lib_general.tpa, with new ds-localised helper function)
+/////  Sort an IDS file into numerical order (copy of function in stratagems/sfo/general/lib_general.tpa, with new ds-localised helper function
+/////  and some EVALs to function in a non-AUTO_EVAL_STRINGS environment)
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION ds_sort_ids STR_VAR ids="" BEGIN
@@ -791,10 +856,10 @@ DEFINE_ACTION_FUNCTION ds_sort_ids STR_VAR ids="" BEGIN
              WHILE "%list%" STRING_COMPARE "" BEGIN
                 LPF ds_return_first_entry STR_VAR list RET entry list END
                 SPRINT check "%num%--%entry%"
-                PATCH_IF !VARIABLE_IS_SET "%check%" BEGIN
+                PATCH_IF !VARIABLE_IS_SET EVAL "%check%" BEGIN
                   INSERT_2DA_ROW rowcount 2 "%num% %entry%"
                   SET rowcount+=1
-                  SPRINT "%check%" ""
+                  SPRINT EVAL "%check%" ""
                 END
              END
           END
@@ -1115,3 +1180,28 @@ END
 WRITE_SHORT 0x6e 0
 
 END // end of function
+
+//////////////////////////////////////////////////////////////////////////////////////
+//// Softcoded version of WEIDU LOOKUP_IDS, because we don't want to have to keep clearing
+//// the IDS map
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ds_load_ids
+	STR_VAR ids=""
+	RET_ARRAY ids_map
+BEGIN
+  ACTION_IF FILE_EXISTS_IN_GAME "%ids%.ids" BEGIN
+	COPY_EXISTING "%ids%.ids" "override"
+		READ_2DA_ENTRIES_NOW _ds_ids_entries 2
+		FOR (row=0;row<_ds_ids_entries;++row) BEGIN
+			READ_2DA_ENTRY_FORMER _ds_ids_entries row 0 val
+			PATCH_IF IS_AN_INT val BEGIN
+				READ_2DA_ENTRY_FORMER _ds_ids_entries row 1 var
+				SET $ids_map("%var%")=val
+			END
+		END
+	BUT_ONLY
+  END
+  OUTER_SET $ids_map("DS_IDS_MAP_LOADED")=1
+END
