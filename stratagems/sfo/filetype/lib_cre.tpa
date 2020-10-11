@@ -8,6 +8,7 @@ DEFINE_ACTION_FUNCTION clone_creature
     INT_VAR
            allow_missing=0
            tv=0
+		   silent=0
     STR_VAR
            creature=""
            edits=""
@@ -15,7 +16,7 @@ DEFINE_ACTION_FUNCTION clone_creature
 
     BEGIN
          LAUNCH_ACTION_FUNCTION clone_template
-                  INT_VAR allow_missing tv
+                  INT_VAR allow_missing tv silent
                   STR_VAR file_list= ~%creature%~
                           file_ext=~CRE~
                           edits
@@ -34,6 +35,7 @@ DEFINE_ACTION_FUNCTION edit_creature
     INT_VAR
            allow_missing=0
            tv=0
+		   silent=0
     STR_VAR
            creature=""
            file=""
@@ -44,7 +46,7 @@ DEFINE_ACTION_FUNCTION edit_creature
            locabs=""
     BEGIN
          LAUNCH_ACTION_FUNCTION edit_template
-                  INT_VAR allow_missing tv
+                  INT_VAR allow_missing tv silent
                   STR_VAR file_list= ~%creature%~
                           file_ext=~CRE~
                           external_file= ~%file%~
@@ -81,6 +83,7 @@ DEFINE_ACTION_FUNCTION install_creature
     INT_VAR
            allow_missing=0
            tv=0
+		   silent=0
     STR_VAR
            creature=""
            edits=""
@@ -89,11 +92,10 @@ DEFINE_ACTION_FUNCTION install_creature
            locbase=""
     BEGIN
          LAUNCH_ACTION_FUNCTION install_template
-                  INT_VAR allow_missing tv
+                  INT_VAR allow_missing tv silent
                   STR_VAR file_list= ~%creature%~
                           file_ext=~CRE~
-                          edits editstring allow_missing
-                          tv silent location locbase
+                          edits editstring location locbase
 
          END
 END
@@ -161,6 +163,8 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_fields BEGIN
    color_leather => ~0x30,BYTE~
    color_armor => ~0x31,BYTE~
    color_hair => ~0x32,BYTE~
+   portrait_small => ~0x34,ASCII~
+   portrait_large => ~0x3c,ASCII~
    hide_in_shadows => ~0x45,BYTE~
    detect_illusions => ~0x64,BYTE~
    set_traps => ~0x65,BYTE~
@@ -214,7 +218,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_fields BEGIN
    save_vs_spell    =>    ~0x58,SBYTE~
    save_vs_spells    =>    ~0x58,SBYTE~
    thac0            =>    ~0x52,SBYTE~
-   attacks          =>    ~0x53,BYTE~ 
+   attacks          =>    ~0x53,BYTE~
    hp_max           =>    ~0x26,SHORT~
    hp_current       =>    ~0x24,SHORT~
    dv               =>    ~0x280,ASCII20~
@@ -223,6 +227,10 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_fields BEGIN
    effect_type      =>     ~0x33,BYTE~
    ac_natural       =>     ~0x46,SSHORT~
    ac_effective     =>     ~0x48,SSHORT~
+   ac_vs_crushing   =>     ~0x4a,SSHORT~
+   ac_vs_missiles   =>     ~0x4c,SSHORT~
+   ac_vs_piercing   =>     ~0x4e,SSHORT~
+   ac_vs_slashing   =>     ~0x50,SSHORT~
    morale           =>     ~0x23f,BYTE~
    morale_break     =>     ~0x240,BYTE~
    nightmare_mode   =>     ~0x7d,BYTE~
@@ -260,7 +268,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_rel_fields BEGIN
    power => ~0x18,LONG~
 END
 
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=cre_rel_fields offset_base=~offset_base~ function_prefix=CRE END
+LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=cre_rel_fields offset_base=yes function_prefix=CRE END
 
 
 
@@ -319,7 +327,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_rel_bit_fields BEGIN
 END
 
 
-LAF build_flag_data_field_editors STR_VAR lookup_table=cre_rel_bit_fields offset_base="offset_base" function_prefix=CRE END
+LAF build_flag_data_field_editors STR_VAR lookup_table=cre_rel_bit_fields offset_base=yes function_prefix=CRE END
 
 
 
@@ -389,9 +397,9 @@ DEFINE_PATCH_FUNCTION CRE_original_class STR_VAR arguments="" BEGIN
     PATCH_FOR_EACH class IN
     fighter mage cleric thief druid ranger BEGIN
       PATCH_IF "%class%" STRING_EQUAL "%arguments%" BEGIN
-         LPF "CRE_original_class_%class%" INT_VAR arguments=1 END
+         LPF "CRE_original_class_%class%" STR_VAR arguments=1 END
       END ELSE BEGIN
-         LPF "CRE_original_class_%class%" INT_VAR arguments=0 END
+         LPF "CRE_original_class_%class%" STR_VAR arguments=0 END
       END
     END
    END
@@ -446,7 +454,7 @@ BEGIN
 			male BEGIN
                WRITE_BYTE 0x237 1			
 			END
-			female BEGIN 
+			female BEGIN
                WRITE_BYTE 0x237 2
             END
 			DEFAULT
@@ -472,7 +480,7 @@ COPY_EXISTING kit.ids "override/dw#kit.ids"
             SET thisrow += 1
          END
       END
-      APPEND_FILE ~%scsroot%/sfo/dw#kit.ids~
+      APPEND_FILE ~%MOD_FOLDER%/sfo/dw#kit.ids~
 
 DEFINE_PATCH_FUNCTION CRE_kit
     STR_VAR arguments=""
@@ -609,7 +617,7 @@ BEGIN
    LPF return_first_entry STR_VAR list= ~%arguments%~ RET script1=entry list=list END
    LPF return_first_entry STR_VAR list RET list=list abovebelow=entry END
    PATCH_IF (~%abovebelow%~ STRING_COMPARE_CASE ~above~ && ~%abovebelow%~ STRING_COMPARE_CASE ~below~) BEGIN
-      LPF warning STR_VAR ~Warning: malformed argument in CRE_enforce_script_order~ END
+      LPF warning STR_VAR warning=~Warning: malformed argument in CRE_enforce_script_order~ END
    END
    LPF return_first_entry STR_VAR list RET list=list script2=entry END
    PATCH_IF (~%abovebelow%~ STRING_EQUAL_CASE above) BEGIN
@@ -656,7 +664,6 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_enforce_script_order") ""
 DEFINE_PATCH_FUNCTION CRE_insert_script
      STR_VAR
          arguments=""
-         filename=""
      RET new_loc
 BEGIN SET success=0
           new_loc=~-1~
@@ -811,7 +818,6 @@ END
 DEFINE_PATCH_FUNCTION CRE_insert_script_low
      STR_VAR
          arguments=""
-         filename=""
 BEGIN
      FOR (i=0x268;i>0x240;i=i - 8) BEGIN
         READ_ASCII i ~test~
@@ -861,7 +867,6 @@ END
 DEFINE_PATCH_FUNCTION CRE_insert_script_high
      STR_VAR
          arguments=""
-         filename=""
 BEGIN
      FOR (i=0x248;i<0x270;i=i + 8) BEGIN
         READ_ASCII i ~test~
@@ -911,7 +916,6 @@ END
 DEFINE_PATCH_FUNCTION CRE_insert_script_second
      STR_VAR
          arguments=""
-         filename=""
 BEGIN
      FOR (i=0x250;i<0x270;i=i + 8) BEGIN
         READ_ASCII i ~test~
@@ -961,17 +965,15 @@ END
 DEFINE_PATCH_FUNCTION CRE_insert_script_above // legacy syntax
      STR_VAR
          arguments=""
-         filename=""
 BEGIN
-   LPF CRE_insert_script_high STR_VAR arguments filename END
+   LPF CRE_insert_script_high STR_VAR arguments  END
 END
 
 DEFINE_PATCH_FUNCTION CRE_insert_script_below // legacy syntax
      STR_VAR
          arguments=""
-         filename=""
 BEGIN
-   LPF CRE_insert_script_low STR_VAR arguments filename END
+   LPF CRE_insert_script_low STR_VAR arguments END
 END
 
 
@@ -983,7 +985,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION CRE_match_script
-     STR_VAR 
+     STR_VAR
          arguments=""
      RET
          value
@@ -1006,7 +1008,7 @@ END
 
 DEFINE_PATCH_FUNCTION ~QUICK_ADD_SPELL~
     INT_VAR as_known=0
-    STR_VAR ~spellname~="" 
+    STR_VAR ~spellname~=""
 BEGIN
     LPF return_function_and_argument STR_VAR input= ~%spellname%~ RET spellname=function number=argument END
 
@@ -1516,6 +1518,9 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_immunity_to_icon") ""
 DEFINE_PATCH_FUNCTION CRE_enforce_saves
        STR_VAR arguments=""
 BEGIN
+       INNER_ACTION BEGIN
+         LAM read_in_saving_throws
+       END
        // initialise the enforced values
        PATCH_FOR_EACH save IN death wand polymorph breath spell BEGIN
           SET  ~enforced_%save%~ = 20
@@ -1544,7 +1549,7 @@ BEGIN
        // do the comparison
        PATCH_FOR_EACH save IN death wand polymorph breath spell BEGIN
           LPF ~CRE_read_save_vs_%save%~ RET currentsave = value END
-          SET possiblesave =  ~enforced_%save%~ 
+          SET possiblesave =  ~enforced_%save%~
           PATCH_MATCH ~%arguments%~ WITH
           at_worst
           BEGIN
@@ -1566,7 +1571,7 @@ BEGIN
           DEFAULT
              SET newsave=possiblesave
           END
-          LPF ~CRE_save_vs_%save%~ INT_VAR arguments=newsave END
+          LPF ~CRE_save_vs_%save%~ STR_VAR arguments="%newsave%" END
        END
 
 END
@@ -1630,7 +1635,7 @@ BEGIN
        DEFAULT
              SET new=possible
        END
-       LPF CRE_thac0 INT_VAR arguments=new END
+       LPF CRE_thac0 STR_VAR arguments="%new%" END
 END
 
 
@@ -1640,7 +1645,7 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION CRE_enforce_hp BEGIN
+DEFINE_PATCH_FUNCTION CRE_enforce_hp STR_VAR arguments="" BEGIN
        CLEAR_ARRAY class_list_array
        LPF CRE_read_class RET classlist=value END
        SET levelnum=0
@@ -1682,7 +1687,7 @@ DEFINE_PATCH_FUNCTION CRE_enforce_hp BEGIN
        DEFAULT
              SET new=possible
        END
-       LPF CRE_hitpoints INT_VAR arguments=new END
+       LPF CRE_hitpoints STR_VAR arguments="%new%" END
 
 END
 
@@ -1692,7 +1697,7 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION CRE_enforce_animation 
+DEFINE_PATCH_FUNCTION CRE_enforce_animation
    STR_VAR arguments=""
 BEGIN
    SET continue=1
@@ -1747,7 +1752,7 @@ BEGIN
           SET animcode= IDS_OF_SYMBOL (~animate~ ~%animation%~)
        END
        PATCH_IF !(animcode = ~-1~) BEGIN
-          LPF CRE_animation_code INT_VAR arguments=animcode END
+          LPF CRE_animation_code STR_VAR arguments="%animcode%" END
        END ELSE BEGIN
           LPF warning STR_VAR warning= ~Failed to find animation %class%_%gender%_%race%, %race%_%gender%, %race%, or bespoke setting~ END
        END
@@ -1882,7 +1887,7 @@ BEGIN
    END
 END
 
-DEFINE_PATCH_FUNCTION wipe_soundset 
+DEFINE_PATCH_FUNCTION wipe_soundset
    STR_VAR arguments=""
 BEGIN
    FOR (i=0xa4;i<0x234;i+=4) BEGIN
@@ -1956,7 +1961,7 @@ BEGIN
                    SET  ~num%entrynumber%~= ~%entry%~
                    SET entrynumber=entrynumber+1
                 END
-            END ELSE BEGIN 
+            END ELSE BEGIN
                 PATCH_IF "%arg_entry%" STRING_EQUAL_CASE notequip BEGIN
                    SET equip=0
                 END ELSE BEGIN
@@ -2047,7 +2052,7 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_remove_items") ""
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION CRE_build 
+DEFINE_PATCH_FUNCTION CRE_build
 BEGIN
    ///// basic structure
    DELETE_BYTES 0x0 BUFFER_LENGTH
@@ -2105,7 +2110,7 @@ BEGIN
    WRITE_BYTE 0x242 60
    // racial enemy
    WRITE_BYTE 0x241 0xff
-   // EA 
+   // EA
    WRITE_BYTE 0x270 128
    // general
    WRITE_BYTE 0x271 1
@@ -2148,7 +2153,7 @@ BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION CRE_postbuild 
+DEFINE_PATCH_FUNCTION CRE_postbuild
 BEGIN
    LPF CRE_enforce_saves STR_VAR arguments=only_if_new END
    LPF CRE_enforce_thac0 STR_VAR arguments=only_if_new END
@@ -2176,11 +2181,11 @@ BEGIN
          LAUNCH_PATCH_MACRO get_offset_array
          SET prof=0
          PHP_EACH offset_array AS int =>offset_base BEGIN
-            LPF CRE_read_opcode INT_VAR offset_base= ~%offset_base%~ RET opcode=value END
+            LPF CRE_read_opcode RET opcode=value END
             PATCH_IF opcode=233 BEGIN
-               LPF CRE_read_parameter2 INT_VAR offset_base= ~%offset_base%~ RET prof_int=value END
+               LPF CRE_read_parameter2 RET prof_int=value END
                PATCH_IF prof_int=prof_int_target BEGIN
-                  LPF CRE_read_parameter1 INT_VAR offset_base= ~%offset_base%~ RET value=value END
+                  LPF CRE_read_parameter1 RET value=value END
                END
             END
          END
@@ -2279,14 +2284,13 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_delete_opcodes") ""
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION CRE_is_PC
-        STR_VAR filename=""
         RET value
 BEGIN
         LPF CRE_read_dv RET dv=value END
         TO_LOWER dv
         PATCH_IF VARIABLE_IS_SET $script_name_pdialog( ~%dv%~) BEGIN
            PATCH_MATCH "%filename%" WITH
-              sarev1 sarevo sarevo2 // BG1 sarevok in EET, shares DV with joinable sarevok 
+              sarev1 sarevo sarevo2 // BG1 sarevok in EET, shares DV with joinable sarevok
               "%tutu_var%arkani3" "%tutu_var%deder3" // false positives - all copies of the illusionary Candlekeep NPCs who exist in RL as INNOCENTs
               finimoen // false positive, Imoen in Ascension
            BEGIN
@@ -2603,7 +2607,7 @@ BEGIN
           SPRINT value ~~
         END ELSE BEGIN
           SET offset_base=LONG_AT $CREoffset_loc(~item~) + item_num * $CREentry_length(~item~)
-          LPF CRE_read_item_resource STR_VAR offset_base RET value=value END
+          LPF CRE_read_item_resource RET value=value END
         END
 END
 
@@ -2623,7 +2627,7 @@ BEGIN
         SPRINT file_ext CRE
         LAUNCH_PATCH_MACRO get_offset_array
         PHP_EACH offset_array AS int=>offset_base BEGIN
-           LPF CRE_read_memorized_spell STR_VAR offset_base RET spell_here=value END
+           LPF CRE_read_memorized_spell RET spell_here=value END
            PATCH_IF ~%spell_here%~ STRING_EQUAL_CASE ~%spell%~ BEGIN
               SET value=1
            END
@@ -2702,7 +2706,7 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_PATCH_FUNCTION CRE_log_me STR_VAR filename="" arguments="" BEGIN
+DEFINE_PATCH_FUNCTION CRE_log_me STR_VAR arguments="" BEGIN
    LPF log_this STR_VAR file= ~%arguments%~ input= ~%filename%~ repeat=no END
 END
 
@@ -2742,23 +2746,23 @@ END
 DEFINE_PATCH_FUNCTION CRE_set_name
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0xc arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0xc STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 
 DEFINE_PATCH_FUNCTION CRE_set_unidentified_name
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0x8 arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x8 STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 DEFINE_PATCH_FUNCTION CRE_say_name
    STR_VAR arguments=""
 BEGIN
-   LPF say_this_here INT_VAR offset=0x8 say= ~%arguments%~ END
+   WRITE_LONG 0x8 RESOLVE_STR_REF ((AT arguments))
 END
 DEFINE_PATCH_FUNCTION CRE_say_unidentified_name
    STR_VAR arguments=""
 BEGIN
-   LPF say_this_here INT_VAR offset=0xc say= ~%arguments%~ END
+   WRITE_LONG 0xc RESOLVE_STR_REF ((AT arguments))
 END
 
 DEFINE_PATCH_FUNCTION CRE_set_both_names
@@ -2794,7 +2798,8 @@ BEGIN
          LPF check_label STR_VAR label="%arguments%" RET value=value END
     END
     PATCH_IF value BEGIN
-      LPF CRE_immunity_to_opcode STR_VAR file_ext=CRE arguments="38 60 80" END
+	  SPRINT file_ext CRE
+      LPF CRE_immunity_to_opcode STR_VAR arguments="38 60 80" END
     END
 END
 
@@ -2817,7 +2822,8 @@ BEGIN
          LPF check_label STR_VAR label="%arguments%" RET value=value END
     END
     PATCH_IF value BEGIN
-      LPF CRE_delete_opcodes STR_VAR file_ext=CRE arguments=189 END
+	  SPRINT file_ext CRE
+      LPF CRE_delete_opcodes STR_VAR arguments=189 END
       LPF add_entry_inline STR_VAR file_ext=CRE type=effect arguments=~opcode=>189 parameter1=>10~ END
     END
 END
@@ -2936,8 +2942,7 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("CRE_level_by_class") ""
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION CRE_enforce_class
-   STR_VAR filename=""
-           arguments=""
+   STR_VAR arguments=""
 BEGIN
  // argument parsing
  SET even_if_monk=0
@@ -3009,7 +3014,7 @@ BEGIN
           SPRINT file mxsplwiz
           SET type=1
       END
-      SORCERER SORCEROR BEGIN 
+      SORCERER SORCEROR BEGIN
         LPF CRE_read_kit RET value END
         PATCH_IF "%value%" STRING_EQUAL_CASE "dragon_disciple" BEGIN
           SPRINT file mxsplsrc
@@ -3079,7 +3084,7 @@ BEGIN
          // find the kit's parent class
          PATCH_IF "%original_class%" STRING_COMPARE_CASE none BEGIN
             FOR (i=1;i<=3;i+=1) BEGIN
-               PATCH_IF $class("%i%") STRING_EQUAL_CASE "%original_class%" BEGIN 
+               PATCH_IF $class("%i%") STRING_EQUAL_CASE "%original_class%" BEGIN
                   SPRINT $class("%i%") "%kit%"
                   SPRINT original_class "%kit%"
                END
@@ -3140,9 +3145,9 @@ BEGIN
 
 
    // enforce the kit
-   
+
     PATCH_IF (!read_clab_at_install && !joinable) BEGIN
-       LPF kit_hardcode INT_VAR level=classlevel_1 STR_VAR kit END
+	   LPF kit_hardcode INT_VAR level=classlevel_1 STR_VAR kit END
     END ELSE BEGIN
        LPM kit_softcode
     END // end of softcoding
@@ -3185,7 +3190,7 @@ DEFINE_PATCH_MACRO kit_softcode BEGIN
                       "AP_.*" BEGIN
                        INNER_PATCH_SAVE spell "%entry%" BEGIN DELETE_BYTES 0x0 3 END
                        TO_UPPER spell
-                       
+                     
                       PATCH_IF (!enforce_whitelist || "%spell%" STRING_MATCHES_REGEXP "SPCL.*" || VARIABLE_IS_SET $kit_whitelist("%spell%") ) BEGIN
                          PATCH_IF !VARIABLE_IS_SET "RESREF_%spell%_KIT_EFFECTS_ADD" BEGIN
                            SPRINT opcode_drop ""
@@ -3466,7 +3471,7 @@ BEGIN
 	FOR (offset=item_slot_off + 0x24; offset<item_slot_off + 0x4a; offset +=2) BEGIN
 		READ_SSHORT offset item
 		PATCH_IF item>=0 BEGIN
-			PATCH_IF VARIABLE_IS_SET $item_array("%item%") BEGIN 
+			PATCH_IF VARIABLE_IS_SET $item_array("%item%") BEGIN
 				SET $item_array("%item%") +=1
 			END ELSE BEGIN
 				SET $item_array("%item%") =1
@@ -3495,8 +3500,78 @@ BEGIN
 			END
 		END
 	END
+END
 
+///////////////////////////////////////////////////////////////////////////////////////
+//
+// Angel's 'enforce_xp' - Set xp_value based on creature's HD + adjustment
+///////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_PATCH_FUNCTION CRE_enforce_xp
+BEGIN
+  LPF fail_unless_int STR_VAR value="%arguments%" expression="" END
+  LPF CRE_read_level1 RET level1=value END
+
+  SET level = level1 + arguments
+  
+  PATCH_MATCH level
+  WITH
+    1
+    BEGIN
+      SET xp_value = 15
+    END
+    2
+    BEGIN
+      SET xp_value = 35
+    END
+    3
+    BEGIN
+      SET xp_value = 65
+    END
+    4
+    BEGIN
+      SET xp_value = 120
+    END
+    5
+    BEGIN
+      SET xp_value = 175
+    END
+    6
+    BEGIN
+      SET xp_value = 270
+    END
+    7
+    BEGIN
+      SET xp_value = 420
+    END
+    8
+    BEGIN
+      SET xp_value = 650
+    END
+    9
+    BEGIN
+      SET xp_value = 975
+    END
+    10
+    BEGIN
+      SET xp_value = 1400
+    END
+    11
+    BEGIN
+      SET xp_value = 2000
+    END
+    DEFAULT
+    PATCH_IF (level > 11)
+    BEGIN
+      SET xp_value = (level - 10) * 1000
+    END
+    ELSE
+    BEGIN
+      SET xp_value = 7
+    END
+  END
+
+  LPF CRE_xp_value STR_VAR arguments="%xp_value%" END
 END
 
 

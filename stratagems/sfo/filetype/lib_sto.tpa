@@ -7,14 +7,15 @@
 DEFINE_ACTION_FUNCTION clone_store
     INT_VAR allow_missing=0
             tv=0
+			silent=0
     STR_VAR
            store=""
            edits=""
            editstring=""
-           allow_missing="no"
     BEGIN
          LAUNCH_ACTION_FUNCTION clone_template
-                  STR_VAR file_list=~%store%~
+                  INT_VAR allow_missing tv silent
+				  STR_VAR file_list=~%store%~
                           file_ext=~STO~
                           edits
                           editstring
@@ -31,17 +32,18 @@ END
 DEFINE_ACTION_FUNCTION edit_store
     INT_VAR allow_missing=0
             tv=0
+			silent=0
     STR_VAR
            store=""
            edits=""
            editstring=""
-           allow_missing=0
            external_file=""
     BEGIN
          LAUNCH_ACTION_FUNCTION edit_template
+				  INT_VAR allow_missing tv silent
                   STR_VAR file_list=~%store%~
                           file_ext=~STO~
-                          edits editstring allow_missing tv external_file
+                          edits editstring external_file
 
          END
 END
@@ -53,6 +55,9 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION install_store
+    INT_VAR allow_missing=0
+            tv=0
+			silent=0
     STR_VAR
            store=""
            edits=""
@@ -62,9 +67,10 @@ DEFINE_ACTION_FUNCTION install_store
            locbase=""
     BEGIN
          LAUNCH_ACTION_FUNCTION install_template
-                  STR_VAR file_list= ~%store%~
+                  INT_VAR allow_missing tv silent
+				  STR_VAR file_list= ~%store%~
                           file_ext=~STO~
-                          edits editstring allow_missing tv external_file location locbase 
+                          edits editstring external_file location locbase 
 
          END
 END
@@ -173,7 +179,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY sto_fields BEGIN
      rumor_rate=>"0x10,LONG"  // misnomer
 END
 
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=sto_fields offset_base=~offset_base~ function_prefix=STO END
+LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=sto_fields offset_base=yes function_prefix=STO END
 
 ACTION_DEFINE_ASSOCIATIVE_ARRAY sto_bit_fields_absolute BEGIN
       room_peasant=>"0x5c,0"
@@ -192,7 +198,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY sto_bit_fields_absolute BEGIN
       fence=>"0x11,4"
 END
 
-LAF build_flag_data_field_editors STR_VAR offset_base=offset_base lookup_table=sto_bit_fields_absolute function_prefix=STO END
+LAF build_flag_data_field_editors STR_VAR offset_base=yes lookup_table=sto_bit_fields_absolute function_prefix=STO END
 
 
 ACTION_DEFINE_ASSOCIATIVE_ARRAY sto_bit_fields BEGIN
@@ -201,7 +207,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY sto_bit_fields BEGIN
       state_stolen  => ~0x10,2~
 END
 
-LAF build_flag_data_field_editors STR_VAR offset_base=offset_base lookup_table=sto_bit_fields function_prefix=STO END
+LAF build_flag_data_field_editors STR_VAR offset_base=yes lookup_table=sto_bit_fields function_prefix=STO END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -210,7 +216,7 @@ LAF build_flag_data_field_editors STR_VAR offset_base=offset_base lookup_table=s
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION STO_store_type
-   INT_VAR arguments=0
+   STR_VAR arguments=0
 BEGIN
    TO_LOWER arguments
    PATCH_MATCH "%arguments%" WITH
@@ -229,10 +235,11 @@ BEGIN
       5 container BEGIN
          SET num=5
       END
-      DEFAULT
-         SET num=0
+      DEFAULT        
+		LPF warning STR_VAR warning="Store type %arguments% is unrecognised; defaulting to 0" END
+        SET num=0
       END
-   LPF STO_store_type_code INT_VAR arguments=num END
+   LPF STO_store_type_code STR_VAR arguments=num END
 END
 
 
@@ -290,11 +297,11 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("STO_remove_items") ""
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION add_items_to_store
+   INT_VAR tv=0
    STR_VAR store=""
            items=""
            item=""
            location=""
-           tv="no"
 BEGIN
       ACTION_IF "%store%" STRING_EQUAL "" BEGIN
          LAF warning STR_VAR warning="Store unspecified in add_items_to_store" END
@@ -304,7 +311,7 @@ BEGIN
          LAF warning STR_VAR warning="Tried to add empty list of items to store(s) %store%" END
       END
       LAF return_first_entry STR_VAR list= ~%store%~ RET this_store=entry store=list END
-      ACTION_IF (~%tv%~ STRING_EQUAL_CASE ~yes~ || ~%tv%~ STRING_EQUAL_CASE 1) BEGIN
+      ACTION_IF tv BEGIN
         OUTER_SPRINT ~this_store~ ~%tutu_var%%this_store%~
       END
       COPY_EXISTING ~%this_store%.sto~ ~override~
@@ -321,7 +328,7 @@ BEGIN
         END
       BUT_ONLY
       ACTION_IF "%store%" STRING_COMPARE "" BEGIN
-         LAF add_items_to_store STR_VAR store items location tv END
+         LAF add_items_to_store INT_VAR tv STR_VAR store items location END
       END
 END
 
@@ -334,60 +341,25 @@ END
 DEFINE_PATCH_FUNCTION STO_set_name
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0xc arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0xc STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 
 DEFINE_PATCH_FUNCTION STO_say_name
    STR_VAR arguments=""
 BEGIN
-   LPF say_this_here INT_VAR offset=0xc say= ~%arguments%~ END
+   WRITE_LONG 0xc RESOLVE_STR_REF ((AT arguments))
 END
 
 DEFINE_PATCH_FUNCTION STO_set_drink
    STR_VAR arguments=""
-           offset_base="0"
 BEGIN
    LPF patch_text_entry INT_VAR loc=0x8+offset_base STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 
 DEFINE_PATCH_FUNCTION STO_say_drink
    STR_VAR arguments=""
-           offset_base="0"
 BEGIN
-   LPF say_this_here INT_VAR offset=0x8+offset_base say= ~%arguments%~ END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////             set the type
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION STO_store_type
-   STR_VAR arguments=""
-BEGIN
-   TO_LOWER arguments
-   PATCH_MATCH "%arguments%" WITH
-      store BEGIN
-        SET num=0
-      END
-      tavern BEGIN
-        SET num=1
-      END
-      inn BEGIN
-        SET num=2
-      END
-      temple BEGIN
-        SET num=3
-      END
-      container BEGIN
-        SET num=5
-      END
-      DEFAULT
-        LPF warning STR_VAR warning="Store type %arguments% is unrecognised; defaulting to 0" END
-        SET num=0
-      END
-      LPF STO_store_type_code STR_VAR arguments="%num%" END
+   WRITE_LONG (offset_base+0x8) RESOLVE_STR_REF ((AT arguments))
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -422,7 +394,7 @@ BEGIN
     // add the items
     PHP_EACH items_bought AS item=>val BEGIN
        PATCH_IF val BEGIN
-           LPF apply_patches STR_VAR file_ext=STO editstring="add_entry_inline=>~type=>item_purchased item_bought=>%item%~" END
+           LPF apply_patches_inline STR_VAR file_ext=STO editstring="add_entry_inline=>~type=>item_purchased item_bought=>%item%~" END
        END
     END
 END
@@ -432,12 +404,12 @@ DEFINE_PATCH_FUNCTION STO_will_not_buy
 BEGIN
   PATCH_MATCH "%arguments%" WITH
    all "ALL" any "ANY" BEGIN
-       LPF apply_patches STR_VAR file_ext=STO editstring="delete_entries_inline=>~type=>item_purchased~"  END
+       LPF apply_patches_inline STR_VAR file_ext=STO editstring="delete_entries_inline=>~type=>item_purchased~"  END
    END
    DEFAULT
       WHILE "%arguments%" STRING_COMPARE "" BEGIN
          LPF return_first_entry STR_VAR list="%arguments%" RET entry=entry arguments=list END
-         LPF apply_patches STR_VAR file_ext=STO editstring="delete_entries_inline=>~type=>item_purchased match=>item_bought check=>%entry%~"  END
+         LPF apply_patches_inline STR_VAR file_ext=STO editstring="delete_entries_inline=>~type=>item_purchased match=>item_bought check=>%entry%~"  END
       END
    END
 END

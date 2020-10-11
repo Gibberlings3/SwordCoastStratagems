@@ -37,8 +37,8 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
           END ELSE BEGIN
 
              // sanity check
-             ACTION_IF FILE_EXISTS ~%scsroot%\%location%\%script%.ssl~ BEGIN
-                OUTER_SPRINT full_loc ~%scsroot%\%location%~
+             ACTION_IF FILE_EXISTS ~%MOD_FOLDER%\%location%\%script%.ssl~ BEGIN
+                OUTER_SPRINT full_loc ~%MOD_FOLDER%\%location%~
              END ELSE BEGIN
                 LAF get_directory STR_VAR location locabs locbase RET full_loc=directory END
                 ACTION_IF !FILE_EXISTS ~%full_loc%\%script%.ssl~ BEGIN
@@ -49,21 +49,21 @@ DEFINE_ACTION_FUNCTION ~compile_ssl_to_bcs_core~ INT_VAR skip_bcs=0 STR_VAR scri
           END
           ACTION_IF debug_variable=2 BEGIN
              LAF warning STR_VAR warning= ~SSL call with variables %sslvariables%, library %ssllibrary%, booleans %booleanstring%~ END
-             PRINT ~~~~~actual SSL string is ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~ ~~~~~
+             PRINT ~~~~~actual SSL string is ~%MOD_FOLDER%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~ ~~~~~
           END
           DELETE "%workspace%/ssl_out/%script%.baf"
           ACTION_IF ~%WEIDU_OS%~ STRING_COMPARE_CASE ~WIN32~ THEN BEGIN
                 OUTER_INNER_PATCH_SAVE scsargs "%full_loc%/%script%" BEGIN
                      REPLACE_TEXTUALLY "\" "/"
                 END
-		AT_NOW ~chmod 755 %scsroot%/%ssl_loc%/ssl.pl~
-                AT_NOW ~/usr/bin/perl %scsroot%/%ssl_loc%/ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%/autolib %booleanstring%~ EXACT	  
+		AT_NOW ~chmod 755 %MOD_FOLDER%/%ssl_loc%/ssl.pl~
+                AT_NOW ~/usr/bin/perl %MOD_FOLDER%/%ssl_loc%/ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%/autolib %booleanstring%~ EXACT	  
           END ELSE BEGIN
                 LAF check_ini STR_VAR ini=Use_Perl_Natively RET value END
                 ACTION_IF value BEGIN
-                   AT_NOW ~perl %scsroot%\%ssl_loc%\ssl.pl %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
+                   AT_NOW ~perl %MOD_FOLDER%\%ssl_loc%\ssl.pl %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
 		END ELSE BEGIN
-                   AT_NOW ~%scsroot%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
+                   AT_NOW ~%MOD_FOLDER%\%ssl_loc%\ssl.exe %full_loc%\%script% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %workspace%\autolib %booleanstring%~
 		END
 	  END
 	  COPY ~%workspace%\ssl_out\%script%.baf~ ~%workspace%\ssl_out~ EVALUATE_BUFFER
@@ -90,7 +90,7 @@ DEFINE_ACTION_FUNCTION ~ssl_to_bcs~
          STR_VAR script="" location="" locbase="" locabs="" variables="" booleans="" rename_to="" inline=""
 BEGIN
          // "location" should in normal circumstances be relativised to local_loc, but SSL permits
-         // it to be relative to scsroot (for legacy reasons)
+         // it to be relative to MOD_FOLDER (for legacy reasons)
 
          ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
                LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
@@ -103,14 +103,14 @@ BEGIN
 END
 
 DEFINE_ACTION_FUNCTION ~ssl_to_baf~
-         STR_VAR script="" location="" locbase="" locabs="" variables="" inline=""  booleans=""
+         STR_VAR script="" location="" locbase="" locabs="" variables="" inline="" rename_to="" booleans=""
 BEGIN
          ACTION_IF ~%script%~ STRING_EQUAL ~~ BEGIN
                LAF warning STR_VAR warning="Warning: SSL compiler called with empty argument" END
          END
          OUTER_WHILE ~%script%~ STRING_COMPARE ~~ BEGIN
                LAF return_first_entry STR_VAR list= ~%script%~ RET script=list script_to_call=entry END
-               LAF compile_ssl_to_bcs_core INT_VAR skip_bcs=1 STR_VAR script=  ~%script_to_call%~ location locbase locabs variables booleans inline  END
+               LAF compile_ssl_to_bcs_core INT_VAR skip_bcs=1 STR_VAR script=  ~%script_to_call%~ location locbase locabs variables rename_to booleans inline  END
          END
 
 END
@@ -461,7 +461,7 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION log_resource_name STR_VAR arguments="SFOlog" filename="" file_ext="" BEGIN
+DEFINE_PATCH_FUNCTION log_resource_name STR_VAR arguments="SFOlog" BEGIN
 
 
    TO_LOWER file_ext
@@ -490,54 +490,6 @@ DEFINE_PATCH_FUNCTION log_resource_name STR_VAR arguments="SFOlog" filename="" f
 
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("log_resource_name") ""
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////               Say something at an offset
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION say_this_here
-      INT_VAR offset=0
-              say=0
-BEGIN
-   SPRINT input ~SAY %offset% %atsymbol%%say%~ // why? for more specific error messages
-   PATCH_TRY
-      LPF patch_reinclude_this STR_VAR input END
-   WITH DEFAULT
-      PATCH_PRINT "Failed to SAY %atsymbol%%say% at offset %offset%, most likely because the string does not exist in the TRA file"
-      PATCH_RERAISE
-   END
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////              Get a strref for a tra entry by number
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION strref_of_tra
-      INT_VAR  arguments=0
-      RET value
-BEGIN
-   SPRINT input ~SET value=RESOLVE_STR_REF (%atsymbol%%arguments%)~ // why? for more specific error messages
-   PATCH_TRY
-      LPF patch_reinclude_this STR_VAR input END
-   WITH DEFAULT
-      PATCH_PRINT "Failed to RESOLVE_STR_REF for %atsymbol%%arguments%, most likely because the string does not exist in the TRA file"
-      PATCH_RERAISE
-   END
-END
-
-DEFINE_ACTION_FUNCTION strref_of_tra
-      INT_VAR  arguments=0
-      RET value
-BEGIN
-   OUTER_PATCH "" BEGIN
-      LPF strref_of_tra STR_VAR arguments RET value END
-   END
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -729,16 +681,14 @@ END
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////      Apply the function "arguments", which in turn takes arguments offset, (NOT offset_base) 
-////////////      filename, file_ext, to the offset of every strref in the file.
+////////////      Apply the function "arguments", which in turn takes arguments INT_VAR offset, (NOT offset_base) 
+////////////      STR_VAR filename, file_ext, to the offset of every strref in the file.
 ////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION apply_to_strrefs
-          STR_VAR arguments=""
-                  filename=""
-                  file_ext=""
+          STR_VAR arguments="" filename="" file_ext=""
 BEGIN
         TO_LOWER file_ext
         PATCH_MATCH "%file_ext%" WITH
@@ -866,7 +816,6 @@ END
 
 DEFINE_PATCH_FUNCTION apply_to_strrefs_script 
    STR_VAR arguments=""
-           filename=""
 BEGIN
    REPLACE_EVALUATE "DisplayString\([A-Za-z]*\)(\([^,]+\),\([0-9]+\))" BEGIN
         LPF "%arguments%" STR_VAR strref="%MATCH3%" filename  RET strref_new=strref_new  END
@@ -1112,7 +1061,7 @@ BEGIN
     END
     LAF length_of_list STR_VAR list RET num_classes=value END
     // get the XP cap
-    LAF read_table_entry STR_VAR file=xpcap row="%parent_class%" colnum=1 RET xp=value END
+    LAF read_table_entry INT_VAR colnum=1 STR_VAR file=xpcap row="%parent_class%" RET xp=value END
     LAF level_at_xp INT_VAR xp num_classes STR_VAR class RET level END
 END
 

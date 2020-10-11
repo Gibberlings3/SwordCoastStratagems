@@ -1,3 +1,5 @@
+// NB: as of SCS v33.5 SFO needs the ini system to have been installed already (from lib_ini)
+
 ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
 
   OUTER_SET sfo_installed=1
@@ -18,11 +20,6 @@ ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
    //////////////////////////////////////////////////////////////
    /// set the default variables if they're not set already
    //////////////////////////////////////////////////////////////
-
-   ACTION_IF !VARIABLE_IS_SET mod_root BEGIN
-      OUTER_SPRINT mod_root "%TP2_BASE_NAME%"
-      ACTION_TO_LOWER mod_root
-   END
 
    ACTION_IF !VARIABLE_IS_SET external_loc BEGIN
       OUTER_SPRINT external_loc weidu_external
@@ -47,12 +44,13 @@ ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
    MKDIR "%external_loc%"
    MKDIR "%external_loc%/workspace"
    MKDIR "%external_loc%/workspace/ssl_out"
-   MKDIR "%external_loc%/data/%mod_root%"
+   MKDIR "%external_loc%/data/%MOD_FOLDER%"
    MKDIR "%external_loc%/markers"
    MKDIR "%external_loc%/lang"
+   MKDIR "%external_loc%/lang/%MOD_FOLDER%"
 
    ACTION_IF !FILE_EXISTS "%external_loc%/readme.txt" BEGIN
-      COPY + "%mod_root%/lib/resource/weidu_external_readme.txt" "%external_loc%/readme.txt"
+      COPY + "%MOD_FOLDER%/lib/resource/weidu_external_readme.txt" "%external_loc%/readme.txt"
    END
 
    //////////////////////////////////////////////////////////////
@@ -61,9 +59,9 @@ ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
 
    OUTER_SPRINT workspace "%external_loc%/workspace"
    OUTER_SPRINT data_loc_root "%external_loc%/data"
-   OUTER_SPRINT data_loc "%external_loc%/data/%mod_root%"
+   OUTER_SPRINT data_loc "%external_loc%/data/%MOD_FOLDER%"
    OUTER_SPRINT marker_loc "%external_loc%/markers"
-   OUTER_SPRINT ext_lang_loc "%external_loc%/lang/%mod_root%"
+   OUTER_SPRINT ext_lang_loc "%external_loc%/lang/%MOD_FOLDER%"
 
 
 
@@ -71,39 +69,17 @@ ACTION_IF !VARIABLE_IS_SET sfo_installed BEGIN
 // Set default values of control parameters
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
- ACTION_IF !VARIABLE_IS_SET scsroot BEGIN // legacy
-      OUTER_SPRINT scsroot "%TP2_BASE_NAME%"
- END
  ACTION_IF !VARIABLE_IS_SET ssl_loc BEGIN
       OUTER_SPRINT ssl_loc "ssl"
  END
  ACTION_IF !VARIABLE_IS_SET sfo_loc BEGIN
       OUTER_SPRINT sfo_loc "sfo"
  END
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Get the debug variable from ini (do this manually, ini reading functions aren't installed yet)
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-OUTER_SET debug_variable=0
-ACTION_IF FILE_EXISTS "%mod_root%/%ini_file%" BEGIN
-COPY - "%mod_root%/%ini_file%" "%workspace%"
-   REPLACE_EVALUATE "debug_variable[ =]+\([0-9]+\)"
-   BEGIN
-       SET debug_variable=MATCH1
-	   
-   END
-   "" // doesn't matter, this is COPY -
-BUT_ONLY
-END
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Set the debug variable if it isn't already set; run silent if it's set to zero
+// Get the debug variable from ini; run silent if it's set to zero
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ACTION_IF !VARIABLE_IS_SET debug_variable BEGIN
-   OUTER_SET debug_variable=0
-END
+LAF check_ini STR_VAR ini="debug_variable" RET debug_variable=value END
 ACTION_IF debug_variable=0 BEGIN SILENT END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -398,8 +374,8 @@ END
 // Determine status of auto-built functions
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ACTION_IF FILE_EXISTS "%scsroot%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
-   INCLUDE "%scsroot%/%sfo_loc%/SFO_autofunc.tpa"
+ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
+   INCLUDE "%MOD_FOLDER%/%sfo_loc%/SFO_autofunc.tpa"
    OUTER_SET SFO_reserved_build_function_control=2
 END ELSE BEGIN
    OUTER_SET SFO_reserved_build_function_control=1
@@ -415,9 +391,10 @@ END
      ACTION_READLN blook
      SILENT
   END
-  ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/general~ ~lib_.*\.tpa~ BEGIN
+  ACTION_BASH_FOR ~%MOD_FOLDER%/%sfo_loc%/general~ ~lib_.*\.tpa~ BEGIN
          ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
-            INCLUDE ~%scsroot%/%sfo_loc%/general/%BASH_FOR_RES%.tpa~
+			//PRINT "%BASH_FOR_RES%"
+			INCLUDE ~%MOD_FOLDER%/%sfo_loc%/general/%BASH_FOR_RES%.tpa~
          END
   END
 
@@ -430,9 +407,9 @@ END
      ACTION_READLN blook
      SILENT
   END
-  ACTION_BASH_FOR ~%scsroot%/%sfo_loc%/filetype~ ~lib_.*\.tpa~ BEGIN
+  ACTION_BASH_FOR ~%MOD_FOLDER%/%sfo_loc%/filetype~ ~lib_.*\.tpa~ BEGIN
          ACTION_IF "%BASH_FOR_EXT%" STRING_EQUAL_CASE TPA BEGIN
-             INCLUDE ~%scsroot%/%sfo_loc%/filetype/%BASH_FOR_RES%.tpa~
+			 INCLUDE ~%MOD_FOLDER%/%sfo_loc%/filetype/%BASH_FOR_RES%.tpa~
          END
   END
 
@@ -441,39 +418,17 @@ END
 // If appropriate, copy over autofunc library
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ACTION_IF !FILE_EXISTS "%scsroot%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
+ACTION_IF !FILE_EXISTS "%MOD_FOLDER%/%sfo_loc%/SFO_autofunc.tpa" BEGIN
    ACTION_IF FILE_EXISTS "%workspace%/SFO_autofunc.tpa" BEGIN
-      COPY + "%workspace%/SFO_autofunc.tpa" "%scsroot%/%sfo_loc%/SFO_autofunc.tpa"
+      COPY + "%workspace%/SFO_autofunc.tpa" "%MOD_FOLDER%/%sfo_loc%/SFO_autofunc.tpa"
    END
 END
-
-
-///////////////////////////////////////////////////
-// read in ini
-///////////////////////////////////////////////////
-
-  ACTION_IF debug_variable=3 BEGIN
-     PRINT "Reading in INI: press a key to continue"
-     ACTION_READLN blook
-     SILENT
-  END
-
-
-   ACTION_IF VARIABLE_IS_SET ini_file BEGIN
-      OUTER_SPRINT ini_to_read "%mod_root%/%ini_file%"
-      LAM SFO_read_ini_file
-   END
-
-   ACTION_IF VARIABLE_IS_SET user_ini_file BEGIN
-      OUTER_SPRINT ini_to_read "%mod_root%/%user_ini_file%"
-      LAM SFO_read_ini_file
-   END
  
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Initialise SSL variables
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-OUTER_SPRINT ~sslvariables~ ~%percentage%scsroot%percentage%=%scsroot%&%percentage%tutu_var%percentage%=%tutu_var%~
+OUTER_SPRINT ~sslvariables~ ~%percentage%MOD_FOLDER%percentage%=%MOD_FOLDER%&%percentage%tutu_var%percentage%=%tutu_var%~
 OUTER_SPRINT ssllibrary ""
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -481,7 +436,7 @@ OUTER_SPRINT ssllibrary ""
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   ACTION_FOR_EACH hotkey IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
-     LAF check_ini STR_VAR ini="hot_key_%hotkey%" RET value END
+     LAF check_ini INT_VAR silent=1  STR_VAR ini="hot_key_%hotkey%" RET value END
      ACTION_IF "%value%" STRING_EQUAL_CASE "0" BEGIN
             OUTER_SPRINT "hot_key_%hotkey%" "%hotkey%"
      END ELSE BEGIN

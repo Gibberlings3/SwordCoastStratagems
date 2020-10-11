@@ -5,18 +5,18 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION clone_spell
-    INT_VAR allow_missing=0
+    INT_VAR allow_missing=0 silent=0
     STR_VAR
            spell=""
            edits=""
            editstring=""
     BEGIN
          LAUNCH_ACTION_FUNCTION clone_template
+				  INT_VAR allow_missing silent
                   STR_VAR file_list= ~%spell%~
                           file_ext=~SPL~
                           edits
                           editstring
-                          allow_missing
          END
 END
 
@@ -28,8 +28,10 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION edit_spell
-    INT_VAR allow_missing=0
+    INT_VAR tv=0 // this doesn't get used, but it avoids a function mismatch in edit_whatever
+			allow_missing=0
             stop_after_match=0
+			silent=0
     STR_VAR
            spell=""
            edits=""
@@ -55,12 +57,11 @@ DEFINE_ACTION_FUNCTION edit_spell
             LAF get_spellcode STR_VAR input="%this_spell%" RET this_spell=value END
          END
          LAUNCH_ACTION_FUNCTION edit_template
-                  INT_VAR SFO_RESERVED_object_index
+                  INT_VAR SFO_RESERVED_object_index allow_missing silent
                   STR_VAR file_list=~%this_spell%~
                           file_ext=~SPL~
                           edits
                           editstring
-                          allow_missing
                           location
                           locbase
                           locabs
@@ -78,7 +79,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION install_spell
-    INT_VAR allow_missing=0
+    INT_VAR allow_missing=0 silent=0
     STR_VAR
            spell=""
            edits=""
@@ -104,11 +105,11 @@ DEFINE_ACTION_FUNCTION install_spell
             OUTER_SPRINT newname "%spell%"
          END
          LAUNCH_ACTION_FUNCTION install_template
-                  STR_VAR file_list=~%spell%~
+                  INT_VAR allow_missing silent
+				  STR_VAR file_list=~%spell%~
                           file_ext=~SPL~
                           edits
                           editstring
-                          allow_missing
                           destination
                           location
                           locbase
@@ -143,9 +144,8 @@ END
 
 DEFINE_ACTION_FUNCTION make_spell
     INT_VAR level=1
-
+		    type=0
     STR_VAR
-           type=""
            spell=""
            idsname=""
            edits=""
@@ -153,7 +153,7 @@ DEFINE_ACTION_FUNCTION make_spell
     RET    newname
     BEGIN
          ACTION_IF "%idsname%" STRING_COMPARE "" BEGIN
-            LAF add_spell_to_ids INT_VAR level STR_VAR idsname type filename="%spell%" file_loc RET newname=newname END
+            LAF add_spell_to_ids INT_VAR level type STR_VAR idsname filename="%spell%" file_loc RET newname=newname END
             OUTER_SPRINT spell "%newname%"
          END ELSE BEGIN
             OUTER_SPRINT newname "%spell%"
@@ -243,7 +243,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_ability_fields BEGIN
    casting_time=>~0x12,SHORT~
 END
 
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR offset_base=~offset_base~ lookup_table=spell_ability_fields function_prefix=SPL END
+LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR offset_base=yes lookup_table=spell_ability_fields function_prefix=SPL END
 
 
 ACTION_DEFINE_ASSOCIATIVE_ARRAY eff_fields BEGIN
@@ -267,7 +267,7 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY eff_fields BEGIN
    mode=> ~0x2c,LONG~
 END
 
-LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=eff_fields offset_base=~offset_base~ function_prefix=SPL secondary="yes" END
+LAUNCH_ACTION_FUNCTION build_simple_data_field_editors STR_VAR lookup_table=eff_fields offset_base=yes function_prefix=SPL secondary="yes" END
 
 ACTION_DEFINE_ASSOCIATIVE_ARRAY spl_bit_fields BEGIN
       breaks_invisibility=>~0x19,2~
@@ -313,11 +313,15 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY eff_bit_fields BEGIN
       save_vs_wands => ~0x24,3~
       save_vs_petrification => ~0x24,4~
       save_vs_polymorph => ~0x24,4~
+      ignore_primary_target => ~0x25,2~
+      ignore_secondary_target => ~0x25,3~
       bypass_mirror_image => ~0x27,0~
+      ignore_difficulty => ~0x27,1~
       does_not_wake_sleeper => ~0x2d,2~
+	  save_for_half=>~0x2d,0~
 END
 
-LAF build_flag_data_field_editors STR_VAR lookup_table=eff_bit_fields offset_base=~offset_base~ function_prefix=SPL  secondary="yes" END
+LAF build_flag_data_field_editors STR_VAR lookup_table=eff_bit_fields offset_base=yes function_prefix=SPL  secondary="yes" END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -456,7 +460,17 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION SPL_enforce_school
+DEFINE_PATCH_FUNCTION SPL_enforce_school 
+  STR_VAR arguments=""
+BEGIN
+	PATCH_IF is_iwd BEGIN
+		LPF SPL_enforce_school_iwd STR_VAR arguments END
+	END ELSE BEGIN
+		LPF SPL_enforce_school_bg2 STR_VAR arguments END	
+	END
+END
+
+DEFINE_PATCH_FUNCTION SPL_enforce_school_bg2
   STR_VAR arguments=""
 BEGIN
    INNER_ACTION BEGIN
@@ -491,7 +505,7 @@ BEGIN
            LPF SPL_casting_sound STR_VAR arguments="%casting_sound%" END
            PATCH_IF (SHORT_AT 0x1c)=1 BEGIN
               WRITE_SHORT 0x1e 0 // zero exclusions
-              LPF "SPL_unusable_%exclude%" INT_VAR arguments=1 END
+              LPF "SPL_unusable_%exclude%" STR_VAR arguments=1 END
            END
            SET i=spell_school_data
         END
@@ -518,21 +532,26 @@ BEGIN
      COUNT_2DA_COLS colcount
      READ_2DA_ENTRIES_NOW spell_school_data colcount
    END
+   PATCH_IF "%arguments%" STRING_EQUAL_CASE "" BEGIN
+      LPF SPL_read_school RET arguments=value END
+   END
      FOR (i=1;i<spell_school_data;i+=1) BEGIN
         READ_2DA_ENTRY_FORMER spell_school_data i 0 name
         PATCH_IF "%arguments%" STRING_EQUAL_CASE "%name%" BEGIN
            FOR (j=1;j<colcount;j+=1) BEGIN
               READ_2DA_ENTRY_FORMER spell_school_data 0 j var
               READ_2DA_ENTRY_FORMER spell_school_data i j val
+			  SPRINT  "%var%" "%val%"
            END
-           SPRINT  "%var%" "%val%"
            LPF SPL_school STR_VAR arguments END
            LPF SPL_casting_animation STR_VAR arguments="%casting_animation%" END
            LPF SPL_casting_sound STR_VAR arguments="%casting_sound%" END
            PATCH_IF (SHORT_AT 0x1c)=1 BEGIN
               WRITE_SHORT 0x1e 0 // zero exclusions
-              LPF "SPL_unusable_%exclude%" INT_VAR arguments=1 END
-              LPF "SPL_unusable_%exclude2%" INT_VAR arguments=1 END
+              LPF "SPL_unusable_%exclude%" STR_VAR arguments=1 END
+			  PATCH_IF "%exclude2%" STRING_COMPARE "null" BEGIN
+				LPF "SPL_unusable_%exclude2%" STR_VAR arguments=1 END
+			  END
            END
            SET i=spell_school_data
         END
@@ -546,18 +565,17 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION SPL_duration_if_variable
-           INT_VAR offset_secondary=0 offset_base=0
-           STR_VAR arguments="" file_ext="" filename=""
+           STR_VAR arguments="" 
 BEGIN
-   LPF SPL_read_opcode INT_VAR offset_secondary RET opcode=value END
+   LPF SPL_read_opcode RET opcode=value END
    PATCH_MATCH "%opcode%" WITH
    215 BEGIN
 
    END
    DEFAULT
-     LPF SPL_read_duration INT_VAR offset_secondary RET value=value END
+     LPF SPL_read_duration RET value END
      PATCH_IF value>0 BEGIN
-      LPF SPL_duration INT_VAR offset_secondary offset_base STR_VAR arguments filename file_ext END
+      LPF SPL_duration STR_VAR arguments END
      END
    END
 END
@@ -573,11 +591,9 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION SPL_read_ability_true_level
-         INT_VAR offset_secondary=0 offset_base=0
-         STR_VAR filename=""
          RET value
 BEGIN
-         LPF SPL_read_ability_min_level INT_VAR offset_base RET min_level=value END
+         LPF SPL_read_ability_min_level RET min_level=value END
          PATCH_IF min_level>1 BEGIN
             SET value=min_level
          END ELSE BEGIN
@@ -877,14 +893,14 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_delete_opcodes") ""
 DEFINE_PATCH_FUNCTION SPL_append_description
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=append_string_nospace loc=0x50 arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=append_string_nospace arguments= ~%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_append_description") ""
 
 DEFINE_PATCH_FUNCTION SPL_append_description_newline
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=append_string_nospace loc=0x50 arguments= ~%WNL%%WNL%%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=append_string_nospace arguments= ~%WNL%%WNL%%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_append_description_newline") ""
 
@@ -899,9 +915,33 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_append_description_newline") ""
 DEFINE_PATCH_FUNCTION SPL_substitute_description
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=substitute_string loc=0x50 arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=substitute_string arguments= ~%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_substitute_description") ""
+
+DEFINE_PATCH_FUNCTION SPL_substitute_description_strref
+   STR_VAR arguments=""
+BEGIN
+   READ_LONG 0x50 tlk_entry
+   LPF substitute_tlk_entry INT_VAR tlk_entry STR_VAR arguments END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_substitute_description_strref") ""
+
+DEFINE_PATCH_FUNCTION SPL_substitute_description_exact
+   STR_VAR arguments=""
+BEGIN
+   LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=substitute_string_exact arguments= ~%arguments%~ END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_substitute_description_exact") ""
+
+DEFINE_PATCH_FUNCTION SPL_substitute_description_exact_strref
+   STR_VAR arguments=""
+BEGIN
+   READ_LONG 0x50 tlk_entry
+   LPF substitute_tlk_entry INT_VAR exact=1 tlk_entry STR_VAR arguments END
+END
+OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_substitute_description_exact_strref") ""
+
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -913,7 +953,7 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_substitute_description") ""
 DEFINE_PATCH_FUNCTION SPL_set_description
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0x50 arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x50 STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_set_description") ""
 
@@ -921,7 +961,16 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_set_description") ""
 DEFINE_PATCH_FUNCTION SPL_say_description
    STR_VAR arguments=""
 BEGIN
-   LPF say_this_here INT_VAR offset=0x50 say= ~%arguments%~ END
+   WRITE_LONG 0x50 RESOLVE_STR_REF ((AT arguments))
+END
+
+DEFINE_PATCH_FUNCTION SPL_say_description_strref
+	STR_VAR arguments=""
+BEGIN
+	READ_LONG 0x50 strref
+	INNER_ACTION BEGIN
+		STRING_SET_EVALUATE strref (AT %arguments%)
+	END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -958,7 +1007,7 @@ END
 DEFINE_PATCH_FUNCTION SPL_set_name
    STR_VAR arguments=""
 BEGIN
-   LPF patch_text_entry STR_VAR function=set_string loc=0x8 arguments= ~%arguments%~ END
+   LPF patch_text_entry INT_VAR loc=0x8 STR_VAR function=set_string arguments= ~%arguments%~ END
 END
 OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_set_name") ""
 
@@ -966,7 +1015,7 @@ OUTER_SPRINT $SFO_do_not_parse_arguments("SPL_set_name") ""
 DEFINE_PATCH_FUNCTION SPL_say_name
    STR_VAR arguments=""
 BEGIN
-   LPF say_this_here INT_VAR offset=0x8 say= ~%arguments%~ END
+   WRITE_LONG 0x8 RESOLVE_STR_REF ((AT arguments))
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1007,9 +1056,8 @@ END
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION level_based_blocks  // no SPL prefix: "level_based_blocks isn't allowed to evaluate its argument, so it has to be called out specially
-        STR_VAR arguments=""
-                filename=""
+DEFINE_PATCH_FUNCTION level_based_blocks  // no SPL prefix: "level_based_blocks isn't allowed to evaluate its argument, so it has to be called out specially"
+        STR_VAR arguments="" filename="" file_ext=""
 BEGIN
         SPRINT iter_func "%arguments%" // just for readability
         // get the first ability as a template
@@ -1098,7 +1146,7 @@ DEFINE_ACTION_FUNCTION add_spell_to_ids
                 to_try_next
 
 BEGIN
-   LAF find_spell_type STR_VAR type typename filename idsname file_loc RET type END
+   LAF find_spell_type INT_VAR type STR_VAR typename filename idsname file_loc RET type END
    ACTION_IF type<=2 BEGIN
        LAF find_spell_level INT_VAR level STR_VAR filename file_loc RET level END
    END
@@ -1114,7 +1162,7 @@ BEGIN
       ACTION_IF (type=current_type) && ((level=current_level)||type>2) BEGIN
          OUTER_SET to_try_next=current_num
          OUTER_SET newcode=current_num
-         LAF idscode_to_spell STR_VAR idscode="%newcode%" RET newname=resref END
+         LAF idscode_to_spell INT_VAR idscode=newcode RET newname=resref END
          LAF warning STR_VAR warning="No need to add spell %idsname% to spell.ids as it is already there at the right level" END
       END ELSE BEGIN
          COPY_EXISTING "spell.ids" override
@@ -1377,6 +1425,7 @@ DEFINE_ACTION_FUNCTION make_scroll_of_spell
     INT_VAR price="-1"
     STR_VAR resref=""
             scrollname=""
+	    	scrollicon=""
             name_func=""
             spell_loc=""
             price_func="standard_scroll_price"
@@ -1385,6 +1434,10 @@ BEGIN
        // find a name
        ACTION_IF "%scrollname%" STRING_EQUAL "" BEGIN
           LAF "%name_func%" STR_VAR arguments="%resref%" RET scrollname=value END
+       END
+       // set the icon if none given
+       ACTION_IF "%scrollicon%" STRING_EQUAL "" BEGIN
+          OUTER_TEXT_SPRINT scrollicon "%resref%A"
        END
        // find a price
        ACTION_IF price<0 BEGIN
@@ -1414,18 +1467,20 @@ BEGIN
           name2_string=>"%name%"
           description2_string=>"%desc%"
           patch_effect_inline=>"resource=>%resref%"
-          patch_ability_inline'1=>"ability_icon=>%resref%A"
-          icon=>"%resref%A"
+          patch_ability_inline'1=>"ability_icon=>%scrollicon%"
+          icon=>"%scrollicon%"
           price=>"%price%"
        END
        ACTION_PHP_EACH unusable_flag AS flag=>discard BEGIN
            OUTER_SET $patch_data("unusable_%flag%")=1
        END
+	   
        ACTION_IF ability_target=4 BEGIN
           OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_target=>4 ability_range=>%range% opcode=>148"
        END ELSE BEGIN
           OUTER_SPRINT $patch_data("patch_effect_inline'") "match=>opcode=146 ability_target=>%ability_target% target=>2 ability_range=>%range%"
        END
+	   
        LAF clone_item STR_VAR item="%template%=>%scrollname%" edits=patch_data END
 END // end of main function
 
@@ -1434,11 +1489,11 @@ BEGIN
            LPF SPL_unusable_conjurer STR_VAR arguments=0 END // because the template spell is unusable by conjurers!
 		   LPF SPL_read_description1_string RET desc=value END
            LPF SPL_read_name1_string RET name=value END
-           READ_LONG 0x64 offset_base
-           LPF SPL_read_ability_target STR_VAR offset_base RET ability_target=value END
-           LPF SPL_read_ability_range STR_VAR offset_base RET range=value END
+		   READ_LONG 0x64 offset_base
+           LPF SPL_read_ability_target RET ability_target=value END
+           LPF SPL_read_ability_range RET range=value END
            LPF SPL_read_spell_type_num RET type=value END
-           PATCH_IF value=1 BEGIN
+		   PATCH_IF value=1 BEGIN
                 PATCH_FOR_EACH specialist IN abjurer conjurer diviner enchanter illusionist invoker necromancer transmuter generalist BEGIN
                    LPF "SPL_read_unusable_%specialist%" RET value END
                    PATCH_IF value BEGIN
@@ -1773,5 +1828,6 @@ BEGIN
    LAF make_casting_effect STR_VAR spell="%payload%" effect END
 
 END
+
 
 

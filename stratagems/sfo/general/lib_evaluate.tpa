@@ -10,8 +10,8 @@
 DEFINE_PATCH_FUNCTION apply_standard_function
     INT_VAR offset_secondary=0
             entry_index=0
-    STR_VAR offset_base=""
-            func=""
+			offset_base=""
+    STR_VAR func=""
             arguments=""
             filename=""
             file_ext=""
@@ -19,12 +19,24 @@ BEGIN
    TO_UPPER file_ext
    PATCH_TRY
        PATCH_SILENT
-       LPF ~%file_ext%_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext END
+	   PATCH_MATCH "%arguments%" WITH
+	   null "" BEGIN
+	   LPF ~%file_ext%_%func%~ END
+	   END
+	   DEFAULT
+       LPF ~%file_ext%_%func%~ STR_VAR arguments END	   
+	   END
        PATCH_VERBOSE
    WITH
        ~Failure("Unknown function: %file_ext%_%func%")~
        BEGIN
-          LPF ~%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext END
+		  PATCH_MATCH "%arguments%" WITH
+		  null "" BEGIN
+			LPF ~%func%~ END		  
+		  END
+		  DEFAULT
+			LPF ~%func%~ STR_VAR arguments END
+		  END
        END
        DEFAULT
           PATCH_PRINT "ERROR: %ERROR_MESSAGE% in apply_standard_function: inputs were func=%func%, arguments=%arguments%"
@@ -40,8 +52,8 @@ DEFINE_PATCH_FUNCTION check_standard_function
     INT_VAR offset_secondary=0
             func_or_string=0
             entry_index=0
-    STR_VAR offset_base=""
-            func=""
+			offset_base=""
+    STR_VAR	func=""
             arguments=""
             parameter=""
             filename=""
@@ -54,21 +66,39 @@ BEGIN
    TO_UPPER file_ext
    PATCH_TRY
        PATCH_SILENT
-       LPF ~%file_ext%_read_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments parameter filename file_ext RET value=value END
+	   PATCH_MATCH "%arguments%" WITH
+	   null "" BEGIN
+       LPF ~%file_ext%_read_%func%~ RET value END
+	   END
+	   DEFAULT
+       LPF ~%file_ext%_read_%func%~ STR_VAR arguments RET value END
+	   END
        PATCH_VERBOSE
    WITH
        ~Failure("Unknown function: %file_ext%_read_%func%")~
        BEGIN
           PATCH_TRY
              PATCH_SILENT
-             LPF ~%file_ext%_%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments parameter filename file_ext RET value=value END
+			 PATCH_MATCH "%arguments%" WITH
+			 null "" BEGIN
+             LPF ~%file_ext%_%func%~ RET value END			 
+			 END
+			 DEFAULT
+             LPF ~%file_ext%_%func%~ STR_VAR arguments RET value END
+			 END
              PATCH_VERBOSE
           WITH
                  ~Failure("Unknown function: %file_ext%_%func%")~
                  BEGIN
                       PATCH_TRY
                            PATCH_SILENT
-                           LPF ~%func%~ INT_VAR offset_secondary entry_index STR_VAR offset_base arguments filename file_ext parameter RET value=value END
+						   PATCH_MATCH "%arguments%" WITH
+						   null "" BEGIN
+                           LPF ~%func%~ RET value END						   
+						   END
+						   DEFAULT
+                           LPF ~%func%~ STR_VAR arguments RET value END
+						   END
                            PATCH_VERBOSE
                       WITH
                            ~Failure("Unknown function: %func%")~
@@ -151,7 +181,7 @@ BEGIN
         SPRINT value "%arguments%"
   END ELSE
   PATCH_IF !("%expression%" STRING_MATCHES_REGEXP "[A-Za-z0-9#!_-]*$") BEGIN // if it's an ordinary string, don't waste time parsing
-        LPF check_standard_function INT_VAR offset_secondary  entry_index func_or_string=1 STR_VAR arguments offset_base func="%expression%" filename file_ext RET value=value END
+        LPF check_standard_function INT_VAR offset_secondary  entry_index func_or_string=1 offset_base STR_VAR arguments func="%expression%" filename file_ext RET value END
   END ELSE BEGIN
      INNER_PATCH_SAVE expression "%expression%" BEGIN  // make sure we can use list-management techniques
        REPLACE_TEXTUALLY " *( *" " ( "
@@ -554,12 +584,14 @@ END
 
 DEFINE_ACTION_FUNCTION evaluate_expression
     INT_VAR entry_index=0
+			offset_secondary=0
     STR_VAR arguments=""
             expression=""
+			offset_base=0
     RET value
 BEGIN
    OUTER_PATCH "" BEGIN
-      LPF evaluate_expression INT_VAR entry_index STR_VAR arguments expression RET value END
+      LPF evaluate_expression INT_VAR entry_index offset_secondary offset_base STR_VAR arguments expression RET value END
    END
 END
 
@@ -637,7 +669,7 @@ BEGIN
           DEFAULT
              SET depth = depth - 1
           END
-          LPF polish_parser INT_VAR depth STR_VAR left right RET left=left right=right END
+          LPF polish_parser INT_VAR depth STR_VAR left right RET left right END
       END ELSE BEGIN
          PATCH_FAIL ~"%left% %right%" is not a correctly formed argument pair (i.e., you've messed up the syntax of something containing this string)~
       END
@@ -646,11 +678,11 @@ END
 
 DEFINE_ACTION_FUNCTION polish_parser
     INT_VAR depth=1
-    STR_VAR left="" right="" to_parse=""
+    STR_VAR left="" right="" 
     RET left right
 BEGIN
    OUTER_INNER_PATCH "" BEGIN
-      LPF polish_parser INT_VAR depth STR_VAR left right to_parse RET left=left right=right END
+      LPF polish_parser INT_VAR depth STR_VAR left right RET left right END
    END
 END
 
