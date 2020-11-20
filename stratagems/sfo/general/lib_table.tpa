@@ -125,7 +125,7 @@ DEFINE_PATCH_FUNCTION read_table_entry
             colnum="-1"
     STR_VAR row=""
             column=""
-    RET value
+    RET value rownum colnum
 BEGIN
    PATCH_IF "%column%" STRING_COMPARE "" BEGIN
        LPF get_table_column_coordinate STR_VAR column RET colnum END
@@ -135,7 +135,7 @@ BEGIN
        END
    END
    PATCH_IF "%row%" STRING_COMPARE "" BEGIN
-       LPF get_table_row_coordinate STR_VAR row lookup_column RET rownum END
+       LPF get_table_row_coordinate INT_VAR lookup_column STR_VAR row RET rownum END
    END ELSE BEGIN
        PATCH_IF rownum<0 BEGIN
            PATCH_FAIL "No row specified in read_table_entry"
@@ -161,8 +161,11 @@ DEFINE_ACTION_FUNCTION read_table_entry
              row=""
              column=""
 
-     RET value
+     RET value colnum rownum
 BEGIN
+   ACTION_IF "%file%" STRING_EQUAL "" BEGIN
+	FAIL "No table specified in read_table_entry"
+   END
    ACTION_IF !FILE_EXISTS_IN_GAME "%file%" BEGIN
       ACTION_IF !FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
          FAIL "Tried to read an entry from %file%, but %file% does not exist and nor does %file%.2da"
@@ -171,7 +174,7 @@ BEGIN
       END
    END
    COPY_EXISTING "%file%" "%workspace%"
-        LPF read_table_entry INT_VAR lookup_column dont_complain rownum colnum STR_VAR row column RET value END
+        LPF read_table_entry INT_VAR lookup_column dont_complain rownum colnum STR_VAR row column RET value colnum rownum END
    BUT_ONLY
 END
 
@@ -310,8 +313,9 @@ DEFINE_PATCH_FUNCTION append_numbered_row
 BEGIN
       COUNT_2DA_COLS colcount
       COUNT_2DA_ROWS colcount rowcount
+	  SET firstrow=(colcount=2)? 1 : 0
       SET highest_num=0
-      FOR (i=0;i<rowcount;i+=1) BEGIN
+      FOR (i=firstrow;i<rowcount;i+=1) BEGIN
          READ_2DA_ENTRY i 0 colcount this_num
          PATCH_IF !IS_AN_INT this_num BEGIN
             PATCH_FAIL "You are trying to use the append_numbered_row function with a 2da (probably %SOURCE_FILE%) that is not of the right form"
@@ -403,8 +407,7 @@ BEGIN
           LPF get_table_column_coordinate STR_VAR column="%clone_from%" RET from_col=colnum END
           LPF get_table_column_coordinate STR_VAR column="%add_before%%add_after%" RET to_col=colnum END
           FOR (i=0;i<rowcount;i+=1) BEGIN
-             // get entry to clone
-             LPF get_table_column_coordinate STR_VAR column="%clone_from%" RET colnum END
+            // LPF get_table_column_coordinate STR_VAR column="%clone_from%" RET colnum END
              READ_2DA_ENTRY i from_col colcount to_edit
              /// set entry in target column
              READ_2DA_ENTRY i to_col colcount to_copy
@@ -426,4 +429,24 @@ BEGIN
          PRINT "Tried to clone %clone_from% column of %file% to %clone_to%, but there is no such column, or else %clone_to% is already present"
         END
       END
+END
+
+DEFINE_ACTION_FUNCTION copy_column_contents
+	STR_VAR copy_from=""
+			copy_to=""
+			file=""
+BEGIN
+    ACTION_TO_UPPER copy_from
+	ACTION_TO_UPPER copy_to
+	  COPY_EXISTING "%file%.2da" override
+        COUNT_2DA_COLS colcount
+        COUNT_2DA_ROWS colcount rowcount
+		LPF get_table_column_coordinate STR_VAR column="%copy_from%" RET colnum_from=colnum END
+        LPF get_table_column_coordinate STR_VAR column="%copy_to%" RET colnum_to=colnum END
+		FOR (row=0;row<rowcount;++row) BEGIN
+			READ_2DA_ENTRY row colnum_from colcount data
+			SET_2DA_ENTRY row colnum_to colcount data
+		END
+	  BUT_ONLY
+
 END

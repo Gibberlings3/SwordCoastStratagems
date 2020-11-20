@@ -11,7 +11,7 @@ DEFINE_ACTION_FUNCTION edit_kit
               edits=""
               kit=""
 BEGIN    
-          // synonyms
+		 // synonyms
           LAF standardize_kit STR_VAR arguments="%kit%" RET kit=value END
           // get parent class
           LAF resolve_parent_class STR_VAR kit RET parent_class true_class multiclassed END
@@ -32,6 +32,22 @@ BEGIN
                 REPLACE_TEXTUALLY "'" ""
              END
              ACTION_MATCH "%command%" WITH
+			 "grant_power_.*" "apply_power_.*" BEGIN
+				  OUTER_PATCH "%command%" BEGIN
+					REPLACE_EVALUATE "\(.*_power\)_\(.*\)" BEGIN
+						SPRINT command_core "%MATCH1%"
+						SPRINT parent_class "%MATCH2%"
+						TO_UPPER parent_class
+					END
+					""
+				  END
+				  ACTION_IF !VARIABLE_IS_SET $mc_clab_edits("%parent_class%") BEGIN
+					OUTER_SPRINT temp ""
+				  END ELSE BEGIN
+				    OUTER_SPRINT temp $mc_clab_edits("%parent_class%") 
+				  END
+				  OUTER_SPRINT $mc_clab_edits("%parent_class%") "%temp% %command_core%=>~%arguments%~"
+			 END
              grant_power apply_power remove_power BEGIN
                   OUTER_SPRINT clab_edits "%clab_edits% %command%=>~%arguments%~"
              END
@@ -49,6 +65,23 @@ BEGIN
              END
 
              ACTION_MATCH "%command%" WITH
+			 "grant_power_.*" "apply_power_.*" BEGIN
+				  OUTER_PATCH "%command%" BEGIN
+					REPLACE_EVALUATE "\(.*_power\)_\(.*\)" BEGIN
+						SPRINT command_core "%MATCH1%"
+						SPRINT parent_class "%MATCH2%"
+						TO_UPPER parent_class
+					END
+					""
+				  END
+				  ACTION_IF !VARIABLE_IS_SET $mc_clab_edits("%parent_class%") BEGIN
+					OUTER_SPRINT temp ""
+				  END ELSE BEGIN
+				    OUTER_SPRINT temp $mc_clab_edits("%parent_class%") 
+				  END
+				  OUTER_SPRINT $mc_clab_edits("%parent_class%") "%temp% %command_core%=>~%arguments%~"
+			 END
+
              grant_power apply_power remove_power BEGIN
                   OUTER_SPRINT clab_edits "%clab_edits% %command%=>~%arguments%~"
              END
@@ -63,6 +96,10 @@ BEGIN
           ACTION_IF ("%clab_edits%" STRING_COMPARE "" && !skip_clab) BEGIN
              LAF edit_clab STR_VAR editstring="%clab_edits%" kit END
           END
+		  // process multiclass CLAB editing
+		  ACTION_PHP_EACH mc_clab_edits AS parent_class=>editstring BEGIN
+			LAF edit_clab_mc INT_VAR kit_id STR_VAR parent_class kit editstring END
+		  END		  
           // process LUA editing
           ACTION_IF ("%lua_edits%" STRING_COMPARE "" && !skip_lua) BEGIN
              LAF edit_lua INT_VAR at_top="%at_top_hla%" STR_VAR editstring="%lua_edits%" kit END
@@ -74,7 +111,7 @@ DEFINE_ACTION_FUNCTION edit_kit_parser
    STR_VAR command=""
            arguments=""
 BEGIN
-             OUTER_SET found=1
+       		 OUTER_SET found=1
              ACTION_TO_UPPER command
              ACTION_TO_UPPER kit
              ACTION_MATCH "%command%" WITH
@@ -225,19 +262,27 @@ BEGIN
                      END
 
                   END
-                  set_name say_name BEGIN
-                     ACTION_IF "%command%" STRING_EQUAL_CASE "%say_name%" BEGIN
-                       LAF strref_of_tra STR_VAR arguments RET mixed=value END
-                       ACTION_GET_STRREF mixed mixed_string
-                       ACTION_TO_LOWER mixed_string
-                       OUTER_SET lower=RESOLVE_STR_REF ("%mixed_string%")
-                     END ELSE BEGIN
+                  set_name say_name name_strref BEGIN
+                     ACTION_MATCH "%command%" WITH
+					 set_name BEGIN
                        OUTER_SET mixed=RESOLVE_STR_REF ("%arguments%")
-                       ACTION_TO_LOWER arguments
-                       OUTER_SET lower=RESOLVE_STR_REF ("%arguments%")
-                     END
-                     ACTION_IF !true_class BEGIN  
-                      LAF write_table_entry INT_VAR lookup_column=1 STR_VAR row="%kit%" column=lower arguments="%lower%" file=kitlist END
+					   LAF kit_name_to_lower STR_VAR mixed_string="%arguments%" RET lower_string END
+                       OUTER_SET lower=RESOLVE_STR_REF ("%lower_string%")					 
+					 END
+					 say_name BEGIN
+                       OUTER_SET mixed=RESOLVE_STR_REF ((AT "%arguments%"))
+                       ACTION_GET_STRREF mixed mixed_string
+					   LAF kit_name_to_lower STR_VAR mixed_string RET lower_string END
+                       OUTER_SET lower=RESOLVE_STR_REF ("%lower_string%")		 
+					 END
+					 DEFAULT
+						OUTER_SET mixed=arguments
+						ACTION_GET_STRREF mixed mixed_string 
+					   LAF kit_name_to_lower STR_VAR mixed_string RET lower_string END
+                       OUTER_SET lower=RESOLVE_STR_REF ("%lower_string%")		 
+					 END
+					 ACTION_IF !true_class BEGIN  
+                      LAF write_table_entry INT_VAR lookup_column=1 STR_VAR row="%kit%" column=LOWER arguments="%lower%" file=kitlist END
                       LAF write_table_entry INT_VAR lookup_column=1 STR_VAR row="%kit%" column=mixed arguments="%mixed%" file=kitlist END
                       ACTION_IF enhanced_edition BEGIN // now CLASTEXT, for enhanced
                       // lookup by IDS doesn't look reliable for CLASTEXT
@@ -252,13 +297,13 @@ BEGIN
                             LAF write_table_entry  STR_VAR row=WILD_MAGE column=mixed arguments="%mixed%" file=clastext END
                         END
                         DEFAULT
-                             LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%kit_id%" column=lower arguments="%lower%" file=clastext END
+                             LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%kit_id%" column=LOWER arguments="%lower%" file=clastext END
                              LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%kit_id%" column=mixed arguments="%mixed%" file=clastext END
                         END
                        END
                      END ELSE BEGIN
                       ACTION_IF enhanced_edition BEGIN
-                        LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%class_id%" column=lower arguments="%lower%" file=clastext END
+                        LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%class_id%" column=LOWER arguments="%lower%" file=clastext END
                         LAF write_table_entry INT_VAR lookup_column=2 STR_VAR row="%class_id%" column=mixed arguments="%mixed%" file=clastext END
                       END ELSE BEGIN
                         LAF warning STR_VAR warning="Names of classes can only (readily) be edited on the Enhanced Edition of the game" END
@@ -274,7 +319,7 @@ BEGIN
                           OUTER_SET strref=RESOLVE_STR_REF ("%arguments%")
                       END
                       say_biography BEGIN
-                          LAF strref_of_tra STR_VAR arguments RET strref=value END
+                          OUTER_SET strref=RESOLVE_STR_REF ( (AT arguments) )
                       END
                       DEFAULT
                          OUTER_SET strref=arguments
@@ -302,7 +347,7 @@ BEGIN
                           OUTER_SET strref=RESOLVE_STR_REF ("%arguments%")
                       END
                       say_description BEGIN
-                          LAF strref_of_tra STR_VAR arguments RET strref=value END
+						  OUTER_SET strref=RESOLVE_STR_REF ((AT arguments))
                       END
                       DEFAULT
                          OUTER_SET strref=arguments
@@ -356,7 +401,7 @@ BEGIN
                      LAF write_table_entry STR_VAR row="%command%" column="%kit%" arguments file=clascolr END
                   END
                   armor shield helm bag ring1 ring2 cloak boots amulet bracers belt ammo1 ammo2 ammo3 misc1 misc2 misc3 misc4 misc5 weapon1 BEGIN
-                     LAF write_table_entry STR_VAR rol="%command%" column="%kit%" arguments file=25stweap END
+                     LAF write_table_entry STR_VAR row="%command%" column="%kit%" arguments file=25stweap END
                   END
                   backstab BEGIN
                       ACTION_IF enhanced_edition BEGIN
@@ -606,23 +651,16 @@ DEFINE_ACTION_FUNCTION make_kit
               edits=""
               kit=""
               parent_class=""
+			  race=all
+	  RET idsnum
 BEGIN
+ SILENT
+ LAF make_clabs_unique END
  ACTION_IF FILE_CONTAINS_EVALUATED ("kitlist.2da" "%kit%") BEGIN
        LAF warning STR_VAR warning="Could not make kit %kit% as a kit of the same name already exists" END
  END ELSE BEGIN
-   // sanity check
-   ACTION_MATCH "%parent_class%" WITH
-      FIGHTER PALADIN RANGER CLERIC DRUID THIEF BARD
-   BEGIN END
-   MONK SORCERER
-   BEGIN
-      ACTION_IF !enhanced_edition BEGIN
-         FAIL "%parent_class% is only a legally kittable class in the Enhanced Edition"
-      END
-   END
-   DEFAULT
-      FAIL "%parent_class% is not a legal class to be kitted"
-   END
+
+
    // initialise all the various files
    ACTION_FOR_EACH file IN clasweap abclasrq abclsmod abdcdsrq abdcscrq alignmnt dualclas backstab clswpbon hpclass numwslot thiefskl traplimt luabbr
    BEGIN
@@ -637,16 +675,24 @@ BEGIN
       END
    END
    LAF clone_column STR_VAR file=25stweap clone_from="%parent_class%" clone_to="%kit%" add_before="default" END
+   
+   ACTION_IF INDEX ("_" "%parent_class%")>=0 BEGIN
+	OUTER_SPRINT dc_line "%kit% 0 0 0 0 0 0"
+	ACTION_FOR_EACH file IN abdcdsrq abdcscrq BEGIN
+		APPEND "%file%.2da" "%dc_line%"
+		COPY_EXISTING "%file%.2da" override PRETTY_PRINT_2DA
+	END
+   END
+   
+
    // set up base class abilities
-   LAF find_next_unused_clab INT_VAR clone=1 STR_VAR parent_class RET clab END
+   
+   ACTION_IF INDEX ("_" "%parent_class%")<0 BEGIN
+		LAF find_next_unused_clab INT_VAR clone=1 STR_VAR parent_class RET clab END
+	END ELSE BEGIN
+		OUTER_SPRINT clab "clabnull"
+	END
    LAF find_next_unused_lua INT_VAR clone=1 STR_VAR parent_class RET lua END
-
-   // find an IDS entry
-
-   LAF find_spare_kit_ids RET idsnum END
-   LAF ensure_hex INT_VAR in=idsnum RET idsnum=out END
-   APPEND kit.ids "%idsnum% %kit%"
-   LAF ensure_hex INT_VAR in=idsnum pad_length=8 RET idsnum=out END
 
    // set up the entry in KITLIST
 
@@ -657,20 +703,34 @@ BEGIN
         SET prof_num = colcount - 2
    BUT_ONLY
    
+
+   
    // get the ID of the parent class
 
    OUTER_SET class_id = IDS_OF_SYMBOL (class "%parent_class%")
 
    OUTER_SPRINT to_add "%kit% -1 -1 -1 %clab% %prof_num% 0x00004000 %class_id%"
    ACTION_IF enhanced_edition BEGIN
-     OUTER_SPRINT to_add "%to_add% %idsnum%"
+     OUTER_SPRINT to_add "%to_add% IDS_PLACEHOLDER"
    END
    
    // add the string
 
    COPY_EXISTING kitlist.2da override
       LPF append_numbered_row STR_VAR arguments="%to_add%" RET kit_id=value END
+	  SET idsnum=0x4000+kit_id
+	  LPF ensure_hex STR_VAR in=idsnum RET idsnum=out END
+	  INNER_PATCH_SAVE idsnum_disp "%idsnum%" BEGIN
+		REPLACE_TEXTUALLY "0x" "0x0000"
+	  END
+	  REPLACE_TEXTUALLY "IDS_PLACEHOLDER" "%idsnum_disp%"
       PRETTY_PRINT_2DA
+	  
+	// add the IDS entry  
+	
+
+	
+   APPEND "kit.ids" "%idsnum% %kit%"
 
    // on the enhanced edition, set up the entry in CLASTEXT
 
@@ -678,23 +738,55 @@ BEGIN
     // corresponding to a kit in KITLIST)
    ACTION_IF enhanced_edition BEGIN
       LAF delete_table_row INT_VAR lookup_column=2 STR_VAR file=clastext row="%kit_id%" END
-      OUTER_SPRINT to_add "%kit% %class_id% %kit_id% -1 -1 -1 -1 0"
+      COPY_EXISTING clastext.2da override 
+		LPF read_table_entry STR_VAR row="%parent_class%" column=briefdesc RET briefdesc=value END
+		LPF read_table_entry STR_VAR row="%parent_class%" column=biography RET biography=value END
+	  BUT_ONLY
+      OUTER_SPRINT to_add "%kit% %class_id% %kit_id% -1 -1 -1 %biography% 0 %briefdesc% -1"
       APPEND clastext.2da "%to_add%"
-      COPY_EXISTING clastext.2da override PRETTY_PRINT_2DA
+	  // fill in the brief description and bio from the parent class
+      COPY_EXISTING clastext.2da override 
+		PRETTY_PRINT_2DA
    END
    
    // apply patches
    
    LAF edit_kit STR_VAR kit edits editstring END
 
+	// install 
+	
+	ACTION_IF "%race%" STRING_COMPARE_CASE "all" BEGIN
+	  OUTER_SET install_all=0	
+	  OUTER_WHILE "%race%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%race%" RET entry race=list END
+		ACTION_TO_UPPER entry
+		OUTER_SPRINT $include_this_race("%entry%") ""
+	  END
+	END ELSE BEGIN
+		OUTER_SET install_all=1
+	END
+	
+	OUTER_SPRINT clsrcreq_line "%kit% "
+	ACTION_FOR_EACH race IN HUMAN ELF HALF_ELF  DWARF HALFLING GNOME  HALFORC BEGIN // same order as clsrcreq
+		ACTION_IF install_all || VARIABLE_IS_SET $include_this_race("%race%") BEGIN
+			LAF read_table_entry STR_VAR file=kittable row="%parent_class%" column="%race%" RET table=value END
+			LAF install_kit_in_table STR_VAR kit_id table END
+			OUTER_SPRINT clsrcreq_line "%clsrcreq_line% 1"
+		END ELSE BEGIN
+			OUTER_SPRINT clsrcreq_line "%clsrcreq_line% 0"
+		END
+	END
+	APPEND "clsrcreq.2da" "%clsrcreq_line%"
+	COPY_EXISTING "clsrcreq.2da" override PRETTY_PRINT_2DA
+	VERBOSE
  END
 END
 
 DEFINE_ACTION_FUNCTION find_spare_kit_ids
-    INT_VAR to_start=0x4025
+    INT_VAR to_start=0x4029
     RET idsnum
 BEGIN
-    LAF ensure_hex INT_VAR in=to_start RET out END
+    LAF ensure_hex STR_VAR in=to_start RET out END
     ACTION_IF !FILE_CONTAINS_EVALUATED ("kit.ids" "%out%[ %TAB%]") BEGIN
          OUTER_SET idsnum=to_start
     END ELSE BEGIN
@@ -702,6 +794,31 @@ BEGIN
     END
 END
 
+DEFINE_ACTION_FUNCTION install_kit_in_table 
+	STR_VAR kit_id=""
+			table=""
+BEGIN
+	ACTION_IF !FILE_EXISTS_IN_GAME "%table%.2da" BEGIN
+	<<<<<<<<.../stratagems-inline/%table%.2da
+2DA  V1.0
+*
+                    KIT	
+					1 0
+>>>>>>>>
+		COPY ".../stratagems-inline/%table%.2da" override
+	END
+	COPY_EXISTING "%table%.2da" override
+		COUNT_2DA_ROWS 2 rowcount
+	OUTER_WHILE "%kit_id%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%kit_id%" RET entry kit_id=list END
+		APPEND "%table%.2da" "%rowcount% %entry%"
+		OUTER_SET rowcount +=1
+	END
+	
+	COPY_EXISTING "%table%.2da" override
+		 PRETTY_PRINT_2DA
+
+END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    General clab editor
@@ -953,8 +1070,6 @@ BEGIN
     END
 END
 
-
-
 DEFINE_ACTION_FUNCTION prettify_clab_entry
    STR_VAR entry=""
    RET entry_new
@@ -964,6 +1079,90 @@ BEGIN
    END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////    Multiclass clab editor
+/////    (Intended basically to be called from within edit_kit)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION edit_clab_mc
+	INT_VAR kit_id=0
+	STR_VAR kit=""
+			parent_class=""
+			editstring=""
+BEGIN
+
+	// get the actual hex value of the kit ID
+	
+	LAF read_table_entry STR_VAR file="kitlist.2da" row="%kit_id%" column=KITIDS RET kit_id_real=value END
+	
+
+	// get the splprot entry
+	
+	LAF resolve_splprot_entry INT_VAR stat=152 value="-1" STR_VAR relation=equal RET stat_ind_equal=value END
+	LAF resolve_splprot_entry INT_VAR stat=152 value="-1" STR_VAR relation=not_equal RET stat_ind_notequal=value END
+
+	// find the base name for wrap spells
+	
+	LAF ensure_hex STR_VAR in=kit_id RET kit_id_hex=out END
+	OUTER_PATCH_SAVE kit_id_hex "%kit_id_hex%" BEGIN
+		REPLACE_TEXTUALLY "0x" ""
+	END
+	OUTER_SPRINT wrap_prefix "DWMK%kit_id_hex%" // 6 characters or less
+
+	// parse the editstring, building wraps for each spell as appropriate
+
+	OUTER_SPRINT list "%editstring%" // the input
+	OUTER_SPRINT editstring "" // the string we're going to pass to edit_clab
+	OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+		// get command-argument pair
+		LAF return_first_pair STR_VAR list RET command=key argument=value list END
+		// find a wrap name
+		LAF find_unused_wrap_name STR_VAR wrap_prefix RET wrap END
+		// extract the spell being applied/granted; swap it for the wrap
+		OUTER_PATCH_SAVE argument "%argument%" BEGIN
+			REPLACE_EVALUATE "^\([^ ]+\)" BEGIN
+				SPRINT core_spell "%MATCH1%"
+			END
+			"%wrap%"
+		END
+		// build the wrap
+		ACTION_CLEAR_ARRAY patch_data
+		ACTION_IF "%command%" STRING_EQUAL_CASE grant_power BEGIN
+			ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+				add_basic_ability=>null
+				add_effect_inline=>"opcode=>171 target=>2 timing=>1 resource=>%core_spell%"
+				add_effect_inline'=>"opcode=>318 target=>2 timing=>0 duration=>1 resource=>%wrap% parameter1=>%kit_id_real% parameter2=>%stat_ind_notequal%"
+			END
+		END ELSE BEGIN
+			ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+				add_basic_ability=>null
+				add_effect_inline'=>"opcode=>326 target=>2 timing=>0 duration=>1 resource=>%core_spell% parameter1=>%kit_id_real% parameter2=>%stat_ind_equal%"
+			END		
+		END
+		LAF make_spell STR_VAR spell="%wrap%" edits=patch_data END
+		// add to the command string
+		OUTER_SPRINT editstring "%editstring% apply_power=>~%argument%~"
+	END
+	
+	// apply to the CLAB
+	
+	LAF edit_clab STR_VAR kit="%parent_class%" editstring END
+
+END
+
+DEFINE_ACTION_FUNCTION find_unused_wrap_name INT_VAR to_try=1 STR_VAR wrap_prefix="" RET wrap BEGIN
+
+	ACTION_IF to_try<10 BEGIN
+		OUTER_SPRINT wrap "%wrap_prefix%0%to_try%"
+	END ELSE BEGIN
+		OUTER_SPRINT wrap "%wrap_prefix%%to_try%"	
+	END
+	ACTION_IF FILE_EXISTS_IN_GAME "%wrap%.spl" BEGIN
+		OUTER_SET to_try=to_try+1
+		LAF find_unused_wrap_name INT_VAR to_try STR_VAR wrap_prefix RET wrap END
+	END
+
+END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    General HLA editor
@@ -1248,6 +1447,7 @@ BEGIN
           MAGE=> MA
           SORCEROR=>SO
           SORCERER=>SO
+		  SHAMAN=>SH
           THIEF=>TH
           BARD=>BA
        END
@@ -1263,6 +1463,7 @@ BEGIN
           OUTER_SPRINT clab "%file_to_try%"
           ACTION_IF clone BEGIN
                COPY_EXISTING "CLAB%file_ext%01.2da" "override/%clab%.2da"
+				REPLACE_TEXTUALLY "AP_DWMK[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]" "****"
           END
        END ELSE BEGIN
           LAF find_next_unused_clab INT_VAR clone try_next=try_next + 1 STR_VAR parent_class RET clab END
@@ -1287,6 +1488,17 @@ BEGIN
          MONK=>MO
          SORCERER=>SO
          SORCEROR=>SO
+		 SHAMAN=>SH
+		FIGHTER_MAGE =>FM
+		FIGHTER_CLERIC =>FC
+		FIGHTER_THIEF =>FT
+		FIGHTER_MAGE_THIEF => FT
+		MAGE_THIEF        =>  MT
+		CLERIC_MAGE      =>   CM
+		CLERIC_THIEF      =>  CT
+		FIGHTER_DRUID    =>   FD
+		FIGHTER_MAGE_CLERIC => FC
+		CLERIC_RANGER     =>  CR
      END
      ACTION_TO_UPPER parent_class
      OUTER_SPRINT file_ext $class_lua("%parent_class%")
@@ -1294,7 +1506,7 @@ BEGIN
      ACTION_IF !FILE_EXISTS_IN_GAME "%file_to_try%.2da" BEGIN
           OUTER_SPRINT lua "%file_to_try%"
           ACTION_IF clone BEGIN
-             COPY_EXISTING "lu%file_ext%1.2da" "override/%lua%.2da"
+             COPY_EXISTING "lu%file_ext%0.2da" "override/%lua%.2da"
           END
      END ELSE BEGIN
           LAF find_next_unused_lua INT_VAR clone try_next=try_next+1 STR_VAR parent_class RET lua END
@@ -1302,6 +1514,7 @@ BEGIN
 
 
 END
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////    Race editor
@@ -1348,8 +1561,8 @@ BEGIN
        END
        set_name say_name BEGIN
           ACTION_IF FILE_EXISTS_IN_GAME "racetext.2da" BEGIN
-                ACTION_IF "%command%" STRING_EQUAL_CASE "%say_name%" BEGIN
-                       LAF strref_of_tra STR_VAR arguments RET mixed=value END
+                ACTION_IF "%command%" STRING_EQUAL_CASE "say_name" BEGIN
+                       OUTER_SET mixed=RESOLVE_STR_REF ((AT arguments))
                        ACTION_GET_STRREF mixed mixed_string
                        ACTION_TO_LOWER mixed_string
                        OUTER_SET lower=RESOLVE_STR_REF ("%mixed_string%")
@@ -1370,7 +1583,7 @@ BEGIN
                 ACTION_IF "%setorsay%" STRING_EQUAL_CASE set BEGIN
                    OUTER_SET strref=RESOLVE_STR_REF ("%arguments%")
                 END ELSE BEGIN
-                   LAF strref_of_tra STR_VAR arguments RET strref=value END
+				   OUTER_SET strref=RESOLVE_STR_REF ((AT arguments))
                 END
                 LAF write_table_entry STR_VAR row="%race%" column=descstr file=racetext arguments="%strref%" END
           END ELSE BEGIN
@@ -1383,7 +1596,7 @@ BEGIN
                 ACTION_IF "%setorsay%" STRING_EQUAL_CASE set BEGIN
                    OUTER_SET strref=RESOLVE_STR_REF ("%arguments%")
                 END ELSE BEGIN
-                   LAF strref_of_tra STR_VAR arguments RET strref=value END
+                   OUTER_SET strref=RESOLVE_STR_REF ((AT arguments))
                 END
                 LAF write_table_entry STR_VAR row="%race%" column=biography file=racetext arguments="%strref%" END
           END ELSE BEGIN
@@ -1709,16 +1922,55 @@ DEFINE_PATCH_FUNCTION kit_hardcode BEGIN END // this is a placeholder, to be rep
 /////////////////////////////////////////////////////
 ///    Wild Mage squats on the
 ///    core CLABs mages;
-///    give them unique entries
+///    give them unique entries.
+///    Also make sure every clab actually exists
 /////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION make_clabs_unique BEGIN
     LAF check_label STR_VAR label="dw#uniqueclab" RET value END
     ACTION_IF !value BEGIN
        LAF make_label STR_VAR label="dw#uniqueclab" END
+	   // build unique template
+        OUTER_SPRINT row1 ""
+        OUTER_SPRINT row2 "ABILITY1"
+        OUTER_FOR (i=1;i<=40;i+=1) BEGIN
+           OUTER_SPRINT row1 "%row1% %i%"
+           OUTER_SPRINT row2 "%row2% ****"
+        END
+
+<<<<<<<<.../stratagems-inline/clab_template.2da
+2DA V1.0
+****
+%row1%
+%row2%
+>>>>>>>>
+	    // make sure each CLAB actually exists
+		COPY_EXISTING kitlist.2da override
+			COUNT_2DA_COLS colcount
+			COUNT_2DA_ROWS colcount rowcount
+			FOR (row=0;row<rowcount;++row) BEGIN
+				READ_2DA_ENTRY row 5 colcount clab
+				PATCH_MATCH "%clab%" WITH "*" "clabnull" BEGIN
+				END 
+				DEFAULT
+					PATCH_IF !FILE_EXISTS_IN_GAME "%clab%.2da" BEGIN
+						INNER_ACTION BEGIN
+							COPY ".../stratagems-inline/clab_template.2da" "override/%clab%.2da" EVALUATE_BUFFER PRETTY_PRINT_2DA
+						END
+					END
+				END
+			END
+		BUT_ONLY
+	// now sort out wild mages
+	   
+	   
        LAF find_free_clab INT_VAR to_try=10 STR_VAR prefix=MA RET clab_wildmage=clab END
        LAF read_table_entry INT_VAR lookup_column=1 STR_VAR file=kitlist row=WILDMAGE column=ABILITIES RET value END
-       ACTION_IF "%value%" STRING_EQUAL_CASE CLABMA01 BEGIN
+	   ACTION_IF !FILE_EXISTS_IN_GAME "clabma01.2da" BEGIN
+         COPY ".../stratagems-inline/clab_template.2da" "override/clabma01.2da" EVALUATE_BUFFER PRETTY_PRINT_2DA
+     END
+	   
+	   ACTION_IF "%value%" STRING_EQUAL_CASE CLABMA01 BEGIN
             LAF write_table_entry INT_VAR lookup_column=1 STR_VAR file=kitlist row=WILDMAGE column=ABILITIES arguments="%clab_wildmage%" END
             ACTION_IF FILE_EXISTS_IN_GAME "clabma01.2da" BEGIN
                 COPY_EXISTING "clabma01.2da" "override/%clab_wildmage%.2da"
@@ -1732,6 +1984,7 @@ DEFINE_ACTION_FUNCTION find_free_clab
     STR_VAR prefix=""
     RET clab
 BEGIN
+
    ACTION_IF to_try<10 BEGIN
       OUTER_SPRINT clab "CLAB%prefix%0%to_try%"
    END ELSE BEGIN
@@ -1763,6 +2016,22 @@ BEGIN
 END
 
 ////////////////////////////////////////////////////////////////////////
+/// Lowercase a mixed-case string
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_name_to_lower STR_VAR mixed_string="" RET lower_string BEGIN
+
+	OUTER_PATCH_SAVE lower_string "%mixed_string%" BEGIN
+		REPLACE_TEXTUALLY "û" "U"
+		REPLACE_TEXTUALLY "Û" "U"
+	END
+
+	PRINT "%lower_string%"
+	ACTION_TO_LOWER lower_string
+
+END
+
+////////////////////////////////////////////////////////////////////////
 /// This table codes the vanilla BG2 class descriptions, indexed by
 /// class ID
 /////////////////////////////////////////////////////////////////////////
@@ -1789,3 +2058,99 @@ ACTION_DEFINE_ASSOCIATIVE_ARRAY default_class_descriptions BEGIN
       17=>9581 // F/M/C
       18=>9580 // C/R
 END
+
+
+////////////////////////////////////////////////////////////////////////
+/// Make a kit selectable
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_kit_selectable INT_VAR human=0 dwarf=0 elf=0 half_elf=0 halfling=0 gnome=0 halforc=0 all_races=1 STR_VAR kit="" class="" BEGIN
+	COPY_EXISTING "kitlist.2da" override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 kit_id
+			READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_num
+			TO_UPPER kit_id
+			SET $kit_id_map("%kit_id%")=kit_num
+		END
+		SET $kit_id_map("TRUECLASS")=0
+	BUT_ONLY
+	COPY_EXISTING "kittable.2da" override
+		COUNT_2DA_COLS colcount
+		CLEAR_ARRAY kittable_cols
+		FOR (col=1;col<colcount;++col) BEGIN
+			READ_2DA_ENTRY 0 (col - 1) (colcount - 1) col_header
+			TO_LOWER col_header
+			SET $kittable_cols("%col_header%")=col
+		END
+		READ_2DA_ENTRIES_NOW kittable_data colcount
+		FOR (row=0;row<kittable_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kittable_data row 0 rowname
+			TO_UPPER rowname
+			PHP_EACH kittable_cols AS colname=>colnum BEGIN
+				READ_2DA_ENTRY_FORMER kittable_data row colnum entry
+				SPRINT $"%colname%"("%rowname%") "%entry%"
+			END
+		END
+	BUT_ONLY
+	COPY_EXISTING "kittable.2da" override
+	OUTER_WHILE "%class%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%class%" RET this_class=entry class=list END
+		ACTION_PHP_EACH kittable_cols AS race=>null BEGIN
+			ACTION_IF "%%race%%"=1 || all_races=1 BEGIN
+				OUTER_SPRINT file $"%race%"("%this_class%")
+				LAF make_kit_selectable_core STR_VAR kit file END
+			END
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION make_kit_selectable_core STR_VAR kit="" file="" BEGIN
+ ACTION_IF "%kit%" STRING_COMPARE "" BEGIN
+	ACTION_CLEAR_ARRAY kits_here_arr
+	// get already-present kits
+	ACTION_IF FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+		COPY_EXISTING "%file%.2da" "%workspace%"
+			COUNT_2DA_ROWS 2 rowcount
+			FOR (row=0;row<rowcount;++row) BEGIN
+				READ_2DA_ENTRY row 1 2 kitnum
+				PATCH_IF IS_AN_INT kitnum BEGIN
+					SPRINT $kits_here_arr("%kitnum%") ""
+				END
+			END
+		BUT_ONLY
+	END
+	// get new kits
+	OUTER_WHILE "%kit%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%kit%" RET entry kit=list END
+		OUTER_SET kitnum=$kit_id_map("%entry%")
+		OUTER_SPRINT $kits_here_arr("%kitnum%") ""
+	END
+	
+	// sort the list
+	ACTION_SORT_ARRAY_INDICES kits_here_arr NUMERICALLY
+	// write it
+	OUTER_SPRINT data ""
+	OUTER_SET ind=1
+	ACTION_PHP_EACH kits_here_arr AS num=>null BEGIN
+		OUTER_SPRINT data "%data%%ind% %num%%WNL%"
+		OUTER_SET ++ind
+	END
+	COPY ".../stratagems-inline/k_x_y_template.2da" "override/%file%.2da"
+		EVALUATE_BUFFER
+		PRETTY_PRINT_2DA
+
+
+ END
+END
+
+<<<<<<<< .../stratagems-inline/k_x_y_template.2da
+2DA V1.0
+*
+	KIT
+%data%
+>>>>>>>>
+
+////////////////////////////////////////////////////////////////////////
+

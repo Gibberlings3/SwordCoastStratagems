@@ -1,0 +1,61 @@
+// the ini functions, extracted from SFO and SFO_lite
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Read an ini file "ini_to_read.ini" into SFO_reserved_ini_hash (mostly borrowed from Kjeron)
+/////
+///// ini key values are treated case-insensitive
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION SFO_read_ini_file
+	STR_VAR ini_to_read=""
+	RET_ARRAY SFO_reserved_ini_hash
+BEGIN 
+	ACTION_IF "%ini_to_read%" STRING_EQUAL "" BEGIN
+		OUTER_SPRINT ini_to_read "%MOD_FOLDER%/%MOD_FOLDER%.ini"
+	END
+    OUTER_SPRINT key ""
+    ACTION_IF FILE_EXISTS "%ini_to_read%" BEGIN
+       COPY - "%ini_to_read%" "%workspace%"
+	    REPLACE_EVALUATE ~^\([^ %TAB%%WNL%]+\) *= *\([^%WNL%$]+\)~
+                     BEGIN
+			// key must start line and cannot contain whitespace
+			// value is everything after the "=" until the newline/end
+			        SPRINT key "%MATCH1%"
+			        TO_LOWER key
+				TEXT_SPRINT $SFO_reserved_ini_hash(~%key%~) ~%MATCH2%~
+		     END	
+                     ~~
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Check an ini value (case-insensitive)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION check_ini
+        INT_VAR silent=0
+		STR_VAR ini=""
+        RET value
+BEGIN
+        TO_LOWER ini
+        PATCH_IF !VARIABLE_IS_SET $SFO_reserved_ini_hash(~%ini%~) BEGIN
+           SPRINT value 0
+           PATCH_IF !silent BEGIN
+				PATCH_WARN "ini entry %ini% has been checked, but is not present in the ini file"
+		   END
+        END ELSE BEGIN
+           SPRINT value $SFO_reserved_ini_hash(~%ini%~)
+        END
+END
+
+DEFINE_ACTION_FUNCTION check_ini
+        INT_VAR silent=0
+		STR_VAR ini=""
+        RET value
+BEGIN
+       OUTER_PATCH "" BEGIN
+        LPF check_ini INT_VAR silent STR_VAR ini RET value END
+       END
+END

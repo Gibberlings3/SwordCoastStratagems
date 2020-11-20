@@ -1,0 +1,330 @@
+DEFINE_PATCH_FUNCTION get_func_name
+	STR_VAR data=""
+	RET func_name is_variable
+BEGIN
+	INNER_PATCH "%data%" BEGIN
+		SPRINT func_name ""
+		// replace % with <>
+		REPLACE_TEXTUALLY EXACT_MATCH "%" "<>"
+		// standardize spacing
+		REPLACE_TEXTUALLY "[%TAB%%WNL%%MNL%%LNL%]" " "	
+		// wipe any spaces and regexp matches from quoted material and remove quote marks
+		REPLACE_EVALUATE "~\([^~]*\)~" BEGIN
+			INNER_PATCH_SAVE contents "%MATCH1%" BEGIN
+				REPLACE_TEXTUALLY "\" "MATCH"
+				REPLACE_TEXTUALLY " " "_"
+			END
+		END
+		"%contents%"
+		REPLACE_EVALUATE ~"\([^"]*\)"~ BEGIN
+			INNER_PATCH_SAVE contents "%MATCH1%" BEGIN
+				REPLACE_TEXTUALLY "\" "MATCH"
+				REPLACE_TEXTUALLY " " "_"
+			END
+		END
+		"%contents%"
+		// find name
+		REPLACE_EVALUATE "DEFINE_\(ACTION\|PATCH\|DIMORPHIC\)_FUNCTION +\([^ ]+\)" BEGIN
+			SPRINT func_name "%MATCH2%"
+	    END
+	    ""
+		REPLACE_EVALUATE "\(LPF\|LAF\|LAUNCH_PATCH_FUNCTION\|LAUNCH_ACTION_FUNCTION\) +\([^ ]+\)" BEGIN
+			SPRINT func_name "%MATCH2%"
+	    END
+		""
+		SET is_variable= ( INDEX ("<>" "%func_name%")>=0 )
+	END
+END
+
+DEFINE_PATCH_FUNCTION get_func_args
+	INT_VAR format_desc=0
+	STR_VAR data=""
+	RET any_args func_desc 
+	RET_ARRAY str_arr int_arr both_arr ret_arr ret_array_arr
+BEGIN
+	CLEAR_ARRAY str_arr
+	CLEAR_ARRAY int_arr
+	CLEAR_ARRAY both_arr
+	CLEAR_ARRAY ret_arr
+	CLEAR_ARRAY ret_array_arr
+	SET any_args=0
+	INNER_PATCH "%data%" BEGIN
+		SPRINT func_name ""
+		// replace % with <>
+		REPLACE_TEXTUALLY EXACT_MATCH "%" "<>"
+		// handle special cases
+		REPLACE_TEXTUALLY "= *EVAL +" "=EVAL_"
+		REPLACE_TEXTUALLY "= *IDS_OF_SYMBOL *([^)]*)" "=IDS_OF_SYMBOL()"
+		// wipe any comments
+		REPLACE_TEXTUALLY "//.*" ""
+		// standardize spacing
+		REPLACE_TEXTUALLY "[%TAB%%WNL%%MNL%%LNL%]" " "	
+		// remove any spaces in algebra
+		REPLACE_TEXTUALLY " +\([+=-]\)" "\1"
+		REPLACE_TEXTUALLY "\([+=-]\) +" "\1"
+		// wipe any spaces and regexp matches from quoted material and remove quote marks
+		REPLACE_EVALUATE "~\([^~]*\)~" BEGIN
+			INNER_PATCH_SAVE contents "%MATCH1%" BEGIN
+				REPLACE_TEXTUALLY "\" "MATCH"
+				REPLACE_TEXTUALLY " " "_"
+			END
+		END
+		"%contents%"
+		REPLACE_EVALUATE ~"\([^"]*\)"~ BEGIN
+			INNER_PATCH_SAVE contents "%MATCH1%" BEGIN
+				REPLACE_TEXTUALLY "\" "MATCH"
+				REPLACE_TEXTUALLY " " "_"
+			END
+		END
+		"%contents%"
+		/*
+		READ_ASCII 0x0 data (BUFFER_LENGTH)
+		PATCH_PRINT "%data%"
+		*/
+		// find name
+		REPLACE_EVALUATE "DEFINE_\(ACTION\|PATCH\|DIMORPHIC\)_FUNCTION +\([^ ]+\)" BEGIN
+			SPRINT func_name "%MATCH2%"
+	    END
+	    " "
+		REPLACE_EVALUATE "\(LPF\|LAF\|LAUNCH_PATCH_FUNCTION\|LAUNCH_ACTION_FUNCTION\) +\([^ ]+\)" BEGIN
+			SPRINT func_name "%MATCH2%"
+	    END
+		" "
+		SPRINT int_data ""
+		SPRINT str_data ""
+		SPRINT ret_data ""
+		SPRINT ret_array_data ""
+		SPRINT int_desc_data ""
+		SPRINT str_desc_data ""
+		SPRINT ret_desc_data ""
+		SPRINT ret_array_desc_data ""
+		REPLACE_EVALUATE " RET_ARRAY\(.*\)" BEGIN
+			SPRINT ret_array_data "%MATCH1%"
+		END
+		""
+		REPLACE_EVALUATE " RET\(.*\)" BEGIN
+			SPRINT ret_data "%MATCH1%"
+		END
+		""		
+		REPLACE_EVALUATE " STR_VAR\(.*\)" BEGIN
+			SPRINT str_data "%MATCH1%"
+		END
+		""
+		REPLACE_EVALUATE " INT_VAR\(.*\)" BEGIN
+			SPRINT int_data "%MATCH1%"
+		END
+		""
+	END
+	WHILE "%int_data%" STRING_COMPARE "" BEGIN
+		LPF return_first_entry STR_VAR list="%int_data%" RET entry int_data=list END
+		INNER_PATCH_SAVE entry "%entry%" BEGIN
+			REPLACE_TEXTUALLY "=.*" ""
+		END
+		SPRINT $int_arr("%entry%") ""
+		SPRINT $both_arr("%entry%") ""
+		SET any_args=1
+		PATCH_IF "%int_desc_data%" STRING_EQUAL "" BEGIN
+			SPRINT int_desc_data "int %entry%"
+		END ELSE BEGIN
+			SPRINT int_desc_data "%int_desc_data%,%entry%"		
+		END
+	END
+	WHILE "%str_data%" STRING_COMPARE "" BEGIN
+		LPF return_first_entry STR_VAR list="%str_data%" RET entry str_data=list END
+		INNER_PATCH_SAVE entry "%entry%" BEGIN
+			REPLACE_TEXTUALLY "=.*" ""
+		END
+		SPRINT $str_arr("%entry%") ""
+		SPRINT $both_arr("%entry%") ""
+		SET any_args=1
+		PATCH_IF "%str_desc_data%" STRING_EQUAL "" BEGIN
+			SPRINT str_desc_data "str %entry%"
+		END ELSE BEGIN
+			SPRINT str_desc_data "%str_desc_data%,%entry%"		
+		END	
+	END
+	WHILE "%ret_data%" STRING_COMPARE "" BEGIN
+		LPF return_first_entry STR_VAR list="%ret_data%" RET entry ret_data=list END
+		INNER_PATCH_SAVE entry "%entry%" BEGIN
+			REPLACE_TEXTUALLY ".*=" ""
+		END
+		SPRINT $ret_arr("%entry%") ""
+		PATCH_IF "%ret_desc_data%" STRING_EQUAL "" BEGIN
+			SPRINT ret_desc_data "%entry%"
+		END ELSE BEGIN
+			SPRINT ret_desc_data "%ret_desc_data%,%entry%"		
+		END	
+	END
+	WHILE "%ret_array_data%" STRING_COMPARE "" BEGIN
+		LPF return_first_entry STR_VAR list="%ret_array_data%" RET entry ret_array_data=list END
+		INNER_PATCH_SAVE entry "%entry%" BEGIN
+			REPLACE_TEXTUALLY ".*=" ""
+		END
+		PATCH_IF "%ret_array_desc_data%" STRING_EQUAL "" BEGIN
+			SPRINT ret_desc_data "array %entry%"
+		END ELSE BEGIN
+			SPRINT ret_array_desc_data "%ret_array_desc_data%,%entry%"		
+		END		
+		SPRINT $ret_array_arr("%entry%") ""
+	END
+	PATCH_IF format_desc BEGIN
+		PATCH_IF "%int_desc_data%" STRING_COMPARE "" && "%str_desc_data%" STRING_COMPARE "" BEGIN
+			SPRINT arg_desc "(%int_desc_data%; %str_desc_data%)"
+		END ELSE BEGIN
+			SPRINT arg_desc "(%int_desc_data%%str_desc_data%)"
+		END
+		PATCH_IF "%ret_desc_data%" STRING_COMPARE "" && "%ret_array_desc_data%" STRING_COMPARE "" BEGIN
+			SPRINT ret_desc "(%ret_desc_data%; %ret_array_desc_data%)"
+		END ELSE BEGIN
+			SPRINT ret_desc "(%ret_desc_data%%ret_array_desc_data%)"
+		END
+		SPRINT func_desc "%func_name%%arg_desc%=%ret_desc%"
+	END ELSE BEGIN
+		SPRINT func_desc ""
+	END
+END
+
+DEFINE_ACTION_FUNCTION check_function_call_validity STR_VAR type=patch BEGIN
+
+
+	ACTION_TO_UPPER type
+	
+	// get the directory lists
+	
+	OUTER_SPRINT required_prefix ""
+	
+	GET_DIRECTORY_ARRAY dir_array "%MOD_FOLDER%" ".*[a-zA-Z].*"
+	OUTER_SPRINT $dir_array("998") "%MOD_FOLDER%/sfo/filetype"
+	OUTER_SPRINT $dir_array("999") "%MOD_FOLDER%/sfo/general"
+	OUTER_SPRINT $dir_array("1000") "%MOD_FOLDER%/iwdspells/lib"
+	// read in a bunch of extant functions (this list isn't complete)
+	
+	ACTION_MATCH "%type%" WITH
+	patch BEGIN
+	ACTION_FOR_EACH func_name IN ALTER_EFFECT CLONE_EFFECT DELETE_EFFECT ADD_SPELL_EFFECT ADD_AREA_REGION_TRIGGER ADD_ITEM_EQEFFECT ALTER_SPELL_HEADER DELETE_SPELL_HEADER ADD_CRE_EFFECT DELETE_AREA_ITEM FJ_CRE_VALIDITY ADD_SPELL_CFEFFECT DELETE_SPELL_EFFECT fj_are_structure fix_are_container_index ALTER_SPELL_HEADER NAME_NUM_OF_SPELL_RES DELETE_CRE_EFFECT DELETE_ITEM_EFFECT DELETE_ITEM_EQEFFECT FJ_CRE_EFF_V2 BEGIN 
+		OUTER_SPRINT $extern_func_list("%func_name%") ""
+	END
+	END
+	action BEGIN
+	ACTION_FOR_EACH func_name IN HANDLE_CHARSETS RES_NUM_OF_SPELL_NAME RES_NAME_OF_SPELL_NUM BEGIN 
+		OUTER_SPRINT $extern_func_list("%func_name%") ""
+	END
+	
+	END
+	DEFAULT
+	END
+	
+    // get all the function definitions
+
+	ACTION_PHP_EACH dir_array AS ind=>dir BEGIN
+		ACTION_BASH_FOR "%dir%" "%required_prefix%.*\.\(tph\|tp2\|tpa\)" BEGIN
+			PRINT "Processing %BASH_FOR_FILESPEC% (for definitions)"
+			COPY "%BASH_FOR_FILESPEC%" "%workspace%"		
+				ind=0
+				WHILE ind>=0 BEGIN
+					ind=INDEX_BUFFER ("DEFINE_\(%type%\|DIMORPHIC\)_FUNCTION" ind)
+					ind2=INDEX_BUFFER (CASE_SENSITIVE "[%TAB% %WNL%%LNL%%MNL%]BEGIN" ind)
+					PATCH_IF ind>=0 BEGIN
+						READ_ASCII ind data (ind2 - ind)
+						LPF get_func_name STR_VAR data RET func_name is_variable END
+						PATCH_IF is_variable  BEGIN 
+						END ELSE
+						PATCH_IF VARIABLE_IS_SET $func_list("%func_name%") BEGIN
+							LPF log_this STR_VAR file=possible_duplicate_functions.txt input="%func_name% in %BASH_FOR_FILESPEC%" END
+						END ELSE BEGIN
+							SPRINT $func_list("%func_name%") ""
+						END
+						  CLEAR_ARRAY "args_int_%func_name%"
+						  CLEAR_ARRAY "args_str_%func_name%"
+						  CLEAR_ARRAY "args_both_%func_name%"
+						  CLEAR_ARRAY "ret_%func_name%"
+						  CLEAR_ARRAY "ret_array_%func_name%"
+					  	  LPF get_func_args INT_VAR format_desc=1 STR_VAR data RET func_desc RET_ARRAY "args_int_%func_name%"=int_arr "args_str_%func_name%"=str_arr "args_both_%func_name%"=both_arr "ret_%func_name%"=ret_arr "ret_array_%func_name%"=ret_array_arr END
+						  
+							LPF log_this STR_VAR file=func_desc.txt input="%func_desc%    %BASH_FOR_RES%" END
+						  // check legality
+						  PATCH_IF "%type%" STRING_EQUAL_CASE patch BEGIN
+						  is_legal=1
+						  is_patch_func=1
+						  PHP_EACH "args_both_%func_name%" AS arg=>null BEGIN
+							PATCH_MATCH "%arg%" WITH
+							arguments BEGIN
+							END
+							filename file_ext entry_index offset_base offset_secondary BEGIN
+								is_legal=0
+							END
+							DEFAULT
+								is_patch_func=0
+							END
+						  END
+						  PHP_EACH "ret_%func_name%" AS ret=>null BEGIN
+							PATCH_MATCH "%ret%" WITH
+							value BEGIN END
+							DEFAULT
+								is_patch_func=0
+							END
+						  END
+						  PHP_EACH "ret_array_%func_name%" AS ret=>null BEGIN
+							is_patch_func=0
+						  END
+
+						  PATCH_IF (is_patch_func && !is_legal) BEGIN
+							LPF log_this STR_VAR file=illegal_patches.txt input="%func_name% in %BASH_FOR_FILESPEC%" END
+						  END
+						  END
+					END
+					ind=ind2
+				END
+			BUT_ONLY
+		END
+	END
+
+
+	//check function uses
+	
+	ACTION_IF "%type%" STRING_EQUAL_CASE "patch" BEGIN
+		OUTER_SPRINT type_abbrev "LPF"
+	END ELSE BEGIN
+		OUTER_SPRINT type_abbrev "LAF"	
+	END
+	ACTION_PHP_EACH dir_array AS ind=>dir BEGIN
+		ACTION_BASH_FOR "%dir%" "%required_prefix%.*\.\(tph\|tp2\|tpa\)" BEGIN
+			PRINT "Processing %BASH_FOR_FILESPEC% (for function calls)"
+			COPY "%BASH_FOR_FILESPEC%" "%workspace%"	
+				ind=0
+				WHILE ind>=0 BEGIN
+					ind=INDEX_BUFFER ("[ %TAB%%WNL%%MNL%%LNL%]\(LAUNCH_%type%_FUNCTION\|%type_abbrev%\)" ind)
+					ind2=INDEX_BUFFER (CASE_SENSITIVE "[%TAB% %WNL%%LNL%%MNL%]END" ind)
+					PATCH_IF ind>=0 BEGIN
+						READ_ASCII ind data (ind2 - ind)
+						CLEAR_ARRAY int_arr
+						CLEAR_ARRAY str_arr
+						LPF get_func_name STR_VAR data RET func_name is_variable END
+						LPF get_func_args STR_VAR data RET_ARRAY int_arr str_arr END
+						PATCH_IF VARIABLE_IS_SET $extern_func_list("%func_name%") || is_variable BEGIN
+						END ELSE
+						PATCH_IF "%func_name%" STRING_EQUAL_CASE "QUOTE" || "%func_name%" STRING_EQUAL_CASE "" BEGIN
+						END ELSE
+						PATCH_IF VARIABLE_IS_SET $func_list("%func_name%") BEGIN
+							PHP_EACH int_arr AS var=>null BEGIN
+								PATCH_IF !VARIABLE_IS_SET $"args_int_%func_name%"("%var%") BEGIN
+									LPF log_this STR_VAR file="illegal_arguments.txt" input="INT_VAR %var%, in function %func_name%, file %BASH_FOR_FILESPEC%" END
+								END
+							END
+							PHP_EACH str_arr AS var=>null BEGIN
+								PATCH_IF !VARIABLE_IS_SET $"args_str_%func_name%"("%var%") BEGIN
+									LPF log_this STR_VAR file="illegal_arguments.txt" input="STR_VAR %var%, in function %func_name%, file %BASH_FOR_FILESPEC%" END
+								END
+							END
+						END ELSE BEGIN
+							LPF log_this STR_VAR file=nonexistent_functions.txt input="%func_name%, in %BASH_FOR_FILESPEC%" END
+						END
+					END
+					ind=ind2
+				END
+			BUT_ONLY
+		END
+	END
+
+
+END

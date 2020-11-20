@@ -37,20 +37,24 @@ BEGIN
           LAUNCH_ACTION_FUNCTION decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 type=argument_1 END
           ACTION_MATCH ~%offset_base%~
           WITH 
-          ~~
+          ~~ no
           BEGIN
               OUTER_SPRINT ~offset_formula~ ~%offset%~
           END
-          DEFAULT
+		  yes 
+		  BEGIN
               ACTION_IF "%secondary%" STRING_EQUAL_CASE yes BEGIN
                     OUTER_SPRINT ~offset_formula~ ~(%offset% + offset_secondary)~
               END ELSE BEGIN
                     OUTER_SPRINT ~offset_formula~ ~(%offset% + offset_base)~
               END
           END
+		  DEFAULT
+			FAIL "unknown argument for build_simple_data_field_editors"
+		  END
 
-          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
-          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT arg_string ~STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "STR_VAR arguments=~null~ RET value"
           OUTER_SPRINT parse_string ""
           OUTER_SPRINT parse_string_int ~LPF fail_unless_int STR_VAR value="%arguments%" expression="" END~
 
@@ -150,7 +154,7 @@ BEGIN
                                    SET value=1 
                           END
 
-                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%LT 
+                          DEFINE_PATCH_FUNCTION %function_prefix%_%function%LT
                                   %arg_string% 
                           BEGIN 
                                   %parse_string_int%  
@@ -161,6 +165,7 @@ BEGIN
                                   END 
                                   SET value=1 
                           END
+
                           DEFINE_PATCH_FUNCTION %function_prefix%_read_%function% %simple_arg_string% BEGIN READ_%type% %offset_formula% value END
                           ~
           END
@@ -245,8 +250,8 @@ BEGIN
         OUTER_SPRINT SFO_reserved_build_function_location "%workspace%"
     END
     ACTION_IF !(SFO_reserved_build_function_control=2) BEGIN // if it's 2, do nothing
-          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
-          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT arg_string ~STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "%arg_string%"
           OUTER_SPRINT parse_string ""
 
 
@@ -255,12 +260,16 @@ BEGIN
           LAF decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 type=argument_1 idsfile=argument_2 END
           ACTION_MATCH ~%offset_base%~
           WITH
-          ~~
+          ~~ no
           BEGIN
               OUTER_SPRINT ~offset~ ~%offset%~
           END
+		  yes 
+		  BEGIN
+              OUTER_SPRINT ~offset~ ~(%offset% + offset_base)~		  
+		  END
           DEFAULT
-              OUTER_SPRINT ~offset~ ~(%offset% + %offset_base%)~
+              FAIL "unknown argument for offset_base in build_IDS_data_field_editors"
           END
           ACTION_IF ~%type%~ STRING_EQUAL_CASE ~LONG_REVERSED~ THEN BEGIN
              OUTER_SPRINT definition ~
@@ -352,8 +361,8 @@ BEGIN
     ACTION_IF !(SFO_reserved_build_function_control=2) BEGIN // if it's 2, do nothing
 
 
-          OUTER_SPRINT arg_string ~INT_VAR offset_secondary=0 offset_base=0 STR_VAR arguments="" RET value~
-          OUTER_SPRINT simple_arg_string "INT_VAR offset_secondary=0 offset_base=0 RET value"
+          OUTER_SPRINT arg_string ~STR_VAR arguments="" RET value~
+          OUTER_SPRINT simple_arg_string "%arg_string%"
           OUTER_SPRINT parse_string_boolean ~LPF fail_unless_boolean STR_VAR value="%arguments%" expression="" END~
 
 
@@ -362,12 +371,16 @@ BEGIN
           LAF decompose_CSV STR_VAR input= ~%arglist%~ RET offset=argument_0 bit=argument_1 END
           ACTION_MATCH ~%offset_base%~
           WITH
-          ~~
+          ~~ no
           BEGIN
               OUTER_SPRINT ~offset~ ~%offset%~
           END
+		  yes 
+		  BEGIN
+              OUTER_SPRINT ~offset~ ~(%offset% + offset_base)~		  
+		  END
           DEFAULT
-              OUTER_SPRINT ~offset~ ~(%offset% + %offset_base%)~
+              FAIL "unknown argument for offset_base in build_flag_data_field_editors (function prefix is %function_prefix%; lookup table is %lookup_table%)"
           END
           // input is in NI conventions counting 0-7, so bit N is 2^N
           OUTER_SET one_code=2**bit
@@ -423,6 +436,8 @@ END
 DEFINE_ACTION_FUNCTION clone_template
     INT_VAR
            allow_missing=0
+		   silent=0
+		   tv=0
     STR_VAR
            file_list=""
            file_ext=""
@@ -556,8 +571,8 @@ BEGIN
                              LPF FJ_CRE_EFF_V2 END
                           END
                     END
-                    LPF apply_patches INT_VAR stop_after_match STR_VAR edits filename file_ext RET value_here=value END
-                    LPF apply_patches_inline INT_VAR stop_after_match STR_VAR editstring filename file_ext RET value_here2=value END
+                    LPF apply_patches STR_VAR edits filename file_ext RET value_here=value END
+                    LPF apply_patches_inline STR_VAR editstring filename file_ext RET value_here2=value END
                     SET value=value || value_here || value_here2
                 END
               BUT_ONLY
@@ -578,8 +593,8 @@ BEGIN
                     PATCH_IF "%file_ext%" STRING_EQUAL_CASE CRE BEGIN
                        LPF FJ_CRE_EFF_V2 END
                     END
-                    LPF apply_patches INT_VAR stop_after_match STR_VAR edits filename file_ext RET value_here=value END
-                    LPF apply_patches_inline INT_VAR stop_after_match STR_VAR editstring filename file_ext RET value_here2=value END
+                    LPF apply_patches STR_VAR edits filename file_ext RET value_here=value END
+                    LPF apply_patches_inline STR_VAR editstring filename file_ext RET value_here2=value END
                     SET value=value || value_here || value_here2
               END
                
@@ -612,6 +627,7 @@ END
 DEFINE_ACTION_FUNCTION install_template
     INT_VAR allow_missing=0
             tv=0
+			silent=0
     STR_VAR
            file_list=""
            file_ext=""
@@ -632,11 +648,10 @@ BEGIN
          LAF read_in_list STR_VAR file=~%external_file%~ RET extra=list END
          OUTER_SPRINT ~file_list~ ~%file_list% %extra%~
       END
-      ACTION_IF (~%edits%~ STRING_EQUAL_CASE ~~ && ~%editstring%~ STRING_EQUAL_CASE ~~) BEGIN
-         OUTER_SPRINT edits patch_data
+	  ACTION_IF !silent BEGIN
+		PRINT ~SFO: Installing and patching %file_ext% file(s) %file_list%... ~
       END
-      PRINT ~SFO: Installing and patching %file_ext% file(s) %file_list%... ~
-      SILENT
+	  SILENT
       OUTER_INNER_PATCH_SAVE file_list "%file_list%" BEGIN
          REPLACE_TEXTUALLY " +=> +" "=>"
       END
@@ -984,7 +999,7 @@ BEGIN
      INNER_PATCH_SAVE ~list~ ~%list%~ BEGIN
         REPLACE_TEXTUALLY ~\(-[0-9]+\)~ ~"\1"~
      END
-     SPRINT ~list~ ~PATCH_FOR_EACH entry IN %list% BEGIN LPF %function% INT_VAR arguments= "%entry%" END END~
+     SPRINT ~list~ ~PATCH_FOR_EACH entry IN %list% BEGIN LPF %function% STR_VAR arguments= "%entry%" END END~
      LPF patch_reinclude_this STR_VAR input=~%list%~ END
 
 
