@@ -1,41 +1,97 @@
-DEFINE_ACTION_FUNCTION iwdspells_arcane BEGIN
+DEFINE_ACTION_FUNCTION iwdspells_arcane STR_VAR version="" BEGIN
 
-   OUTER_SPRINT resource_loc "%MOD_FOLDER%/%component_loc%/copyover"
+	LAF check_label STR_VAR label="dw#iwdspells_arcane" RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label="dw#iwdspells_arcane" END
 
-   OUTER_SPRINT iwdspells_data "%component_loc%/data"
-   OUTER_SPRINT iwdspells_lib "%component_loc%/lib"
-   OUTER_SPRINT sfo_loc sfo
-   OUTER_SPRINT ssl_loc ssl
-   OUTER_SPRINT iwdspells_resource "%component_loc%/resource"
-   OUTER_SPRINT iwdspells_trabase "%scs_tra_loc%"
-   
-   OUTER_SPRINT component_loc "" // my conventions in DW_IWDSPELLS are inconsistent about checking component_loc; simplest to zap it
+		OUTER_SPRINT custom_includes "%version%" // pass through 'version' to conform to rules for SFO 'run' function
 
-   LAF check_ini STR_VAR ini=do_not_biff_iwd_resources RET do_not_biff=value END
+		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/move_spell_resources.tph"
 
-LAF include STR_VAR file=install_iwd_spell_resources.tpa location="%iwdspells_lib%" END
-LAF install_iwd_spell_resources
-           STR_VAR
-               scroll_shadow_list=iwd_arcane.2da
-               spell_list=arcane_resrefs.txt
-               lookup=iwd_strref.txt
-               smtables_list=arcane_smtable.txt
-               scroll_price_list=scroll_prices_arcane.txt
-               proj_list=arcane_proj.txt
-               tra=iwdspells.tra
-               biff="dw#iwdm"
-               afterwards="arcane_spells_postproduction"
-               afterwards_tra="dw_iwdspells_arcane.tra"
-               bam_copy="bam_copy_arcane.2da"
-               green_bams="green_spells_arcane.2da"
-END
+		LAF check_ini INT_VAR silent=1 STR_VAR section=iwdspells ini=no_cap_at_level_20 RET value END
+		OUTER_SET truncate_at_level=value?"-1":20
 
-    
-  ACTION_IF MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 55 BEGIN
-    OUTER_SPRINT component_loc iwdspells
-    LAF run STR_VAR file=sr_nwn_spelldeflection location=lib version=sr_nwn_arcane END
-  END
-  
-  LAF run STR_VAR file=rebuild_spell_hotkeys locbase=lib END
+		OUTER_SPRINT resource_loc "%MOD_FOLDER%/%component_loc%/copyover"
+		// greenify a few summoning spell icons
+		
+		ACTION_FOR_EACH spell IN
+			CONJURE_EARTH_ELEMENTAL
+			CONJURE_AIR_ELEMENTAL
+			CONJURE_FIRE_ELEMENTAL
+			SUMMON_PLANATAR_GOOD
+			SUMMON_PLANATAR_EVIL
+			CREATE_BONEGUARD
+		BEGIN
+			OUTER_SPRINT resref EVAL "%WIZARD_%spell%%"
+			ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+				LAF make_bams_green STR_VAR resref END
+			END
+		END
+		
+		//SR-relative settings
+		
+		ACTION_IF MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 55 BEGIN
+			OUTER_SPRINT overwrite_these_spells "overwrite_sr.2da"
+			OUTER_SPRINT skip_these_spells "skip_sr.2da"
+		END ELSE BEGIN
+			OUTER_SPRINT overwrite_these_spells "overwrite.2da"
+			OUTER_SPRINT skip_these_spells ""
+		END
+		
+		// main install
+		
+		LAF install_spell_resources
+			INT_VAR truncate_at_level
+			STR_VAR resource_loc
+					prefix=arcane
+					file=iwd_arcane.2da
+					location=data
+					anim_remaps="anim_maps.2da"
+					resource_overwrite="resource_overwrite_bg2.2da"
+					old_style="%MOD_FOLDER%/%sfo_library_path%/data/spell_styles_iwd.2da"
+					new_style="%MOD_FOLDER%/%sfo_library_path%/data/spell_styles_bg.2da"
+					overwrite_these_spells
+					skip_these_spells
+					log="iwd_spells_installed.txt"
+					afterwards="iwd_arcane_spells_postproduction"
+					afterwards_tra="dw_iwdspells"
+					custom_includes
+		END
+		
+		// bams
+		
+		LAF install_spell_bams
+			STR_VAR resource_loc
+					location=data
+					file=bam_copy_arcane.2da
+		END
+		
+		// rebuild hotkeys
+		
+		ACTION_IF enhanced_edition BEGIN
+			LAF rebuild_spell_hotkeys END
+		END
+		
+		// oBG2 icons
+		
+		ACTION_IF !enhanced_edition BEGIN
+		
+			// main icons already installed?
+			LAF check_label STR_VAR label="dw#iwdspells_obg2_icons_installed" RET proceed=value END
+			ACTION_IF !proceed BEGIN
+				// if not, check the ini
+				LAF check_ini INT_VAR silent=1 STR_VAR section="iwdspells" ini=install_obg2_icons RET proceed=value END
+			END
+			ACTION_IF proceed BEGIN
+				LAF run STR_VAR file=iwdspells_icons END
+			END
 
+		
+		END
+		
+	END ELSE BEGIN// end of outer LABEL check
+
+		PRINT "IWD arcane spells have already been installed and will not be installed again."
+
+	END
 END

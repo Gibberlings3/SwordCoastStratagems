@@ -1,0 +1,324 @@
+/*
+describe-library{
+functions to document the 'struct' structures.
+}
+*/
+
+DEFINE_ACTION_FUNCTION strdoc_document_all_strtypes
+	STR_VAR path="%MOD_FOLDER%/%sfo_library_path%/structures"
+			style_path="../../../doc/files"
+			template_path="%MOD_FOLDER%/%sfo_library_path%/resource/strdoc_template.html"
+			doc_path="%MOD_FOLDER%/%sfo_library_path%/doc"
+BEGIN
+	ACTION_BASH_FOR "%path%" "str_[a-z]+_[^_]+$" BEGIN
+		OUTER_SPRINT resref "%BASH_FOR_RES%"
+		OUTER_PATCH "%resref%" BEGIN
+			REPLACE_EVALUATE CASE_INSENSITIVE "str_\([a-z]+\)_\(.+\)" BEGIN
+				SPRINT type "%MATCH1%"
+				SPRINT version "%MATCH2%"
+				TO_UPPER type
+				TO_UPPER version
+				INNER_PATCH_SAVE version_fancy "%version%" BEGIN
+					REPLACE_TEXTUALLY "_" "."
+				END
+			END
+			""
+		END
+		ACTION_IF !VARIABLE_IS_SET $strdoc_main_menu("%type%") BEGIN
+			OUTER_SPRINT $strdoc_main_menu("%type%") ~%type% (<a href="%type%_%version%.html">%version_fancy%</a>~
+		END ELSE BEGIN
+			OUTER_SPRINT temp $strdoc_main_menu("%type%")
+			OUTER_SPRINT $strdoc_main_menu("%type%") ~%temp%, <a href="%type%_%version%.html">%version_fancy%</a>~
+		END
+		ACTION_TO_LOWER resref
+		OUTER_PATCH "%resref%" BEGIN
+			REPLACE_EVALUATE "str_\(.*\)" BEGIN
+				SPRINT strtype "%MATCH1%"
+			END
+			""
+		END
+		LAF strdoc_document_strtype STR_VAR strtype doc_path="%doc_path%/struct" style_path template_path path END
+	END
+	OUTER_SPRINT data ~<div class="section"><p><ul>%WNL%~
+	ACTION_PHP_EACH strdoc_main_menu AS ind=>line BEGIN
+		OUTER_SPRINT data "%data%%TAB%<li>%line%)</li>%WNL%"
+	END
+	OUTER_SPRINT data "%data%</ul></p></div>"
+	COPY + "%template_path%" "%doc_path%/struct/struct_index.html"
+		REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
+		REPLACE_TEXTUALLY "---!!!SFO_CONTENTS!!!---" "%data%"
+		REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" ~~
+		REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "IE structures"
+		REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "IE structures (for use with lib_struct)"
+
+
+
+END
+
+
+
+DEFINE_ACTION_FUNCTION strdoc_document_strtype
+	STR_VAR strtype=""
+			path="%MOD_FOLDER%/%sfo_library_path%/structures"
+			style_path="../../../doc/files"
+			template_path="%MOD_FOLDER%/%sfo_library_path%/resource/strdoc_template.html"
+			doc_path="%MOD_FOLDER%/%sfo_library_path%/doc/struct"
+BEGIN
+	
+	OUTER_SPRINT data ""
+	OUTER_SPRINT data_alphabetical ""
+	ACTION_FOR_EACH filter IN filter1 filter2 filter3 BEGIN
+		OUTER_SPRINT label "main_%filter%"
+		OUTER_SPRINT temp $info_array("%strtype%" "%label%")
+		ACTION_IF VARIABLE_IS_SET $info_array("%strtype%" "%label%") BEGIN
+			OUTER_SPRINT this_filter $info_array("%strtype%" "%label%")
+			OUTER_SPRINT "%filter%" "%this_filter%"
+			OUTER_SPRINT "%filter%_title" $info_array("%strtype%" "main_%filter%_title")
+		END ELSE BEGIN
+			OUTER_SPRINT "%filter%" ""
+			OUTER_SPRINT "%filter%_title" ""
+		END
+	END
+	OUTER_SPRINT description $info_array("%strtype%" "main_description")
+	COPY - "%path%/str_%strtype%.2da" nowhere
+				LPF strdoc_format_header_data STR_VAR filter1 filter2 filter3 filter1_title filter2_title filter3_title title="Main Header" description RET data_here=data data_here_alphabetical=data_alphabetical END
+				SPRINT data "%data%%data_here%"	
+				SPRINT data_alphabetical "%data_alphabetical%%data_here_alphabetical%"
+	BUT_ONLY
+	LAF 2da_read INT_VAR silent=1 STR_VAR file="str_%strtype%_ext.2da" path case=mixed RET value RET_ARRAY exts=rows END
+	ACTION_IF value BEGIN
+		ACTION_PHP_EACH exts AS id=>discard BEGIN
+			OUTER_SPRINT id_full "%strtype%_%id%"
+			ACTION_IF VARIABLE_IS_SET $repeat_array("%id_full%") BEGIN
+				OUTER_SPRINT file $repeat_array("%id_full%")
+				OUTER_SPRINT file "str_%file%.2da"
+			END ELSE BEGIN
+				OUTER_SPRINT file "str_%id_full%.2da"
+			END
+			ACTION_IF VARIABLE_IS_SET $info_array("%strtype%" "%id%_header") BEGIN
+				OUTER_SPRINT title $info_array("%strtype%" "%id%_header")
+				OUTER_SPRINT title "%title% (%id%)"
+			END ELSE BEGIN
+				OUTER_SPRINT title "%id%"
+			END
+			ACTION_IF VARIABLE_IS_SET $info_array("%strtype%" "%id%_description") BEGIN
+				OUTER_SPRINT description $info_array("%strtype%" "%id%_description")
+			END ELSE BEGIN
+				OUTER_SPRINT description ""
+			END
+			ACTION_FOR_EACH filter IN filter1 filter2 filter3 BEGIN
+				OUTER_SPRINT label "%id%_%filter%"
+				OUTER_SPRINT temp $info_array("%strtype%" "%label%")
+				ACTION_IF VARIABLE_IS_SET $info_array("%strtype%" "%label%") BEGIN
+					OUTER_SPRINT this_filter $info_array("%strtype%" "%label%")
+					OUTER_SPRINT "%filter%" "%this_filter%"
+					OUTER_SPRINT "%filter%_title" $info_array("%strtype%" "%id%_%filter%_title")
+				END ELSE BEGIN
+					OUTER_SPRINT "%filter%" ""
+					OUTER_SPRINT "%filter%_title" ""
+				END
+			END
+			ACTION_IF FILE_EXISTS "%path%/%file%" BEGIN
+				COPY - "%path%/%file%" nowhere
+					LPF strdoc_format_header_data STR_VAR title description filter1 filter2 filter3 filter1_title filter2_title filter3_title RET data_here=data data_here_alphabetical=data_alphabetical END
+					SPRINT data "%data%%data_here%"				
+					SPRINT data_alphabetical "%data_alphabetical%%data_here_alphabetical%"				
+				BUT_ONLY
+			END	ELSE BEGIN
+				WARN "%strtype% type %id% is apparently not defined: cannot find file %file%"
+			END
+		END	
+	END
+	OUTER_SPRINT file "%strtype%"
+	OUTER_SPRINT description $info_array("%strtype%" "description")
+	OUTER_SPRINT title $info_array("%strtype%" "title")
+		COPY + "%template_path%" "%doc_path%/%file%.html"
+			REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS!!!---" "%data%"
+			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" ~<p>Sorted by order in the file (<a href="%file%_a.html">sort alphabetically</a>)</p><p>%description%</p>~
+			REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "%title%"
+			REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "%strtype%"
+		COPY + "%template_path%" "%doc_path%/%file%_a.html"
+			REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS!!!---" "%data_alphabetical%"
+			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" ~<p>Sorted alphabetically (<a href="%file%.html">sort by order in the file</a>)</p><p>%description%</p>~
+			REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "%title%"
+			REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "%strtype%"
+END
+
+
+DEFINE_PATCH_FUNCTION strdoc_get_data
+	STR_VAR filter1="" filter2="" filter3=""
+	RET_ARRAY main_keys meta_keys special1_keys special2_keys special3_keys
+BEGIN
+	LPF 2da_read STR_VAR case=mixed RET_ARRAY array END
+	LPF 2da_extract_array STR_VAR array range=type case=mixed map=strdoc_parse_types RET_ARRAY lookup_array=array END
+	PHP_EACH lookup_array AS k=>v BEGIN
+		PATCH_MATCH "%v%" WITH
+		special BEGIN END
+		"Sets these.*" "Comma.*" BEGIN
+			SPRINT $meta_keys("%k%") "%v%"
+		END
+		DEFAULT
+			SPRINT $main_keys("%k%") "%v%"
+		END
+	END
+	
+	PATCH_IF "%filter1%" STR_CMP "" BEGIN
+		LPF array_split STR_VAR array=main_keys match_key="%filter1%" RET_ARRAY special1_keys=split main_keys=rest END
+	END
+	PATCH_IF "%filter2%" STR_CMP "" BEGIN
+		LPF array_split STR_VAR array=main_keys match_key="%filter2%" RET_ARRAY special1_keys=split main_keys=rest END
+	END
+	PATCH_IF "%filter3%" STR_CMP "" BEGIN
+		LPF array_split STR_VAR array=main_keys match_key="%filter3%" RET_ARRAY special1_keys=split main_keys=rest END
+	END
+END
+
+DEFINE_PATCH_FUNCTION strdoc_format_header_data
+	STR_VAR filter1=""//function
+			filter2=""//function
+			filter3=""//function
+			filter1_title=""
+			filter2_title=""
+			filter3_title=""
+			title=""
+			description=""
+	RET data data_alphabetical
+BEGIN
+		LPF strdoc_get_data STR_VAR filter1 filter2 filter3 RET_ARRAY main_keys meta_keys special1_keys special2_keys special3_keys END
+		SPRINT data ~
+		<div class="ribbon_rectangle_h2"><h2>%title%</h2> </div>
+		<div class="ribbon_triangle_h2-l"></div>
+		<div class="ribbon_triangle_h2-r"></div>
+		<div class="section"><p>%description%</p>~
+		SPRINT data_alphabetical "%data%"
+		SPRINT $subtitle("main_keys") "Standard keys"
+		SPRINT $subtitle("meta_keys") "Special keys"
+		SPRINT $subtitle("special1_keys") "%filter1_title%"
+		SPRINT $subtitle("special2_keys") "%filter2_title%"
+		SPRINT $subtitle("special3_keys") "%filter3_title%"
+
+		PATCH_FOR_EACH array IN meta_keys main_keys special1_keys special2_keys special3_keys BEGIN
+			LPF array_length STR_VAR array="%array%" RET length END
+			PATCH_IF length>0 BEGIN
+				SPRINT subtitle $subtitle("%array%")
+				LPF strdoc_format_array_as_table STR_VAR array RET data_here=data END
+				SPRINT data "%data%<p><strong>%subtitle%</strong>%data_here%</p>"
+				SORT_ARRAY_INDICES "%array%" LEXICOGRAPHICALLY
+				LPF strdoc_format_array_as_table STR_VAR array RET data_here=data END
+				SPRINT data_alphabetical "%data_alphabetical%<p><strong>%subtitle%</strong>%data_here%</p>"
+			END
+		END
+
+		SPRINT data "%data%</div>"
+		SPRINT data_alphabetical "%data_alphabetical%</div>"
+
+END
+	
+
+DEFINE_PATCH_FUNCTION strdoc_format_array_as_table
+	STR_VAR array=""
+	RET data
+BEGIN
+	any_data=0
+	SPRINT data ~<table><tr><th width="40%">Key</th><th width="60%">Type</th></tr>%WNL%~
+	PHP_EACH "%array%" AS k=>v BEGIN
+		SPRINT data "%data%<tr><td>%k%</td><td>%v%</td></tr>%WNL%"
+		any_data=1
+	END
+	PATCH_IF any_data BEGIN
+		SPRINT data "%data%</table>%WNL%%WNL%"
+	END ELSE BEGIN
+		SPRINT data ""
+	END
+END
+
+
+DEFINE_ACTION_FUNCTION strdoc_parse_lookups//internal 
+	RET_ARRAY lookup_array
+BEGIN
+	LAF ini_read STR_VAR file=str_lookup.ini path="%MOD_FOLDER%/%sfo_library_path%/structures" RET_ARRAY array section_array END
+	ACTION_PHP_EACH section_array AS k=>discard BEGIN
+		OUTER_SPRINT $lookup_array("%k%") ""
+	END
+	ACTION_PHP_EACH array AS k=>v BEGIN
+		OUTER_SPRINT temp $lookup_array("%k_0%")
+		OUTER_SPRINT $lookup_array("%k_0%") "%temp%%k_1%=%v%, "
+	END
+	ACTION_PHP_EACH lookup_array AS k=>v BEGIN
+		OUTER_PATCH_SAVE v "%v%" BEGIN
+			DELETE_BYTES (BUFFER_LENGTH - 2) 2
+		END
+		OUTER_SPRINT $lookup_array("%k%") "%v%"
+	END
+END
+
+
+
+DEFINE_PATCH_FUNCTION strdoc_parse_types//internal
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	SPRINT value "Unknown type %arguments%"
+	INNER_PATCH "%arguments%" BEGIN
+		REPLACE_EVALUATE "^id[0-9]?b?_\(.*\)" BEGIN
+			SPRINT value "id lookup (%MATCH1%)"
+		END
+		""
+		REPLACE_EVALUATE "itmspl-proj" BEGIN
+			SPRINT value "id lookup (projectl) with off-by-one correction"
+		END
+		""
+		REPLACE_EVALUATE "^s?\(long\|short\|byte\)" BEGIN
+			SPRINT value "Integer"
+		END
+		""
+		REPLACE_EVALUATE "^strref$" BEGIN
+			SPRINT value "Strref"
+		END
+		""
+		REPLACE_EVALUATE "^commalist_\(.*\)" BEGIN
+			SPRINT value "Comma-separated list (%MATCH1%)"
+		END
+		""
+		REPLACE_EVALUATE "^multiple_\(.*\)" BEGIN
+			SPRINT value "Sets these: %MATCH1%"
+		END
+		""
+		REPLACE_EVALUATE "^ascii_\([0-9]+\)" BEGIN
+			SPRINT value "String (%MATCH1% bytes)"
+		END
+		""
+		REPLACE_EVALUATE "^resref_.*" BEGIN
+			SPRINT value "String (8 bytes)"
+		END
+		""
+		REPLACE_EVALUATE "^varlength.*" BEGIN
+			SPRINT value "String (variable length)"
+		END
+		""
+		REPLACE_EVALUATE "strength" BEGIN
+			SPRINT value "Strength (enter as integer or in 18/76 style)"
+		END
+		""
+		REPLACE_EVALUATE "^flag_.*" BEGIN
+			SPRINT value "Boolean"
+		END
+		""
+		REPLACE_EVALUATE "^lookup[0-9]_\(.*\)" BEGIN
+			PATCH_IF VARIABLE_IS_SET $lookup_array("%MATCH1%") BEGIN
+				SPRINT lookup $lookup_array("%MATCH1%")
+				SPRINT value "Lookup (%lookup%)"
+			END ELSE BEGIN
+				SPRINT value "Lookup (unknown %MATCH1%)"
+			END
+		END
+		""
+		REPLACE_EVALUATE "special.*" BEGIN
+			SPRINT value "special"
+		END
+		""
+	END
+
+END

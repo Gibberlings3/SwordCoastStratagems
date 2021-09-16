@@ -1,0 +1,71 @@
+DEFINE_ACTION_FUNCTION obg2_bard BEGIN
+
+	INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cdfunctions.tpa"
+
+
+  //LAF CD_HANDLE_AUDIO_PREP END // at present, no new audio for bard songs
+
+  // obg2 w/o fixpack's optional bard song fixes
+  ACTION_IF !FILE_EXISTS_IN_GAME ~fjbard.spl~ BEGIN
+
+    COPY ~%obg2_res_path%/cdibard.spl~ ~override~ 
+      WRITE_ASCIIE 0xae ~%BARD_SONG_BALLAD%~ #8
+
+    APPEND ~clabba01.2da~ ~ABILITYX AP_CDIBARD CDREPLACE~
+
+    COPY_EXISTING ~clabba01.2da~ ~override~
+      COUNT_2DA_COLS cols
+      FOR (index = 1 ; index < cols ; ++index) BEGIN
+        REPLACE_TEXTUALLY ~CDREPLACE~ ~**** CDREPLACE~
+      END
+      REPLACE_TEXTUALLY ~CDREPLACE~ ~****~
+      PRETTY_PRINT_2DA
+
+  END  
+  
+  OUTER_SET icons = 0
+  ACTION_IF MOD_IS_INSTALLED ~iwdification/setup-iwdification.tp2~ ~80~ BEGIN OUTER_SET icons = 1 END
+  
+  ACTION_CLEAR_ARRAY cd_bard_icons
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_bard_icons BEGIN
+
+    ~%BARD_SONG_BALLAD%.spl~  => 183
+    ~%BARD_SONG_CURRAN%.spl~  => 184
+    ~%BARD_SONG_TYMORA%.spl~  => 185
+    ~%BARD_SONG_KAUDIES%.spl~ => 186
+    ~%BARD_SONG_SIREN%.spl~   => 187
+    ~%BARD_SONG_SITH%.spl~    => 188
+    
+  END
+  
+  ACTION_PHP_EACH cd_bard_icons AS song => new_icon BEGIN  
+
+    COPY_EXISTING ~%song%~ ~override~
+      PATCH_IF icons BEGIN SET icon = new_icon END ELSE BEGIN SET icon = 40 END 
+      LPF DELETE_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 66 END // oBG2 can't stop deafened characters from hearing
+      LPF DELETE_EFFECT INT_VAR match_opcode = 321 END // remove EE no-stacking
+      LPF ALTER_EFFECT INT_VAR match_timing = 0 match_duration = 7 timing = 10 duration = 100 END // oBG2 round times
+      LPF CLONE_EFFECT INT_VAR match_opcode = 142 opcode = 206 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%SOURCE_RES%~ END // re-apply no stacking
+      LPF ALTER_EFFECT INT_VAR match_opcode = 142 parameter2 = icon END // bard song icons
+      
+  END
+  
+  COPY_EXISTING ~%BARD_SONG_CURRAN%.spl~  ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 END // protections
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    
+  COPY_EXISTING ~%BARD_SONG_TYMORA%.spl~  ~override~
+    LPF CD_CONVERT_325 END
+
+  COPY ~%obg2_res_path%/immunity.eff~ ~override/cdixb118.eff~
+    WRITE_ASCIIE 0x30 ~%BARD_SONG_SIREN%~ #8   
+    
+  COPY_EXISTING ~%BARD_SONG_SIREN%.spl~  ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixb118 END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixb118 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 19 opcode = 177 parameter1 =   3 parameter2 = 4 probability1 = 29 STR_VAR resource = cdixb118 END // half-elf charm protection
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 15 opcode = 177 parameter1 =   2 parameter2 = 4 probability1 = 69 STR_VAR resource = cdixb118 END // elf charm protection
+    LPF ALTER_EFFECT INT_VAR match_opcode = 142 match_target = 2 parameter2 = 55 END // stunned icon
+    LPF DELETE_EFFECT INT_VAR match_opcode = 232 END // no wake-on-hit
+
+END

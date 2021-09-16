@@ -1,0 +1,134 @@
+/*
+describe-library{Functions related to BCS scripts. (See also the family of functions in alter_script.tph).}
+*/ 
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{script_install}
+{
+Given a list 'arguments' (syonyms: 'script', 'scripts') of script names (without .baf suffix), located at the location given by location/locbase/path,
+compile them into the override, first applying script_ee_to_vanilla if we're on a non-EE game. If a script is
+missing, whine unless silent=1.</p>
+<p>If instead input is a list of k=>v pairs, compile k.baf to v.bcs (we don't check variables in this case).</p>
+
+<p>
+If the script name is a set variable, compile it to the value of that variable, e.g. if script_for_wyrms is set
+to dw#wyrm1, compile script_for_wyrms.baf to dw#wyrm1.bcs.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION script_install
+	INT_VAR silent=0
+	STR_VAR arguments=""
+			script=""
+			scripts=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	OUTER_SPRINT arguments "%arguments%%scripts%%script%"
+	ACTION_IF "%arguments%" STR_CMP "" BEGIN
+		ACTION_IF INDEX ("=>" "%arguments%")>=0 BEGIN
+			LAF return_first_pair STR_VAR list="%arguments%" RET script=key script_out=value arguments=list END
+		END ELSE BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET script=entry arguments=list END
+			ACTION_IF VARIABLE_IS_SET "%script%" BEGIN
+				OUTER_SPRINT script_out EVAL "%%script%%"
+			END ELSE BEGIN
+				OUTER_SPRINT script_out "%script%"
+			END
+		END
+		LAF sfo_path STR_VAR location locbase path file="%script%.baf" RET file_path END
+		ACTION_IF FILE_EXISTS "%file_path%" BEGIN
+			COPY "%file_path%" "override/%script_out%.bcs"
+				EVALUATE_BUFFER
+				LPF script_ee_to_vanilla END
+				LPF script_custom_hotkeys END
+				COMPILE_BAF_TO_BCS
+			// end of copy
+		END ELSE
+		ACTION_IF !silent BEGIN
+			WARN "script_install error: Script %file_path% is missing, cannot compile."
+		END
+		LAF script_install INT_VAR silent STR_VAR arguments location locbase path END
+	
+	END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{script_ee_to_vanilla}
+{
+On the current file (assumed to be a BAF file) replace EE-only script commands with more-or-less-adequate oBG2 alternatives.
+If ToBEX is installed, replace CheckSpellState with CheckStat; if it isn't, replace it with False().
+Do nothing if we're on EE.
+}
+
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION script_ee_to_vanilla//internal 
+BEGIN
+    PATCH_IF !enhanced_edition BEGIN 
+	 // SPLSTATE to ToBeX extended stats
+     PATCH_IF is_tobex BEGIN
+		 REPLACE_TEXTUALLY "!CheckSpellState(\([^,]*\),\([^)]*\))" "CheckStat(\1,0,\2)"
+		 REPLACE_TEXTUALLY "CheckSpellState(\([^,]*\),\([^)]*\))" "CheckStatGT(\1,0,\2)"
+	 END ELSE BEGIN
+		 REPLACE_TEXTUALLY "!CheckSpellState(\([^,]*\),\([^)]*\))" "True()"
+		 REPLACE_TEXTUALLY "CheckSpellState(\([^,]*\),\([^)]*\))" "False()"	 
+	 END
+     // vanilla doesn't have RunAwayFromNoLeaveArea
+     REPLACE_TEXTUALLY RunAwayFromNoLeaveArea RunAwayFrom
+     REPLACE_TEXTUALLY NinthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY EighthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY SeventhFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY SixthFarthestEnemyOf NearestEnemyOf
+     REPLACE_TEXTUALLY FifthFarthestEnemyOf SecondNearestEnemyOf
+     REPLACE_TEXTUALLY FourthFarthestEnemyOf ThirdNearestEnemyOf
+     REPLACE_TEXTUALLY ThirdFarthestEnemyOf FourthNearestEnemyOf
+     REPLACE_TEXTUALLY SecondFarthestEnemyOf FifthNearestEnemyOf
+     REPLACE_TEXTUALLY FarthestEnemyOf SixthNearestEnemyOf
+     REPLACE_TEXTUALLY "NearestAllyOf(Myself)" "NearestMyGroupOfType([0.0])"
+     REPLACE_TEXTUALLY "NightmareModeOn()" "False()"
+	END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{script_custom_hotkeys}
+{
+On the current file (assumed to be a BAF file) swap any hotkey commands with user-set hotkey remaps,
+as set in the ini. 
+}
+
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION script_custom_hotkeys BEGIN
+    PATCH_IF INDEX_BUFFER ("HotKey")>=0 BEGIN
+		// set hotkey data from ini
+		PATCH_FOR_EACH hotkey IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+			LPF check_ini INT_VAR silent=1 STR_VAR ini="hot_key_%hotkey%" RET value END
+			PATCH_IF "%value%" STRING_EQUAL_CASE "0" BEGIN
+				SPRINT "hot_key_%hotkey%" "%hotkey%"
+			END ELSE BEGIN
+				SPRINT "hot_key_%hotkey%" "%value%"
+			END
+		END
+		// carry out swaps
+		REPLACE_EVALUATE "HotKey(\([A-Z]\))" 
+		BEGIN
+			SPRINT value EVAL "%hot_key_%MATCH1%%"
+		END
+		~HotKey(%value%)~	
+	END
+END
+
+
+

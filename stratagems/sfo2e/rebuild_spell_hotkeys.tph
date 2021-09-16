@@ -1,0 +1,174 @@
+DEFINE_ACTION_FUNCTION rebuild_spell_hotkeys BEGIN
+
+	ACTION_IF !VARIABLE_IS_SET workspace BEGIN
+		OUTER_SPRINT workspace "weidu_external/workspace"
+		MKDIR "%workspace%"
+	END
+
+	LAF get_hidespl_data RET_ARRAY is_hidden END
+	LAF prepare_lua RET_ARRAY occupied_slots END
+	OUTER_SET number=0
+	OUTER_SPRINT priest_insert ""
+	ACTION_FOR_EACH root IN sppr1 sppr2 sppr3 sppr4 sppr5 sppr6 sppr7 BEGIN
+		LAF get_hotkey_spells_by_root STR_VAR root RET_ARRAY hotkey_spells_array END
+		ACTION_PHP_EACH hotkey_spells_array AS resref=>strref BEGIN
+			LAF get_next_free_slot INT_VAR current_slot=number RET number=next_slot END
+			OUTER_SPRINT to_add "		{ %number%, 5, '%resref%',					%strref%,	'',		0,	0 }"
+			ACTION_IF "%priest_insert%" STRING_EQUAL "" BEGIN
+				OUTER_SPRINT priest_insert "%to_add%"
+			END ELSE BEGIN
+				OUTER_SPRINT priest_insert "%priest_insert%,%WNL%%to_add%"
+			END
+		END
+	END
+	OUTER_SPRINT mage_insert ""
+	ACTION_FOR_EACH root IN spwi1 spwi2 spwi3 spwi4 spwi5 spwi6 spwi7 spwi8 spwi9 BEGIN
+		LAF get_hotkey_spells_by_root STR_VAR root RET_ARRAY hotkey_spells_array END
+		ACTION_PHP_EACH hotkey_spells_array AS resref=>strref BEGIN
+			LAF get_next_free_slot INT_VAR current_slot=number RET number=next_slot END
+			OUTER_SPRINT to_add "		{ %number%, 6, '%resref%',					%strref%,	'',		0,	0 }"
+			ACTION_IF "%mage_insert%" STRING_EQUAL "" BEGIN
+				OUTER_SPRINT mage_insert "%to_add%"
+			END ELSE BEGIN
+				OUTER_SPRINT mage_insert "%mage_insert%,%WNL%%to_add%"
+			END
+		END
+	END
+	COPY_EXISTING bgee.lua override
+		REPLACE_TEXTUALLY DW_INSERT_POINT_PRIEST_SPELLS "%priest_insert%"
+		REPLACE_TEXTUALLY DW_INSERT_POINT_MAGE_SPELLS "%mage_insert%"
+
+END
+
+
+DEFINE_ACTION_FUNCTION prepare_lua
+	RET_ARRAY occupied_slots
+BEGIN
+	// destructively get data from a copy of BGEE.LUA
+	COPY_EXISTING "bgee.lua" "%workspace%"
+		SET found_first=0
+		REPLACE_TEXTUALLY "%TAB%" " "
+		REPLACE_EVALUATE "{ +\([0-9]+\), +[1-4], [^}]*}" BEGIN
+			SET $occupied_slots("%MATCH1%")=1
+		END
+		""
+		REPLACE_EVALUATE "{ +[0-9]+, +5, +'\(SPPR[0-9]+\)" BEGIN
+			PATCH_IF !found_first BEGIN
+				SET found_first=1
+				SPRINT first_priest_spell "%MATCH1%"
+			END
+			SPRINT last_priest_spell "%MATCH1%"
+		END
+		""
+		SET found_first=0
+		REPLACE_EVALUATE "{ +[0-9]+, +6, +'\(SPWI[0-9]+\)" BEGIN
+			PATCH_IF !found_first BEGIN
+				SET found_first=1
+				SPRINT first_mage_spell "%MATCH1%"
+			END
+			SPRINT last_mage_spell "%MATCH1%"
+		END
+		""
+	// now patch the original
+	COPY_EXISTING "bgee.lua" override
+		REPLACE_TEXTUALLY ".*%first_priest_spell%.*" "DW_INSERT_POINT_1"
+		REPLACE_TEXTUALLY ".*%last_priest_spell%.*" "DW_INSERT_POINT_PRIEST_SPELLS"
+		start_point = INDEX_BUFFER ("DW_INSERT_POINT_1")
+		end_point = INDEX_BUFFER ("DW_INSERT_POINT_PRIEST_SPELLS")
+		DELETE_BYTES start_point (end_point - start_point)
+		REPLACE_TEXTUALLY ".*%first_mage_spell%.*" "DW_INSERT_POINT_2"
+		REPLACE_TEXTUALLY ".*%last_mage_spell%.*" "DW_INSERT_POINT_MAGE_SPELLS"
+		start_point = INDEX_BUFFER ("DW_INSERT_POINT_2")
+		end_point = INDEX_BUFFER ("DW_INSERT_POINT_MAGE_SPELLS")
+		DELETE_BYTES start_point (end_point - start_point)
+
+
+END
+
+DEFINE_ACTION_FUNCTION get_hotkey_spells_by_root
+	INT_VAR display_output=0
+	STR_VAR root=""
+	RET_ARRAY hotkey_spells_array
+BEGIN
+	ACTION_CLEAR_ARRAY hotkey_spells_array
+	ACTION_CLEAR_ARRAY ordering_array
+	ACTION_CLEAR_ARRAY strref_array
+	COPY_EXISTING_REGEXP "%root%[0-9]+\.spl" "%workspace%"
+		SPRINT resref "%SOURCE_RES%"
+		TO_UPPER resref
+		PATCH_IF !VARIABLE_IS_SET $is_hidden("%resref%") BEGIN
+			READ_LONG 0x8 name_strref
+			READ_STRREF 0x8 name_string
+			SPRINT $strref_array("%name_strref%")  "%resref%"
+			SPRINT $ordering_array("%name_string%") "%name_strref%"				
+		END	
+	BUT_ONLY
+	ACTION_SORT_ARRAY_INDICES ordering_array LEXICOGRAPHICALLY
+	ACTION_PHP_EACH ordering_array AS discard=>strref BEGIN
+		OUTER_SPRINT resref $strref_array("%strref%")
+		OUTER_SPRINT $hotkey_spells_array("%resref%") "%strref%"
+	END
+	// for debugging
+	ACTION_IF display_output BEGIN
+		ACTION_PHP_EACH hotkey_spells_array AS resref=>strref BEGIN
+		    ACTION_GET_STRREF strref name
+			PRINT "%resref% (%name%)"
+		END
+	END
+END
+
+
+DEFINE_ACTION_FUNCTION get_next_free_slot
+	INT_VAR current_slot=0
+	RET next_slot
+BEGIN
+	ACTION_IF current_slot>9999 BEGIN
+		FAIL "emergency exit from loop"
+	END
+	OUTER_SET current_slot +=1
+	ACTION_IF VARIABLE_IS_SET $occupied_slots("%current_slot%") BEGIN
+		LAF get_next_free_slot INT_VAR current_slot RET next_slot END
+	END ELSE BEGIN
+		OUTER_SET next_slot=current_slot
+	END
+END
+
+
+
+
+
+
+
+DEFINE_ACTION_FUNCTION get_hidespl_data 
+	RET_ARRAY is_hidden
+BEGIN
+        COPY_EXISTING hidespl.2da override
+            READ_2DA_ENTRIES_NOW hidespl_array 4
+            FOR (i=0;i<hidespl_array;i+=1) BEGIN
+               READ_2DA_ENTRY_FORMER hidespl_array i 0 resref
+               TO_UPPER resref
+               READ_2DA_ENTRY_FORMER hidespl_array i 1 is_hidden
+               SET $is_hidden("%resref%")=is_hidden
+               READ_2DA_ENTRY_FORMER hidespl_array i 2 is_final
+               READ_2DA_ENTRY_FORMER hidespl_array i 3 is_removed
+               SET $is_removed("%resref%")=is_removed
+               PATCH_IF is_final BEGIN
+                  SET $final_entry("%resref%")=1
+               END
+            END
+        BUT_ONLY
+        // find and add the spells we need to add
+        ACTION_PHP_EACH final_entry AS key=>discard BEGIN
+           OUTER_INNER_PATCH "%key%" BEGIN
+              READ_ASCII 0x0 start (5)
+              READ_ASCII 0x5 number (2)
+           END
+           OUTER_FOR (n=number+1;n<100;n+=1) BEGIN
+              OUTER_SPRINT resref "%start%%n%"
+              ACTION_IF (FILE_EXISTS_IN_GAME "%resref%.spl" && !VARIABLE_IS_SET $is_hidden("%resref%")) BEGIN
+                    OUTER_SET $is_hidden("%resref%")=1
+                    OUTER_SET $is_removed("%resref%")=0
+              END
+           END
+        END
+END

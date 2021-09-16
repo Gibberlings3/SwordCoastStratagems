@@ -1,0 +1,381 @@
+/*
+describe-library{
+Functions here should be pure functions (no side effects, no reference to external data) and so should all be dimorphic. No specific naming convention.
+Be cautious putting functions in here.
+
+Functions here should have no dependencies outside lib_fn.
+}
+
+
+
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{return_first_entry}
+{
+Given a list of strings (separated by spaces, either bare or in "" or ~~ quotes), return the first entry, and the rest of the list. If 'separator' is specified,
+use it instead of space to separate strings. (It should be a single character.)
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION return_first_entry
+	 STR_VAR list=""
+			 separator=" "
+     RET     entry
+             list
+BEGIN
+	ACTION_IF "%separator%" STR_EQ "" BEGIN
+		FAIL "return_first_entry called with empty separator (list=%list%)"
+	END
+	LAF trim_string STR_VAR string="%list%" character="%separator%" RET list=string END
+	OUTER_PATCH_SAVE list "%list%" BEGIN
+		PATCH_IF BUFFER_LENGTH=0 BEGIN
+			SPRINT entry ""
+			SPRINT list ""
+			PATCH_WARN "return_first_entry called on empty string"
+		END ELSE BEGIN
+		// get the first character, to check version
+			pointer=0
+			done=0
+			in_tilde_quote=0
+			in_quote=0
+			WHILE !done BEGIN
+			// get the character
+				READ_ASCII pointer char (1)
+			// match it
+				PATCH_MATCH "%char%" WITH
+				"%separator%" BEGIN
+					// if we're not in quote context, we're done. If we are, ignore it.
+					PATCH_IF !in_quote && !in_tilde_quote BEGIN
+						done=1
+					END
+				END
+				~"~ BEGIN
+					// toggle quote context
+					in_quote=!in_quote
+				END
+				"~"BEGIN
+					// toggle quote context
+					in_tilde_quote=!in_tilde_quote
+				END
+				DEFAULT
+				END
+				// advance the pointer
+				++pointer
+				PATCH_IF pointer=BUFFER_LENGTH BEGIN
+					done=1
+					++pointer
+				END 
+			END
+			// extract the string
+			READ_ASCII 0x0 entry (pointer - 1)
+			DELETE_BYTES 0x0 (pointer - 1)
+			
+		END
+
+
+	END
+	LAF trim_string STR_VAR string="%list%" character="%separator%" RET list=string END
+	LAF trim_string STR_VAR string="%entry%" character="%separator%" RET entry=string END
+	OUTER_PATCH_SAVE entry "%entry%" BEGIN
+		REPLACE_TEXTUALLY "^~\(.*\)~$" "\1"
+		REPLACE_TEXTUALLY ~^"\(.*\)"$~ "\1"
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{trim_string}
+{
+Given a single string, and a character (space by default) remove any occurrences of the character from the beginning and end of the string.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION trim_string
+	STR_VAR character=" " 
+			string=""
+	RET string
+BEGIN
+	OUTER_PATCH_SAVE string "%string%" BEGIN
+	 ind=INDEX_BUFFER ("%character%")
+	 WHILE ind=0 BEGIN
+		DELETE_BYTES 0x0 1
+		ind=INDEX_BUFFER ("%character%")
+	 END
+	 
+	 rind=RINDEX_BUFFER ("%character%")
+	 len=BUFFER_LENGTH
+	 WHILE len>0 && rind=len - 1 BEGIN
+		DELETE_BYTES (BUFFER_LENGTH - 1) 1
+		rind=RINDEX_BUFFER ("%character%")
+		len=BUFFER_LENGTH
+	 END
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{return_first_pair}
+{
+Given a string in the form 'key=>value list', return the first key, the first value, and the rest of the string. if 'arrow' is specified, its value is used in place of 
+'=>' to separate key-value pairs. 'key' and 'value' can be bare strings or can be wrapped in "" or ~~.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION return_first_pair
+     STR_VAR list=""
+             arrow="=>"
+     RET list
+         key
+         value
+
+BEGIN
+	OUTER_PATCH_SAVE list ~%list%~ BEGIN REPLACE_TEXTUALLY ~%arrow%~ ~ %arrow% ~ END
+     // we can now treat the list as an ordinary list. Return the first entry, discard the second (which should be =>), return the third
+     LAF return_first_entry STR_VAR list RET list key=entry END
+     LAF return_first_entry STR_VAR list RET list discard=entry END
+     ACTION_IF ~%discard%~ STR_CMP ~%arrow%~ BEGIN
+        WARN "Warning: it looks as if some entry that should be a key%arrow%value list, isn't (~list~ is currently %list%, key=%key%)"
+     END
+     LAF return_first_entry STR_VAR list RET list value=entry END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{tolower}
+{
+Given a string, return it in lower case. (This is for use in functional programming - WEIDU's TO_LOWER suffices for first-order code.)
+}
+
+document{toupper}
+{
+Given a string, return it in upper case.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION tolower STR_VAR arguments="" RET value BEGIN OUTER_SPRINT value "%arguments%" ACTION_TO_LOWER value END
+DEFINE_DIMORPHIC_FUNCTION toupper STR_VAR arguments="" RET value BEGIN OUTER_SPRINT value "%arguments%" ACTION_TO_UPPER value END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{eval}
+{
+Given a string, return its value if it's a variable, or the string itself if not.
+Also permits 'argument'->'value' interface.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION eval
+	STR_VAR var=""
+			arguments=""
+	RET var value
+BEGIN
+	ACTION_IF "%var%" STR_EQ "" BEGIN
+		OUTER_SPRINT var "%arguments%"
+	END
+	ACTION_IF VARIABLE_IS_SET "%var%" BEGIN
+		OUTER_SPRINT var EVAL "%%var%%"
+	END 
+	OUTER_SPRINT value "%var%"
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{point_in_bounds}
+{
+Determine whether (x,y) are inside the rectangle with bottom left point (xmin,ymin) and top right point (xmax,ymax)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_DIMORPHIC_FUNCTION point_in_bounds
+   INT_VAR x=0
+           xmin=0
+           xmax=0
+           y=0
+           ymin=0
+           ymax=0
+   RET in_bounds
+       x_in_bounds
+       y_in_bounds
+BEGIN
+   OUTER_INNER_PATCH "" BEGIN
+      LPF point_in_bounds
+          INT_VAR x xmin xmax y ymin ymax 
+          RET in_bounds x_in_bounds y_in_bounds
+      END
+   END
+END
+
+//////////////////////////////////////////
+/*
+document{divide_round_up}
+{
+Divide two numbers, rounding up
+any remainder
+}
+*/
+//////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION divide_round_up
+   INT_VAR numerator=0
+           denominator=0
+   RET value
+BEGIN
+	OUTER_PATCH "" BEGIN
+   PATCH_IF (numerator / denominator) * denominator = numerator BEGIN
+      SET value = numerator / denominator
+   END ELSE BEGIN
+      SET value = (numerator / denominator) + 1
+   END
+   END
+END
+
+
+//////////////////////////////////////////
+/*
+document{invert_string}
+{
+Break 'string' into 'block_size'xN substrings,
+and invert the order of those substrings. }
+*/
+//////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION invert_string
+    INT_VAR block_size=0
+    STR_VAR string=""
+    RET string
+BEGIN	
+	OUTER_PATCH "" BEGIN
+    SET number=(STRING_LENGTH "%string%") / block_size
+    SPRINT string_old "%string%"
+    SPRINT string ""
+    INNER_PATCH "%string_old%" BEGIN
+      FOR (n=0;n<number;n+=1) BEGIN
+          SET index=n*block_size
+          READ_ASCII index data (block_size)
+          SPRINT string "%data%"^"%string%"
+      END
+    END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+
+document{ensure_hex}
+{
+Forces the string 'in' into hex form and passes it as 'out'. If pad_length is set to a non-zero value, ensure the hex is (at least) that long.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION ensure_hex
+     INT_VAR pad_length=0
+     STR_VAR in=""
+     RET out
+BEGIN
+	OUTER_PATCH "" BEGIN
+      SNPRINT 2 check "%in%"
+      PATCH_IF "%check%" STRING_EQUAL_CASE "0x" BEGIN
+         PATCH_IF pad_length>0 BEGIN
+            INNER_PATCH_SAVE in "%in%" BEGIN
+               DELETE_BYTES 0x0 2
+            END
+            WHILE pad_length>STRING_LENGTH "%in%" BEGIN
+               SPRINT in "0%in%"
+            END
+            SPRINT in "0x%in%"
+         END
+         TO_LOWER in
+         SPRINT out "%in%"
+      END ELSE BEGIN
+         LPF hexify INT_VAR in pad_length RET out END
+      END
+	END
+END
+
+DEFINE_PATCH_FUNCTION hex_digit//internal
+    INT_VAR digit=0
+    RET out
+BEGIN
+   PATCH_IF (digit>=16 || digit<0) BEGIN
+            INNER_ACTION BEGIN
+               FAIL "not a digit"
+            END
+   END
+   PATCH_CLEAR_ARRAY hex_digit_map
+   DEFINE_ASSOCIATIVE_ARRAY hex_digit_map BEGIN
+      15=>f
+      14=>e
+      13=>d
+      12=>c
+      11=>b
+      10=>a
+   END
+   PATCH_IF VARIABLE_IS_SET $hex_digit_map("%digit%") BEGIN
+      SPRINT out $hex_digit_map("%digit%")
+   END ELSE BEGIN
+      SPRINT out "%digit%"
+   END
+END
+
+DEFINE_PATCH_FUNCTION hexify//internal
+    INT_VAR in=0
+            pad_length=0
+    STR_VAR out=""
+    RET out
+BEGIN
+   SET div=in / 16
+   SET digit=in - (div * 16)
+   LPF hex_digit INT_VAR digit RET char=out END
+   SPRINT out "%char%%out%"
+   PATCH_IF div>0 BEGIN
+      LPF hexify INT_VAR in= "%div%" pad_length STR_VAR out RET out=out  END
+   END ELSE BEGIN
+      WHILE pad_length>STRING_LENGTH "%out%" BEGIN
+         SPRINT out "0%out%"
+      END
+      SPRINT out "0x%out%"
+
+
+   END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+
+document{despecialize}
+{
+Take a string, and return it with any WEIDU regexp special characters escaped out.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION despecialize 
+	STR_VAR string=""
+	RET string
+BEGIN
+	OUTER_PATCH_SAVE string "%string%" BEGIN
+		PATCH_FOR_EACH spc IN "\" "$" "^" "." "*" "+" "?" "[" "]"  BEGIN
+			REPLACE_TEXTUALLY EXACT_MATCH "%spc%" "\%spc%"
+		END
+	END
+END
+

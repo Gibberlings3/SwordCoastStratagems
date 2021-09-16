@@ -1,0 +1,108 @@
+/*
+describe-library
+{Functions to interact with ini files. (Probably quite short, since we probably won't write them and once we've read them in we can use array tools.)
+
+Functions here should begin with 'ini_'}
+
+*/
+
+/*
+document{ini_read}
+{
+Read in a file, or in patch context this file, in the 'ini' format. By default, store it in a 2d array (section,key)-> value. If 'flat' is set, instead store it as key=>value, ignoring sections. 
+If 'backwards' is set, swap key and value. if 'case' is set, force the key and value into upper or lower case.
+Also return a k=>_ array 'section_array' of section keys.
+
+In action context, if path,location, and locbase are all blank, assume an in-game ini file.
+
+Ini entries wrapped in "" will have them stripped.
+}
+*/
+
+DEFINE_PATCH_FUNCTION ini_read
+	INT_VAR backwards=0//Boolean
+			flat=0//Boolean
+	STR_VAR case=""//[upper|lower]
+	RET_ARRAY array section_array
+BEGIN
+	CLEAR_ARRAY array
+	CLEAR_ARRAY section_array
+	SPRINT section default
+	READ_ASCII 0x0 data (BUFFER_LENGTH)
+	LPF data_lines STR_VAR data RET_ARRAY lines END
+	PHP_EACH lines AS ind=>line BEGIN
+		INNER_PATCH "%line%" BEGIN
+			READ_ASCII (BUFFER_LENGTH - 1) last_char (1)
+			REPLACE_EVALUATE "^\[\([^]]*\)\]" BEGIN
+				SPRINT section "%MATCH1%"
+				PATCH_MATCH "%case%" WITH
+				upper BEGIN
+					TO_UPPER section
+				END
+				lower BEGIN
+					TO_LOWER section
+				END
+				DEFAULT
+				END
+				SPRINT $section_array("%section%") ""
+			END
+			""
+			REPLACE_EVALUATE "\(^[^ =%WNL%%LNL%%MNL%]*[^ %TAB%]\)[ %TAB%]*=[ %TAB%]*\([^ %TAB%].*\)" BEGIN
+			SPRINT key "%MATCH1%"
+			SPRINT value "%MATCH2%"
+			INNER_PATCH_SAVE key "%key%" BEGIN
+				REPLACE_TEXTUALLY "^[ %TAB%]+" "" // strip leading spaces
+			END
+			INNER_PATCH_SAVE value "%value%" BEGIN	// strip trailing spaces
+				REPLACE_TEXTUALLY "[ %TAB%]+$" ""
+			END
+			PATCH_MATCH "%case%" WITH
+			upper BEGIN
+				TO_UPPER key
+				TO_UPPER value
+			END
+			lower BEGIN
+				TO_LOWER key
+				TO_LOWER value
+			END
+			DEFAULT
+			END
+			LPF trim_string STR_VAR string="%value%" character=~"~ RET value=string END
+			PATCH_IF backwards BEGIN
+					SPRINT temp "%value%"
+					SPRINT value "%key%"
+					SPRINT key "%temp%"
+				END
+				PATCH_IF flat BEGIN
+					SPRINT $array("%key%") "%value%"
+				END ELSE BEGIN
+					SPRINT $array("%section%" "%key%") "%value%"
+				END
+			END
+			""
+		END	
+	END
+
+END
+
+DEFINE_ACTION_FUNCTION ini_read
+	INT_VAR backwards=0//Boolean
+			flat=0//Boolean
+	STR_VAR file=""
+			path=""
+			location=""
+			locbase=""
+			case=""//[upper|lower]
+	RET_ARRAY array section_array
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET path END
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		COPY_EXISTING - "%file%" nowhere
+			LPF ini_read INT_VAR backwards flat STR_VAR case RET_ARRAY array section_array END
+		BUT_ONLY
+	END ELSE BEGIN
+		COPY - "%path%/%file%" nowhere
+			LPF ini_read INT_VAR backwards flat STR_VAR case RET_ARRAY array section_array END
+		BUT_ONLY	
+	END
+END

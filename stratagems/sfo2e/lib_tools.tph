@@ -1,0 +1,264 @@
+/*
+describe-library
+{
+Functions here do simple, IE-independent tasks. (If they're pure functions without side effects they should be in lib_fn instead.)
+No special naming conventions. (Be cautious!)
+
+Functions here should have no dependencies outside lib_tools.
+}
+*/
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{data_lines}
+{
+Given either 'data' (a string) or a path to a file, return either the string or the file separated into an array of lines, separated by line-breaks.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION data_lines
+	STR_VAR data="" path="" file=""
+	RET_ARRAY lines
+BEGIN
+	ACTION_IF !("%file%" STR_EQ "") BEGIN
+		COPY - "%path%/%file%" "%workspace%"
+			READ_ASCII 0x0 data (BUFFER_LENGTH)
+	END
+	OUTER_PATCH "%data%" BEGIN
+		CLEAR_ARRAY lines
+		count=0
+		REPLACE_EVALUATE "^\([^%WNL%%MNL%%LNL%]+\)" BEGIN
+			SPRINT $lines("%count%") "%MATCH1%"
+			++count
+		END	
+		""
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{read_whatever}
+{
+Given an offset in the current file, and given a length that is 1,2,or 4, read the appropriate-length integer from that offset.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION read_whatever
+	INT_VAR length=0//[1|2|4]
+			offset=0
+	RET value
+BEGIN
+	PATCH_MATCH "%length%" WITH
+	4 BEGIN
+		READ_LONG offset value
+	END
+	2 BEGIN
+		READ_SHORT offset value
+	END
+	1 BEGIN
+		READ_BYTE offset value
+	END
+	DEFAULT
+		PATCH_WARN "length %length% is not recognised by write_whatever"
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{write_whatever}
+{
+Given an offset in the current file, a length that is 1,2,or 4, and an integer, write the integer to an appropriate-length slot at that offset.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION write_whatever
+	INT_VAR length=0//[1|2|4]
+			write=0
+			offset=0
+BEGIN
+	PATCH_MATCH "%length%" WITH
+	4 BEGIN
+		WRITE_LONG offset write
+	END
+	2 BEGIN
+		WRITE_SHORT offset write
+	END
+	1 BEGIN
+		WRITE_BYTE offset write
+	END
+	DEFAULT
+		PATCH_WARN "length %length% is not recognised by write_whatever"
+	END
+END
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{find_parenthesis_range}
+{
+given an index in a file, a left string, and a right string, extract the
+index number of the left string and the matching right string
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION find_parenthesis_range
+     STR_VAR left="{"
+             right="}"
+             index=0
+     RET     start
+             end
+BEGIN
+     SET next_right="-1"
+     SET start=INDEX_BUFFER("%left%" index)
+     PATCH_IF start>=0 BEGIN
+        SET indent=1
+        SET loc=start + 1
+        WHILE indent>0 BEGIN
+           SET next_left = INDEX_BUFFER ("%left%" loc)
+           SET next_right = INDEX_BUFFER ("%right%" loc)
+           PATCH_IF next_right<0 BEGIN
+              SET indent=0
+              PATCH_WARN "Failed to properly extract next %left%---%right% section from file %SOURCE_RES%, starting at %index%" 
+           END ELSE 
+           PATCH_IF next_left<0 BEGIN
+              SET indent -=1
+              SET loc=next_right + 1
+           END ELSE
+           PATCH_IF (next_left<next_right && next_left>=0) BEGIN
+              SET indent +=1
+              SET loc=next_left + 1
+           END ELSE BEGIN
+              SET indent -=1
+              SET loc=next_right + 1
+           END
+        END
+        SET end=next_right
+     END ELSE BEGIN
+		end="-1"
+	 END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{GET_UNIQUE_FILE_NAME}
+{
+A temporary fix for the WEIDU version, until Wisp fixes it.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_PATCH_FUNCTION ~GET_UNIQUE_FILE_NAME~
+  STR_VAR
+          extension = ""
+          base = ""
+  RET filename
+  BEGIN
+    PATCH_IF ~%extension%~ STRING_EQUAL_CASE ~~ THEN BEGIN
+      PATCH_FAIL ~GET_UNIQUE_FILE_NAME requires to define the extension variable.~
+    END
+
+    INNER_ACTION BEGIN
+      ACTION_IF ! FILE_EXISTS_IN_GAME ~get_unique_filename_%extension%.ids~ THEN BEGIN
+        <<<<<<<< empty
+        >>>>>>>>
+        COPY + empty ~override/get_unique_filename_%extension%.ids~
+      END
+    END
+
+    value = ("%base%" STR_CMP "")? IDS_OF_SYMBOL (~get_unique_filename_%extension%~ ~%base%~): 0 - 1
+	PATCH_IF value = 0 - 1 THEN BEGIN
+      found = 0
+      WHILE !found BEGIN
+        ++value
+        LPF ~BASE36~ INT_VAR value = value RET maybe = base36 END
+        LOOKUP_IDS_SYMBOL_OF_INT exists ~get_unique_filename_%extension%~ value
+        PATCH_IF IS_AN_INT exists
+          && !FILE_EXISTS_IN_GAME ~__%maybe%.%extension%~ THEN BEGIN
+          found = 1
+        END
+      END
+      PATCH_IF "%base%" STR_CMP "" BEGIN
+		  INNER_ACTION BEGIN
+			APPEND + ~get_unique_filename_%extension%.ids~ ~%value% %base%~
+		  END
+	  END
+    END ELSE BEGIN
+      LPF ~BASE36~ INT_VAR value = value RET maybe = base36 END
+    END
+
+    SPRINT filename ~__%maybe%~
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{append}
+{
+Append the string 'arguments' at the end of the file 'file' at locations given by location/locbase/path (or, in patch context, at the end of the current file), with no spacing or line breaks
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION append 
+	STR_VAR arguments=""
+BEGIN
+	insert_point=BUFFER_LENGTH
+	INSERT_BYTES insert_point STRING_LENGTH "%arguments%"
+	WRITE_ASCII insert_point "%arguments%"
+END
+
+DEFINE_ACTION_FUNCTION append
+	INT_VAR no_log=0
+	STR_VAR arguments=""
+			file=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET file_path END
+	ACTION_IF no_log BEGIN
+		COPY + "%file_path%" "%file_path%"
+			LPF append STR_VAR arguments END	
+	END ELSE BEGIN
+		COPY "%file_path%" "%file_path%"
+			LPF append STR_VAR arguments END
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{new_file}
+{
+Create a new file 'file' at locations given by location/locbase/path, containing only the string 'arguments' with no spacing or line breaks
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION new_file
+	INT_VAR no_log=0
+	STR_VAR arguments=""
+			file=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET file_path END
+	ACTION_IF no_log BEGIN
+		COPY + ".../stratagems-inline/blank" "%file_path%"
+			LPF append STR_VAR arguments END	
+	END ELSE BEGIN
+		COPY ".../stratagems-inline/blank" "%file_path%"
+			LPF append STR_VAR arguments END
+	END
+END
+	

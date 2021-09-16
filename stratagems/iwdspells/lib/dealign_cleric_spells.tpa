@@ -1,0 +1,92 @@
+// removes good/evil axis alignment restrictions from all cleric spells except those specifically called out
+// description adjustment is heuristic, based on the presence of a set of strings (10001-10020 in the tra file,
+// by default dw_iwdspells_divine.tra)
+//
+// For reasons I don't recall, if version=0 we don't patch descriptions
+
+DEFINE_ACTION_FUNCTION dealign_cleric_spells STR_VAR version=1 BEGIN
+
+	// load dialog strings
+	
+	ACTION_IF version=1 BEGIN
+	  ACTION_CLEAR_ARRAY dealign_dialog_array
+	  OUTER_FOR (line=1;line<=20;++line) BEGIN
+		OUTER_SET tra_ref=line+10000
+		OUTER_SPRINT $dealign_dialog_array("%line%") (AT tra_ref)
+	  END
+	END
+	
+	// load special cases
+	ACTION_CLEAR_ARRAY dealign_exclude
+	ACTION_FOR_EACH special_spell IN CLERIC_HOLY_WORD CLERIC_UNHOLY_WORD CLERIC_HOLY_SMITE CLERIC_UNHOLY_BLIGHT CLERIC_SHIELD_OF_LATHANDER CLERIC_GREATER_SHIELD_OF_LATHANDER CLERIC_FAVOR_OF_ILMATER BEGIN
+		ACTION_IF IDS_OF_SYMBOL (spell "%special_spell%")>=0 BEGIN
+			LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="%special_spell%" RET spell_res END
+			ACTION_TO_UPPER spell_res
+			OUTER_SPRINT $dealign_exclude("%spell_res%") ""
+		END
+	END
+	
+	// main pass through spells
+	
+	COPY_EXISTING_REGEXP "sppr[1-7][0-9][0-9]\.spl" override
+		SPRINT filename "%SOURCE_RES%"
+		TO_UPPER filename
+		PATCH_IF !VARIABLE_IS_SET $dealign_exclude("%filename%") BEGIN
+			// the actual alignment shift (much the easiest bit!)
+			READ_BYTE 0x1e align_byte_old
+			align_byte_new= align_byte_old BAND 0b11110001
+			PATCH_IF !(align_byte_new=align_byte_old) BEGIN
+				// set new alignment shift
+				WRITE_BYTE 0x1e align_byte_new
+				// set description
+				PATCH_IF version=1 BEGIN
+				  READ_LONG 0x50 desc_strref
+				  LPF dealign_cleric_spell_description INT_VAR desc_strref END
+				END
+				// if the spell previously couldn't be used by true neutral characters, mark it as unusable by druids if it isn't already
+				block_druids=0
+				PATCH_IF !((align_byte_old BAND 0b00101000)=0) BEGIN
+					READ_BYTE 0x21 druid_check
+					block_druids=((druid_check BAND 0b10000000)=0) 
+					PATCH_IF block_druids BEGIN
+						WRITE_BYTE 0x21 (druid_check BOR 0b10000000)
+					END				
+				END 
+				// update scroll
+				INNER_PATCH_SAVE scroll_resref "%filename%" BEGIN
+					REPLACE_TEXTUALLY "SPPR" "CDID"
+				END
+				PATCH_IF FILE_EXISTS_IN_GAME "%scroll_resref%.itm" BEGIN
+					INNER_ACTION BEGIN
+						COPY_EXISTING "%scroll_resref%.itm" override
+							align_byte_itm=align_byte_new BAND 0b00111111
+							align_byte_itm_rest=( BYTE_AT 0x1e BAND 0b11000000)
+							WRITE_BYTE 0x1e (align_byte_itm BOR align_byte_itm_rest)
+							PATCH_IF block_druids BEGIN
+								WRITE_BYTE 0x21 ((BYTE_AT 0x21) BOR 0b01000000)
+							END
+						BUT_ONLY
+					END
+				END
+			END
+		END
+	BUT_ONLY
+
+END
+
+DEFINE_PATCH_FUNCTION dealign_cleric_spell_description INT_VAR desc_strref=0 BEGIN
+
+  PATCH_IF desc_strref>0 BEGIN
+	GET_STRREF desc_strref desc
+	INNER_PATCH_SAVE desc "%desc%" BEGIN
+		FOR (line=1;line<=20;++line) BEGIN
+			SPRINT string $dealign_dialog_array("%line%")
+			REPLACE_TEXTUALLY "\.[^.]*%string%[^.]*\." "."
+		END
+	END
+	INNER_ACTION BEGIN
+		STRING_SET_EVALUATE desc_strref "%desc%"
+	END
+  END
+
+END

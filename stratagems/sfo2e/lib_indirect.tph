@@ -1,0 +1,63 @@
+/*
+describe-library
+{
+The purpose of this library is to manage namespace in large projects by creating lookups for resources.
+The main macro loads a series of variables, each naming a resource; that resource can then be identified
+throughout the mod via that variable. Resources live in lib/resource_id.
+}
+*/
+
+/*
+document{indirect_load}
+{
+Load the various variables in resource_id, checking for duplicates and prebuilding any listed duplicates
+}
+*/
+
+DEFINE_ACTION_MACRO indirect_load BEGIN
+
+	LOCAL_SPRINT rowcount ""
+	LOCAL_SPRINT name ""
+	LOCAL_SPRINT resref ""
+	LOCAL_SPRINT oldval ""
+	LOCAL_SPRINT array_id ""
+	ACTION_IF !VARIABLE_IS_SET sfo_indirect_load_done BEGIN
+		OUTER_SET sfo_indirect_load_done=1
+		PRINT "Loading indirect-reference variables..."
+		ACTION_BASH_FOR "%MOD_FOLDER%/lib/resource_id" ".*\.2da" BEGIN
+			COPY - "%BASH_FOR_FILESPEC%" nowhere
+				REPLACE_TEXTUALLY "//.*" ""
+				COUNT_2DA_ROWS 2 rowcount
+				FOR (i=1;i<rowcount;i+=1) BEGIN
+					READ_2DA_ENTRY i 0 2 name
+					READ_2DA_ENTRY i 1 2 resref
+					SPRINT array_id "%BASH_FOR_RES%_id"
+					SPRINT $%array_id%("%name%") "%resref%"
+					PATCH_IF VARIABLE_IS_SET "%name%" BEGIN
+						SPRINT oldval EVAL "%%name%%"
+						PATCH_WARN "Duplicate variable %name% is already set to %oldval%"
+					END
+					PATCH_IF VARIABLE_IS_SET $has_been_used("%BASH_FOR_RES%" "%resref%") && !("%resref%" STRING_MATCHES_REGEXP ".*[a-z].*") BEGIN
+						PATCH_WARN "resref %resref% is used more than once in file %BASH_FOR_FILESPEC%"
+					END ELSE BEGIN
+						SPRINT $has_been_used("%BASH_FOR_RES%" "%resref%") ""
+					END
+					SPRINT "%name%" "%resref%"    
+					// specifically for dialogs, build them
+					PATCH_MATCH "%BASH_FOR_RES%" WITH
+					dialogs BEGIN
+						PATCH_IF !FILE_EXISTS_IN_GAME "%resref%.dlg" BEGIN
+							INNER_ACTION BEGIN
+								LAF dlg_make STR_VAR dlg="%resref%" END
+							END
+						END
+					END
+					DEFAULT
+					END
+				END
+			BUT_ONLY
+		END
+		PRINT "...done"
+	END
+		
+END

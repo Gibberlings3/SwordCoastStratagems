@@ -1,0 +1,71 @@
+/*
+document{ids_resolve}
+{
+Given an ids file and an ids symbol, return its int value, adding it if necessary. min and max are the minimum and maximum values to try.
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION ids_resolve
+	INT_VAR min="0"
+			max="-1"
+	STR_VAR ids="" 
+			idsfile=""
+	RET 	value
+BEGIN
+	// start by checking for it
+	OUTER_SET value=IDS_OF_SYMBOL ("%idsfile%" "%ids%")
+	ACTION_IF value<0 BEGIN
+		LAF 2da_read STR_VAR file="%idsfile%.ids" RET_ARRAY idsarray=array END
+		LAF 2da_extract_array STR_VAR array=idsarray domain=int range=sym RET_ARRAY idslookup=array END
+		OUTER_SET index=min
+		OUTER_WHILE ((index<max || max<0) && value<0) BEGIN
+			ACTION_IF !VARIABLE_IS_SET $idslookup("%index%") BEGIN
+				OUTER_SET value=index
+			END
+			OUTER_SET ++index
+		END
+		ACTION_IF value>=0 BEGIN
+			OUTER_SPRINT $idsarray("new" "int") "%value%"
+			OUTER_SPRINT $idsarray("new" "sym") "%ids%"
+			APPEND "%idsfile%.ids" "%value%%TAB%%ids%"
+		END ELSE BEGIN
+			WARN "Unable to find an ids value between %min% and %max% for %ids% in %idsfile%.ids"
+		END	
+	END
+END
+
+/*
+document{ids_sort}
+{
+Given an ids file, sort it numerically by index, preserving duplicates
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION ids_sort 
+	STR_VAR idsfile=""
+BEGIN
+	COPY_EXISTING "%idsfile%.ids" override
+		CLEAR_ARRAY sortarray
+		LPF 2da_read RET_ARRAY array rows END
+		PHP_EACH rows AS row=>discard BEGIN
+			SPRINT v0 $array("%row%" "int")
+			SPRINT v1 $array("%row%" "sym")
+			SPRINT $SFO_sortarray_base("%v0%") ""
+			SPRINT $"SFO_sortarray_%v0%"("%v1%") ""
+		END
+		CLEAR_ARRAY outarray
+		SORT_ARRAY_INDICES SFO_sortarray_base NUMERICALLY
+		SPRINT data "IDS V1.0%WNL%"
+		PHP_EACH SFO_sortarray_base AS key=>discard BEGIN
+			SORT_ARRAY_INDICES "SFO_sortarray_%key%" LEXICOGRAPHICALLY
+			PHP_EACH "SFO_sortarray_%key%" AS k=>v BEGIN
+				SPRINT data "%data%%key%%TAB%%k%%WNL%"
+			END
+		END
+		DELETE_BYTES 0x0 BUFFER_LENGTH
+		INSERT_BYTES 0x0 STRING_LENGTH "%data%"
+		WRITE_ASCII 0x0 "%data%"
+	BUT_ONLY
+END
+

@@ -1,0 +1,96 @@
+/*
+document{class_edit}
+{
+Edit the class 'class' (or the list of classes 'class'). 'edits' is executed as an anonymous function, which first reads the class into struct 'struct' (default 'k') and then writes that struct back. ('k' so that the same patch can be used for kits and classes.)</p>
+
+<p>If 'edit_strrefs_in_place' is set to 1, any strrefs have their values updated, rather than being
+replaced with new strrefs (use this with caution).</p>
+
+<p>(Arguably this is just an internal function: you can put unkitted classes into kit_edit and it just calls class_edit.)
+}
+*/
+
+DEFINE_ACTION_FUNCTION class_edit
+	INT_VAR edit_strrefs_in_place=0
+	STR_VAR class=""
+			edits=""
+			struct=k
+BEGIN
+	OUTER_WHILE "%class%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%class%" RET this_class=entry class=list END
+		PRINT "Editing class %this_class%..."
+		LAF anon_define 
+			STR_VAR 
+				function="%edits%" 
+				prepend="LPF class_read STR_VAR class=~%this_class%~ RET_ARRAY %struct%=struct END" 
+				append="LPF class_write INT_VAR edit_strrefs_in_place STR_VAR class=~%this_class%~ struct=%struct% END"
+			RET 
+				function 
+				SFO_anon_func_count 
+		END
+		OUTER_PATCH "" BEGIN
+			LPF "%function%" END	
+		END
+		PRINT "...done"
+	END
+END
+
+
+/*
+document{class_read}
+{
+Read a class into a struct. (A wrapper for vtable_read, with a bit of extra stuff to handle editing clabs.)
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION class_read
+	STR_VAR class=""
+	RET_ARRAY struct
+BEGIN
+	LAF vtable_read STR_VAR vtable=class row="%class%" RET_ARRAY struct END
+	// set up the CLAB data
+	OUTER_FOR (n=1;n<=50;++n) BEGIN
+		OUTER_SET $struct("extra_data" "powers" "%n%" count)=0
+	END
+	OUTER_SET $struct("extra_data" "clab_altered")=0
+END
+
+/*
+document{class_write}
+{
+Write the contents of a struct into class 'class'. This includes setting the clab file and the race tables (which are controlled by the 'any_race' and 'human'/'dwarf' (etc) struct variables.
+If 'edit_strrefs_in_place' is set to 1, any strrefs have their values updated, rather than being
+replaced with new strrefs (use this with caution).</p>
+
+<p>Note that (unlike for lib_struct functions) 'struct' needs to be an array, not just a set of values. (So intermediate functions need to return the whole array.)
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION class_write
+	INT_VAR edit_strrefs_in_place=0//boolean
+	STR_VAR class=""
+			struct=""
+BEGIN
+	// initialize clabs
+	LAF kit_clab_initialize END
+	
+	// set the clab	
+	ACTION_IF "%struct%_extra_data_clab_altered" BEGIN
+		ACTION_CLEAR_ARRAY power_array
+		OUTER_FOR (level=1;level<=100;++level) BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("extra_data" "powers" "%level%") BEGIN
+				OUTER_SPRINT $power_array("%level%") $"%struct%"("extra_data" "powers" "%level%")
+			END
+		END
+		OUTER_SPRINT delete_powers $"%struct%"("extra_data" "delete_powers")
+		LAF kit_find_class_clab_prefix STR_VAR class RET clab END
+		LAF kit_edit_clab STR_VAR power_array delete_powers clab END
+	
+	END
+
+	// write the data
+	
+	LAF vtable_write INT_VAR edit_strrefs_in_place STR_VAR row="%class%" vtable=class struct END
+END
+

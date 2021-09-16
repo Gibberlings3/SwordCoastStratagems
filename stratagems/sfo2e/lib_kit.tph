@@ -1,0 +1,1081 @@
+/*
+document{kit_edit}
+{
+Edit the kit (or class) 'kit'. (You can also specify a string of kits, and each will be edited, but be careful using this function for bulk minor editing of kits, 
+as it may be faster to edit the relevant 2da directly.) 'kit' should be a rowname entry from kitlist.2da (or a class from class.ids), but
+we can cope with it being a row entry from clastext.2da instead (e.g. we can cope with ARCHER or ASSASSIN rather than
+FERALAN or ASSASIN).</p>
+
+<p>'edits' is executed as an anonymous function, which first reads the kit into struct 'struct' (default value 'k') and then writes that struct back.</p>
+
+<p>If 'edit_strrefs_in_place' is set to 1, any strrefs have their values updated, rather than being
+replaced with new strrefs (use this with caution).
+}
+*/
+
+DEFINE_ACTION_FUNCTION kit_edit
+	INT_VAR edit_strrefs_in_place=0//boolean
+			debug=1//boolean
+	STR_VAR kit=""
+			edits=""
+			struct="k"
+BEGIN
+	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%kit%" RET this_kit=entry kit=list END
+		ACTION_PHP_EACH sfo_vtable_kit_clastext_remap AS k=>v BEGIN
+			ACTION_IF "%v%" STR_EQ "%this_kit%" BEGIN
+				OUTER_SPRINT this_kit "%k%"
+			END
+		END
+		ACTION_IF IDS_OF_SYMBOL (class "%this_kit%")<0 BEGIN
+			PRINT "Editing kit %this_kit%..."
+			ACTION_IF debug BEGIN
+				LAF vtable_debug STR_VAR vtable=kit struct function="%edits%" END
+			END
+			LAF anon_define 
+				STR_VAR 
+					function="%edits%" 
+					prepend="LPF kit_read STR_VAR kit=~%this_kit%~ RET_ARRAY %struct%=struct END" 
+					append="LPF kit_write INT_VAR edit_strrefs_in_place STR_VAR kit=~%this_kit%~ struct=%struct% END"
+				RET 
+					function 
+					SFO_anon_func_count 
+			END
+			OUTER_PATCH "" BEGIN
+				LPF "%function%" END	
+			END
+			PRINT "...done"
+		END ELSE BEGIN
+			LAF class_edit INT_VAR edit_strrefs_in_place STR_VAR class="%this_kit%" edits struct END
+		END
+	END
+END
+
+/*
+document{kit_edit_all}
+{
+Apply 'edits' as an edit to all kits with parent class 'parent_class', using the same syntax as 'kit_edit'. If 'skip_trueclass' is set to 0 (the default) also
+include the parent class itself. If 'filter' is set, apply 'filter' as an SFO function to each (uppercased) kit label, and apply the edit only if the return value is 1. 
+(You can use the anonymous function construct.)
+}
+*/
+
+DEFINE_ACTION_FUNCTION kit_edit_all
+	INT_VAR edit_strrefs_in_place=0//boolean
+			skip_trueclass=0//boolean
+	STR_VAR parent_class=""
+			edits=""
+			filter=""
+			struct=k
+BEGIN
+	LAF trim_string STR_VAR string="%parent_class%" RET parent_class=string END
+	ACTION_IF "%filter%" STR_CMP "" BEGIN
+		LAF anon_define INT_VAR has_output=1 STR_VAR function="%filter%" RET filter=function SFO_anon_func_count END
+	END
+	OUTER_SET class_num=IDS_OF_SYMBOL (class "%parent_class%")
+	ACTION_CLEAR_ARRAY kit_array
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_rows=rows kitlist_array=array END
+	ACTION_PHP_EACH kitlist_rows AS row=>discard BEGIN
+		ACTION_IF IS_AN_INT "kitlist_array_%row%_CLASS" && "kitlist_array_%row%_CLASS"=class_num BEGIN
+			OUTER_SPRINT kit $kitlist_array("%row%" ROWNAME)
+			OUTER_SPRINT $kit_array("%kit%") ""
+		END
+	END
+	ACTION_IF !skip_trueclass BEGIN
+		ACTION_TO_UPPER parent_class
+		OUTER_SPRINT $kit_array("%parent_class%") ""
+	END
+	ACTION_PHP_EACH kit_array AS kit=>discard BEGIN
+		ACTION_IF "%filter%" STR_EQ "" BEGIN
+			OUTER_SET proceed=1
+		END ELSE BEGIN
+			OUTER_PATCH "" BEGIN
+				LPF "%filter%" STR_VAR arguments="%kit%" RET proceed=value END
+			END
+		END
+		ACTION_IF proceed BEGIN
+			LAF kit_edit INT_VAR edit_strrefs_in_place STR_VAR kit edits struct END
+		END
+	END
+	
+
+
+END
+
+/*
+document{kit_copy}
+{
+Given kit="old=>new", copy kit 'old' onto kit 'new'. 'old' can be a class instead of a kit, and can be a rowname entry from kitlist or a row label from clastext. 
+This assumes 'new' is a new kit, and doesn't officially support overwriting, i.e. when kit 'new' already exists. (It might work fine but no guarantees.)</p>
+
+<p>'edits' is executed as an anonymous function, which first reads old kit into struct 'k' and then writes that struct onto the new kit.
+
+}
+*/
+
+DEFINE_ACTION_FUNCTION kit_copy
+	STR_VAR kit=""
+			edits=""
+BEGIN
+	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
+		LAF return_first_pair STR_VAR list="%kit%" RET old_kit=key new_kit=value kit=list END
+		ACTION_PHP_EACH sfo_vtable_kit_clastext_remap AS k=>v BEGIN
+			ACTION_IF "%v%" STR_EQ "%old_kit%" BEGIN
+				OUTER_SPRINT old_kit "%k%"
+			END
+		END
+		PRINT "Copying kit %old_kit% to kit %new_kit%..."
+		LAF anon_define 
+			STR_VAR 
+				function="%edits%" 
+				prepend="LPF kit_read STR_VAR kit=~%old_kit%~ RET_ARRAY k=struct END"  
+				append="LPF kit_write STR_VAR kit=~%new_kit%~ struct=k END"
+			RET 
+				function 
+				SFO_anon_func_count 
+		END
+		OUTER_PATCH "" BEGIN
+			LPF "%function%" END	
+		END
+		PRINT "...done"
+	END
+END
+
+/*
+document{kit_read}
+{
+Read the contents of a kit (or the kit part of a class, if 'kit' is a class) into a struct. (This is basically a wrapper for vtable_read, with a bit of extra functionality to support clab editing.)
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION kit_read
+	STR_VAR kit=""
+	RET_ARRAY struct
+BEGIN
+	LAF vtable_read STR_VAR vtable=kit row="%kit%" RET_ARRAY struct END
+	// set up the CLAB data
+	OUTER_FOR (n=1;n<=50;++n) BEGIN
+		OUTER_SET $struct("extra_data" "powers" "%n%" count)=0
+	END
+	OUTER_SET $struct("extra_data" "clab_altered")=0
+END
+
+/*
+document{kit_write}
+{
+Write the contents of a struct into (new or existing) kit 'kit'. This includes setting the clab file and the race tables (which are controlled by the 'any_race' and 'human'/'dwarf' (etc) struct variables.
+If 'edit_strrefs_in_place' is set to 1, any strrefs have their values updated, rather than being
+replaced with new strrefs (use this with caution). ('is_dummy' just creates a dummy kit; this is used internally).
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION kit_write
+	INT_VAR is_dummy=0//boolean
+			edit_strrefs_in_place=0//boolean
+	STR_VAR kit=""
+			struct=""
+BEGIN
+	// initialize clabs
+	LAF kit_clab_initialize END
+	
+	SILENT
+	// sanity check
+	ACTION_IF IDS_OF_SYMBOL (class "%kit%")>=0 BEGIN
+		WARN "You can't use kit_write to write a class. Use class_write instead."
+	END 
+	// is this a new kit? 	
+	COPY_EXISTING - "kitlist.2da" nowhere
+		LPF 2daq_has_row INT_VAR rowname_column=1 STR_VAR row="%kit%" RET value END
+		is_new=!value
+	VERBOSE
+	ACTION_IF is_new BEGIN
+		// are we copying a kit, or a class?
+		OUTER_SET copying_kit=VARIABLE_IS_SET "%struct%_kitlist_rowname"
+		ACTION_IF copying_kit BEGIN
+			// find parent class
+			OUTER_PATCH "" BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%struct%_kitlist_class"
+			END
+		END ELSE BEGIN
+		// here we'll need to add extras if we're not copying a kit
+			OUTER_SPRINT parent_class EVAL "%%struct%_extra_data_row_id%"
+			OUTER_SET $"%struct%"("kitlist_class") = IDS_OF_SYMBOL (class "%parent_class%")
+			OUTER_SPRINT $"%struct%"("kitlist_unusable") " 0x00004000"
+			OUTER_SET $"%struct%"("kitlist_mixed")="-1"
+			OUTER_SET $"%struct%"("kitlist_lower")="-1"
+			OUTER_SET $"%struct%"("kitlist_help")="-1"
+			LAF kit_find_class_clab_prefix STR_VAR class="%parent_class%" RET clab END
+			OUTER_SPRINT $"%struct%"("kitlist_abilities") "%clab%"
+		END
+		
+		// find and clone the clab
+		
+		ACTION_IF !is_dummy && INDEX ("_" "%parent_class%")<0 BEGIN // single-classed
+			LAF kit_find_unused_clab STR_VAR parent_class RET clab END
+			OUTER_SPRINT clab_old EVAL "%%struct%_kitlist_abilities%"
+			COPY_EXISTING "%clab_old%.2da" "override/%clab%.2da"
+			OUTER_SPRINT $"%struct%"("kitlist_abilities") "%clab%"
+		END ELSE BEGIN
+			OUTER_SPRINT $"%struct%"("kitlist_abilities") "clabnull"
+		END
+		
+		//find the ids entry
+	
+		LAF kit_find_next_ids RET idsnum END
+		
+		// these two ids are problematic (cf SubtleDoctor's post on this)
+		ACTION_IF !is_dummy BEGIN
+			ACTION_MATCH "%idsnum%" WITH
+			0x4040 0x4080 BEGIN
+				WITH_SCOPE BEGIN
+					LAF kit_read STR_VAR kit=FIGHTER RET_ARRAY kk=struct END
+					OUTER_SET k_any_race=0
+					LAF kit_write INT_VAR is_dummy=1 STR_VAR kit="DW_DUMMY_%idsnum%" struct=kk END
+				END
+				OUTER_SET idsnum +=1
+			END
+			DEFAULT END
+		END
+		
+		// set the ids entry
+		
+		LAF ensure_hex INT_VAR pad_length=8 STR_VAR in="%idsnum%" RET idsnum_to_8=out END
+		OUTER_SPRINT $"%struct%"("kitlist_kitids") "%idsnum_to_8%"
+		APPEND "kit.ids" "%idsnum%%TAB%%kit%"
+		OUTER_SET $"%struct%"("clastext_kitid")=idsnum - 0x4000
+		
+		// set the proficiency table entry
+		
+		SILENT
+		COPY_EXISTING - weapprof.2da nowhere
+			COUNT_2DA_COLS colcount
+			SET $"%struct%"("kitlist_proficiency")=colcount - 1
+		VERBOSE
+	END ELSE BEGIN
+		// get kit idsnum and parent class
+		OUTER_PATCH "" BEGIN
+			LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%struct%_kitlist_class"
+		END
+		ACTION_IF enhanced_edition BEGIN
+			OUTER_SET idsnum="%struct%_kitlist_kitids"
+		END ELSE BEGIN
+			OUTER_SET idsnum=IDS_OF_SYMBOL (kit "%kit%") // this isn't fully reliable for a few original-game kits (GODLATHANDER, etc) on non-EE, but at present we only use idsnum here for EE installs (for multiclass abilities) so I don't at present care
+		END
+	END
+	// set race tables
+	LAF kit_set_race_tables INT_VAR force=is_new STR_VAR kit struct END
+	
+	// set the main clab
+	
+	ACTION_IF "%struct%_extra_data_clab_altered" BEGIN
+		ACTION_IF INDEX ("_" "%parent_class%")>=0 BEGIN
+			FAIL "You can't add powers to a multiclass kit without specifying the class explicitly, and you can't remove powers from a multiclass kit at all (not in lib_kit, at any rate)."
+		END
+		ACTION_CLEAR_ARRAY power_array
+		OUTER_FOR (level=1;level<=100;++level) BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("extra_data" "powers" "%level%") BEGIN
+				OUTER_SPRINT $power_array("%level%") $"%struct%"("extra_data" "powers" "%level%")
+			END
+		END
+		OUTER_SPRINT delete_powers $"%struct%"("extra_data" "delete_powers")
+		LAF kit_edit_clab STR_VAR power_array delete_powers clab=EVAL "%%struct%_kitlist_abilities%" END
+	
+	END
+	
+	// set any MC clabs
+	
+	ACTION_FOR_EACH class IN fighter mage cleric thief druid ranger BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("extra_data" "mc" "%class%") BEGIN
+			OUTER_SPRINT commands $"%struct%"("extra_data" "mc" "%class%")
+			LAF kit_add_clab_mc INT_VAR kit_ids_entry=idsnum STR_VAR parent_class primary_class="%class%" commands END
+		END
+	END
+	// write the data
+	
+	LAF vtable_write INT_VAR edit_strrefs_in_place STR_VAR row="%kit%" vtable=kit struct END
+	
+END
+
+
+DEFINE_ACTION_FUNCTION kit_grant_apply_powers//internal
+	STR_VAR arguments=""
+			struct=""
+			prefix=""
+	RET_ARRAY struct
+BEGIN
+	LAF array_copy STR_VAR array="%struct%" RET_ARRAY struct=array END
+	OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+		OUTER_SET $struct("extra_data" "clab_altered")=1
+		LAF return_first_entry STR_VAR list="%arguments%" separator="," RET arg=entry arguments=list END
+		LAF return_first_entry STR_VAR list="%arg%" RET resref=entry arg=list END
+		OUTER_PATCH_SAVE resref "%resref%" BEGIN
+			count=1
+			REPLACE_EVALUATE "(\([0-9]+\))" BEGIN
+				count="%MATCH1%"
+			END
+			""
+		END
+		ACTION_TO_UPPER resref
+		LAF return_first_entry STR_VAR list="%arg%" RET min_level=entry arg=list END
+		OUTER_SET interval=1000
+		OUTER_SET max_level=100
+		ACTION_IF "%arg%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%arg%" RET interval=entry arg=list END
+			ACTION_IF IS_AN_INT arg BEGIN
+				OUTER_SET max_level=(arg>100?100:arg)
+			END
+		END
+		OUTER_SET this_level=min_level
+		OUTER_WHILE this_level<=max_level BEGIN
+			OUTER_FOR (n=0;n<count;++n) BEGIN
+				ACTION_IF !VARIABLE_IS_SET $struct("extra_data" "powers" "%this_level%") BEGIN
+					OUTER_SPRINT $struct("extra_data" "powers" "%this_level%") "%prefix%_%resref%"
+				END ELSE BEGIN
+					OUTER_SPRINT temp $struct("extra_data" "powers" "%this_level%")
+					OUTER_SPRINT $struct("extra_data" "powers" "%this_level%") "%temp% %prefix%_%resref%"				
+				END
+			END
+			OUTER_SET this_level+=interval
+		END
+	END
+END
+
+DEFINE_DIMORPHIC_FUNCTION kit_grant_apply_mc_powers
+	STR_VAR arguments=""
+			struct=""
+			class=""
+			prefix=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_TO_LOWER class
+	OUTER_SPRINT data ""
+	OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%arguments%" separator="," RET entry arguments=list END
+		ACTION_IF "%data%" STR_EQ "" BEGIN
+			OUTER_SPRINT data "%prefix%(%entry%)"
+		END ELSE BEGIN
+			OUTER_SPRINT data "%data%,%prefix%(%entry%)"			
+		END
+	END
+	ACTION_IF !VARIABLE_IS_SET $"%struct%"("extra_data" "mc" "%class%") BEGIN
+		OUTER_SPRINT $struct("extra_data" "mc" "%class%") "%data%"
+	END ELSE BEGIN
+		OUTER_SPRINT temp $"%struct%"("extra_data" "mc" "%class%")
+		OUTER_SPRINT $struct("extra_data" "mc" "%class%") "%temp%,%data%"
+	END
+END
+
+DEFINE_DIMORPHIC_FUNCTION kit_grant_powers 
+	STR_VAR arguments=""
+			struct=""
+			class=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_IF "%class%" STR_EQ "" BEGIN
+		LAF kit_grant_apply_powers STR_VAR struct arguments prefix="GA" RET_ARRAY struct END
+	END ELSE BEGIN
+		LAF kit_grant_apply_mc_powers STR_VAR struct arguments class prefix="GA" RET_ARRAY struct END
+	END
+END
+
+DEFINE_DIMORPHIC_FUNCTION kit_apply_powers 
+	STR_VAR arguments=""
+			struct=""
+			class=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_IF "%class%" STR_EQ "" BEGIN
+		LAF kit_grant_apply_powers STR_VAR struct arguments prefix="AP" RET_ARRAY struct END
+	END ELSE BEGIN
+		LAF kit_grant_apply_mc_powers STR_VAR struct arguments class prefix="AP" RET_ARRAY struct END	
+	END
+END
+
+DEFINE_DIMORPHIC_FUNCTION kit_remove_powers
+	STR_VAR arguments=""
+			struct=""
+	RET_ARRAY struct
+BEGIN
+	LAF array_copy STR_VAR array="%struct%" RET_ARRAY struct=array END
+	ACTION_IF "%arguments%" STR_CMP "" BEGIN	
+		OUTER_SET $struct("extra_data" "clab_altered")=1
+		ACTION_IF VARIABLE_IS_SET $struct("extra_data" "delete_powers") BEGIN
+			OUTER_SPRINT temp $struct("extra_data" "delete_powers")
+			OUTER_SPRINT $struct("extra_data" "delete_powers") "%temp% %arguments%"
+		END ELSE BEGIN
+			OUTER_SPRINT $struct("extra_data" "delete_powers") "%arguments%"
+		END
+	END
+END
+
+
+DEFINE_DIMORPHIC_FUNCTION kit_edit_clab
+	STR_VAR power_array=""
+			delete_powers=""
+			clab=""
+BEGIN
+	// get the data from the clab
+	COPY_EXISTING "%clab%.2da" override
+		WHILE "%delete_powers%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list="%delete_powers%" RET entry delete_powers=list END
+			PATCH_IF "%entry%" STR_EQ "all" BEGIN
+				REPLACE_TEXTUALLY CASE_INSENSITIVE "\(GA\|AP\)_[^ %TAB%]+" "****"
+			END ELSE BEGIN
+				REPLACE_TEXTUALLY CASE_INSENSITIVE "\(GA\|AP\)_%entry%" "****"		
+			END
+		END		
+		CLEAR_ARRAY working_array
+		level_max=0
+		REPLACE_EVALUATE "^[%TAB% ]*ABILITY[0-9]+[ %TAB%]+\([^%WNL%%MNL%%LNL%]*\)" BEGIN	
+			INNER_PATCH "%MATCH1%" BEGIN
+				level=1
+				REPLACE_EVALUATE "\([^ %TAB%]+\)[%WNL%%MNL%%LNL%]?" BEGIN
+					PATCH_IF !VARIABLE_IS_SET $working_array_count("%level%") BEGIN
+						SET $working_array_count("%level%")=1
+						SPRINT $working_array("ABILITY1" "%level%") "****"			
+					END
+					PATCH_MATCH "%MATCH1%" WITH
+					"****" BEGIN
+					END
+					DEFAULT
+						count=$working_array_count("%level%")
+						SPRINT $working_array("ABILITY%count%" "%level%") "%MATCH1%"
+						SET $working_array_count("%level%") +=1
+					END
+					++level
+				END
+				""
+			END
+			level_max=level>level_max?level:level_max
+		END
+		""
+		// add the abilities from the array
+		PHP_EACH "%power_array%" AS level=>list BEGIN
+			PATCH_IF level<level_max BEGIN
+				count=$working_array_count("%level%")
+				WHILE "%list%" STR_CMP "" BEGIN
+					LPF return_first_entry STR_VAR list RET entry list END
+					SPRINT $working_array("ABILITY%count%" "%level%") "%entry%"
+					++count		
+				END
+			END
+		END
+		LPF 2da_write STR_VAR array=working_array default="****" END
+	BUT_ONLY
+
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_find_next_ids}
+{
+Find an unused ids entry in kit.ids, and return it in hex format.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_find_next_ids
+    INT_VAR to_start=0x4029
+    RET idsnum
+BEGIN
+    LAF ensure_hex STR_VAR in="%to_start%" RET out END
+    ACTION_IF !FILE_CONTAINS_EVALUATED ("kit.ids" "%out%[ %TAB%]") BEGIN
+         OUTER_SPRINT idsnum "%out%"
+    END ELSE BEGIN
+         LAF kit_find_next_ids INT_VAR to_start = to_start + 1 RET idsnum END
+    END
+END
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_get_id}
+{
+Find the kit_id of a kit. (The left-hand column of kitlist.2da.)
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_get_id
+	STR_VAR kit=""
+	RET kit_id
+BEGIN
+	COPY_EXISTING "kitlist.2da" override
+		kit_id="-1"
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 this_kit
+			PATCH_IF "%this_kit%" STR_EQ "%kit%" BEGIN
+				READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_id
+			END
+		END
+		PATCH_IF kit_id<0 BEGIN
+			//if it's not there already, it must be new
+			kit_id=kitlist_data
+		END
+	BUT_ONLY
+END
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_set_race_tables}
+{
+Given a kit-defining struct, set the race tables to reflect any changes in availability.
+If force=1, set them whether or not the struct metavariables are set (use this for new/copied
+kits).
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_set_race_tables
+	INT_VAR force=0//boolean
+	STR_VAR struct="" kit=""
+BEGIN
+	SILENT
+	// get the kit id
+	LAF kit_get_id STR_VAR kit RET kit_id END
+
+	// get the parent class
+	OUTER_PATCH "" BEGIN
+		LOOKUP_IDS_SYMBOL_OF_INT parent_class class "%struct%_kitlist_class"
+		TO_UPPER parent_class
+	END
+	// read in kittable
+	LAF 2da_read STR_VAR file="kittable.2da" RET_ARRAY kittable=array END
+	ACTION_FOR_EACH race IN HUMAN DWARF GNOME ELF HALF_ELF HALFLING HALFORC BEGIN
+		OUTER_SPRINT table $kittable("%parent_class%" "%race%")
+		ACTION_TO_LOWER race
+		OUTER_SET present="-1"
+		ACTION_IF VARIABLE_IS_SET "%struct%_%race%" BEGIN
+			OUTER_SET present="%struct%_%race%"
+		END ELSE
+		ACTION_IF VARIABLE_IS_SET "%struct%_any_race" BEGIN
+			OUTER_SET present="%struct%_any_race"
+		END ELSE
+		ACTION_IF force BEGIN
+				OUTER_SET present="%struct%_kit_race_%race%"
+		END
+		ACTION_IF present>=0 BEGIN
+			LAF kit_set_table INT_VAR present kit_id STR_VAR table END
+		END
+	END
+	VERBOSE
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_set_table}
+{
+Given a k_x_y table (which might not exist), a kit id, and 'present' (a Boolean),
+add or subtract the kit to/from the table, creating it if necessary
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_set_table
+	INT_VAR present=1//boolean
+			kit_id=0
+	STR_VAR table=""
+BEGIN
+	ACTION_IF !FILE_EXISTS_IN_GAME "%table%.2da" BEGIN
+		COPY ".../stratagems-inline/k_x_y_template.2da" "override/%table%.2da"
+	END
+	COPY_EXISTING "%table%.2da" override
+		READ_2DA_ENTRIES_NOW k_x_y_data 2
+		already_present=0
+		FOR (row=1;row<k_x_y_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER k_x_y_data row 1 this_id
+			PATCH_IF this_id=kit_id BEGIN
+				already_present=1
+				PATCH_IF !present BEGIN
+					kit_row=row
+				END
+			END
+		END	
+		PATCH_IF !present && already_present BEGIN
+			count=1
+			FOR (row=1;row<k_x_y_data;++row) BEGIN		
+				PATCH_IF !(row=kit_row) BEGIN
+					SET_2DA_ENTRY_LATER k_x_y_data_out count 0 "%count%"
+					READ_2DA_ENTRY_FORMER k_x_y_data row 1 id_here
+					SET_2DA_ENTRY_LATER k_x_y_data_out count 1 "%id_here%"
+					++count
+				END
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 0 DELETEME
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 1 DELETEME
+			END
+			SET_2DA_ENTRIES_NOW k_x_y_data_out 2
+			REPLACE_TEXTUALLY "DELETEME" ""
+			PRETTY_PRINT_2DA
+		END ELSE 
+		PATCH_IF present && !already_present BEGIN
+			count=1
+			added=0
+			FOR (row=1;row<k_x_y_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER k_x_y_data row 1 id_here
+				PATCH_IF id_here>kit_id && !added BEGIN
+					SET_2DA_ENTRY_LATER k_x_y_data_out count 0 "%count%"
+					SET_2DA_ENTRY_LATER k_x_y_data_out count 1 "%kit_id%"
+					added=1
+					++count	
+				END
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 0 "%count%"
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 1 "%id_here%"
+				++count
+			END
+			PATCH_IF !added BEGIN
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 0 "%count%"
+				SET_2DA_ENTRY_LATER k_x_y_data_out count 1 "%kit_id%"
+				added=1
+				++count				
+			END
+			INSERT_2DA_ROW k_x_y_data 2 "0 0" 
+			SET_2DA_ENTRIES_NOW k_x_y_data_out 2
+			PRETTY_PRINT_2DA
+		END
+	BUT_ONLY
+END
+
+<<<<<<<<.../stratagems-inline/k_x_y_template.2da
+2DA  V1.0
+*
+                    KIT	
+					1 0
+>>>>>>>>
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+/*
+
+document{kit_find_class_clab_prefix}
+{
+Given a class, return the CLAB prefix for that class, and also the full unkitted CLAB file for that
+class.
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_find_class_clab_prefix 
+	STR_VAR class=""
+	RET prefix clab
+BEGIN
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY class_clab BEGIN
+		FIGHTER=>FI
+		RANGER=>RN
+		PALADIN=>PA
+		MONK=>MO
+		CLERIC=>PR
+		DRUID=>DR
+		MAGE=> MA
+		SORCERER=>SO
+		SHAMAN=>SH
+		THIEF=>TH
+		BARD=>BA
+	END
+	ACTION_TO_UPPER class
+	OUTER_SPRINT prefix $class_clab("%class%")
+	ACTION_MATCH "%class%" WITH
+	SORCERER BEGIN
+		OUTER_SPRINT clab "CLABMA01"	
+	END
+	DEFAULT
+		OUTER_SPRINT clab "CLAB%prefix%01"
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+/*
+
+document{kit_find_unused_clab}
+{
+Find an unused clab for the current kit.
+}
+
+
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_find_unused_clab 
+    INT_VAR try_next=1 
+    STR_VAR parent_class=""
+			file_ext=""
+    RET clab
+BEGIN
+    ACTION_IF try_next=100 BEGIN
+       FAIL "You apparently have at least 100 kits of type %parent_class% installed?! This has given SFO a nervous breakdown, sorry..."
+    END
+	ACTION_IF "%file_ext%" STR_EQ "" BEGIN
+		ACTION_TO_UPPER parent_class
+		LAF kit_find_class_clab_prefix STR_VAR class="%parent_class%" RET file_ext=prefix END
+	END
+	ACTION_IF try_next<10 BEGIN
+	  OUTER_SPRINT file_to_try "CLAB%file_ext%0%try_next%"
+	END ELSE BEGIN
+	  OUTER_SPRINT file_to_try "CLAB%file_ext%%try_next%"
+	END
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "%file_to_try%.2da" BEGIN
+	  OUTER_SPRINT clab "%file_to_try%"
+	END ELSE BEGIN
+	  LAF kit_find_unused_clab INT_VAR try_next=try_next + 1 STR_VAR file_ext RET clab END
+	END
+END
+
+/////////////////////////////////////////////////////
+/*
+document{kit_clab_initialize}
+{
+   Wild Mage squats on the
+   core CLABs mages; give them unique entries.
+    Also make sure every clab actually exists
+}
+*/
+/////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_clab_initialize BEGIN
+    LAF check_label STR_VAR label="dw#uniqueclab" RET value END
+    ACTION_IF !value BEGIN
+       LAF make_label STR_VAR label="dw#uniqueclab" END
+	   // build unique template
+        OUTER_SPRINT row1 ""
+        OUTER_SPRINT row2 "ABILITY1"
+        OUTER_FOR (i=1;i<=40;i+=1) BEGIN
+           OUTER_SPRINT row1 "%row1% %i%"
+           OUTER_SPRINT row2 "%row2% ****"
+        END
+
+<<<<<<<<.../stratagems-inline/clab_template.2da
+2DA V1.0
+****
+%row1%
+%row2%
+>>>>>>>>
+
+		COPY_EXISTING "kitlist.2da" override
+			LPF 2da_read RET_ARRAY kitlist_data=array rows END
+			// sort out wild mages
+			LPF kit_find_unused_clab INT_VAR try_next=10 STR_VAR file_ext=MA RET clab_wildmage=clab END 
+			SPRINT $kitlist_data("30" "ABILITIES") "%clab_wildmage%"
+			//now make sure all clabs exist
+			PHP_EACH rows AS id=>discard BEGIN
+				SPRINT clab $kitlist_data("%id%" "ABILITIES")
+				PATCH_MATCH "%clab%" WITH
+				"*" "clabnull" BEGIN
+				END
+				DEFAULT
+					PATCH_IF !FILE_EXISTS_IN_GAME "%clab%.2da" BEGIN
+						INNER_ACTION BEGIN
+							COPY ".../stratagems-inline/clab_template.2da" "override/%clab%.2da" EVALUATE_BUFFER PRETTY_PRINT_2DA	
+						END				
+					END
+				END
+			END
+			LPF 2da_write STR_VAR array=kitlist_data END
+		BUT_ONLY
+		
+		// check mage clab exists
+		
+		ACTION_IF !FILE_EXISTS_IN_GAME "clabma01.2da" BEGIN
+			COPY ".../stratagems-inline/clab_template.2da" "override/CLABMA01.2da" EVALUATE_BUFFER PRETTY_PRINT_2DA
+		END
+		
+	END
+	   
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_add_clab_mc}
+{
+Adds a list of powers to a multiclass kit. Supply: the entry of the kit in kit.ids ('kit_ids_entry'), the kit's parent 
+class (parent_class), the class to which the powers are to be added ('primary_class'), and the list of powers to add ('commands').
+'commands' is a comma-separated list each of whose elements should be of the form 'GA(arg)' or 'AP(arg)', where 'arg' is
+the usual form of a lib_kit power command, i.e. 'resref first_level', 'resref first_level interval', or 'resref first_level interval last_level'.
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_add_clab_mc
+	INT_VAR kit_ids_entry=0
+	STR_VAR parent_class=""
+			primary_class=""
+			commands=""
+			
+BEGIN
+	// sanity check
+	ACTION_IF !enhanced_edition BEGIN
+		FAIL "lib_kit error: multiclass kit powers can only be added for Enhanced-Edition games."
+	END
+	// set the prefix names for the various master applicators
+	ACTION_CLEAR_ARRAY clab_mc_map 
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY clab_mc_map BEGIN
+		fighter=>dwmkf
+		cleric=>dwmkc
+		mage=>dwmkm
+		thief=>dwmkt
+		ranger=>dwmkr
+		druid=>dwmkd
+	END
+	// initialize, if we haven't already
+	LAF kit_clab_mc_initialize END
+
+	// find the non-primary class
+
+	OUTER_PATCH_SAVE other_class "%parent_class%" BEGIN
+		REPLACE_TEXTUALLY "%primary_class%" ""
+		REPLACE_TEXTUALLY "_" ""
+	END
+	ACTION_MATCH "%other_class%" WITH
+	FIGHTER THIEF CLERIC MAGE RANGER DRUID 
+	BEGIN
+	END
+	DEFAULT
+		OUTER_SPRINT other_class "NULL"
+	END
+
+	// get the splprot entry
+	
+	LAF resolve_splprot_entry INT_VAR stat=152 val="-1" STR_VAR relation=equal RET stat_ind_equal=value END
+	LAF resolve_splprot_entry INT_VAR stat=152 val="-1" STR_VAR relation=not_equal RET stat_ind_notequal=value END
+
+
+	// find and set up the delete spell if appropriate
+	
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/dw_mc_deletes.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc_shared%/dw_mc_deletes.txt"
+	END
+
+	OUTER_SPRINT delete_file "null"
+	ACTION_IF "%other_class%" STRING_COMPARE_CASE null BEGIN
+		COPY "%data_loc_shared%/dw_mc_deletes.txt" "%workspace%"
+			REPLACE_EVALUATE "%kit% +%other_class% +\([a-z0-9]+\)" BEGIN
+				SPRINT delete_file "%MATCH1%"
+			END
+			""
+		BUT_ONLY
+		ACTION_IF "%delete_file%" STRING_EQUAL_CASE null BEGIN
+			OUTER_SET counter=1
+			OUTER_WHILE counter<1000 BEGIN
+				ACTION_IF counter>99 BEGIN
+					OUTER_SPRINT delete_file "dwkdl%counter%"
+				END ELSE
+				ACTION_IF counter>9 BEGIN
+					OUTER_SPRINT delete_file "dwkdl0%counter%"
+				END ELSE BEGIN
+					OUTER_SPRINT delete_file "dwkdl00%counter%"
+				END
+				ACTION_IF FILE_EXISTS_IN_GAME "%delete_file%.spl" BEGIN
+					OUTER_SET counter+=1
+				END ELSE BEGIN
+					OUTER_SET counter=1000
+				END
+			END
+			APPEND_OUTER "%data_loc_shared%/dw_mc_deletes.txt" "%kit%%TAB%%other_class%%TAB%%delete_file%%WNL%"
+			LAF ds_resolve_stat STR_VAR id="ORIGINAL_CLASS_%primary_class%" RET stat_ind_primary=stat_ind END
+			LAF spl_make
+				STR_VAR spl="%delete_file%"
+						edits="m.ab.add{};;m.ab_fx.add{s_opcode=318;;s_target=2;;s_duration=1;;s_parameter1=stat_ind_primary;;s_parameter2=111;;s_resource:=%delete_file%}"
+			END
+			
+			ACTION_TO_LOWER other_class
+			OUTER_SPRINT other_prefix $clab_mc_map("%other_class%")
+			COPY_EXISTING "%other_prefix%01.spl" override
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=kit_ids_entry parameter2=stat_ind_equal STR_VAR resource="%delete_file%" END
+			BUT_ONLY
+			ACTION_CLEAR_ARRAY temp_array
+			ACTION_TO_UPPER delete_file
+			OUTER_SPRINT $temp_array(1) "AP_%delete_file%"
+			LAF kit_find_class_clab_prefix STR_VAR class="%other_class%" RET clab END
+			LAF kit_edit_clab STR_VAR clab power_array=temp_array END
+
+		END	
+	END
+	
+	// go through the array
+	
+	OUTER_WHILE "%commands%" STR_CMP "" BEGIN
+		// get individual command
+		LAF return_first_entry STR_VAR list="%commands%" separator="," RET entry commands=list END
+		// get command-argument pair
+		OUTER_PATCH "%entry%" BEGIN
+			REPLACE_EVALUATE "^\([^(]+\)(\(.*\))$" BEGIN
+				SPRINT type "%MATCH1%"
+				SPRINT arg "%MATCH2%"
+			END
+			""
+		END
+		// parse the argument
+		LAF return_first_entry STR_VAR list="%arg%" RET spell=entry arg=list END
+		LAF return_first_entry STR_VAR list="%arg%" RET min_level=entry arg=list END
+		OUTER_SET interval=1000
+		OUTER_SET max_level=50
+		ACTION_IF "%arg%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%arg%" RET interval=entry arg=list END
+			ACTION_IF IS_AN_INT arg BEGIN
+				OUTER_SET max_level=(arg>50?50:arg)
+			END
+		END
+		OUTER_PATCH_SAVE spell "%spell%" BEGIN
+			number=1
+			REPLACE_EVALUATE "(\([0-9]+\))" BEGIN
+				number="%MATCH1%"
+			END
+			""
+		END
+		// add to delete-spell; make applicator if needed
+		ACTION_MATCH "%type%" WITH
+		"AP" BEGIN
+			// 'apply' is the default, 'grant' is converted into an apply
+			ACTION_IF "%delete_file%" STRING_COMPARE_CASE "NULL" BEGIN
+				COPY_EXISTING "%delete_file%.spl" override
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=1 STR_VAR resource="%spell%" END
+				BUT_ONLY
+			END	
+			ACTION_IF number>1 BEGIN
+				WARN "lib_kit warning - You tried to apply spell %spell% more than once; this isn't supported"
+			END
+		END
+		"GA" BEGIN
+			ACTION_IF "%delete_file%" STRING_COMPARE_CASE "NULL" BEGIN
+				COPY_EXISTING "%delete_file%.spl" override
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=2 timing=1 STR_VAR resource="%spell%" END
+				BUT_ONLY
+			END	
+			LAF kit_resolve_spell_applicator INT_VAR number STR_VAR spell RET applicator END
+			OUTER_SPRINT spell "%applicator%"
+		END
+		DEFAULT
+			FAIL "unrecognised command %type% in kit_edit_mc"
+		END
+		// add the actual spell (or its applicator)
+		ACTION_TO_LOWER primary_class
+		OUTER_SPRINT prefix $clab_mc_map("%primary_class%")
+		OUTER_FOR (index=min_level;index<=max_level;index+=interval) BEGIN
+			ACTION_IF index<10 BEGIN
+				OUTER_SPRINT master_spell "%prefix%0%index%"
+			END ELSE BEGIN
+				OUTER_SPRINT master_spell "%prefix%%index%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%master_spell%.spl" BEGIN 
+				COPY_EXISTING "%master_spell%.spl" override
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=kit_ids_entry parameter2=stat_ind_equal STR_VAR resource="%spell%" END
+				BUT_ONLY			
+			END	ELSE BEGIN
+				WARN "lib_kit: multiclass applicator spell %master_spell% appears to be missing"
+			END			
+		END
+	
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_resolve_spell_applicator}
+{
+Checks a master table (dw_mc_applicators.txt, in data_loc_shared) to see if we have a spell which grants 'spell' 'number' times. If we do, return its resref. If we don't, build it and then return its resref.
+
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_resolve_spell_applicator INT_VAR number=1 STR_VAR spell="null" RET applicator BEGIN
+
+	OUTER_SPRINT applicator "null"
+	// sanity check
+	ACTION_IF "%spell%" STRING_EQUAL "null" BEGIN
+		FAIL "no argument given for 'spell' in 'resolve_kit_spell_applicator'"
+	END
+	// create log file if it doesn't exist
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/dw_mc_applicators.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc_shared%/dw_mc_applicators.txt"
+	END
+
+	// check log file
+	COPY "%data_loc_shared%/dw_mc_applicators.txt" "%workspace%"
+		SPRINT delete_file "null"
+		REPLACE_EVALUATE "%spell%(%number%) +\(dwka[0-9]+\)" BEGIN
+			SPRINT applicator "%MATCH1%"
+		END
+		""
+	BUT_ONLY
+	// if there isn't an applicator, build one and log it
+	ACTION_IF "%applicator%" STRING_EQUAL_CASE "null" BEGIN
+		// first, find a name
+		OUTER_SET index=1
+		OUTER_SET success=0
+		OUTER_WHILE index<1000 && !success BEGIN
+			ACTION_IF index<10 BEGIN
+				OUTER_SPRINT applicator "dwka00%index%"
+			END ELSE
+			ACTION_IF index<100 BEGIN
+				OUTER_SPRINT applicator "dwka0%index%"
+			END ELSE BEGIN
+				OUTER_SPRINT applicator "dwka%index%"
+			END
+			ACTION_IF !FILE_EXISTS_IN_GAME "%applicator%.spl" BEGIN
+				OUTER_SET success=1
+			END ELSE BEGIN
+				OUTER_SET index +=1
+			END
+		END
+		ACTION_IF !success BEGIN
+			FAIL "More than 999 applicators in edit_clab_mc; SFO can't handle this" 
+		END
+	
+		// make the applicator
+	
+		LAF spl_make
+			STR_VAR spl="%applicator%"
+					edits="m.ab.add{};;m.ab_fx.add{s_opcode=171;;s_target=2;;s_resource:=%spell%;;s_timing=9|number:i}"
+		END
+	
+		// log it
+		
+		APPEND_OUTER "%data_loc_shared%/dw_mc_applicators.txt" "%spell%(%number%)     %applicator%"
+	
+	
+	END
+
+END
+
+
+DEFINE_ACTION_FUNCTION kit_clab_mc_initialize BEGIN
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY trueclass_clab BEGIN
+		fighter=>clabfi01
+		mage=>clabma01
+		cleric=>clabpr01
+		druid=>clabdr01
+		thief=>clabth01
+		ranger=>clabrn01
+	END
+	LAF check_label STR_VAR label="dw#edit_clab_mc_initialised" RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label="dw#edit_clab_mc_initialised" END
+		ACTION_PHP_EACH clab_mc_map AS parent_class=>prefix BEGIN
+			LAF spl_make STR_VAR spl="%prefix%01" edits="m.ab.add{}" END
+			OUTER_SPRINT clab $trueclass_clab("%parent_class%")
+			ACTION_CLEAR_ARRAY power_array
+			OUTER_FOR (level=1;level<=50;++level) BEGIN
+				ACTION_IF level<10 BEGIN
+					OUTER_SPRINT spell "%prefix%0%level%"
+				END ELSE BEGIN
+					OUTER_SPRINT spell "%prefix%%level%"
+				END
+				COPY_EXISTING "%prefix%01.spl" "override/%spell%.spl"
+				ACTION_TO_UPPER spell
+				OUTER_SPRINT $power_array("%level%") "AP_%spell%"
+			END
+			LAF kit_edit_clab STR_VAR clab power_array END
+		END
+	END
+END
+
+

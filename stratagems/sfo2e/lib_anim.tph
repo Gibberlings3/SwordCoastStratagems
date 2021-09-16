@@ -1,0 +1,209 @@
+/*
+describe-library{Functions related to creature animations.}
+
+
+
+*/
+
+/*
+document{anim_install}
+{
+Given an animation packaged by anim_collect, install it. If overwrite=1, overwrite existing files; otherwise, don't.
+}
+*/
+
+DEFINE_ACTION_FUNCTION anim_install
+	INT_VAR overwrite=0
+	STR_VAR resource_loc=""
+			animation=""
+BEGIN
+	ACTION_BASH_FOR "%resource_loc%/%animation%" ".*" BEGIN
+		ACTION_IF overwrite || !FILE_EXISTS "%BASH_FOR_FILE%" BEGIN
+			COPY "%BASH_FOR_FILESPEC%" override
+		END
+	END
+
+END
+
+/*
+document{anim_collect}
+{
+Collects the resources used by an animation (i.e. the bam and wav files), according
+to its EE ini file. Files are saved in 'resource_loc'/'animation'. 
+
+The animation is specified by an EE-format animate.ids entry. (We check a stashed copy 
+of animate.ids in %sfo_library_file%/resource).
+
+You can supply a local copy of the ini file, using path/location/locbase. If ini_file is
+not set, we assume the one inferred from animate.ids.
+
+You can override the ini-specified resref with 'resref_original'.
+
+
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION anim_collect
+	STR_VAR animation=""
+			resource_loc=""
+			ini_file=""
+			path=""
+			location=""
+			locbase=""
+			resref_original=""
+BEGIN
+	ACTION_TO_LOWER animation
+	ACTION_CLEAR_ARRAY copy_array
+	// get the ini file
+	ACTION_IF "%ini_file%" STR_EQ "" BEGIN
+		LAF array_read INT_VAR backwards=1 STR_VAR case=lower file=animate_ee.ids locbase="%sfo_library_path%/resource" RET_ARRAY ids_array=array END	
+		ACTION_IF VARIABLE_IS_SET $ids_array("%animation%") BEGIN
+			OUTER_SET proceed=1
+			OUTER_SPRINT ini_file $ids_array("%animation%")
+			OUTER_PATCH_SAVE ini_file "%ini_file%" BEGIN
+				REPLACE_TEXTUALLY "0x" ""
+			END
+		END ELSE BEGIN
+			OUTER_SET proceed=0
+			LAF warning STR_VAR warning="Animation %animation% could not be located." END
+		END
+	END
+	ACTION_IF proceed BEGIN
+		// make a directory
+		MKDIR "%resource_loc%/%animation%"
+		// load the ini file
+		LAF ini_read STR_VAR file="%ini_file%.ini" path location locbase RET_ARRAY anim_ini_array=array END
+		// get the palettes
+		ACTION_IF VARIABLE_IS_SET $anim_ini_array("general" "new_palette") BEGIN
+			OUTER_SPRINT $copy_array("%anim_ini_array_general_new_palette%.bmp") ""
+		END
+		ACTION_IF VARIABLE_IS_SET $anim_ini_array("monster" "palette1") BEGIN
+			OUTER_SPRINT $copy_array("%anim_ini_array_monster_palette1%.bmp") ""
+		END
+		ACTION_IF VARIABLE_IS_SET $anim_ini_array("monster" "palette2") BEGIN
+			OUTER_SPRINT $copy_array("%anim_ini_array_monster_palette2%.bmp") ""
+		END	
+		// get the sounds
+		ACTION_PHP_EACH anim_ini_array AS k=>v BEGIN
+			ACTION_IF "%k_0%" STR_EQ "sounds" BEGIN
+				OUTER_SPRINT list "%v%"
+				OUTER_WHILE "%list%" STR_CMP "" BEGIN
+					LAF return_first_entry STR_VAR list separator="," RET entry list END
+					ACTION_IF !IS_AN_INT entry BEGIN
+						OUTER_SPRINT $copy_array("%entry%.wav") ""
+					END
+				END
+			END
+		END
+		// copy over palette and sounds
+		ACTION_PHP_EACH copy_array AS resource=>discard BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%resource%" BEGIN
+				COPY_EXISTING "%resource%" "%resource_loc%/%animation%"
+			END
+		END
+		// get the resref
+		ACTION_IF VARIABLE_IS_SET $anim_ini_array("monster" "resref") BEGIN
+			OUTER_SPRINT resref $anim_ini_array("monster" "resref")
+		END ELSE BEGIN
+			OUTER_SPRINT resref $anim_ini_array("monster_icewind" "resref")		
+		END
+		ACTION_IF "%resref_original%" STR_EQ "" BEGIN
+			OUTER_SPRINT resref_original "%resref%"
+		END 
+		// copy over bams
+		COPY_EXISTING_REGEXP "%resref_original%.*\.bam" "%workspace%"
+		ACTION_BASH_FOR "%workspace%" "%resref_original%.*\.bam" BEGIN
+			OUTER_INNER_PATCH_SAVE newname "%BASH_FOR_RES%" BEGIN
+			WRITE_ASCII 0x0 "%resref%"
+			END
+			COPY "%BASH_FOR_FILESPEC%" "%resource_loc%/%animation%/%newname%.bam"
+		END
+	END
+	
+END
+
+
+
+//////////////////////////////////////////////////////////////
+//// Animation-collector - assumes that the ini file is in
+//// anims/ini
+//////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION collect_this_animation
+    STR_VAR animation=""
+            resref_orig=""
+            ids_file=""
+			deposit_base="%MOD_FOLDER%/anims"
+BEGIN
+   OUTER_SPRINT orig_animation "%animation%"
+   ACTION_IF "%ids_file%" STRING_COMPARE_CASE "" BEGIN
+      COPY "%ids_file%" override
+          COUNT_2DA_ROWS 2 rowcount
+          FOR (i=0;i<rowcount;i+=1) BEGIN
+             READ_2DA_ENTRY i 1 2 ids_here
+             PATCH_IF "%ids_here%" STRING_EQUAL_CASE "%animation%" BEGIN
+                READ_2DA_ENTRY i 0 2 animation
+                INNER_PATCH_SAVE animation "%animation%" BEGIN
+                   REPLACE_TEXTUALLY "0x" ""
+                END
+             END
+          END
+      BUT_ONLY
+   END
+   MKDIR "%MOD_FOLDER%/anims/%animation%"
+   ACTION_IF FILE_EXISTS "%MOD_FOLDER%/anims/ini_new/%orig_animation%.ini" BEGIN
+      OUTER_SPRINT inifile "%MOD_FOLDER%/anims/ini_new/%orig_animation%.ini"
+      COPY "%inifile%" "%MOD_FOLDER%/anims/%animation%/%animation%.ini"
+   END ELSE BEGIN
+      OUTER_SPRINT inifile "%MOD_FOLDER%/anims/ini/%animation%.ini"
+   END
+
+   COPY "%inifile%" "%workspace%"
+        PATCH_CLEAR_ARRAY "ani_sounds"
+        REPLACE_EVALUATE "resref=\([0-9A-Za-z_-]+\)" BEGIN
+          SPRINT resref "%MATCH1%"
+        END
+        ""
+		SPRINT new_palette ""
+		REPLACE_EVALUATE  "new_palette=\([0-9A-Za-z_-]+\)" BEGIN
+          SPRINT new_palette "%MATCH1%"
+        END
+        ""
+        REPLACE_EVALUATE "=\(.*\)" BEGIN
+          SPRINT list "%MATCH1%"
+          WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+             LPF return_first_entry STR_VAR list separator="," RET entry list END
+             SPRINT $ani_sounds("%entry%") ""
+          END
+        END
+        ""
+   BUT_ONLY
+   COPY "%inifile%" "%deposit_base%/%animation%"
+   ACTION_IF "%resref_orig%" STRING_COMPARE_CASE "" BEGIN
+      OUTER_SPRINT resref_old "%resref_orig%"
+   END ELSE BEGIN
+      OUTER_SPRINT resref_old "%resref%"
+   END
+   COPY_EXISTING_REGEXP "%resref_old%.*\.bam" "%workspace%"
+   ACTION_BASH_FOR "%workspace%" "%resref_old%.*\.bam" BEGIN
+         OUTER_SPRINT oldname "%BASH_FOR_RES%"
+
+         OUTER_INNER_PATCH_SAVE newname "%oldname%" BEGIN
+            WRITE_ASCII 0x0 "%resref%"
+         END
+         COPY + "%BASH_FOR_FILESPEC%" "%deposit_base%/%animation%/%newname%.bam"
+   END
+   ACTION_IF "%new_palette%" STRING_COMPARE "" BEGIN
+	COPY_EXISTING "%new_palette%.bmp" "%workspace%"
+	COPY + "%workspace%/%new_palette%.bmp" "%deposit_base%/%animation%"
+   END
+   ACTION_PHP_EACH ani_sounds AS sound=>null BEGIN
+      ACTION_IF FILE_EXISTS_IN_GAME "%sound%.wav" BEGIN
+         COPY_EXISTING "%sound%.wav" "%workspace%"
+         COPY + "%workspace%/%sound%.wav" "%deposit_base%/%animation%"
+      END
+   END
+END

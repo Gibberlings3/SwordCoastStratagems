@@ -1,0 +1,167 @@
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{math_traverse_graph}
+{
+Given:
+- a string 'start'
+- an action function 'relates_to' that maps strings ('arguments') to arrays of strings 'array', and takes an
+  optional argument 'parameter'
+
+return an array 'visited_nodes' of all strings connected to the original string by the transitive closure
+of the 'relates_to' relation.
+
+Gives up after 'max_iterations' iterations. Set silent to 1 to be told when it's finished, and telemetry to 1
+to get a bit more information.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION math_traverse_graph
+	INT_VAR max_iterations=1000
+			silent=0//boolean
+			telemetry=0//boolean
+	STR_VAR start=""
+			relates_to=""//function
+			parameter=""
+	RET_ARRAY visited_nodes
+BEGIN
+	OUTER_SET stopped=0
+	OUTER_SET count=0
+	ACTION_CLEAR_ARRAY current_nodes
+	ACTION_CLEAR_ARRAY SFO_visited_nodes // we need an internal version because otherwise iterated use leaves entries we can't clear reliably
+	
+	// initialise with the first set of nodes
+	LAF "%relates_to%" STR_VAR arguments="%start%" parameter RET_ARRAY current_nodes=array END
+	ACTION_IF telemetry BEGIN 
+		PRINT "Beginning graph traversal at %start%"
+	END
+	OUTER_WHILE !stopped && count<max_iterations BEGIN
+		// iterate through current nodes
+		ACTION_CLEAR_ARRAY new_nodes
+		OUTER_SET stopped=1
+		OUTER_SET ++count
+		
+		ACTION_PHP_EACH current_nodes AS node=>discard BEGIN
+			// get the nodes we link to
+			LAF "%relates_to%" STR_VAR arguments="%node%" parameter RET_ARRAY reached_nodes=array END
+			// put those nodes into new_nodes, if we haven't already visited them, and also into visited_nodes
+			ACTION_PHP_EACH reached_nodes AS new_node=>discard2 BEGIN
+				ACTION_IF !VARIABLE_IS_SET $SFO_visited_nodes("%new_node%") && !("%new_node%" STR_EQ "null") BEGIN
+					OUTER_SET $new_nodes("%new_node%")=1
+					OUTER_SET stopped=0
+				END
+			END
+			// put the origial node into visited_nodes
+			OUTER_SET $SFO_visited_nodes("%node%")=1		
+		END
+		// report if appropriate
+		ACTION_IF telemetry BEGIN
+			OUTER_SPRINT report "Nodes current at step %count%: {"
+			ACTION_PHP_EACH current_nodes AS node=>discard BEGIN
+				OUTER_SPRINT report "%report%%node%, "
+			END
+			OUTER_SPRINT report "%report%}"
+			PRINT "%report%"			
+		END
+		// flush new nodes into current nodes
+		ACTION_CLEAR_ARRAY current_nodes
+		ACTION_PHP_EACH new_nodes AS k=>v BEGIN
+			OUTER_SET $current_nodes("%k%")=1
+		END
+	END
+	// flush the working array into the output array
+	LAF array_copy STR_VAR array=SFO_visited_nodes RET_ARRAY visited_nodes=array END
+
+	ACTION_IF stopped BEGIN
+	    ACTION_IF telemetry || !silent BEGIN
+			PRINT "graph traversed in %count% iterations"
+		END
+		ACTION_IF telemetry BEGIN
+			OUTER_SPRINT report "Nodes visited: {"
+			ACTION_PHP_EACH visited_nodes AS node=>discard BEGIN
+				OUTER_SPRINT report "%report%%node%, "
+			END
+			OUTER_SPRINT report "%report%}"
+			PRINT "%report%"	
+		END
+	END ELSE BEGIN
+		WARN "math_traverse halted after %max_iterations% steps; graph not fully traversed"
+	END
+	
+END
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{math_transitive_closure}
+{
+Given a 2 place relation defined by a 2D array s.t. array(k,v)=1 iff Rkv, construct its
+transitive closure.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION math_transitive_closure 
+	STR_VAR relation=""
+	RET_ARRAY relation
+BEGIN
+	LAF array_copy STR_VAR array="%relation%" RET_ARRAY relation_copy=array END
+	LAF array_fill STR_VAR array="%relation%" fill="0" RET_ARRAY relation=array END // don't just CLEAR it, wipe it
+	LAF array_keys STR_VAR array=relation RET_ARRAY rows=keys1 END
+	ACTION_PHP_EACH rows AS k=>v BEGIN
+		LAF math_traverse_graph INT_VAR silent=1 STR_VAR relates_to=tc_helper start="%k%" RET_ARRAY visited_nodes END
+		ACTION_PHP_EACH visited_nodes AS k2=>v2 BEGIN
+			ACTION_IF "%k2%" STR_CMP "null" BEGIN
+				OUTER_SET $relation("%k%" "%k2%")=1
+			END
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION tc_helper STR_VAR arguments="" parameter="" RET_ARRAY array BEGIN
+	ACTION_CLEAR_ARRAY array
+	OUTER_SPRINT $array("null") discard
+	ACTION_PHP_EACH rows AS k=>discard BEGIN
+		ACTION_IF VARIABLE_IS_SET $relation_copy("%arguments%" "%k%") BEGIN
+			ACTION_IF $relation_copy("%arguments%" "%k%")=1 BEGIN
+				OUTER_SET $array("%k%")=1
+			END
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{math_traverse_directories}
+{
+Given a directory, recursively return itself and its subdirectories and their subdirectories, etc. as an array in k=>_ form
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION math_traverse_directories
+	STR_VAR directory=""
+	RET_ARRAY array
+BEGIN
+	ACTION_IF "%directory%" STR_EQ "" BEGIN
+		FAIL "math_traverse_directories called with empty directory"
+	END
+	LAF math_traverse_graph STR_VAR start="%directory%" relates_to=get_subdirectories_helper RET_ARRAY array=visited_nodes END
+	OUTER_SPRINT $array("%directory%") ""
+END
+
+DEFINE_ACTION_FUNCTION get_subdirectories_helper//internal
+	STR_VAR arguments="" 
+			parameter=""
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY array
+	OUTER_SPRINT $array("null") discard
+	ACTION_IF "%arguments%" STR_CMP "null" BEGIN
+		GET_DIRECTORY_ARRAY array_working "%arguments%" "[^.].*" 
+		ACTION_PHP_EACH array_working AS k=>v BEGIN
+			OUTER_SPRINT $array("%v%") ""
+		END
+	END
+END

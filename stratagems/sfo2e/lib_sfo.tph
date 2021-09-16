@@ -1,0 +1,650 @@
+<<<<<<<<.../stratagems-inline/blank
+>>>>>>>>
+
+
+/*
+describe-library{}
+{
+Functions tied to SFO's own core functioning. Functions here should depend only on lib_fn and lib_tools.
+
+}
+
+*/
+
+
+/*
+
+document{sfo_path}
+{
+Given some or all of 'file', 'path', 'location' and 'locbase', return a full filespec file_path (e.g. %MOD_FOLDER%/lib/lib_soundset.tph) and the path bit (e.g. "%MOD_FOLDER%/lib).</p>
+<p>
+Determined as follows:
+<ul>
+<li>if 'path' is set, just use it.
+<li>if not, and 'location' is set:
+	<ul>
+	<li>if 'locbase is set, use '%MOD_FOLDER%/locbase/location'
+	<li>if not, and the 'component_loc' variable is set, use '%MOD_FOLDER%/component_loc/location'
+	<li>otherwise, use '%MOD_FOLDER%/location'
+	</ul>
+<li>if not, and 'locbase' is set, use '%MOD_FOLDER%/locbase'
+<li>otherwise, just use ""
+	
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION sfo_path
+	STR_VAR path=""
+			location=""
+			locbase=""
+			file=""
+	RET file_path
+		path
+BEGIN
+	ACTION_IF !"%path%" STR_EQ "" BEGIN
+		OUTER_SPRINT file_path "%path%/%file%"
+	END ELSE
+	ACTION_IF !"%location%" STR_EQ "" BEGIN
+		ACTION_IF !"%locbase%" STR_EQ "" BEGIN
+			OUTER_SPRINT path "%MOD_FOLDER%/%locbase%/%location%"	
+		END ELSE
+		ACTION_IF (VARIABLE_IS_SET component_loc) && !"%component_loc%" STR_EQ "" BEGIN
+			OUTER_SPRINT path "%MOD_FOLDER%/%component_loc%/%location%"
+		END ELSE BEGIN
+			OUTER_SPRINT path "%MOD_FOLDER%/%location%"
+		END	
+	END ELSE
+	ACTION_IF !"%locbase%" STR_EQ "" BEGIN
+			OUTER_SPRINT path "%MOD_FOLDER%/%locbase%"
+	END ELSE BEGIN
+		OUTER_SPRINT path ""
+	END
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		OUTER_SPRINT file_path "%file%"
+	END ELSE BEGIN
+		OUTER_SPRINT file_path "%path%/%file%"
+	END
+
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Check an ini value (case-insensitive)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{check_ini}
+{
+Return a value from the mod's ini (which needs to have previously been read in, as a flat ini, into SFO_reserved_ini_hash).
+If 'section' is set, instead return a section-dependent value from the ini (it needs to have previously been read into SFO_reserved_ini_hash_2d).
+If the ini doesn't contain that value, whine unless silent=1. ini and arguments are synonyms.
+}
+
+
+*/
+
+
+DEFINE_DIMORPHIC_FUNCTION check_ini
+        INT_VAR silent=0
+		STR_VAR ini=""
+				arguments=""
+				section=""
+        RET value
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%arguments%" STR_CMP "" BEGIN
+			SPRINT ini "%arguments%"
+		END
+        TO_LOWER ini
+		PATCH_IF "%section%" STR_EQ "" BEGIN
+			PATCH_IF !VARIABLE_IS_SET $SFO_reserved_ini_hash(~%ini%~) BEGIN
+			   SPRINT value 0
+			   PATCH_IF !silent BEGIN
+					PATCH_WARN "ini entry %ini% has been checked, but is not present in the ini file"
+			   END
+			END ELSE BEGIN
+			   SPRINT value $SFO_reserved_ini_hash(~%ini%~)
+			END
+		END ELSE BEGIN
+			PATCH_IF !VARIABLE_IS_SET $SFO_reserved_ini_hash_2d(~%section%~ ~%ini%~) BEGIN
+			   SPRINT value 0
+			   PATCH_IF !silent BEGIN
+					PATCH_WARN "ini entry %ini% in section %section% has been checked, but is not present in the ini file"
+			   END
+			END ELSE BEGIN
+			   SPRINT value $SFO_reserved_ini_hash_2d(~%section%~ ~%ini%~)
+			END
+		
+		
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{log_this}
+{
+Dump the string 'input' (synonym:'arguments') into the text file 'file' (by default placed in the %data_loc% directory, but you can override), creating it if necessary.
+
+If repeat=0, only do this if it's not already there.
+}
+
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION log_this
+        INT_VAR repeat=1
+		STR_VAR file=""
+                input=""
+				arguments=""
+                path="%data_loc%"
+                location=""
+                locbase=""
+BEGIN
+        ACTION_IF "%file%" STR_EQ "" BEGIN
+			FAIL "No 'file' argment in log_this function"
+		END
+		OUTER_SPRINT input "%input%%arguments%"
+		LAF sfo_path STR_VAR location locbase path file RET file_path END
+        ACTION_IF !FILE_EXISTS ~%file_path%~ BEGIN
+           COPY ~.../stratagems-inline/blank~ ~%file_path%~
+        END
+		ACTION_IF !repeat BEGIN
+			LAF despecialize STR_VAR string="%input%" RET input_despec=string END
+			OUTER_SET proceed=!FILE_CONTAINS_EVALUATED ("%file_path%" "%input_despec%\($\|%WNL%\|%MNL%\|%LNL\)")
+		END ELSE BEGIN
+			OUTER_SET proceed=1
+		END
+        ACTION_IF proceed BEGIN
+           APPEND_OUTER ~%file_path%~ ~%input%~
+        END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{warning}
+{
+Dump the string 'warning' (synonym: 'arguments') into data_loc/sfo_warning.txt, prepended with the component number and mod name.
+If repeat=0, only do this if it's not already there.
+}
+
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION warning
+        INT_VAR repeat=0
+		STR_VAR warning=""
+				arguments=""
+BEGIN
+		PRINT "SFO warning: %warning%%arguments%"
+		LAF log_this INT_VAR repeat STR_VAR file=sfo_warnings.txt input= ~%TP2_BASE_NAME% component %COMPONENT_NUMBER%: %warning%%arguments%~ END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{regexp_warning}
+{
+Special case of 'warning' used specifically as a soft-fail for regexps.
+}
+
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION regexp_warning
+ STR_VAR file=""
+		 parent="<unknown>"
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%file%" STRING_EQUAL_CASE "" BEGIN
+			SPRINT file "%SOURCE_FILE%"
+		END
+		SPRINT warning "The mod's '%parent%' function has encountered a file it doesn't know how to patch, probably %file% (probably the file was broken by a previous mod). The error message was '%ERROR_MESSAGE%'. 
+		WEIDU has skipped it and continued with installation, but this may cause instabilities."
+		PATCH_WARN "%warning%"
+		LPF warning STR_VAR warning END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{sfo_handle_charsets}
+{
+SFO wrapper for HANDLE_CHARSETS.
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sfo_handle_charsets
+	INT_VAR sfo_from_utf8=0//boolean
+	STR_VAR sfo_tra_path=""
+			sfo_iconv_path="%sfo_tra_path%/iconv"
+	RET sfo_tra_loc
+		scs_tra_loc
+BEGIN
+	ACTION_IF !VARIABLE_IS_SET SFO_charsets_handled BEGIN
+		OUTER_SET SFO_charsets_handled=1
+		ACTION_IF sfo_from_utf8=0 BEGIN
+			ACTION_IF enhanced_edition BEGIN
+				LAF HANDLE_CHARSETS 
+					INT_VAR infer_charsets=1
+							from_utf8=0
+					STR_VAR	tra_path="%MOD_FOLDER%/%sfo_tra_path%"
+							out_path="%ext_lang_loc%"
+							iconv_path="%MOD_FOLDER%/%sfo_iconv_path%"
+				END	
+				OUTER_SPRINT sfo_tra_loc "%ext_lang_loc%"
+			END ELSE BEGIN
+				OUTER_SPRINT sfo_tra_loc "%MOD_FOLDER%/%sfo_tra_path%"
+			END
+			OUTER_SPRINT scs_tra_loc "%sfo_tra_loc%" // legacy
+		END ELSE BEGIN
+			ACTION_IF !enhanced_edition BEGIN
+				LAF HANDLE_CHARSETS 
+					INT_VAR infer_charsets=1
+							from_utf8=1
+					STR_VAR	tra_path="%MOD_FOLDER%/%sfo_tra_path%"
+							out_path="%ext_lang_loc%"
+							iconv_path="%MOD_FOLDER%/%sfo_iconv_path%"
+				END	
+				OUTER_SPRINT sfo_tra_loc "%ext_lang_loc%"
+			END ELSE BEGIN
+				OUTER_SPRINT sfo_tra_loc "%MOD_FOLDER%/%sfo_tra_path%"
+			END
+			OUTER_SPRINT scs_tra_loc "%sfo_tra_loc%" // legacy		
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{sfo_setup}
+{
+Set up the SFO directories and variables.
+
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ 
+DEFINE_ACTION_MACRO sfo_setup BEGIN
+  
+  
+ ////// Blank file
+
+<<<<<<<< .../stratagems-inline/blank
+>>>>>>>>
+  
+ //// readme
+
+<<<<<<<< .../stratagems-inline/readme.txt
+This folder is created by DavidW's mods for storing and building files. Other modders are welcome to use it; it's organised as follows:
+
+Workspace: for building things. Put anything you like in here; don't expect it still to be there next time you check.
+
+Data: for storing data that you want to read between components of your mod, or between different mods. Store data in a subfolder of 'Data'. I suggest using a folder with the same name as your mod folder itself; alternatively, use a folder with your modder prefix. Don't have your mod edit anything in someone else's folder without permission.
+
+Markers: for putting small files that let other components of your mod, or other mods, detect what your mod has done. (This is not a good way to detect whether a component is installed at all, as it does not play nicely with automated installers; use REQUIRE/FORBID_COMPONENT and similar for that.) Since this folder is shared, use your modder prefix for any file stored in it. I suggest ".mrk" as a file suffix.
+
+Backup: you can backup your mod here if you'd rather not use a folder in your own mod folder. Use
+BACKUP "weidu_external/backup/[your mod folder name]" in your tp2. 
+>>>>>>>>
+  
+  
+   //////////////////////////////////////////////////////////////
+   /// set the default variables if they're not set already
+   //////////////////////////////////////////////////////////////
+
+
+   ACTION_IF !VARIABLE_IS_SET external_loc BEGIN
+      OUTER_SPRINT external_loc weidu_external
+   END
+
+   ACTION_IF !VARIABLE_IS_SET sfo_tra_path BEGIN
+      OUTER_SPRINT sfo_tra_path lang
+   END
+
+   ACTION_IF !VARIABLE_IS_SET sfo_iconv_path BEGIN
+      OUTER_SPRINT sfo_iconv_path "%sfo_tra_path%/iconv"
+   END
+
+   ACTION_IF !VARIABLE_IS_SET base_language BEGIN
+      OUTER_SPRINT base_language english
+   END
+   
+   ACTION_IF !VARIABLE_IS_SET ext_lang_loc BEGIN
+		OUTER_SPRINT ext_lang_loc "%external_loc%/lang/%MOD_FOLDER%"
+   END
+   ACTION_IF !VARIABLE_IS_SET ext_audio_loc BEGIN
+		OUTER_SPRINT ext_audio_loc "%external_loc%/audio/%MOD_FOLDER%"
+   END
+   
+   ACTION_IF !VARIABLE_IS_SET ssl_loc BEGIN
+		OUTER_SPRINT ssl_loc "%MOD_FOLDER%/bin"
+   END
+
+   ACTION_IF !VARIABLE_IS_SET sfo_from_utf8 BEGIN
+	OUTER_SET sfo_from_utf8=0
+   END
+   
+   //////////////////////////////////////////////////////////////
+   /// make the external folders
+   //////////////////////////////////////////////////////////////
+
+   MKDIR "%external_loc%"
+   MKDIR "%external_loc%/workspace"
+   MKDIR "%external_loc%/workspace/ssl_out"
+   MKDIR "%external_loc%/data/%MOD_FOLDER%"
+   MKDIR "%external_loc%/data/dw_shared"
+   MKDIR "%external_loc%/markers"
+   MKDIR "%external_loc%/lang"
+
+
+   //////////////////////////////////////////////////////////////
+   /// Install the readme
+   //////////////////////////////////////////////////////////////
+	
+	COPY + ".../stratagems-inline/readme.txt" "%external_loc%"
+
+   //////////////////////////////////////////////////////////////
+   /// Set variables for the external locations
+   //////////////////////////////////////////////////////////////
+
+   OUTER_SPRINT workspace "%external_loc%/workspace"
+   OUTER_SPRINT data_loc_root "%external_loc%/data"
+   OUTER_SPRINT data_loc "%external_loc%/data/%MOD_FOLDER%"
+   OUTER_SPRINT marker_loc "%external_loc%/markers"
+   OUTER_SPRINT ext_lang_loc "%external_loc%/lang/%MOD_FOLDER%"
+   OUTER_SPRINT data_loc_shared "%external_loc%/data/dw_shared"
+   OUTER_SPRINT batch_loc "%external_loc%/batch"
+   
+    ///////////////////////////////////////////////////
+	// check what install we're running on
+	///////////////////////////////////////////////////
+
+  OUTER_SET enhanced_edition = ( GAME_IS ~bgee bg2ee eet iwdee pstee~ ? 1 : 0)
+  OUTER_SET is_tobex = (FILE_EXISTS "tobex.dll")
+  OUTER_SET is_bg1 = ( GAME_IS ~bgee tutu tutu_totsc bgt eet~ ? 1 : 0)
+  OUTER_SET is_bg2 = ( GAME_IS ~bg2ee eet bgt tob soa~ ? 1 : 0)
+  OUTER_SET is_iwd = ( GAME_IS ~iwdee iwd totlm~ ? 1 : 0)
+  OUTER_SET is_tutu = ( GAME_IS ~tutu tutu_totsc~ ? 1 : 0)
+  OUTER_SET is_eet = ( GAME_IS ~eet~ ? 1 : 0)
+
+  ACTION_IF !VARIABLE_IS_SET tutu_var BEGIN
+     ACTION_IF is_tutu BEGIN
+        OUTER_SPRINT tutu_var "_"
+     END ELSE BEGIN
+        OUTER_SPRINT tutu_var ""
+     END
+  END
+  
+  ACTION_IF GAME_IS "eet" BEGIN
+     OUTER_SPRINT eet_var "_"
+  END ELSE BEGIN
+     OUTER_SPRINT eet_var ""
+  END
+   
+END
+
+
+/*
+document{sfo_crossplatform}
+{
+Load appropriate values of the various variables for different versions of BG.
+}
+*/
+
+DEFINE_ACTION_MACRO sfo_crossplatform BEGIN
+ 
+	LOCAL_SPRINT letter ""
+	LOCAL_SPRINT thegame ""
+	LOCAL_SPRINT rows ""
+	LOCAL_SPRINT var ""
+	LOCAL_SPRINT val ""
+	LOCAL_SPRINT area_array ""
+	LOCAL_SPRINT name_array ""
+	LOCAL_SET chapter_delta=0
+	LOCAL_SET num=0
+
+	ACTION_IF !VARIABLE_IS_SET sfo_crossplatform_set BEGIN
+		
+		OUTER_SET sfo_crossplatform_set=1
+	 
+		// file naming - general case (these are used enough that they tend to creep into even BG2 code, so it's worth defining them once and for all)
+
+		ACTION_FOR_EACH letter IN a b c d e f g h i j k l m n o p q r s t u v w x y z BEGIN
+			ACTION_IF is_tutu BEGIN
+				OUTER_SPRINT ~tutu_script%letter%~ ~_~
+			END ELSE BEGIN
+				OUTER_SPRINT ~tutu_script%letter%~ ~%letter%~
+			END
+		END
+		
+		// the rest of this is skipped unless on a BG1 install
+		
+		ACTION_IF is_bg1 BEGIN
+		
+		// setup
+		 
+			ACTION_IF is_tutu BEGIN
+				OUTER_SPRINT thegame tutu
+			END ELSE 
+			ACTION_IF GAME_IS bgt BEGIN
+				OUTER_SPRINT thegame bgt
+			END ELSE
+			ACTION_IF GAME_IS bgee BEGIN
+				OUTER_SPRINT thegame bgee
+			END ELSE 
+			ACTION_IF GAME_IS eet BEGIN
+				OUTER_SPRINT thegame eet
+			END ELSE BEGIN
+				FAIL ~Error in sfo_crossplatform: unrecognised BG1 game~
+			END
+		
+		// area codes (and associated area scripts)
+	   
+			LAF 2da_read STR_VAR file=bg1_area_list.2da locbase="%sfo_library_path%/data" case=mixed RET_ARRAY area_array=array rows END
+			ACTION_PHP_EACH rows AS var=>discard BEGIN
+				ACTION_IF "%thegame%" STR_EQ "bgt" BEGIN
+					OUTER_SPRINT val $area_array("%var%" "bgt")
+				END ELSE BEGIN
+					OUTER_SPRINT val $area_array("%var%" "default")
+					ACTION_MATCH "%thegame%" WITH
+					eet BEGIN
+						OUTER_PATCH_SAVE val "%val%" BEGIN
+							WRITE_ASCII 0x0 BG (2)
+						END	
+						OUTER_SPRINT val_bcs "%val%"
+					END
+					tutu BEGIN
+						OUTER_PATCH_SAVE val_bcs "%val%" BEGIN
+							INSERT_BYTES 0x0 1
+							WRITE_ASCII 0x0 "_"
+						END
+						OUTER_PATCH_SAVE val "%val%" BEGIN
+							WRITE_ASCII 0x0 FW (2)
+						END
+					END	
+					DEFAULT
+						OUTER_SPRINT val_bcs "%val%"
+					END				
+				END
+				OUTER_SPRINT "%var%" "%val%"
+				OUTER_SPRINT "%var%_BCS" "%val_bcs%"
+			END
+	   
+		// residuals
+		
+			LAF 2da_read STR_VAR file=bg1_file_names.2da locbase="%sfo_library_path%/data" case=mixed RET_ARRAY name_array=array rows END
+			ACTION_PHP_EACH rows AS var=>discard BEGIN
+				OUTER_SPRINT val $name_array("%var%" "%thegame%")
+				ACTION_IF "%val%" STR_CMP "null" BEGIN
+					OUTER_SPRINT "%var%" "%val%"
+				END
+			END	
+		
+			 // chapters
+		  
+			OUTER_SET chapter_delta= ( ~%thegame%~ STRING_EQUAL bgt ? 1 : 0)
+			OUTER_FOR (num=1;num<=7;num +=1) BEGIN
+				OUTER_SET ~bg1_chapter_%num%~ =num + chapter_delta
+			END
+
+
+			  // testing
+			  /*
+			  PRINT ~tutu_var is "%tutu_var%"~
+			  PRINT ~tutu_scriptbg is %tutu_scriptbg%~
+			  PRINT ~tutu_scriptf is %tutu_scriptf%~
+			  PRINT ~bg1_skeleton_warrior is %bg1_skeleton_warrior%~
+			  PRINT ~bg1_chapter_4 is %bg1_chapter_4%~
+			  PRINT ~Undercity_TempleofBhaal is %Undercity_TempleofBhaal%~
+			  ACTION_READLN bloook
+			  */
+
+		END // end of BG1 section
+
+		ACTION_IF is_bg2 BEGIN    // BG2 section
+
+			OUTER_SET chapter_delta= ( ~%thegame%~ STRING_EQUAL eet ? 12 : 0)
+			OUTER_FOR (num=1;num<=10;num +=1) BEGIN
+				OUTER_SET ~bg2_chapter_%num%~ =num + chapter_delta
+			END
+
+
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{make_label}
+{
+Set a marker file, which can be checked by check_label. </p>
+
+<p>Do not use make_label or check_label in your base tp2 to decide whether to install a component, as they are invisible to Project Infinity and the like.
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION make_label
+	STR_VAR label=""
+BEGIN
+    COPY ~.../stratagems-inline/blank~ ~%marker_loc%/%label%.mrk~
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{check_label}
+{
+Check for a marker file, which can be set by make_label.</p>
+
+<p>Do not use make_label or check_label in your base tp2 to decide whether to install a component, as they are invisible to Project Infinity and the like.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION check_label
+    STR_VAR label=""
+			prefix=""
+    RET value
+BEGIN
+   OUTER_SET value=FILE_EXISTS ~%marker_loc%/%prefix%%label%.mrk~ 
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{sfo_fix}
+{
+A few basic fixes:
+<ul>
+<li>make sure dir.ids is present and working
+<li>add some possibly-missing entries to gtimes.ids and spell.ids
+</ul>
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION sfo_fix BEGIN
+
+	SILENT
+	LAF check_label STR_VAR label="dw-sfo-fix" RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label="dw-sfo-fix" END
+		
+		////////////////////////////////////////////////////////////////////////////////
+		/// make sure dir.ids is present and working
+		////////////////////////////////////////////////////////////////////////////////
+
+        COPY "%MOD_FOLDER%/%sfo_library_path%/resource/dir.ids" override
+        COPY_EXISTING "action.ids" override
+             REPLACE_TEXTUALLY "Face\*)" "Face*DIR)"
+             REPLACE_TEXTUALLY "Direction\*)" "Direction*DIR)"
+        BUT_ONLY
+
+		////////////////////////////////////////////////////////////////////////////////
+		// add a few possibly-missing IDS entries (direct from EEAsc)
+		////////////////////////////////////////////////////////////////////////////////
+
+        APPEND ~gtimes.ids~ ~6 ONE_ROUND~                    UNLESS ~ONE_ROUND~
+        APPEND ~gtimes.ids~ ~12 TWO_ROUNDS~                    UNLESS ~TWO_ROUNDS~
+        APPEND ~gtimes.ids~ ~18 THREE_ROUNDS~                    UNLESS ~THREE_ROUNDS~
+        APPEND ~gtimes.ids~ ~24 FOUR_ROUNDS~                    UNLESS ~FOUR_ROUNDS~
+        APPEND ~gtimes.ids~ ~30 FIVE_ROUNDS~                    UNLESS ~FIVE_ROUNDS~
+        APPEND ~gtimes.ids~ ~54 NINE_ROUNDS~                    UNLESS ~NINE_ROUNDS~
+        APPEND ~gtimes.ids~ ~60 TEN_ROUNDS~                     UNLESS ~TEN_ROUNDS~
+        APPEND ~gtimes.ids~ ~10 TWO_MINUTES~                    UNLESS ~TWO_MINUTES~
+        APPEND ~gtimes.ids~ ~45 NINE_MINUTES~                    UNLESS ~NINE_MINUTES~
+        APPEND ~gtimes.ids~ ~100 TWENTY_MINUTES~                    UNLESS ~TWENTY_MINUTES~
+        APPEND ~gtimes.ids~ ~300 ONE_HOUR~                    UNLESS ~ONE_HOUR~
+        APPEND ~spell.ids~  ~2302 WIZARD_REMOVE_MAGIC~          UNLESS ~WIZARD_REMOVE_MAGIC~
+        APPEND ~spell.ids~  ~2705 WIZARD_KHELBENS_WARDING_WHIP~ UNLESS ~WIZARD_KHELBENS_WARDING_WHIP~
+
+		////////////////////////////////////////////////////////////////////////////////
+		//deal with the broken objects in vBG2
+		////////////////////////////////////////////////////////////////////////////////
+
+		ACTION_IF !enhanced_edition BEGIN
+			ACTION_FOR_EACH bad IN "iplot01k.itm" "iplot04g.itm" "iplot04h.itm" "iplot04i.itm" "xr2400.are" "xr2600.are" BEGIN
+				ACTION_IF FILE_EXISTS_IN_GAME "%bad%" BEGIN
+					DISABLE_FROM_KEY "%bad%"
+				END
+			END
+		END
+
+
+	END
+	VERBOSE
+
+END
+
+
+DEFINE_ACTION_MACRO sfo_batch_set BEGIN
+	OUTER_SET SFO_batch_mode=1
+	MKDIR "%batch_loc%"
+	LAF new_file INT_VAR no_log=1 STR_VAR file="%MOD_FOLDER%.bat" path="%batch_loc%" arguments="setup-%MOD_FOLDER% --uninstall --force-install-list" END
+	AT_EXIT "%batch_loc%/%MOD_FOLDER%.bat"
+END
+
+
+DEFINE_ACTION_FUNCTION sfo_batch_update BEGIN
+	COPY "%batch_loc%/%MOD_FOLDER%.bat" "%batch_loc%"
+		SPRINT string " %COMPONENT_NUMBER%"
+		insert_point=BUFFER_LENGTH
+		INSERT_BYTES insert_point STRING_LENGTH "%string%"
+		WRITE_ASCII insert_point "%string%"
+END

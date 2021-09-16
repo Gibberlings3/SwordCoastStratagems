@@ -1,0 +1,983 @@
+DEFINE_ACTION_FUNCTION obg2_divine BEGIN
+
+
+	INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cdfunctions.tpa"
+
+/* 
+//temp for when testing this as a standalone file
+
+OUTER_SET anim_beetle = 30720
+OUTER_SET truncate_at_level = 20
+LAM data_spell_resrefs
+
+*/
+
+
+
+OUTER_SPRINT spell_list divine_resrefs.txt
+
+/* 
+Converting for non-EE is essentially two parts--exclusion of spells
+that can't be converted (removed from arcane_resrefs.txt prior
+to running this on oBG2) and then this, where we convert EE-only
+opcodes to oBG2 counterparts.
+*/
+
+  LAF CD_HANDLE_AUDIO_PREP END // ogg > wav conversions  
+
+// build array of new summons; delete 2nd & 3rd columns for oBG2 summon tables, graphics will be specified as 215s in spells
+ACTION_CLEAR_ARRAY cd_monster_summoning_script 
+COPY_EXISTING ~ginsect.2da~ ~override~ // giant insect
+              ~sshamb.2da~  ~override~ // stalker
+  COUNT_2DA_ROWS 4 rows
+  FOR (index = 0 ; index < rows ; ++index) BEGIN
+    READ_2DA_ENTRY index 1 4 file
+    DEFINE_ASSOCIATIVE_ARRAY cd_monster_summoning_script BEGIN ~%file%~ => ~%default%~ END
+  END
+  REPLACE_TEXTUALLY ~[ %TAB%]+Hit\(Animation\)?[ %TAB%]+AreaHitAnimation~ ~~
+  REPLACE_TEXTUALLY ~^\([0-9]+[ %TAB%]+[^ %TAB%]+\)[ %TAB%].+$~ ~\1~ 
+  BUT_ONLY IF_EXISTS
+
+ACTION_PHP_EACH cd_monster_summoning_script AS file => script BEGIN
+
+  COPY_EXISTING ~%file%.cre~ ~override~
+	PATCH_IF !FILE_EXISTS_IN_GAME "bdsum00.bcs" BEGIN
+		REPLACE_TEXTUALLY "bdsum00" "wtasight" (8)
+	END
+    LPF ADD_CRE_EFFECT INT_VAR opcode = 215 target = 1 parameter2 = 1 duration = 1 STR_VAR resource = msumm1h END
+    BUT_ONLY IF_EXISTS
+    
+END 
+
+
+// DW- stun icons provided by stun effect in EE, need to be done explicitly in oBG2  
+// omit SMASHING_WAVE as oBG2 doesn't do it anyway
+  COPY_EXISTING ~%CLERIC_WHIRLWIND%.spl~     ~override~
+		LPF CLONE_EFFECT INT_VAR match_opcode = 45 opcode=142 parameter2 = 55 END 
+
+
+// DW- these are present in BG2EE and (very slightly) different from the IWDEE versions (hence not installed by the main converter)
+
+	ACTION_FOR_EACH vvc IN prayerg prayerb BEGIN
+		COPY "%obg2_res_path%/%vvc%.vvc" override
+	END
+
+
+
+/////                                                  \\\\\
+///// moved spells                                     \\\\\
+/////                                                  \\\\\
+
+  // these are hidden on EE via hidespel; have to use flags on oBG2
+  COPY_EXISTING ~sppr414.spl~ ~override~ // cause serious wounds (using IWD alt)
+                ~sppr510.spl~ ~override~ // cause critical wounds (using IWD alt)
+                ~sppr613.spl~ ~override~ // physical mirror (now at level 5)
+    WRITE_LONG 0x1e (THIS BOR (BIT30 + BIT31)) // adds cleric/pal and druid/ran flags, effectively excluding it from all divine casters
+              
+
+/////                                                  \\\\\
+///// creature animations                              \\\\\
+/////                                                  \\\\\
+
+  ACTION_IF MOD_IS_INSTALLED ~INFINITYANIMATIONS/SETUP-INFINITYANIMATIONS.TP2~ ~500~ BEGIN // 'more base animations'
+
+    ACTION_IF IDS_OF_SYMBOL (~animate~ ~BEETLE_BLACK~) > 0 THEN BEGIN
+      OUTER_SET anim_beetle = IDS_OF_SYMBOL (~animate~ ~BEETLE_BLACK~)
+    END
+    
+  END
+
+  ACTION_IF anim_beetle BEGIN // only set if animation is present, otherwise never installed
+  
+    COPY_EXISTING ~gisbomb.cre~ ~override~
+                  ~gisborb.cre~ ~override~
+      WRITE_LONG 0x28 anim_beetle
+
+  END   
+
+/////                                                  \\\\\
+///// immunity effs                                    \\\\\
+/////                                                  \\\\\ 
+
+  // generating immunity EFFs for various 324 replacements
+  ACTION_CLEAR_ARRAY cd_immunity_eff
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_immunity_eff BEGIN
+
+     ~%CLERIC_SUNSCORCH%c~                  => cdixd116 // undead/myconids immune to normie sunscorch
+     ~%CLERIC_MOLD_TOUCH%~                  => cdix326
+     ~%CLERIC_MOLD_TOUCH%b~                 => cdix326b
+     ~%CLERIC_BLOOD_RAGE%~                  => cdixd422
+     ~%CLERIC_CLOUD_OF_PESTILENCE%b~        => cdixd423
+     ~%CLERIC_SHIELD_OF_LATHANDER%~         => cdixd520
+     cdid617b                               => cdixd617 // whirlwind
+     ~%CLERIC_SYMBOL_PAIN%~                 => cdixd714
+     ~%CLERIC_SYMBOL_HOPELESSNESS%~         => cdixd716
+     ~%CLERIC_DESTRUCTION%~                 => cdixd734
+     ~%CLERIC_GREATER_SHIELD_OF_LATHANDER%~ => cdixd735
+     cdishmbl                               => cdixd737 // entangle from smabling mound (via stalker)
+     ~%CLERIC_ENERGY_DRAIN%~                => cdixd739
+     
+  END
+
+  ACTION_PHP_EACH cd_immunity_eff AS imm => file BEGIN
+  
+    COPY ~%obg2_res_path%/immunity.eff~ ~override/%file%.eff~
+      WRITE_ASCIIE 0x30 ~%imm%~ #8  
+      
+  END
+  
+/////                                                  \\\\\
+///// self-stacking protection                         \\\\\
+/////                                                  \\\\\          
+
+  // EE generally uses self-referential 321s for better spell stacking
+  // oBG2 has to use 206, which we clone from an existing opcode
+  ACTION_CLEAR_ARRAY cd_206_clone
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_206_clone BEGIN
+
+     ~%CLERIC_CURSE%~               =>  54 // thac0 bonus
+     ~#prayerb~                     =>  54 // thac0 bonus
+     ~#prayerg~                     =>  54 // thac0 bonus
+     ~#reciteb~                     =>  54 // thac0 bonus
+     ~#reciteg~                     =>  54 // thac0 bonus 
+     ~%CLERIC_CIRCLE_OF_BONES%~     => 176 // movement speed
+     ~%CLERIC_BLOOD_RAGE%~          =>   3 // berserk
+     ~%CLERIC_SHIELD_OF_LATHANDER%~ => 101 // immunity to damage
+     ~%CLERIC_ANIMAL_RAGE%~         =>   3 // berserk
+     ~sppr203d~                     => 131 // chant
+     ~sppr203e~                     => 137 // bad chant
+     ~%CLERIC_SYMBOL_PAIN%~         =>  54 // thac0 bonus
+
+  END
+
+  ACTION_PHP_EACH cd_206_clone AS file => clone_op BEGIN
+  
+    COPY_EXISTING ~%file%.spl~ ~override~
+      LPF CLONE_EFFECT INT_VAR match_opcode = clone_op opcode = 206 parameter1 = 0 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%file%~ END 
+
+  END   
+
+/////                                                  \\\\\
+///// op 8/9 with 255                                  \\\\\
+/////                                                  \\\\\
+
+  // EEs allow these ops to target 255 'full body'; need to convert to series of smaller targets
+  COPY_EXISTING ~#prayerb.spl~                                  ~override~
+                ~#prayerg.spl~                                  ~override~
+                ~#reciteb.spl~                                  ~override~
+                ~#reciteg.spl~                                  ~override~
+                ~%CLERIC_CURSE%.spl~                            ~override~
+                ~sppr203d.spl~                                  ~override~
+                ~sppr203e.spl~                                  ~override~
+                ~%CLERIC_ALICORN_LANCE%.spl~                    ~override~
+                ~%CLERIC_BLOOD_RAGE%.spl~                       ~override~
+                ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a.spl~ ~override~
+                ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%b.spl~ ~override~
+                ~%CLERIC_ANIMAL_RAGE%.spl~                      ~override~
+                ~%CLERIC_ENTROPY_SHIELD%.spl~                   ~override~
+                ~%CLERIC_IMPERVIOUS_SANCTITY_OF_MIND%.spl~      ~override~
+    LPF CD_CONVERT_9_255 END
+
+/////                                                  \\\\\
+///// op 61                                            \\\\\
+/////                                                  \\\\\
+  
+  // op 61 crashes oBG2, so convert it to seven op 50s for body glow 
+  COPY_EXISTING ~%CLERIC_CAUSE_LIGHT_WOUNDS%.spl~          ~override~
+                ~%CLERIC_BEAST_CLAW%.spl~                  ~override~
+                ~%CLERIC_CAUSE_MODERATE_WOUNDS%.spl~       ~override~
+                ~%CLERIC_CAUSE_DISEASE%.spl~               ~override~
+                ~%CLERIC_MOONBLADE%.spl~                   ~override~
+                ~%CLERIC_CAUSE_MEDIUM_WOUNDS%.spl~         ~override~
+                ~%CLERIC_BLOOD_RAGE%.spl~                  ~override~
+                ~%CLERIC_UNFAILING_ENDURANCE%.spl~         ~override~
+                ~%CLERIC_STAR_METAL_CUDGEL%.spl~           ~override~
+                ~%CLERIC_CAUSE_SERIOUS_WOUNDS_IWD%.spl~    ~override~
+                ~%CLERIC_ANIMAL_RAGE%.spl~                 ~override~
+                ~%CLERIC_MASS_CAUSE_LIGHT_WOUNDS%.spl~     ~override~
+                ~%CLERIC_CAUSE_CRITICAL_WOUNDS_IWD%.spl~   ~override~
+                ~%CLERIC_ENTROPY_SHIELD%.spl~              ~override~
+                ~%CLERIC_ENERGY_DRAIN%.spl~                ~override~
+                ~%CLERIC_SYMBOL_PAIN%.spl~                 ~override~
+                ~%CLERIC_IMPERVIOUS_SANCTITY_OF_MIND%.spl~ ~override~
+                ~%CLERIC_WITHER%.spl~                      ~override~
+                ~moonbla.itm~                              ~override~
+                ~smcudge.itm~                              ~override~
+    LPF CD_CONVERT_61 END 
+
+/////                                                  \\\\\
+///// portrait icons, op 142                           \\\\\
+/////                                                  \\\\\
+
+  // portrait icons that use IWD-exclusive icons get remapped if
+  // an existing icon works, otherwise get deleted
+  ACTION_CLEAR_ARRAY cd_icon_map
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_icon_map BEGIN
+
+     ~#prayerg.spl~                             => 18   // prayer > chant
+     ~#reciteg.spl~                             => 18   // recitation > chant
+     ~%CLERIC_EXALTATION%.spl~                  => "-1" // exaltation > delete
+     ~%CLERIC_CIRCLE_OF_BONES%.spl~             => "-1" // circle of bones > delete
+     ~%CLERIC_STORM_SHELL%.spl~                 => "-1" // storm shield > delete
+     ~%CLERIC_STATIC_CHARGE%.spl~               => "-1" // static charge > delete
+     ~%CLERIC_BLOOD_RAGE%.spl~                  => 4    // blood rage to berserk
+     ~%CLERIC_SHIELD_OF_LATHANDER%.spl~         => "-1" // shield o' lathander > delete
+     ~%CLERIC_ANIMAL_RAGE%.spl~                 => 83   // animal rage > spell failure
+     ~%CLERIC_ENTROPY_SHIELD%.spl~              => 56   // entropy shield > regeneration
+     ~%CLERIC_SYMBOL_PAIN%.spl~                 => "-1" // pain > delete
+     ~%CLERIC_GREATER_SHIELD_OF_LATHANDER%.spl~ => "-1" // greater shield o' lathander > delete
+     
+  END
+
+  ACTION_PHP_EACH cd_icon_map AS file => icon BEGIN
+  
+    COPY_EXISTING ~%file%~ ~override~
+      PATCH_IF icon < 0 BEGIN
+        LPF DELETE_EFFECT INT_VAR match_opcode = 142 END
+      END ELSE BEGIN  
+        LPF ALTER_EFFECT INT_VAR match_opcode = 142 parameter2 = icon END  
+      END
+
+  END  
+
+/////                                                  \\\\\
+///// op 325                                           \\\\\
+/////                                                  \\\\\
+
+  // convert 325 to individual save opcodes
+  COPY_EXISTING ~#prayerb.spl~                                  ~override~
+                ~#prayerg.spl~                                  ~override~
+                ~#reciteb.spl~                                  ~override~
+                ~#reciteg.spl~                                  ~override~
+                ~%CLERIC_CURSE%.spl~                            ~override~
+                ~sppr203d.spl~                                  ~override~
+                ~sppr203e.spl~                                  ~override~
+                ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a.spl~ ~override~
+                ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%b.spl~ ~override~
+                ~%CLERIC_ANIMAL_RAGE%.spl~                      ~override~
+                ~%CLERIC_ENTROPY_SHIELD%.spl~                   ~override~
+    LPF CD_CONVERT_325 END
+
+/////                                                  \\\\\
+///// CAUSE_BAD_THINGS                                 \\\\\
+/////                                                  \\\\\ 
+
+  // grouping these together as the preventions all work similarly    
+  ACTION_CLEAR_ARRAY cd_immunity_cause
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_immunity_cause BEGIN
+
+     ~%CLERIC_CAUSE_LIGHT_WOUNDS%~        => cdixd114
+     ~%CLERIC_CAUSE_MODERATE_WOUNDS%~     => cdixd220
+     ~%CLERIC_CAUSE_DISEASE%~             => cdixd320
+     ~%CLERIC_CAUSE_MEDIUM_WOUNDS%~       => cdixd330 
+     ~%CLERIC_CAUSE_SERIOUS_WOUNDS_IWD%~  => cdixd414  
+     ~%CLERIC_CAUSE_CRITICAL_WOUNDS_IWD%~ => cdixd510  
+     ~%CLERIC_MASS_CAUSE_LIGHT_WOUNDS%~   => cdixd523     
+
+  END
+
+  ACTION_PHP_EACH cd_immunity_cause AS spell => eff BEGIN
+    
+    // create the eff 
+    COPY ~%obg2_res_path%/immunity.eff~ ~override/%eff%.eff~
+      WRITE_ASCIIE 0x30 ~%spell%~ #8          
+      
+    COPY_EXISTING ~%spell%.spl~ ~override~
+      LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = EVAL ~%eff%~ END // race = golem
+      LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = EVAL ~%eff%~ END // general = undead
+      LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 104 opcode = 177                  parameter2 = 4 STR_VAR resource = EVAL ~%eff%~ END // race = parameter1
+      LPF CD_SPLIT_SAVE_DAMAGE END
+      
+  END
+
+/////                                                  \\\\\
+///// CLERIC_CURSE                                     \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_CURSE%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+
+/////                                                  \\\\\
+///// CLERIC_SUNSCORCH                                 \\\\\
+/////                                                  \\\\\ 
+
+// [DW] Myconid race is not automatically present in oBG2
+// Add it in 164, or the first available space after 164 in
+// the (unlikely) event that 164 is taken
+
+	ACTION_IF IDS_OF_SYMBOL (race myconid)<0 BEGIN
+		OUTER_PATCH "" BEGIN
+			found_gap=0
+			ids=164
+			WHILE !found_gap BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT entry race ids
+				PATCH_IF IS_AN_INT entry BEGIN
+					found_gap=1
+				END ELSE BEGIN
+					++ids
+				END
+			END
+		END
+		APPEND "race.ids" "%ids%%TAB%MYCONID"
+		ACTION_FOR_EACH myconid IN icmyc01 icmyc02 BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%myconid%.cre" BEGIN
+				COPY_EXISTING "%myconid%.cre" override
+					WRITE_BYTE 0x272 ids
+				BUT_ONLY
+			END
+		END
+	END
+	OUTER_SET myconid_ids=IDS_OF_SYMBOL (race myconid)
+
+  // sunscorch d is for undead/myconids, sunscorch-c for the normies
+  COPY_EXISTING ~%CLERIC_SUNSCORCH%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 326 opcode = 177 parameter1 = 164 parameter2 = 4 STR_VAR match_resource = EVAL ~%CLERIC_SUNSCORCH%c~ resource = cdixd116 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 177 STR_VAR resource = cdiad116 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 177 match_parameter1 = myconid_ids match_parameter2 = 4 parameter1 = 4 parameter2 = 3 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 326 opcode = 146 parameter2 = 1 STR_VAR resource = EVAL ~%CLERIC_SUNSCORCH%c~ END
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    PATCH_FOR_EACH res IN cdid1151 cdid1152 cdid1153 cdid1154 BEGIN
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 2 power = 1 timing = 1 resist_dispel = 3 STR_VAR resource = EVAL ~%res%~ END
+    END  
+  
+  // cast sunscorsch-d
+  COPY ~%obg2_res_path%/cast.eff~ ~override/cdiad116.eff~
+    WRITE_ASCIIE 0x30 ~%CLERIC_SUNSCORCH%d~ #8 
+    
+  COPY_EXISTING ~%CLERIC_SUNSCORCH%c.spl~ ~override~  
+                ~%CLERIC_SUNSCORCH%d.spl~ ~override~ 
+    LPF CD_SPLIT_SAVE_DAMAGE END
+      
+  COPY ~%obg2_res_path%/cdid1151.vvc~ ~override~
+       ~%obg2_res_path%/cdid1152.vvc~ ~override~
+       ~%obg2_res_path%/cdid1153.vvc~ ~override~
+       ~%obg2_res_path%/cdid1154.vvc~ ~override~
+       ~%obg2_res_path%/cdisunsc.bam~ ~override~
+      
+  // see if this projectile actually works in oBG2 
+
+/////                                                  \\\\\
+///// CLERIC_ALICORN_LANCE                             \\\\\
+/////                                                  \\\\\
+
+  // make subspell to prevent AC penalty stacking
+  COPY_EXISTING ~%CLERIC_ALICORN_LANCE%.spl~ ~override/%CLERIC_ALICORN_LANCE%b.spl~ 
+    WRITE_LONG 0x08 "-1" // name
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 12 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 0 opcode = 206 parameter1 = 0 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%CLERIC_ALICORN_LANCE%b~ END 
+
+  // farm out everything but damage to subspell
+  COPY_EXISTING ~%CLERIC_ALICORN_LANCE%.spl~ ~override~   
+    LPF ALTER_EFFECT INT_VAR match_opcode = 0 opcode = 146 parameter1 = 0 parameter2 = 1 timing = 1 duration = 0 STR_VAR resource = EVAL ~%CLERIC_ALICORN_LANCE%b~ END
+    PATCH_FOR_EACH op IN 8 139 174 321 BEGIN
+      LPF DELETE_EFFECT INT_VAR match_opcode = op END
+    END  
+    LPF CD_SPLIT_SAVE_DAMAGE END
+
+/////                                                  \\\\\
+///// CLERIC_PRAYER                                    \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~#prayerb.spl~ ~override~
+                ~#prayerg.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+
+/////                                                  \\\\\
+///// CLERIC_EXALTATION                                \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_EXALTATION%.spl~ ~override~ 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 206 target = 1 parameter1 = 0 parameter2 = 0 END // prevent self-cast
+
+/////                                                  \\\\\
+///// CLERIC_MOONBLADE                                 \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~moonbla.itm~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 12 match_parameter1 = 0 END // delete undead damage, since it's going through an EFF
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 177 parameter1 = 4 parameter2 = 3 timing = 1 duration = 0 STR_VAR resource = cdimoonb END
+
+  COPY ~%obg2_res_path%/cdimoonb.eff~ ~override~
+
+/////                                                  \\\\\
+///// CLERIC_CIRCLE_OF_BONES                           \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_CIRCLE_OF_BONES%.spl~ ~override~ 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END // add self-stacking elsewhere
+    LPF ALTER_EFFECT INT_VAR match_opcode = 176 parameter2 = 2 END // mode 5 not available on oBG2
+
+  COPY_EXISTING ~%CLERIC_CIRCLE_OF_BONES%d.spl~ ~override~ 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END // evasion
+
+/////                                                  \\\\\
+///// CLERIC_SPIKE_GROWTH                              \\\\\
+/////                                                  \\\\\
+ 
+  // make into a subspell for cloud treatment
+  COPY_EXISTING ~%CLERIC_SPIKE_GROWTH%.spl~ ~override/cdid324.spl~
+    WRITE_LONG 0x08 "-1" // name
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 duration = 6 STR_VAR resource = cdid324  END
+    
+  COPY_EXISTING ~%CLERIC_SPIKE_GROWTH%.spl~ ~override~
+    LPF DELETE_EFFECT END
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 parameter2 = 2 timing = 1 parameter2 = 2 STR_VAR resource = cdid324 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 2 duration = 3 STR_VAR resource = sgrowtx END
+    
+  COPY_EXISTING ~idpro300.pro~ ~override~ // remove graphics, repetitions from projectile  
+    WRITE_SHORT 0x204 0     // trap size  
+    WRITE_SHORT 0x210 0     // explosion freq
+    WRITE_BYTE  0x216 0     // reps
+    WRITE_BYTE  0x217 255   // explosion effect (none)
+    WRITE_BYTE  0x218 0     // explosion color
+    WRITE_ASCII 0x21c ~~ #8 // blank animation
+    
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 5 cloud_dur = 60 STR_VAR code = cdid324 anim = sgrowta END
+
+/////                                                  \\\\\
+///// CLERIC_CLOUDBURST                                \\\\\
+/////                                                  \\\\\
+
+  // make into a subspell for cloud treatment
+  COPY_EXISTING ~%CLERIC_CLOUDBURST%.spl~ ~override/cdid325.spl~
+    WRITE_LONG 0x08 "-1" // name
+    LPF DELETE_EFFECT INT_VAR match_opcode = 206 END // this prevents the final dam 12 for 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END // evasion check
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END // replaced as 177s below
+    LPF DELETE_EFFECT INT_VAR match_opcode = 12 match_dicesize = 3 END // magic damage routed through eff instead
+    LPF CD_SPLIT_SAVE_DAMAGE END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 power = 3 parameter1 = 187 parameter2 = 5 timing = 1 resist_dispel = 1 STR_VAR resource = cdid325c END // extra dam for class: fire elemental
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 power = 3 parameter1 = 146 parameter2 = 5 timing = 1 resist_dispel = 1 STR_VAR resource = cdid325c END // extra dam for class: winter wolf
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 duration = 6 STR_VAR resource = cdid325 END
+    
+  COPY_EXISTING ~%CLERIC_CLOUDBURST%.spl~ ~override~
+    LPF DELETE_EFFECT END
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 parameter2 = 2 timing = 1 parameter2 = 2 STR_VAR resource = cdid325 END
+    
+  COPY_EXISTING ~idpro301.pro~ ~override~ // remove graphics, repetitions from projectile  
+    WRITE_SHORT 0x00a 20    // speed
+    WRITE_BYTE  0x133 0     // face target
+    WRITE_SHORT 0x204 0     // trap size  
+    WRITE_SHORT 0x210 0     // explosion freq
+    WRITE_BYTE  0x216 0     // reps
+    WRITE_BYTE  0x217 255   // explosion effect (none)
+    WRITE_BYTE  0x218 0     // explosion color
+
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 1 cloud_dur = 12 zosa = 1 STR_VAR code = cdid325 anim = cloudbh ssound = "are_p24" END  
+
+  COPY ~%obg2_res_path%/cdid325c.eff~ ~override~ // eff for 'fire- and cold-using' creature damage
+  
+  // since cloudburst is a mix of lightning and rain, adjust the visuals
+  COPY_EXISTING ~cdid325v.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_probability1 = 100 probability1 =  19 probability2 =  0 END // 51-100 becomes 0-19 (3251)
+    LPF ALTER_EFFECT INT_VAR match_probability1 = 50  probability1 = 100 probability2 = 20 END // 0-50 becomes 20-100 (3250)
+  
+  COPY_EXISTING ~cdid3250.vvc~ ~override~ //  3250 becomes rain; 3251 already lightning
+    WRITE_ASCII 0x08 ~cloudba~ #8
+
+/////                                                  \\\\\
+///// CLERIC_PRODUCE_FIRE                              \\\\\
+/////                                                  \\\\\
+    
+  COPY_EXISTING ~%CLERIC_PRODUCE_FIRE%.spl~ ~override~
+    LPF ADD_SPELL_EFFECT INT_VAR insert_point = 0 opcode = 215 target = 1 parameter2 = 2 timing = 1 resist_dispel = 3 STR_VAR resource = pfirex END
+      
+  COPY_EXISTING ~idpro215.pro~ ~override~
+    WRITE_BYTE  0x133 0     // face target
+    WRITE_BYTE  0x217 255   // explosion effect (none)
+
+/////                                                  \\\\\
+///// CLERIC_STATIC_CHARGE                             \\\\\
+/////                                                  \\\\\
+
+  // in ee/oIWD static charge is a self-targeted recurring effect; best we 
+  // can do for oBG2 is make it a single-target recurring damage spell
+  COPY_EXISTING ~%CLERIC_STATIC_CHARGE%.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR target = 1 projectile = 1 range = 30 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF ALTER_EFFECT INT_VAR target = 2 dicenumber = 0 dicesize = 0 END
+    LPF CD_CONVERT_333 STR_VAR 333spell = EVAL ~%CLERIC_STATIC_CHARGE%b~ END
+
+  COPY_EXISTING ~%CLERIC_STATIC_CHARGE%b.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR target = 1 projectile = 1 range = 30 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 dicenumber = 4 dicesize = 8 special = 0 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 12 dicenumber = 5 savingthrow = BIT24 END
+    LPF CD_EXTEND-O-MATIC INT_VAR base_dur = 0 step_dur = 0 level_cap = 20 min_lev_alt = 7 END
+    READ_SHORT 0x68 abil_num
+    FOR (index = 0 ; index < abil_num ; ++index) BEGIN
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 12 match_savingthrow = BIT24    dicenumber = ((index +  9) / 2) END
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 12 match_savingthrow = (BIT0 + BIT24) dicenumber = ((index + 10) / 2) END
+    END
+
+  COPY_EXISTING ~cdid419.itm~ ~override~
+    LPF ALTER_ITEM_HEADER INT_VAR target = 1 range = 30 END 
+
+/////                                                  \\\\\
+///// CLERIC_RECITATION                                \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~#reciteb.spl~ ~override~
+                ~#reciteg.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+
+/////                                                  \\\\\
+///// CLERIC_BLOOD_RAGE                                \\\\\
+/////                                                  \\\\\
+  
+  COPY_EXISTING ~%CLERIC_BLOOD_RAGE%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 328 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 parameter1 = 0 parameter2 = 0 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 power = 4 parameter1 = 16 parameter2 = 8 resist_dispel = 3 duration = 120 insert_point = 0 STR_VAR resource = cdixd422 END // lawful
+    PATCH_FOR_EACH ea IN 1 28 29 30 31 126 128 BEGIN // all ea values except charmed, controlled, ally, familiar, pc
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 power = 4 parameter1 = ea parameter2 = 2 resist_dispel = 3 duration = 120 insert_point = 0 STR_VAR resource = cdixd42 END
+    END  
+
+/////                                                  \\\\\
+///// CLERIC_CLOUD_OF_PESTILENCE                       \\\\\
+/////                                                  \\\\\
+
+  // copy meat to subspell that does the work
+  COPY_EXISTING ~%CLERIC_CLOUD_OF_PESTILENCE%.spl~ ~override/cdid423.spl~
+    WRITE_LONG 0x08 "-1" // name
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 duration = 6 STR_VAR resource = cdid423 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 39 END // class = paladin, but bg2 paladins don't have disease immunity
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  9 opcode = 177 parameter1 = 145 parameter2 = 4 STR_VAR resource = cdixd423 END // race = elemental
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 27 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixd423 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  1 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixd423 END // general = undead
+  
+  // strip main spell to caster-immunity and cloud creature creation
+  COPY_EXISTING ~%CLERIC_CLOUD_OF_PESTILENCE%.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 timing = 1 parameter2 = 2 STR_VAR resource = cdid423 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 1 duration = 24 STR_VAR resource = cdid423 END
+  
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 9 cloud_dur = 24 zosa = 1 STR_VAR code = cdid423 anim = copesta dsound = "are_p25" END
+      
+  COPY_EXISTING ~idpro309.pro~ ~override~ // remove graphics, repetitions from projectile  
+    WRITE_SHORT 0x00a 96    // speed
+    WRITE_LONG  0x100 0     // blank flags
+    WRITE_SHORT 0x204 0     // trap size  
+    WRITE_SHORT 0x210 0     // explosion freq
+    WRITE_BYTE  0x216 0     // reps
+    WRITE_BYTE  0x217 255   // explosion effect (none)
+    WRITE_BYTE  0x218 0     // explosion color
+
+/////                                                  \\\\\
+///// CLERIC_THORN_SPRAY                               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_THORN_SPRAY%.spl~ ~override~
+    LPF CD_SPLIT_SAVE_DAMAGE END
+    
+  COPY_EXISTING ~idpro303.pro~ ~override~
+    WRITE_BYTE 0x217 11 // re-use cone of cold
+    WRITE_BYTE 0x218 0
+
+/////                                                  \\\\\
+///// CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL           \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 146 STR_VAR match_resource = EVAL ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a~ END
+    PATCH_FOR_EACH align IN 17 18 19 33 34 35 49 50 51 BEGIN
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 power = 5 parameter1 = align parameter2 = 8 timing = 1 resist_dispel = 3 STR_VAR resource = EVAL ~cdirwf%align%~ END
+    END
+    READ_LONG 0x64 abil_off
+    READ_SHORT abil_off + 0x26 proj
+    
+  COPY_EXISTING ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%b.spl~ ~override~ // allies
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 184 END
+    PATCH_FOR_EACH op IN 321 8 174 215 18 93 BEGIN // cosmetics, sound, fatigue, hp bonus
+      LPF DELETE_EFFECT INT_VAR match_opcode = op END
+    END
+    PATCH_FOR_EACH op IN 54 33 34 35 36 37 BEGIN // already get +1 from 99, so only bump another +1 here
+      LPF ALTER_EFFECT INT_VAR match_opcode = op parameter1 = 1 END
+    END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 54 opcode = 206 parameter1 = 0 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%b~ END
+
+  COPY_EXISTING ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a.spl~ ~override~ // same alignment
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 184 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 54 opcode = 206 parameter1 = 0 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a~ END
+    LPF CD_CONVERT_9_255 END
+
+  COPY ~%obg2_res_path%/cast.eff~ ~override/cdirwf00.eff~
+    WRITE_ASCIIE 0x30 ~%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a~
+
+  ACTION_FOR_EACH align IN 17 18 19 33 34 35 49 50 51 BEGIN
+
+    COPY ~%obg2_res_path%/cast.eff~ ~override/cdirwf%align%.eff~
+      WRITE_ASCIIE 0x30 ~cdirwf%align%~
+
+    COPY ~%obg2_res_path%/cdirwf17.spl~ ~override/cdirwf%align%.spl~
+      WRITE_LONG 0x9e align
+      LPF ALTER_SPELL_HEADER INT_VAR projectile = proj END
+  
+  END
+
+/////                                                  \\\\\
+///// CLERIC_SPIKE_STONES                              \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_SPIKE_STONES%.spl~ ~override/cdid519.spl~
+    WRITE_LONG 0x08 "-1" // name
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 126 parameter2 = 2 END // mode 5 not available on oBG2
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 duration = 6 STR_VAR resource = cdid519 END
+
+  COPY_EXISTING ~%CLERIC_SPIKE_STONES%.spl~ ~override~
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 timing = 1 parameter2 = 2 STR_VAR resource = cdid519 END
+  
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 5 cloud_dur = 72 STR_VAR code = cdid519 anim = sstonea dsound = are_p04 END
+      
+  COPY_EXISTING ~idpro213.pro~ ~override~ // remove graphics, repetitions from projectile  
+    WRITE_SHORT 0x00a 96    // speed
+    WRITE_LONG  0x100 0     // blank flags
+    WRITE_SHORT 0x204 0     // trap size  
+    WRITE_SHORT 0x210 0     // explosion freq
+    WRITE_BYTE  0x216 0     // reps
+    WRITE_BYTE  0x217 255   // explosion effect (none)
+    WRITE_BYTE  0x218 0     // explosion color
+    
+  COPY ~%obg2_res_path%/sstonea.bam~ ~override~    
+
+/////                                                  \\\\\
+///// CLERIC_SHIELD_OF_LATHANDER                       \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_SHIELD_OF_LATHANDER%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 3 parameter2 = 8 STR_VAR resource = cdixd520 END
+
+/////                                                  \\\\\
+///// CLERIC_UNDEAD_WARD                               \\\\\
+/////                                                  \\\\\
+
+  // simple enough, summons an invisible cleric to turn undead
+  COPY_EXISTING ~%CLERIC_UNDEAD_WARD%.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 1 power = 5                resist_dispel = 2 duration = 60 STR_VAR resource = uwardx END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 power = 5 parameter2 = 2 resist_dispel = 2 duration = 60 END
+    LPF CD_EXTEND-O-MATIC INT_VAR base_dur = 60 step_dur = 0 level_cap = truncate_at_level min_lev_alt = 9 END
+    READ_SHORT 0x68 abil_num
+    FOR (index = 9 ; index < (abil_num + 9) ; ++index) BEGIN
+      LPF ALTER_EFFECT INT_VAR header = (index - 9) match_opcode = 177 STR_VAR resource = EVAL ~cdiuwr%index%~ END
+    END
+
+  COMPILE ~%obg2_res_path%/cdid521.baf~
+
+  OUTER_FOR (index = 9 ; index < (truncate_at_level + 1) ; ++index) BEGIN
+
+    COPY ~%obg2_res_path%/cdiuwr9.eff~ ~override/cdiuwr%index%.eff~
+      WRITE_ASCIIE 0x30 "%DEST_RES%" #8
+
+    COPY ~%obg2_res_path%/cdiuwr9.cre~ ~override/cdiuwr%index%.cre~
+      WRITE_BYTE 0x234 index
+      
+  END
+
+/////                                                  \\\\\
+///// CLERIC_ANIMAL_RAGE                               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_ANIMAL_RAGE%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END
+    LPF CD_CONVERT_333 END    
+    PATCH_FOR_EACH ea IN 0 1 28 29 30 31 126 128 199 200 201 202 254 255 BEGIN // all ea values except charmed, controlled, ally, familiar, pc
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 power = 4 parameter1 = ea parameter2 = 2 resist_dispel = 3 duration = 120 insert_point = 0 STR_VAR resource = cdixd42 END
+    END  
+
+/////                                                  \\\\\
+///// CLERIC_ENTROPY_SHIELD                            \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_ENTROPY_SHIELD%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 END
+    // iwdee/bgee/bg2ee/vanilla all match in projectiles until the 1pp slots for EE, so remove 1pp refs for vanilla (EEs all match, fortunately)
+    FOR (index = 282 ; index < 319 ; ++index) BEGIN
+      LPF DELETE_EFFECT INT_VAR match_opcode = 83 match_parameter2 = index END
+    END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 83 match_parameter2 = 331 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 83 match_parameter2 = 332 END
+    PATCH_IF FILE_EXISTS_IN_GAME ~1arow01.pro~ BEGIN // if 1pp is installed, re-add the references manually since they still may not sync with EE
+      PATCH_FOR_EACH proj IN // 1pp stuff
+        1stafm0c 1arow01 1arow02 1arow03 1arow04 1arow05 1arow07 1arow10 1arow11 1arow15 1axe05 1axe08 1axe09 1axe10 1axe16 1bolt01 1bolt02 1bolt03 1bolt04
+        1bolt05 1bolt06 1bolt09 1bull02 1bull03 1bull04 1bull05 1bull06 1dagg05 1dagg11 1dagg12 1dagg16 1dart01 1dart02 1dart03 1dart04 1dart05 1dart08
+      BEGIN
+        SET projids = IDS_OF_SYMBOL (~projectl~ ~%proj%~)
+        PATCH_IF projids > 0 BEGIN
+          LPF CLONE_EFFECT INT_VAR match_opcode = 83 match_parameter2 = 1 parameter2 = projids END
+        END
+      END
+    END
+  
+/////                                                  \\\\\
+///// CLERIC_WHIRLWIND                                 \\\\\
+/////                                                  \\\\\
+
+  // use circle of bones projectile, but increase AoE slightly
+  COPY_EXISTING ~smllarnc.pro~ ~override/cdwhirl.pro~
+    WRITE_SHORT 0x204 100
+    WRITE_SHORT 0x206 100
+  ADD_PROJECTILE ~override/cdwhirl.pro~  
+
+  // whirlwind is basically simulated by an invisible creature that random walks and applies visuals, cdid617b
+  COPY_EXISTING ~%CLERIC_WHIRLWIND%.spl~ ~override/cdid617b.spl~
+    WRITE_LONG 0x08 "-1"
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = cdwhirl END // use smallarc from circle of bones
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 265 target = 1 parameter1 = 1 timing = 1 insert_point = 0 STR_VAR resource = cdizosa END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 273 target = 1 timing = 1 resist_dispel = 3 insert_point = 0 STR_VAR resource = cdizosa END
+    PATCH_FOR_EACH race IN 146 118 119 142 101 102 145 144 127 199 BEGIN // dragon, syverns, slimes, giants, ankheg, basilisk, elemental, golem, otyugh, ettin
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 2 parameter1 = race parameter2 = 4 duration = 1 insert_point = 0 STR_VAR resource = cdixd617 END
+    END
+
+  COPY_EXISTING ~%CLERIC_WHIRLWIND%.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 parameter2 = 2 resist_dispel = 2 duration = 120 STR_VAR resource = cdid617 END
+
+  COMPILE ~%obg2_res_path%/cdid617.baf~
+
+  COPY ~%obg2_res_path%/cdid617.cre~  ~override~
+       ~%obg2_res_path%/cdid617.eff~  ~override~
+       ~%obg2_res_path%/cdid617b.eff~ ~override~
+       ~%obg2_res_path%/whirlwx.vvc~  ~override~
+
+/////                                                  \\\\\
+///// CLERIC_SYMBOL_PAIN                               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_SYMBOL_PAIN%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 328 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixd714 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixd714 END // general = undead
+    
+/////                                                  \\\\\
+///// CLERIC_SYMBOL_HOPELESSNESS                       \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_SYMBOL_HOPELESSNESS%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixd716 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixd716 END // general = undead
+    
+  COPY ~%obg2_res_path%/paralh.bam~ ~override~
+  
+/////                                                  \\\\\
+///// CLERIC_IMPERVIOUS_SANCTITY_OF_MIND               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_IMPERVIOUS_SANCTITY_OF_MIND%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 170 END // do it here since there are multiple 142s
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 parameter1 = 0 parameter2 = 0 END
+
+/////                                                  \\\\\
+///// CLERIC_DESTRUCTION                               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_DESTRUCTION%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 4 parameter2 = 3 STR_VAR resource = cdixd734 END // undead are immune
+
+/////                                                  \\\\\
+///// CLERIC_GREATER_SHIELD_OF_LATHANDER               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_GREATER_SHIELD_OF_LATHANDER%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 3 parameter2 = 8 STR_VAR resource = cdixd735 END // evil are immune
+
+/////                                                  \\\\\
+///// CLERIC_MIST_OF_ELDATH                            \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_MIST_OF_ELDATH%.spl~ ~override/cdid736.spl~
+    WRITE_LONG 0x08 "-1" // name
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 duration = 6 STR_VAR resource = cdid736 END
+  
+  COPY_EXISTING ~%CLERIC_MIST_OF_ELDATH%.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 timing = 1 parameter2 = 2 STR_VAR resource = cdid736 END
+
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 7 cloud_dur = 6 zosa = 1 STR_VAR code = cdid736 anim = moeldaa dsound = eff_p104 END
+       
+  COPY_EXISTING ~idpro307.pro~ ~override~   
+    WRITE_SHORT 0x00a 96            // speed    
+    WRITE_BYTE  0x133 0             // face target
+    WRITE_SHORT 0x204 0             // trap size
+    WRITE_SHORT 0x206 128           // explosion size
+    WRITE_SHORT 0x210 0             // explosion freq
+    WRITE_BYTE  0x216 0             // reps
+    WRITE_BYTE  0x217 255           // explosion effect
+    WRITE_BYTE  0x218 0             // explosion color
+
+/////                                                  \\\\\
+///// CLERIC_STALKER                                   \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_STALKER%.spl~ ~override~ 
+  
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 2 resist_dispel = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = asumm1x END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 22 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = sshamb END 
+    
+  COPY_EXISTING ~shmblr.itm~ ~override~ // remove all effects and move to spell
+    READ_LONG 0x64 abil_off
+    READ_LONG 0x6a fx_off
+    READ_SHORT abil_off + 0x1e abil_fx_num
+    READ_SHORT abil_off + 0x20 abil_fx_idx
+    READ_ASCII (fx_off + (abil_fx_idx * 0x30)) fx (abil_fx_num * 0x30)
+    LPF DELETE_EFFECT INT_VAR check_globals = 0 END
+    LPF ADD_ITEM_EFFECT INT_VAR type = 1 opcode = 177 target = 2 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixd737 END // general = undead
+    LPF ADD_ITEM_EFFECT INT_VAR type = 1 opcode = 177 target = 2 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixd737 END // race = golem
+    LPF ADD_ITEM_EFFECT INT_VAR type = 1 opcode = 177 target = 2 parameter1 = 145 parameter2 = 4 STR_VAR resource = cdixd737 END // race = elemental
+    LPF ADD_ITEM_EFFECT INT_VAR type = 1 opcode = 177 target = 2 parameter1 = 164 parameter2 = 4 STR_VAR resource = cdixd737 END // race = myconid
+    LPF ADD_ITEM_EFFECT INT_VAR type = 1 insert_point="-1" opcode = 146 target = 2 parameter2 = 1 STR_VAR resource = cdishmbl END
+    
+  COPY ~%obg2_res_path%/cdishmbl.spl~ ~override~
+    READ_LONG 0x64 abil_off
+    READ_LONG 0x6a fx_off
+    READ_SHORT abil_off + 0x20 abil_fx_idx
+    WRITE_SHORT abil_off + 0x1e THIS + abil_fx_num
+    INSERT_BYTES (fx_off + (abil_fx_idx * 0x30)) (abil_fx_num * 0x30)
+    WRITE_ASCIIE (fx_off + (abil_fx_idx * 0x30)) ~%fx%~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 126 parameter2 = 2 END // mode 5 not available on oBG2
+
+/////                                                  \\\\\
+///// CLERIC_ENERGY_DRAIN                              \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_ENERGY_DRAIN%.spl~ ~override~ 
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixd739 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixd739 END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 104 opcode = 177                  parameter2 = 4 STR_VAR resource = cdixd739 END // race = parameter1
+
+/////                                                  \\\\\
+///// CLERIC_GIANT_INSECT                              \\\\\
+/////                                                  \\\\\
+
+  ACTION_IF anim_beetle BEGIN // only proceed if animation is present, otherwise spell never installed
+  
+    COPY_EXISTING ~gisbomb.cre~ ~override~
+                  ~gisborb.cre~ ~override~
+      WRITE_LONG 0x28 anim_beetle
+
+    COPY_EXISTING ~%CLERIC_GIANT_INSECT%.spl~ ~override~ 
+      LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 2 resist_dispel = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = asumm1x END // add animation
+      LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 4 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = ginsect END // two beetles
+      LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 2 parameter2 = 0 probability1 = 49 dicesize = 0 dicenumber = 0 STR_VAR resource = ginsect END // +1
+
+    COPY_EXISTING ~%INNATE_BOMBARDIER_BEETLE_CLOUD%.spl~ ~override~ 
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 2 timing = 1 resist_dispel = 2 STR_VAR resource = sclouda END
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 2 timing = 4 duration = 2 resist_dispel = 2 STR_VAR resource = scloudr END
+      
+    COPY_EXISTING ~fartrng.itm~ ~override~  
+      LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 END // bombardier immune to their own spells
+      
+    COPY_EXISTING ~idpro282.pro~ ~override~
+      WRITE_BYTE 0x217 255    
+      
+  END      
+
+/////                                                  \\\\\
+///// CLERIC_CHANT                                     \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~sppr203d.spl~ ~override~
+                ~sppr203e.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+
+/////                                                  \\\\\
+///// CLERIC_WITHER                                    \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%CLERIC_WITHER%.spl~ ~override~ 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = EVAL ~%eff%~ END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = EVAL ~%eff%~ END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 104 opcode = 177                  parameter2 = 4 STR_VAR resource = EVAL ~%eff%~ END // race = parameter1
+
+/////                                                  \\\\\
+///// CLERIC_MOLD_TOUCH                                \\\\\
+/////                                                  \\\\\ 
+  
+COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~ ~override~
+  PATCH_FOR_EACH op IN 78 206 318 328 BEGIN
+    LPF DELETE_EFFECT INT_VAR match_opcode = op END
+  END  
+  LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdix326 END // race = golem
+  LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdix326 END // general = undead  
+  FOR (index = 0 ; index < 4 ; ++index) BEGIN
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 78 target = 2 power = 3 parameter1 = 2 parameter2 = 3 resist_dispel = 1 duration = ((index + 1) * 6) savingthrow = BIT0 END // 1d6/round over four rounds
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 146 target = 2 parameter2 = 1 timing = 4 duration = (index * 6) STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%b~ END 
+  END
+  LPF ALTER_EFFECT INT_VAR match_opcode = 146 match_duration = 0 timing = 1 END
+  LPF ALTER_EFFECT INT_VAR match_opcode = 146 match_duration = 18 timing = 1 savingthrow = BIT0 END // only get fourth round of spread on failed save
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 3  parameter2 = 7 resist_dispel = 1 duration = 24 savingthrow = BIT0 END
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 power = 3  resist_dispel = 1 duration = 24 savingthrow = BIT0 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%~ END
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 78 target = 2 power = 3 parameter1 = 2 parameter2 = 3 resist_dispel = 1 duration = 18 END // 1d6/round over 
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 78 target = 2 power = 3 parameter1 = 2 parameter2 = 3 resist_dispel = 1 duration = 6 END // 1d6/round over 
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 3  parameter2 = 7 resist_dispel = 1 duration = 18 END
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 206 target = 2 power = 3  resist_dispel = 1 duration = 18 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%~ END
+
+COPY_EXISTING ~%CLERIC_MOLD_TOUCH%b.spl~ ~override~
+  LPF DELETE_EFFECT INT_VAR match_opcode = 327 END  
+  LPF DELETE_EFFECT INT_VAR match_opcode = 328 END
+  LPF CLONE_EFFECT INT_VAR match_opcode = 318 match_parameter2 =  55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdix326b END // race = golem
+  LPF ALTER_EFFECT INT_VAR match_opcode = 318 match_parameter2 =  55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdix326b END // general = undead  
+  LPF ALTER_EFFECT INT_VAR match_opcode = 78 parameter1 = 2 parameter2 = 3 timing = 0 duration = 24 END  
+  LPF CLONE_EFFECT INT_VAR match_opcode = 78 match_duration = 24 duration = 18 END 
+  LPF CLONE_EFFECT INT_VAR match_opcode = 78 match_duration = 24 duration = 12 END 
+  LPF CLONE_EFFECT INT_VAR match_opcode = 78 match_duration = 24 duration =  6 END
+  LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 3  parameter2 = 7 resist_dispel = 1 duration = 24 savingthrow = BIT0 END
+  
+/////                                                  \\\\\
+///// obg2 graphical fixes                             \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~asumm1x.vvc~ ~override~
+    WRITE_LONG 0x2c "-100" // y-coordinate
+    WRITE_LONG 0x4c "-1"   // z-coordinate
+
+  // 3d blend flag in VVCs cause them to be virtually transparent in oBG2
+  ACTION_FOR_EACH file IN 
+    ~#bless~ ~#entropy~ ~#genabju~ ~#grnring~ ~#latshg1~ ~#latshg2~ ~#latshl1~ ~#latshl2~ ~#storm~ 
+    abjurh alterh asumm1x blessh ccdamah cdiseah cidamah cldamah cloudbh cmdamah cmwounh conjuh csdamah
+    curseh destruh enchah exaltah harmh invoch msumm1h necroh paralh prayerb prayerg recitab recitag
+    rwotfag rwotfah schargh sohopex uwardx witherh mtouchh
+  BEGIN
+
+    COPY_EXISTING ~%file%.vvc~ ~override~
+      WRITE_SHORT 0x18 (THIS BAND `BIT9) 
+
+  END     
+    
+  // ee BAMs have horrible black auras on everything that show up w/o 3d enabled in oBG2; use original IWD BAMs instead  
+  ACTION_FOR_EACH file IN 
+    abjurax abjurh alancet alterh area1x area4x asumm1x blessh ccdamah cdiseah cldamah cloudbh 
+    cmdamah cmwounh conjuh copesta csdamah curseh destruh enchah eshielc exaltah gsolac1 gsolac2 
+    harmh invoch moeldaa msumm1h msumm1x necroh pfirea pfirex rwotfah schargh sclouda scloudr sgrowta 
+    sgrowtx sohopex solatc1 solatc2 sshellc sunscoh tsprayt uwardx mtouchh
+  BEGIN
+
+    COPY ~%obg2_res_path%/%file%.bam~ ~override~
+
+  END  
+END

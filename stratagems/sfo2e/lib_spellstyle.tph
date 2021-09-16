@@ -1,0 +1,302 @@
+/*
+describe-library{Library to set up the visual and sound style of a spell to match standard templates.</p> 
+
+<p>
+Styles (at least in the default use) are:
+<ul>
+<li>mage_[school] (e.g., mage_enchantment), though there is no illusion or conjuration school
+<li>cleric_[school], though there is no illusion school
+<li>mage_[type], where type is 'blind_deaf', 'mirror_image', 'spook', 'invisibility', 'detect_illusion',
+'antimagic', 'ruby_ray', 'confusion', or 'symbol'
+</ul>}
+*/
+
+<<<<<<<< .../stratagems-inline/spell_style_prototypes.txt
+style			prototype
+mage_enchantment 	WIZARD_LUCK
+mage_abjuration		WIZARD_SPELL_TURNING
+mage_divination		WIZARD_INFRAVISION
+mage_invocation		WIZARD_MAGIC_MISSILE
+mage_alteration		WIZARD_COLOR_SPRAY
+mage_blind_deaf		WIZARD_BLINDNESS
+mage_necromancy		WIZARD_ENERGY_DRAIN
+mage_mirror_image	WIZARD_MIRROR_IMAGE
+mage_spook			WIZARD_SPOOK
+mage_invisibility	WIZARD_INVISIBILITY
+mage_detect_illusion	WIZARD_DETECT_ILLUSION
+mage_antimagic		WIZARD_BREACH
+mage_ruby_ray		WIZARD_RUBY_RAY_OF_REVERSAL
+mage_confusion		WIZARD_CONFUSION
+mage_symbol			WIZARD_SYMBOL_STUN
+cleric_abjuration	CLERIC_PROTECT_FROM_EVIL
+cleric_alteration	CLERIC_BARKSKIN	
+cleric_conjuration	CLERIC_SYMBOL_STUN
+cleric_divination	CLERIC_FIND_TRAPS
+cleric_enchantment	CLERIC_MAGIC_STONE
+cleric_invocation	CLERIC_GOOD_BERRIES
+cleric_necromancy	CLERIC_AID
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/blank
+>>>>>>>>
+
+/////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{spellstyle_get_style_data}
+{Get the style data (if any) for the current spell, as defined by its 'vvc' (an actual
+vvc played by opcode 215, or a lighting type from opcode 141), its wav (played by opcode 174),
+and its glow (played by opcode 50 or 61).
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION spellstyle_get_style_data RET vvc wav glow BEGIN
+
+					SPRINT vvc null
+					SPRINT wav null
+					SPRINT glow null
+					GET_OFFSET_ARRAY2 fx_arr 0x72 SPL_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						READ_SHORT fx_off opcode
+						PATCH_IF opcode=215 BEGIN
+							PATCH_IF BYTE_AT (0xc+fx_off)=1 BEGIN
+								READ_ASCII 0x14+fx_off resource
+								TO_UPPER resource
+								SPRINT vvc "%resource%"	
+							END
+						END
+						PATCH_IF opcode=141 BEGIN
+							PATCH_IF BYTE_AT (0xc+fx_off)=1 BEGIN
+								READ_LONG 0x8+fx_off lighting_type
+								SPRINT vvc "141-%lighting_type%"
+				
+							END
+						END
+						PATCH_IF opcode=174 BEGIN
+							PATCH_IF BYTE_AT (0xc+fx_off)=1 BEGIN
+								READ_ASCII 0x14+fx_off resource
+								TO_UPPER resource
+								SPRINT wav "%resource%"
+							END
+						END
+						PATCH_IF opcode=61 || opcode=50 BEGIN
+							READ_LONG 0x4+fx_off color
+							READ_LONG 0x8+fx_off color2
+							SPRINT glow "%opcode%-%color%-%color2%"
+						END
+					END
+
+
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spellstyle_collect_styles} 
+{Get the actual styles from a list of prototypes (probably not run in live-distributed code). The
+default for prototypes is inline in this library.}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION spellstyle_collect_styles STR_VAR prototypes=".../stratagems-inline/spell_style_prototypes.txt" output_loc="" output="" BEGIN
+
+	// get the prototype data
+	
+
+	OUTER_SPRINT data "2DA V1.0%WNL%*%WNL%vvc wav glow%WNL%"
+	COPY "%prototypes%" override
+		READ_2DA_ENTRIES_NOW prototype_data 2
+		FOR (row=1;row<prototype_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER prototype_data row 0 style
+			READ_2DA_ENTRY_FORMER prototype_data row 1 spell_name
+			LPF RES_NUM_OF_SPELL_NAME STR_VAR spell_name RET spell_res END
+			INNER_ACTION BEGIN
+				COPY_EXISTING "%spell_res%.spl" override
+					LPF spellstyle_get_style_data RET vvc wav glow END
+					SPRINT data "%data%%style%%TAB%%vvc%%TAB%%wav%%TAB%%glow%%WNL%"
+				BUT_ONLY
+			END
+		END
+	BUT_ONLY
+	ACTION_IF FILE_EXISTS "%output_loc%/%output%" BEGIN
+		DELETE "%output_loc%/%output%"
+	END
+	COPY ".../stratagems-inline/blank" "%output_loc%/%output%"
+	APPEND_OUTER "%output_loc%/%output%" "%data%" KEEP_CRLF
+	COPY "%output_loc%/%output%" "%output_loc%" PRETTY_PRINT_2DA
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spellstyle_load_styles}
+{
+ Load in the data in a style list
+ }
+ */
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION spellstyle_load_styles STR_VAR file="" RET_ARRAY style_vvc style_wav style_glow BEGIN
+
+	ACTION_CLEAR_ARRAY style_vvc
+	ACTION_CLEAR_ARRAY style_wav
+	ACTION_CLEAR_ARRAY style_glow
+	
+	COPY - "%file%" nowhere
+		READ_2DA_ENTRIES_NOW style_data 4
+		FOR (row=0;row<style_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER style_data row 0 name
+			READ_2DA_ENTRY_FORMER style_data row 1 vvc
+			READ_2DA_ENTRY_FORMER style_data row 2 wav
+			READ_2DA_ENTRY_FORMER style_data row 3 glow
+			SPRINT $style_vvc("%name%") "%vvc%"
+			SPRINT $style_wav("%name%") "%wav%"
+			SPRINT $style_glow("%name%") "%glow%"
+		END
+	
+	BUT_ONLY
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spellstyle_identify_style}
+{ Identify a style for the current spell, using 'style_file' as the list of styles}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION spellstyle_identify_style
+	STR_VAR style_file=""
+	RET style
+BEGIN
+	// load the style file
+	INNER_ACTION BEGIN
+		LAF spellstyle_load_styles STR_VAR file="%style_file%" RET_ARRAY style_vvc style_wav style_glow END
+	END
+	// look for the style data
+	LPF spellstyle_get_style_data RET vvc wav glow END
+	SPRINT style_is ""
+	PHP_EACH style_vvc AS style=>vvc_of_style BEGIN
+		SPRINT wav_of_style $style_wav("%style%")
+		SPRINT glow_of_style $style_glow("%style%")
+		PATCH_IF "%vvc_of_style%" STRING_EQUAL_CASE "%vvc%" && "%wav_of_style%" STRING_EQUAL_CASE "%wav%" && "%glow_of_style%" STRING_EQUAL_CASE "%glow%" && "%vvc%%wav%%glow%" STR_CMP "nullnullnull" BEGIN
+			SPRINT style_is "%style%"
+		END
+	END
+	SPRINT style "%style_is%"
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spellstyle_apply_style}
+{As a patch function, apply a style to a spell. 'arguments' is the style, 'style_file' contains the style data.}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION spellstyle_apply_style 
+	STR_VAR arguments="" 
+			style_file=""
+BEGIN
+
+	TO_LOWER arguments
+	// get data
+	PATCH_IF "%style_file%" STR_CMP "" BEGIN
+		LPF spellstyle_load_styles STR_VAR file="%style_file%" RET_ARRAY style_vvc style_glow style_wav END
+	END
+	PATCH_IF !VARIABLE_IS_SET $style_vvc("%arguments%") BEGIN
+		LPF warning STR_VAR warning="Unable to apply spell style %arguments% as it doesn't exist in %style_file%" END
+	END ELSE BEGIN
+		SPRINT vvc $style_vvc("%arguments%")
+		SPRINT wav $style_wav("%arguments%")
+		SPRINT glow $style_glow("%arguments%")
+	END
+	// find a prototype effect
+	GET_OFFSET_ARRAY2 fx_arr 0x72 SPL_V10_HEAD_EFFECTS
+	template_opcode=0
+	template_target=0
+	PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+		PATCH_IF template_opcode=0 BEGIN
+			PATCH_IF BYTE_AT (0xc+fx_off)=1 BEGIN // permanent duration
+				READ_SHORT fx_off opcode
+				PATCH_MATCH "%opcode%" WITH
+				215 141 174 50 61 BEGIN
+					template_opcode=opcode
+					READ_BYTE fx_off+0x2 template_target
+				END
+				DEFAULT
+				END
+			END
+		END	
+	END
+	PATCH_IF template_opcode=0 BEGIN
+		LPF warning STR_VAR warning="failed to apply spell style %arguments% to %filename% as it lacks a viable prototype" END
+	END ELSE BEGIN
+		// mark the template
+		LPF ALTER_EFFECT INT_VAR match_opcode=template_opcode match_target=template_target match_timing=1 opcode=999 END
+		// delete other style features
+		PATCH_FOR_EACH match_opcode IN 50 61 141 174 215 BEGIN
+			LPF DELETE_EFFECT INT_VAR match_opcode match_target=template_target match_timing=1 END
+		END
+		// vvc
+		PATCH_IF "%vvc%" STRING_COMPARE_CASE "null" BEGIN
+			PATCH_MATCH "%vvc%" WITH 
+			"141.*" BEGIN
+				INNER_PATCH "%vvc%" BEGIN
+					REPLACE_EVALUATE "141-\(.*\)" 
+					BEGIN
+						141_value="%MATCH1%"
+					END
+					""
+				END
+				LPF CLONE_EFFECT INT_VAR match_opcode=999 opcode=141 parameter1=0 parameter2=141_value STR_VAR resource="" END
+			END
+			DEFAULT
+				LPF CLONE_EFFECT INT_VAR match_opcode=999 opcode=215 parameter1=0 parameter2=0 STR_VAR resource="%vvc%" END
+			END
+		END
+		// wav
+		PATCH_IF "%wav%" STRING_COMPARE_CASE "null" BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=999 opcode=174 parameter1=0 parameter2=0 STR_VAR resource="%wav%" END		
+		END
+		// glow
+		PATCH_IF "%glow%" STRING_COMPARE_CASE "null" BEGIN
+			INNER_PATCH "%glow%" BEGIN
+				REPLACE_EVALUATE "\(-?[0-9]+\)-\(-?[0-9]+\)-\(-?[0-9]+\)" BEGIN
+					opcode="%MATCH1%"
+					parameter1="%MATCH2%"
+					parameter2="%MATCH3%"
+				END
+				""
+			END
+			LPF CLONE_EFFECT INT_VAR match_opcode=999 opcode parameter1 parameter2 STR_VAR resource="" END
+		END
+		// clean up
+		LPF DELETE_EFFECT INT_VAR match_opcode=999 END
+	END
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////
+/* 
+document{spellstyle_update_style}
+{Update the currently-being-patched spell's style, and log it as updated.
+
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION spellstyle_update_style
+	STR_VAR old_style=""
+			new_style=""
+BEGIN
+	// identify current style
+	LPF spellstyle_identify_style STR_VAR style_file="%old_style%" RET style END
+	// update style
+	PATCH_IF "%style%" STRING_COMPARE "" BEGIN
+		LPF spellstyle_apply_style STR_VAR arguments="%style%" style_file="%new_style%" END
+		LPF log_this STR_VAR file="altered_spell_styles.txt" input="%SOURCE_RES% %style%" END
+	END
+
+END

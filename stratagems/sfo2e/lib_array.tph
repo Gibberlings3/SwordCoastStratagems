@@ -1,0 +1,652 @@
+/* describe-library
+{Functions to manipulate WEIDU arrays.
+Functions in this library should be pure (no side effects) except insofar as they're explicitly writing array data into a file. They shouldn't interact with IE resources at all.
+Most functions here assume a simple (i.e. not multidimensional) array.
+
+Functions should start with 'array_'.}
+
+*/
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_map}
+{Take a k->v array is input; return keymap(k)->map(v). (Either function can be absent, in which case it's treated as the identity.) 
+You can use the anonymous function construct.}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_map
+	STR_VAR array=""//array
+			map=""//function
+			keymap=""//function
+	RET_ARRAY array
+BEGIN
+	// anonymous function construct
+	LAF anon_check INT_VAR has_output=1 STR_VAR function="%map%" RET map=function END
+	LAF anon_check INT_VAR has_output=1 STR_VAR function="%keymap%" RET keymap=function END
+
+	// map
+	ACTION_IF "%map%" STR_CMP "" BEGIN
+		ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+			OUTER_PATCH "" BEGIN
+				LPF "%map%" STR_VAR arguments="%v%" RET value END
+			END
+			OUTER_SPRINT $array("%k%") "%value%"
+		END
+	END
+	//keymap
+	ACTION_IF "%keymap%" STR_CMP "" BEGIN
+		// make the new array
+		ACTION_CLEAR_ARRAY SFO_working_array
+		ACTION_PHP_EACH "%array%" AS arguments=>v BEGIN
+			OUTER_PATCH "" BEGIN
+				LPF "%keymap%" STR_VAR arguments RET value END
+				SPRINT $SFO_working_array("%value%") "%v%"
+			END
+		END
+		// flush into the output array
+		LAF array_copy STR_VAR array=SFO_working_array RET_ARRAY array END
+	END ELSE BEGIN
+		LAF array_copy STR_VAR array="%array%" RET_ARRAY array END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_split}
+{Take a k->v array as input, along with functions 'match_key' and/or 'match_value'; return an array 'split' of all elements with keys that match 'kmatch'
+and values that match 'vmatch', and an array 'match' of all that don't. You can use the anonymous function construct.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_split
+	STR_VAR array=""//array
+			match_key=""//function
+			match_value=""//function
+	RET_ARRAY split rest
+BEGIN
+	OUTER_PATCH "" BEGIN
+		// anonymous function construct
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_key%" RET match_key=function SFO_anon_func_count END
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_value%" RET match_value=function SFO_anon_func_count END
+
+		CLEAR_ARRAY split
+		CLEAR_ARRAY rest
+		PHP_EACH "%array%" AS k=>v BEGIN
+			PATCH_IF "%match_key%" STR_CMP "" BEGIN
+				LPF "%match_key%" STR_VAR arguments="%k%" RET value1=value END
+			END ELSE BEGIN
+				value1=1
+			END
+			PATCH_IF "%match_value%" STR_CMP "" BEGIN
+				LPF "%match_value%" STR_VAR arguments="%v%" RET value2=value END
+			END ELSE BEGIN
+				value2=1
+			END
+			PATCH_IF value1 && value2 BEGIN
+				SPRINT $split("%k%") "%v%"
+			END ELSE BEGIN
+				SPRINT $rest("%k%") "%v%"		
+			END
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_contains}
+{Depending on which of 'key' and 'val' are set, return true if (i) array 'array' contains 'key' as a key; (ii) array 'array' contains 
+'val' as a value; (iii) array 'array' contains the pair 'key'=>'val', or I suppose (iv) array 'array' is non-empty.</p>
+
+<p>This is intentionally case-sensitive (since a common use-case is going to be pulling an array element out by its key if it's in
+the array).}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_contains
+	STR_VAR array=""//array
+			key=""
+			val=""
+	RET value
+BEGIN
+	OUTER_SET value=0
+	ACTION_PHP_EACH "%array%" AS k1=>v1 BEGIN
+		ACTION_IF ("%key%" STRING_EQUAL "%k1%" || "%key%" STR_EQ "") && ("%val%" STRING_EQUAL "%v1%" || "%val%" STR_EQ "") BEGIN
+			OUTER_SET value=1
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_length}
+{Returns the number of elements in the array. ('value' and 'length' are synonyms.)}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_length
+	STR_VAR array=""//array
+	RET value length
+BEGIN
+	OUTER_SET value=0
+	ACTION_PHP_EACH "%array%" AS k1=>v1 BEGIN
+		OUTER_SET ++value
+	END
+	OUTER_SET length=value
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_read}
+{Take a file (or, for the patch version, the current file), which should be a table, (not necessarily a 2da) and read in the first two
+columns into a k->v array. (If there's only one column, read it into a k->_ array.)
+
+Start at row firstrow.
+
+In action context, return value=1 if the file exists, value=0 if it doesn't, and whine if it doesn't unless silent=1.
+
+If backwards=1, swap the order of key and value.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION array_read
+	INT_VAR firstrow=0
+			backwards=0//boolean
+	STR_VAR case=mixed//[upper|lower|mixed]
+	RET_ARRAY array
+BEGIN
+	CLEAR_ARRAY array
+	COUNT_2DA_COLS colcount
+	PATCH_IF colcount>2 BEGIN
+		colcount=2
+	END
+	empty=1
+	READ_2DA_ENTRIES_NOW SFO_data colcount
+	FOR (row=firstrow;row<SFO_data;++row) BEGIN
+		empty=0
+		READ_2DA_ENTRY_FORMER SFO_data row 0 k
+		PATCH_IF colcount=2 BEGIN
+			READ_2DA_ENTRY_FORMER SFO_data row 1 v
+		END ELSE BEGIN
+			SPRINT v ""
+		END
+		PATCH_MATCH "%case%" WITH
+		upper BEGIN
+			TO_UPPER v
+			TO_UPPER k
+		END
+		lower BEGIN
+			TO_LOWER v
+			TO_LOWER k
+		END
+		DEFAULT
+		END
+		PATCH_IF !("%k%" STR_EQ "2DA" && "%v%" STR_EQ "1.0") BEGIN
+			PATCH_IF !backwards BEGIN
+				SPRINT $array("%k%") "%v%"
+			END ELSE BEGIN
+				SPRINT $array("%v%") "%k%"
+			
+			END
+		END
+	END
+	PATCH_IF empty BEGIN
+		SPRINT $array("null") discard
+	END
+END
+
+DEFINE_ACTION_FUNCTION array_read
+	INT_VAR firstrow=0
+			silent=0
+			backwards=0//boolean
+	STR_VAR file="" path="" location="" locbase=""
+			case=mixed//[upper|lower|mixed]
+	RET value
+	RET_ARRAY array
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET file_path END
+	ACTION_IF FILE_EXISTS "%file_path%" BEGIN
+		COPY "%file_path%" "%workspace%"
+			LPF array_read INT_VAR firstrow backwards STR_VAR case RET_ARRAY array END
+		BUT_ONLY
+		OUTER_SET value=1
+	END ELSE BEGIN
+		OUTER_SET value=0
+		ACTION_IF !silent BEGIN
+			WARN "array_read: file %file_path% does not exist"
+		END
+	END
+END
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_echo}
+{Print an array to the screen (good for debugging). If single_line=1, returns a single string with comma-separated entries;
+otherwise returns one k=>v per line.}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION array_echo
+	INT_VAR single_line=0//debug
+	STR_VAR array=""//array
+BEGIN
+    OUTER_SPRINT report ""
+	ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+			OUTER_SPRINT key ""
+			OUTER_SET ind=0
+			OUTER_WHILE VARIABLE_IS_SET "k_%ind%" BEGIN
+				OUTER_SET ++ind
+			END
+			OUTER_FOR (i=0;i<ind;++i) BEGIN
+				OUTER_SPRINT temp EVAL "%k_%i%%"
+				ACTION_IF !("%key%" STR_EQ "") BEGIN
+					OUTER_SPRINT key "%key%,"
+				END
+				OUTER_SPRINT key "%key%%temp%"
+			END
+			ACTION_IF single_line BEGIN
+				OUTER_SPRINT report "%report%%key%: %v%, "
+			END ELSE BEGIN
+				PRINT "%key%: %v%"
+			END
+	END
+	ACTION_IF single_line BEGIN
+		PRINT "%report%"
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_invert}
+{Input an array of k->v; output an array of v->k.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION array_invert
+	STR_VAR array=""//array
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY SFO_working_array
+	ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+		OUTER_SPRINT $SFO_working_array("%v%") "%k%"
+	END
+	ACTION_CLEAR_ARRAY array
+	ACTION_PHP_EACH SFO_working_array AS k=>v BEGIN
+		OUTER_SPRINT $array("%k%") "%v%"
+	END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_log}
+{Output an array as a 2-column table. If 'new' is set, overwrite any existing file by the same name; if not, append. If 'permanent' is
+set, the table will persist even if the component is uninstalled. (This automatically sets 'new'.)}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION array_log 
+	INT_VAR new=0//boolean
+			permanent=0//boolean
+	STR_VAR path="%data_loc%"
+			file=""
+			array=""
+BEGIN
+	
+	ACTION_IF permanent BEGIN
+		COPY + ".../stratagems-inline/blank" "%path%/%file%"
+	END ELSE
+	ACTION_IF !FILE_EXISTS "%path%/%file%" || new BEGIN
+		COPY ".../stratagems-inline/blank" "%path%/%file%"
+	END
+	OUTER_SPRINT data ""
+	ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+		OUTER_SPRINT data "%data%%k%%TAB%%v%%WNL%"
+	END
+	ACTION_IF permanent BEGIN
+		COPY + "%path%/%file%" "%path%"
+			insert_point=BUFFER_LENGTH
+			INSERT_BYTES insert_point STRING_LENGTH "%data%"
+			WRITE_ASCII insert_point "%data%"
+		BUT_ONLY
+	
+		END ELSE BEGIN
+		COPY "%path%/%file%" "%path%"
+			insert_point=BUFFER_LENGTH
+			INSERT_BYTES insert_point STRING_LENGTH "%data%"
+			WRITE_ASCII insert_point "%data%"
+		BUT_ONLY
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_2d_to_list} 
+{Take a 2d array (k1,k2)->v. Return a 1d array with the k1 as keys and a list of the k2 as values, separated by 'separator'. Optionally, require that v=require_value. 
+If sort=1, sort entries lexicographically.
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_DIMORPHIC_FUNCTION array_2d_to_list
+	INT_VAR sort=1//Boolean
+	STR_VAR array=""//array
+			separator=" "
+			require_value=""
+	RET_ARRAY list
+BEGIN
+	ACTION_CLEAR_ARRAY list
+	LAF array_keys STR_VAR array RET_ARRAY keys1 keys2 END
+	ACTION_SORT_ARRAY_INDICES keys2 LEXICOGRAPHICALLY
+	ACTION_PHP_EACH keys1 AS k1=>discard BEGIN
+		OUTER_SPRINT $list("%k1%") ""
+		ACTION_PHP_EACH keys2 AS k2=>discard BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%array%"("%k1%" "%k2%") BEGIN
+				ACTION_IF "%require_value%" STR_EQ "" || $"%array%"("%k1%" "%k2%") STR_EQ "%require_value%" BEGIN
+					OUTER_SPRINT $list("%k1%") EVAL "%list_%k1%%%k2%%separator%"					
+				END
+			END
+		END
+	END
+	// strip trailing symbol
+	ACTION_PHP_EACH list AS k=>v BEGIN
+		OUTER_PATCH_SAVE v "%v%" BEGIN
+			REPLACE_TEXTUALLY "%separator%$" ""
+		END
+		OUTER_SPRINT $list("%k%") "%v%"
+	END
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_keys_from_string} 
+{Take a string of strings separated by 'separator'. Read them in as the keys of an array. (Values are blank.)}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_keys_from_string
+	STR_VAR separator=" "
+			string=""
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY array
+	OUTER_WHILE "%string%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%string%" RET entry string=list END
+		OUTER_SPRINT $array("%entry%") ""
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_values_from_string}
+{
+Given a string of strings separated by 'separator' (a character), return an [int]=>v array of those strings, labelled by sequential integers. If 'quick' is set, 
+assume no entries are quoted. 'quick' only works for a ' ' separator. 'quick' also allows for tab separators
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_DIMORPHIC_FUNCTION array_values_from_string
+	INT_VAR quick=0
+	STR_VAR string=""
+			separator=" "
+	RET_ARRAY array
+BEGIN
+	OUTER_SET count=0
+	ACTION_CLEAR_ARRAY array
+	ACTION_IF quick BEGIN
+		ACTION_IF "%separator%" STR_CMP " " BEGIN
+			WARN "list_to_array doesn't allow quick mode with a non-space separator"
+			LAF list_to_array STR_VAR list="%string%" separator RET_ARRAY array END
+		END ELSE BEGIN
+			OUTER_SPRINT list "%string% "
+			OUTER_PATCH "%list%" BEGIN
+				REPLACE_EVALUATE "\([^ %TAB%]+\)[ %TAB%]+" BEGIN
+					SPRINT $array("%count%") "%MATCH1%"
+					++count
+				END
+				""
+			END
+		END
+	END ELSE BEGIN
+		OUTER_WHILE "%string%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%string%" RET entry string=list END
+			OUTER_SPRINT $array("%count%") "%entry%"
+			OUTER_SET ++count
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_from_string} 
+{Take a string of k=>v pairs separated by spaces. Read them into an array. }
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_DIMORPHIC_FUNCTION array_from_string
+	STR_VAR string="" 
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY array
+	OUTER_WHILE "%string%" STR_CMP "" BEGIN
+		LAF return_first_pair STR_VAR list="%string%" RET key value string=list END
+		OUTER_SPRINT $array("%key%") "%value%"
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_copy} 
+{Copy an array.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION array_copy
+	STR_VAR array=""
+	RET_ARRAY array
+BEGIN
+	ACTION_IF "%array%" STR_CMP "array" BEGIN
+	ACTION_CLEAR_ARRAY array
+		ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
+			ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+					OUTER_SPRINT $array("%k_0%") $"%array%"("%k_0%")
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%") $"%array%"("%k_0%" "%k_1%")
+			END ELSE		
+			ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") $"%array%"("%k_0%" "%k_1%" "%k_2%")
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") $"%array%"("%k_0%" "%k_1%" "%k_2%" "%k_3%")
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") $"%array%"("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%")
+			END ELSE BEGIN		
+				WARN "array_copy can't handle arrays more than 5 levels deep"
+			END
+		END
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_fill} 
+{Given an array of keys, for each key which also keys the struct, set the corresponding
+array value to the struct value.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_fill
+	STR_VAR array=""//array
+			fill="*"  
+	RET_ARRAY array
+BEGIN
+	ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+				OUTER_SPRINT $array("%k_0%") "%fill%"
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%") "%fill%"
+		END ELSE		
+		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") "%fill%" 
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") "%fill%"
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") "%fill%"
+		END ELSE BEGIN		
+			WARN "array_fill can't handle arrays more than 5 levels deep"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_join}
+{Take two arrays and combine them, so that key k is in the new array iff it is in one or other of the old arrays. If there's a clash
+of key allocations, array2 gets priority.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION array_join
+	STR_VAR array1=""//array
+			array2=""//array
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY array
+	ACTION_FOR_EACH oldarray IN "%array1%" "%array2%" BEGIN
+		ACTION_PHP_EACH "%oldarray%" AS k=>v BEGIN
+			ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+					OUTER_SPRINT $array("%k_0%") "%v%"
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%") "%v%"
+			END ELSE		
+			ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") "%v%" 
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") "%v%"
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") "%v%"
+			END ELSE BEGIN		
+				WARN "array_join can't handle arrays more than 5 levels deep"
+			END
+		END
+	END
+	
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_keys} 
+{Given an array, return arrays k=>_ of the first five levels of its keys.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_keys
+	STR_VAR array=""//array 
+	RET_ARRAY keys1 keys2 keys3 keys4 keys5
+BEGIN
+	ACTION_FOR_EACH keys IN keys1 keys2 keys3 keys4 keys5 BEGIN
+		ACTION_CLEAR_ARRAY "%keys%"
+	END
+	ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+				OUTER_SPRINT $keys1("%k_0%") ""
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+				OUTER_SPRINT $keys1("%k_0%") ""
+				OUTER_SPRINT $keys2("%k_1%") ""
+		END ELSE		
+		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+				OUTER_SPRINT $keys1("%k_0%") ""
+				OUTER_SPRINT $keys2("%k_1%") ""
+				OUTER_SPRINT $keys3("%k_2%") ""
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+				OUTER_SPRINT $keys1("%k_0%") ""
+				OUTER_SPRINT $keys2("%k_1%") ""
+				OUTER_SPRINT $keys3("%k_2%") ""
+				OUTER_SPRINT $keys4("%k_3%") ""
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+				OUTER_SPRINT $keys1("%k_0%") ""
+				OUTER_SPRINT $keys2("%k_1%") ""
+				OUTER_SPRINT $keys3("%k_2%") ""
+				OUTER_SPRINT $keys4("%k_3%") ""
+				OUTER_SPRINT $keys5("%k_4%") ""
+		END 
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{array_sort}
+{
+Given a patch function (of argument->value type) with domain the keys of an array, sort that array alphabetically
+by the values of the function. The function doesn't have to be 1:1. You can use the anonymous function construct.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION array_sort
+	STR_VAR array=""
+			function=""
+	RET_ARRAY array
+BEGIN
+	ACTION_CLEAR_ARRAY sorting_array
+	LAF anon_check INT_VAR has_output=1 STR_VAR function RET function END
+
+	OUTER_SET uniqueness_counter=0
+	ACTION_PHP_EACH "%array%" AS arguments=>discard BEGIN
+		OUTER_PATCH "" BEGIN
+			LPF "%function%" STR_VAR arguments RET value END
+		END
+		OUTER_SPRINT value "%value%%uniqueness_counter%"
+		OUTER_SPRINT $sorting_array("%value%") "%arguments%"
+		OUTER_SET ++uniqueness_counter
+	END
+	ACTION_SORT_ARRAY_INDICES sorting_array LEXICOGRAPHICALLY
+	ACTION_CLEAR_ARRAY array_out
+	ACTION_PHP_EACH sorting_array AS discard=>key BEGIN
+		OUTER_SPRINT $array_out("%key%") $"%array%"("%key%")
+	END
+	LAF array_copy STR_VAR array=array_out RET_ARRAY array END
+END

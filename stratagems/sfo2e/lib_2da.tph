@@ -1,0 +1,1228 @@
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+describe-library
+{
+Files for manipulating 2d arrays via their (assumed uppercase) rows and columns. The
+main use case is reading these 2d arrays out of .2da game files and extracting data from
+them, and/or manipulating them and writing them back in. This is (hopefully) a much simpler
+and more transparent way to manipulate 2das than by READ_2DA_ENTRY and friends.</p>
+
+<p>Functions here should engage with the general 2da format and shouldn't refer to specific
+features of particular game's 2das. They should start with "2da_".</p>
+
+<p>This library can handle these file formats:
+<ol>
+<li>Standard, legally-formatted 2da files.</li>
+<li>IDS files, which are read in with an added set of row headers which are integers labelled
+from 0, and with columns 'int' and 'symbol'.</li>
+<li>Tables with column headers, which are read in with an added set of row headers as for IDS files.</li>
+</ol>
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_read}
+{
+Read a 2da file (or, in patch context, the current 2da file) into a 2d array, with 
+row and column keys uppercased. Also return an array of uppercased row headers and
+column headers, in the format row_label=>row_number. ('case' controls the case of the
+row and column headers; it's uppercase by default on genuine 2das, mixed by default otherwise)
+
+If you don't specify a path for the 2da file, it's assumed to be a game file.
+
+In action context, if the file doesn't exist return 0; otherwise, return 1. Also
+whine if it doesn't exist, unless silent=1.
+
+If the file is a 2da, and 'reflect' is set, reverse rows and columns. If it's a 2da, and 'allow_incomplete_lines'
+is set, don't require that all lines are complete. If it's a 2da, and "rowname_column" is set, use that column
+(if it's present) for the row names instead of the usual entries.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION "2da_read"
+	INT_VAR silent=0//boolean
+			reflect=0//boolean
+			allow_incomplete_lines=0//boolean
+	STR_VAR type=""//[2da|ids|table_header|table_no_header]
+			rowmap=""//function
+			colmap=""//function
+			rowname_column=""
+			case=""//[upper|lower|mixed]
+	RET_ARRAY columns rows array
+BEGIN
+	LPF anon_check INT_VAR has_output=1 STR_VAR function="%rowmap%" RET rowmap=function END
+	LPF anon_check INT_VAR has_output=1 STR_VAR function="%colmap%" RET colmap=function END
+	// initialize
+	CLEAR_ARRAY columns
+	CLEAR_ARRAY rows
+	CLEAR_ARRAY array
+	// try to infer type
+	PATCH_IF "%type%" STR_EQ "" BEGIN
+		PATCH_IF "%rowmap%" STR_CMP "" || "%colmap%" STR_CMP "" BEGIN
+			SPRINT type "2da"
+		END ELSE BEGIN
+			READ_ASCII 0x0 sig (3)
+			PATCH_MATCH "%sig%" WITH 
+			"2da" "ids" BEGIN
+				SPRINT type "%sig%"
+			END
+			DEFAULT
+				PATCH_MATCH "%SOURCE_EXT%" WITH 
+				"2da" "ids" BEGIN
+					SPRINT type "%SOURCE_EXT%"
+				END
+				DEFAULT
+					SPRINT type "table_header"
+				END
+			END
+		END
+	END
+	// get column width & length
+	COUNT_2DA_COLS colcount
+	COUNT_2DA_ROWS colcount rowcount
+	PATCH_MATCH "%type%" WITH
+	"2da" BEGIN
+		// get the default
+		READ_2DA_ENTRY 1 0 1 default
+		// get the col headers (& also the lookup column if appropriate)
+		lookup_col_num=0
+		COUNT_2DA_COLS colcount
+		COUNT_2DA_ROWS colcount rowcount
+		PATCH_MATCH "%colcount%" WITH
+		2 BEGIN
+			col_row=2
+			main_row=1
+		END
+		3 BEGIN
+			col_row=1
+			main_row=0
+		END
+		DEFAULT
+			col_row=0
+			main_row=0
+		END
+		READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
+		FOR (col=1;col<colcount;++col) BEGIN
+			READ_2DA_ENTRY_FORMER 2da_coldata col_row (col - 1) value
+			PATCH_MATCH "%value%" WITH 
+			"%rowname_column%" BEGIN
+				lookup_col_num=col
+			END
+			DEFAULT
+			END
+			PATCH_MATCH "%case%" WITH
+			lower BEGIN
+				TO_LOWER value 
+			END
+			upper BEGIN
+				TO_UPPER value
+			END	
+			mixed BEGIN
+			END
+			DEFAULT
+				TO_UPPER value
+			END
+			PATCH_IF !reflect BEGIN
+				SET $columns("%value%")=col
+			END ELSE BEGIN
+				SET $rows("%value%")=col			
+			END
+		END
+		// get the rows
+		READ_2DA_ENTRIES_NOW 2da_data colcount
+		FOR (rownum=main_row;rownum<2da_data;++rownum) BEGIN
+			READ_2DA_ENTRY_FORMER 2da_data rownum lookup_col_num value
+			PATCH_MATCH "%case%" WITH
+			lower BEGIN
+				TO_LOWER value 
+			END
+			upper BEGIN
+				TO_UPPER value
+			END	
+			mixed BEGIN
+			END
+			DEFAULT
+				TO_UPPER value
+			END		
+			PATCH_IF !reflect BEGIN	
+				SET $rows("%value%")=rownum
+			END ELSE BEGIN
+				SET $columns("%value%")=rownum
+			END
+		END
+		// map rows and columns if needed
+		LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
+		LPF array_map STR_VAR array=rows keymap="%rowmap%" RET_ARRAY rows=array END
+		
+		PATCH_IF allow_incomplete_lines BEGIN
+			// get the data into a working array
+			READ_ASCII 0x0 data (BUFFER_LENGTH)		
+			LPF data_lines STR_VAR data RET_ARRAY lines END
+			PHP_EACH lines AS ind=>line BEGIN
+				PATCH_IF ind>=3 BEGIN
+					LPF array_values_from_string INT_VAR quick=1 STR_VAR string="%line%" RET_ARRAY temparray=array END
+					LPF array_length STR_VAR array=temparray RET length END
+					SPRINT row $temparray(0)
+					row_int=ind - 3 +main_row
+					PATCH_IF !reflect BEGIN
+						SPRINT columns_or_rows columns
+					END ELSE BEGIN
+						SPRINT columns_or_rows rows
+					END
+					PHP_EACH "%columns_or_rows%" AS col=>int BEGIN
+						PATCH_IF int<=length BEGIN
+							SPRINT $working_array("%row_int%" "%int%") $temparray("%int%")
+						END ELSE BEGIN
+							SPRINT $working_array("%row_int%" "%int%") "%default%"
+						END
+					END
+				END			
+			END
+			// get it into the final array
+			PHP_EACH rows AS row=>row_int BEGIN
+				PHP_EACH columns AS col=>col_int BEGIN
+					PATCH_IF !reflect BEGIN
+						SPRINT $array("%row%" "%col%") $working_array("%row_int%" "%col_int%")
+					END ELSE BEGIN
+						SPRINT $array("%row%" "%col%") $working_array("%col_int%" "%row_int%")				
+					END
+				END		
+			END
+		END ELSE BEGIN
+			PHP_EACH rows AS row=>row_int BEGIN
+				PHP_EACH columns AS col=>col_int BEGIN		
+					PATCH_IF !reflect BEGIN
+						READ_2DA_ENTRY_FORMER 2da_data row_int col_int entry
+					END ELSE BEGIN
+						READ_2DA_ENTRY_FORMER 2da_data col_int row_int entry
+					END
+					SPRINT $array("%row%" "%col%") "%entry%"
+				END
+			END	
+		END
+	END
+	"ids" BEGIN
+		READ_2DA_ENTRIES_NOW 2da_data 2
+		// set cols
+			SET $columns("int")=0
+			SET $columns("sym")=1
+		// get main data
+		count=0
+		FOR (row=0;row<2da_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER 2da_data row 0 int
+			READ_2DA_ENTRY_FORMER 2da_data row 1 sym
+			PATCH_IF IS_AN_INT int BEGIN
+				SET $array("%count%" "int")=int
+				SPRINT $array("%count%" "sym") "%sym%"
+				++count
+			END
+		END
+		// set rows
+		FOR (row=0;row<count;++row) BEGIN
+			SET $rows("%row%")=row
+		END
+
+	END	
+	"table_header" BEGIN
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW 2da_data colcount
+		// get columns
+		FOR (col=0;col<colcount;++col) BEGIN
+			READ_2DA_ENTRY_FORMER 2da_data 0 col value
+			PATCH_MATCH "%case%" WITH
+			lower BEGIN
+				TO_LOWER value 
+			END
+			upper BEGIN
+				TO_UPPER value
+			END	
+			DEFAULT
+			END
+			SET $columns("%value%")=col
+		END
+		// get data; set rows
+		FOR (ind=1;ind<2da_data;++ind) BEGIN
+			row=ind - 1
+			SET $rows("%row%")=row
+			PHP_EACH columns AS col=>colnum BEGIN
+				READ_2DA_ENTRY_FORMER 2da_data ind colnum value
+				SPRINT $array("%row%" "%col%") "%value%"
+			END
+		END
+	END
+	"table_noheader" BEGIN
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW 2da_data colcount
+		// set columns
+		FOR (col=0;col<colcount;++col) BEGIN
+			SET $columns("%col%")=col
+		END
+		// get data; set rows
+		FOR (ind=1;ind<2da_data;++ind) BEGIN
+			row=ind - 1
+			SET $rows("%row%")=row
+			PHP_EACH columns AS col=>colnum BEGIN
+				READ_2DA_ENTRY_FORMER 2da_data ind colnum value
+				SPRINT $array("%row%" "%col%") "%value%"
+			END
+		END
+	
+	END
+	DEFAULT
+		PATCH_FAIL "2da_read: unidentified read type %type%"
+	END
+
+END
+
+DEFINE_ACTION_FUNCTION "2da_read"
+	INT_VAR silent=0//boolean
+			inline=0//boolean
+			reflect=0//boolean
+			allow_incomplete_lines=0//boolean
+	STR_VAR file="" 
+			case=""//[upper|lower|mixed]
+			path=""
+			type=""
+			location=""
+			locbase=""
+			rowmap=""//function
+			colmap=""//function
+			rowname_column=""
+	RET value
+	RET_ARRAY columns rows array
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET file_path path END
+	ACTION_IF "%path%" STR_EQ "" &&!inline BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%file%" BEGIN
+			COPY_EXISTING - "%file%" nowhere
+				LPF 2da_read INT_VAR silent reflect allow_incomplete_lines STR_VAR rowname_column case rowmap colmap type RET_ARRAY columns rows array END
+			BUT_ONLY
+			OUTER_SET value=1
+		END ELSE BEGIN
+			OUTER_SET value=0
+			ACTION_IF !silent BEGIN
+				WARN "2da_read: supposed game file %file% does not exist"
+			END
+		END
+	END ELSE BEGIN
+		ACTION_IF FILE_EXISTS "%file_path%" || inline BEGIN
+			COPY - "%file_path%" nowhere
+				LPF 2da_read INT_VAR silent reflect allow_incomplete_lines STR_VAR rowname_column case rowmap colmap type RET_ARRAY columns rows array END
+			BUT_ONLY
+			OUTER_SET value=1
+		END ELSE BEGIN
+			OUTER_SET value=0
+			ACTION_IF !silent BEGIN
+				WARN "2da_read: supposed file %file_path% does not exist"
+			END		
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_write}
+{
+Read a 2d array into a 2da file (or, in patch context, the current 2da file). 
+
+If you don't specify a path for the 2da file, it's assumed to be a game file.
+
+If 'number_rows' is set to 1, the row names are replaced by integers, counting upwards from 0.
+If 'reflect' is set to 1, rows and columns are swapped.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION 2da_write
+	INT_VAR reflect=0//boolean
+			number_rows=0//boolean
+	STR_VAR array=""//array
+			type=""//[2da|ids|table_header|table_noheader]
+			default=""
+BEGIN
+	// get cols, rows
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+	// try to infer type
+	PATCH_IF "%type%" STR_EQ "" BEGIN
+		PATCH_IF "%default%" STR_CMP "" BEGIN
+			SPRINT type "2da"
+		END ELSE BEGIN
+			PATCH_IF BUFFER_LENGTH>=3 BEGIN
+				READ_ASCII 0x0 sig
+				PATCH_MATCH "%sig%" WITH
+				"2da" "ids" BEGIN
+					SPRINT type "%sig%"
+				END	
+				DEFAULT
+				END
+			END
+		END
+	END
+	PATCH_IF "%type%" STR_EQ "" BEGIN
+		PATCH_MATCH "%DEST_EXT%" WITH
+		"2da" "ids" BEGIN
+			SPRINT type "%DEST_EXT%"
+		END 
+		DEFAULT
+		END
+	END
+	PATCH_IF "%type%" STR_EQ "" BEGIN
+		found_first_col=0
+		found_first_row=0
+		found_second_col=0
+		PHP_EACH rows AS row=>discard BEGIN
+			PATCH_IF !found_first_row BEGIN
+				SPRINT first_row "%row%"
+				found_first_row=1
+			END
+		END
+		PHP_EACH columns AS col=>discard BEGIN
+			PATCH_IF !found_first_col BEGIN
+				SPRINT first_col "%col%"
+				found_first_col=1
+			END ELSE
+			PATCH_IF !found_second_col BEGIN
+				SPRINT second_col "%col%"
+				found_second_col=1
+			END	
+		END	
+		PATCH_IF "%first_col%" STR_EQ int && "%second_col%" STR_EQ "sym" BEGIN
+			SPRINT type ids
+		END ELSE
+		PATCH_IF IS_AN_INT "%first_col%" BEGIN
+			SPRINT type table_noheader
+		END ELSE
+		PATCH_IF IS_AN_INT "%first_row%" BEGIN
+			SPRINT type table_header
+		END ELSE BEGIN
+			SPRINT type 2da
+		END
+	END
+
+	PATCH_MATCH "%type%" WITH
+	"2da" BEGIN
+		// initialise
+		PATCH_IF "%default%" STR_EQ "" BEGIN
+			SPRINT default "*"
+		END
+		SPRINT data "2DA V1.0%WNL%%default%%WNL%"
+		// extract col data
+		PATCH_IF !reflect BEGIN
+			LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		END ELSE BEGIN
+			LPF array_keys STR_VAR array RET_ARRAY rows=keys2 columns=keys1 END		
+		END
+		// write column headers
+		PHP_EACH columns AS col=>discard BEGIN
+			SPRINT data "%data%%col%%TAB%"
+		END
+		SPRINT data "%data%"
+		// write rows
+		rowcount=0
+		PHP_EACH rows AS row=>discard BEGIN
+			PATCH_IF !number_rows BEGIN
+				SPRINT rowname "%row%"
+			END ELSE BEGIN
+				SPRINT rowname "%rowcount%"
+			END
+			SPRINT data "%data%%WNL%%rowname%%TAB%"
+			++rowcount
+			PHP_EACH columns AS col=>discard2 BEGIN
+				PATCH_IF !reflect BEGIN
+					SPRINT k1 "%row%"
+					SPRINT k2 "%col%"
+				END ELSE BEGIN
+					SPRINT k1 "%col%"
+					SPRINT k2 "%row%"
+				END
+				PATCH_IF VARIABLE_IS_SET $"%array%"("%k1%" "%k2%") BEGIN
+					SPRINT val $"%array%"("%k1%" "%k2%")
+				END ELSE BEGIN
+					SPRINT val "%default%"
+				END
+				SPRINT data "%data%%val%%TAB%"
+			END
+		END
+		// write to file and justify
+		DELETE_BYTES 0x0 BUFFER_LENGTH
+		INSERT_BYTES 0x0 STRING_LENGTH "%data%"
+		WRITE_ASCII 0x0 "%data%"
+		COUNT_2DA_ROWS 0 rowcount
+		PATCH_IF rowcount>2 BEGIN
+			PRETTY_PRINT_2DA
+			REPLACE_TEXTUALLY "^2DA[ %TAB%]+V1.0" "2DA V1.0"
+		END
+	END
+	"ids" BEGIN
+		SPRINT data "IDS V1.0%WNL%"// extract col data
+		PHP_EACH "%array%" AS k=>v BEGIN
+			PATCH_IF "%k_1%" STR_EQ "sym" BEGIN
+				SPRINT data "%data%%TAB%%v%%WNL%"
+			END ELSE BEGIN
+				SPRINT data "%data%%v%"
+			END
+		END
+		// write to file
+		DELETE_BYTES 0x0 BUFFER_LENGTH
+		INSERT_BYTES 0x0 STRING_LENGTH "%data%"
+		WRITE_ASCII 0x0 "%data%"
+	END
+	"table_header" "table_noheader" BEGIN
+		SPRINT data ""
+		LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		PATCH_IF "%type%" STR_EQ "table_header" BEGIN
+			PHP_EACH columns AS col=>ind BEGIN
+				SPRINT data "%data%%col%%TAB%"
+			END
+			SPRINT data "%data%%WNL%"
+		END
+		PHP_EACH rows AS row=>discard1 BEGIN
+			PHP_EACH columns AS col=>discard2 BEGIN
+				SPRINT val $"%array%"("%row%" "%col%")
+				SPRINT data "%data%%val%%TAB%"
+			END
+			SPRINT data "%data%%WNL%"
+		END
+		// write to file
+		DELETE_BYTES 0x0 BUFFER_LENGTH
+		INSERT_BYTES 0x0 STRING_LENGTH "%data%"
+		WRITE_ASCII 0x0 "%data%"	
+	END
+	DEFAULT
+		PATCH_FAIL "2da_write: unknown type %type%"
+	END
+
+END
+
+DEFINE_ACTION_FUNCTION "2da_write"
+	INT_VAR number_rows=0//boolean
+			reflect=0//boolean
+	STR_VAR file="" path="" location="" locbase="" 
+		type=""//[2da|ids|table_header|table_noheader]
+		array=""//array
+BEGIN
+	LAF sfo_path STR_VAR path location locbase RET path END
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		COPY_EXISTING "%file%" override
+			LPF 2da_write STR_VAR array type END
+		BUT_ONLY
+	END ELSE BEGIN
+		COPY ".../stratagems-inline/blank" "%path%/%file%"
+			LPF 2da_write STR_VAR array type END
+		BUT_ONLY	
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_inject_array}
+{
+Given a 2d array, a column header of that array, and a k=>v array whose keys are row headers in the 2d array, 
+inject the array elements into the 2d array, as (k=>v) goes to (k,col,v)
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_inject_array 
+	INT_VAR silent=0//boolean
+	STR_VAR array=""//array
+			array_in=""//array
+			column=""
+	RET_ARRAY array
+BEGIN
+  OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY rows
+	CLEAR_ARRAY columns
+	TO_UPPER column
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+	LPF array_map STR_VAR array=array_in keymap=toupper RET_ARRAY array_in=array END
+	LPF array_contains STR_VAR array=columns key="%column%" RET value END
+	PATCH_IF !value BEGIN
+		PATCH_IF !silent BEGIN
+			PATCH_WARN "2da_inject_array: column %column% is absent from 2d array %array%"
+		END
+	END ELSE BEGIN
+		PHP_EACH rows AS row=>discard BEGIN
+			PHP_EACH columns AS col=>discard BEGIN
+				PATCH_IF VARIABLE_IS_SET $"%array_in%"("%row%") && "%col%" STR_EQ "%column%" BEGIN
+					SPRINT $array("%row%" "%col%") $"%array_in%"("%row%")
+				END ELSE BEGIN
+					SPRINT $array("%row%" "%col%") $"%array%"("%row%" "%col%")
+				END
+			END 
+		END
+	END
+  END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_extract_array}
+{Given a 2d array, and column labels 'domain' and 'range' for that array, return a 1d
+array whose keys are the elements of the 'domain' column and whose values are the elements
+of the 'range' column.
+
+If you leave either 'domain' or 'range' empty, the row headers are used instead. If we can't
+find domain or range, we return an empty array (and whine unless silent=1).
+
+Optionally, you can specify functions 'keymap' and/or 'map', which are applied to the keys
+and values respectively before being put into the output array. You can use the anonymous
+function construct.
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_extract_array
+	INT_VAR silent=0//boolean
+	STR_VAR domain=""
+			range=""
+			array=""//array
+			keymap=""//function
+			map=""//function
+			case=""//[upper|lower|mixed]
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+		// anonymous function construct
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%map%" RET map=function END
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%keymap%" RET keymap=function END
+		
+		CLEAR_ARRAY lookup_array
+		PATCH_IF ("%domain%" STR_EQ "%range%") && !silent BEGIN
+			PATCH_WARN "warning: domain and range coincide in 2da_extract_array"
+		END
+		CLEAR_ARRAY rows
+		CLEAR_ARRAY columns
+		PATCH_MATCH "%case%" WITH
+		lower BEGIN
+			TO_LOWER domain
+			TO_LOWER range
+		END
+		upper BEGIN
+			TO_UPPER domain
+			TO_UPPER range
+		END	
+		DEFAULT
+		END
+		LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		LPF array_contains STR_VAR array=columns key="%domain%" RET found_domain=value END
+		LPF array_contains STR_VAR array=columns key="%range%" RET found_range=value END
+		PATCH_IF "%domain%" STR_EQ "" && found_range BEGIN // we're using the column entries as lookup
+			PHP_EACH rows AS row=>discard BEGIN
+				SPRINT v $"%array%"("%row%" "%range%")
+				PATCH_IF !("%v%" STR_EQ "*") BEGIN
+					PATCH_IF !"%map%" STR_EQ "" BEGIN
+						LPF "%map%" STR_VAR arguments="%v%" RET v=value END
+					END
+					SPRINT $lookup_array("%row%") "%v%"
+					found_range=1
+				END			
+			END	
+		END ELSE 
+		PATCH_IF "%range%" STR_EQ "" && found_domain BEGIN
+			PHP_EACH rows AS row=>discard BEGIN
+				SPRINT k $"%array%"("%row%" "%domain%")
+				PATCH_IF !("%k%" STR_EQ "*") BEGIN
+					PATCH_IF !"%keymap%" STR_EQ "" BEGIN
+						LPF "%keymap%" STR_VAR arguments="%k%" RET k=value END
+					END
+					SPRINT $lookup_array("%k%") "%row%"
+					found_domain=1
+				END			
+			END	
+		END ELSE
+		PATCH_IF found_domain && found_range BEGIN
+			SPRINT row_label ""
+			SPRINT d "*"
+			SPRINT r "*"
+			PHP_EACH rows AS row=>discard BEGIN
+				SPRINT d $"%array%"("%row%" "%domain%")
+				SPRINT r $"%array%"("%row%" "%range%")
+				PATCH_IF "%d%" STR_CMP "*" && "%r%" STR_CMP "*" BEGIN
+					PATCH_IF !"%map%" STR_EQ "" BEGIN
+							LPF "%map%" STR_VAR arguments="%r%" RET r=value END
+					END
+					PATCH_IF !"%keymap%" STR_EQ "" BEGIN
+						LPF "%keymap%" STR_VAR arguments="%d%" RET d=value END
+					END
+					SPRINT $lookup_array("%d%") "%r%"
+				END
+			END		
+		END ELSE BEGIN
+			PATCH_IF !found_domain && !silent BEGIN
+				PATCH_WARN "warning: domain %domain% in 2da_lookup apparently does not exist. Returning empty array."
+			END
+			PATCH_IF !found_range && !silent BEGIN
+				PATCH_WARN "warning: range %range% in 2da_lookup apparently does not exist. Returning empty array."
+			END
+		END
+		CLEAR_ARRAY array
+		PHP_EACH lookup_array AS k=>v BEGIN
+			SPRINT $array("%k%") "%v%"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_delete_column}
+{Given a 2d array, and column label 'column', delete that column.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_delete_column
+	STR_VAR array=""//array
+			column=""
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY SFO_2da_delete_column_working_array // we need a guaranteed unique array
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_delete_column (trying to delete column %column%)"
+	END
+	CLEAR_ARRAY rows
+	CLEAR_ARRAY columns
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+	PHP_EACH "%array%" AS k=>v BEGIN
+		PATCH_IF !("%k_1%" STR_EQ "%column%") BEGIN
+			SPRINT $SFO_2da_delete_column_working_array("%k_0%" "%k_1%") "%v%"
+		END
+	END
+	CLEAR_ARRAY array
+	PHP_EACH SFO_2da_delete_column_working_array AS k=>v BEGIN
+		SPRINT $array("%k_0%" "%k_1%") "%v%"
+	END
+	END
+END
+			
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_delete_row}
+{Given a 2d array, and row label 'row', delete that row.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_delete_row
+	STR_VAR array=""//array
+			row=""
+			lookup_column=""
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY SFO_2da_delete_row_working_array // we need a guaranteed unique array
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_delete_row (trying to delete row %row%)"
+	END
+	CLEAR_ARRAY rows
+	CLEAR_ARRAY columns
+	PATCH_IF "%lookup_column%" STR_EQ "" BEGIN
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		PHP_EACH "%array%" AS k=>v BEGIN
+			PATCH_IF !("%k_0%" STR_EQ "%row%") BEGIN
+				SPRINT $SFO_2da_delete_row_working_array("%k_0%" "%k_1%") "%v%"
+			END
+		END
+	END ELSE BEGIN	
+		SPRINT row_header ""
+		PHP_EACH "%array%" AS k=>v BEGIN
+			PATCH_IF !("%k_0%" STR_EQ "%row_header%") BEGIN // new row
+				SPRINT row_header "%k_0%"
+				delete_this_row="%row%" STR_EQ $"%array%"("%k_0%" "%lookup_column%")
+			END
+			PATCH_IF !delete_this_row BEGIN
+				SPRINT $SFO_2da_delete_row_working_array("%k_0%" "%k_1%") "%v%"
+			END
+		END	
+	END
+	CLEAR_ARRAY array
+	PHP_EACH SFO_2da_delete_row_working_array AS k=>v BEGIN
+		SPRINT $array("%k_0%" "%k_1%") "%v%"
+	END
+	END
+END
+		
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_renumber}
+{
+Given a 2d array, replace its row labels with sequential integers starting at 'start_at' (i.e. 0 by default)
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_renumber
+	INT_VAR start_at=0
+	STR_VAR array=""//array
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY SFO_2da_renumber_working_array // we need a guaranteed unique array
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_renumber"
+	END
+	row=start_at - 1
+	SPRINT row_header ""
+	PHP_EACH "%array%" AS k=>v BEGIN
+		PATCH_IF !("%k_0%" STR_EQ "%row_header%") BEGIN // new row
+			++row
+			SPRINT row_header "%k_0%"
+		END
+		SPRINT $SFO_2da_renumber_working_array("%row%" "%k_1%") "%v%"
+	END
+	CLEAR_ARRAY array
+	PHP_EACH SFO_2da_renumber_working_array AS k=>v BEGIN
+		SPRINT $array("%k_0%" "%k_1%") "%v%"
+	END
+	END
+END		
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_insert_row}
+{
+Given a 2d array, and a row label, insert a new row with that row label in the position specified by
+'location'. 'location' can be 'first' (or 'start'), 'last' (or 'end'), 'before row_label' or 'after row_label'.
+If we can't find the row label, we default to 'last' (and whine about it unless silent=1).
+
+The new rows are filled with 'entry'.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_insert_row
+	INT_VAR silent=0//boolean
+	STR_VAR array=""//array
+			row=""
+			location=""
+			entry="-1"
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY SFO_2da_working_array // we need a guaranteed unique array
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_insert_row"
+	END
+	// add it to the 'rows' array
+	LPF array_keys STR_VAR array RET_ARRAY rows_in=keys1 columns=keys2 END
+	CLEAR_ARRAY rows
+	PATCH_MATCH "%location%" WITH
+	last end BEGIN
+		warn=0
+		PHP_EACH rows_in AS k=>discard BEGIN
+			SPRINT $rows("%k%") ""
+		END
+		SPRINT $rows("%row%") ""
+	END
+	first start BEGIN
+		warn=0
+		SPRINT $rows("%row%") ""	
+		PHP_EACH rows_in AS k=>discard BEGIN
+			SPRINT $rows("%k%") ""
+		END
+	END
+	"before .*" BEGIN
+		warn=1
+		INNER_PATCH_SAVE match_row "%location%" BEGIN
+			REPLACE_TEXTUALLY "before " ""
+		END
+		PHP_EACH rows_in AS k=>discard BEGIN
+			PATCH_IF "%k%" STR_EQ "%match_row%" BEGIN
+				SPRINT $rows("%row%") ""
+				warn=0
+			END
+			SPRINT $rows("%k%") ""
+		END
+	END
+	"after .*" BEGIN
+		warn=1
+		INNER_PATCH_SAVE match_row "%location%" BEGIN
+			REPLACE_TEXTUALLY "after " ""
+		END
+		PHP_EACH rows_in AS k=>discard BEGIN
+			SPRINT $rows("%k%") ""
+			PATCH_IF "%k%" STR_EQ "%match_row%" BEGIN
+				SPRINT $rows("%row%") ""
+				warn=0
+			END
+		END
+	END
+	DEFAULT
+		PATCH_WARN "'%location%' is not a legal location for 2da_insert_row. Legal locations are 'before ROW', 'after ROW', 'first' (or 'start'), and 'last' (or 'end')"
+		PHP_EACH rows_in AS k=>discard BEGIN
+			SPRINT $rows("%k%") ""
+		END
+	END
+	// put it at the end if you can't find a match
+	PATCH_IF warn BEGIN
+		PATCH_IF !silent BEGIN 
+			PATCH_WARN "Failed to find row '%match_row%' in 2da_insert_row; putting it at the end instead"
+		END
+		PHP_EACH rows_in AS k=>discard BEGIN
+			SPRINT $rows("%k%") ""
+		END
+		SPRINT $rows("%row%") ""
+	END
+	// write the main array
+	PHP_EACH rows AS this_row=>discard BEGIN
+		PHP_EACH columns AS this_col=>discard2 BEGIN
+			PATCH_IF "%this_row%" STR_EQ "%row%" BEGIN
+				SPRINT $SFO_2da_working_array("%this_row%" "%this_col%") "%entry%" 
+			END ELSE BEGIN
+				SPRINT $SFO_2da_working_array("%this_row%" "%this_col%") $"%array%"("%this_row%" "%this_col%")
+			END		
+		END	
+	END
+	// flush it into output
+	CLEAR_ARRAY array
+	PHP_EACH SFO_2da_working_array AS k=>v BEGIN
+		SPRINT $array("%k_0%" "%k_1%") "%v%"
+	END
+	END
+	
+END		
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_insert_column}
+{
+Given a 2d array, and a column label, insert a new column with that column label in the position specified by
+'location'. 'location' can be 'first' (or 'start'), 'last' (or 'end'), 'before column_label' or 'after column_label'.
+If we can't find the column label, we default to 'last' (and whine about it unless silent=1).
+
+The new rows are filled with 'entry'.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_insert_column
+	INT_VAR silent=0//boolean
+	STR_VAR array=""//array
+			column=""
+			location=""
+			entry="-1"
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY SFO_2da_working_array // we need a guaranteed unique array
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_insert_column"
+	END
+	// add it to the 'columns' array
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns_in=keys2 END
+	CLEAR_ARRAY columns
+	PATCH_MATCH "%location%" WITH
+	last end BEGIN
+		warn=0
+		PHP_EACH columns_in AS k=>discard BEGIN
+			SPRINT $columns("%k%") ""
+		END
+		SPRINT $columns("%column%") ""
+	END
+	first start BEGIN
+		warn=0
+		SPRINT $columns("%column%") ""	
+		PHP_EACH columns_in AS k=>discard BEGIN
+			SPRINT $columns("%k%") ""
+		END
+	END
+	"before .*" BEGIN
+		warn=1
+		INNER_PATCH_SAVE match_col "%location%" BEGIN
+			REPLACE_TEXTUALLY "before " ""
+		END
+		PHP_EACH columns_in AS k=>discard BEGIN
+			PATCH_IF "%k%" STR_EQ "%match_col%" BEGIN
+				SPRINT $columns("%column%") ""
+				warn=0
+			END
+			SPRINT $columns("%k%") ""
+		END
+	END
+	"after .*" BEGIN
+		warn=1
+		INNER_PATCH_SAVE match_col "%location%" BEGIN
+			REPLACE_TEXTUALLY "after " ""
+		END
+		PHP_EACH columns_in AS k=>discard BEGIN
+			SPRINT $columns("%k%") ""
+			PATCH_IF "%k%" STR_EQ "%match_col%" BEGIN
+				SPRINT $columns("%column%") ""
+				warn=0
+			END
+		END
+	END
+	DEFAULT
+		PATCH_WARN "'%location%' is not a legal location for 2da_insert_column. Legal locations are 'before COLUMN', 'after COLUMN', 'first' (or 'start'), and 'last' (or 'end')"
+		PHP_EACH columns_in AS k=>discard BEGIN
+			SPRINT $columns("%k%") ""
+		END
+	END
+	// put it at the end if you can't find a match
+	PATCH_IF warn BEGIN
+		PATCH_IF !silent BEGIN 
+			PATCH_WARN "Failed to find column '%match_col%' in 2da_insert_column; putting it at the end instead"
+		END
+		PHP_EACH columns_in AS k=>discard BEGIN
+			SPRINT $columns("%k%") ""
+		END
+		SPRINT $columns("%column%") ""
+	END
+	// write the main array
+	PHP_EACH rows AS this_row=>discard BEGIN
+		PHP_EACH columns AS this_col=>discard2 BEGIN
+			PATCH_IF "%this_col%" STR_EQ "%column%" BEGIN
+				SPRINT $SFO_2da_working_array("%this_row%" "%this_col%") "%entry%" 
+			END ELSE BEGIN
+				SPRINT $SFO_2da_working_array("%this_row%" "%this_col%") $"%array%"("%this_row%" "%this_col%")
+			END		
+		END	
+	END
+	// flush it into output
+	CLEAR_ARRAY array
+	PHP_EACH SFO_2da_working_array AS k=>v BEGIN
+		SPRINT $array("%k_0%" "%k_1%") "%v%"
+	END
+	END
+END		
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_clone_row}
+{
+Given a 2d array, a row label 'clone_from', and a new row label 'clone_to', insert a copy of the clone_from
+row with the clone_to label, in the position specified by
+'location'. 'location' can be 'first' (or 'start'), 'last' (or 'end'), 'before row_label' or 'after row_label'.
+If we can't find the row label, we default to 'last' (and whine about it unless silent=1).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION 2da_clone_row
+	INT_VAR silent=0//boolean
+	STR_VAR array=""//array
+			clone_to=""
+			location=""
+			clone_from=""
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_clone_row"
+	END
+	// create a blank row
+	LPF 2da_insert_row INT_VAR silent STR_VAR array row="%clone_to%" location RET_ARRAY array END
+	// get the columns
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+	// clone the data
+	PATCH_IF !"%array%" STR_EQ "array" BEGIN 
+		CLEAR_ARRAY array
+		PHP_EACH "%array%" AS k=>v BEGIN
+			SPRINT $array("%k_0%" "%k_1%") "%v%"
+		END	
+	END
+	warn=1
+	PHP_EACH columns AS col=>discard BEGIN
+		PATCH_IF VARIABLE_IS_SET $"%array%"("%clone_from%" "%col%") BEGIN
+			SPRINT $array("%clone_to%" "%col%") $"%array%"("%clone_from%" "%col%")
+			warn=0
+		END
+	END
+	PATCH_IF (warn && !silent) BEGIN
+		PATCH_WARN "row %clone_from% does not exist, so can't be cloned; new row will be blank"
+	END
+	END
+END		
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_clone_column}
+{
+Given a 2d array, a column label 'clone_from', and a new column label 'clone_to', insert a copy of the clone_from
+column with the clone_to label, in the position specified by
+'location'. 'location' can be 'first' (or 'start'), 'last' (or 'end'), 'before column_label' or 'after column_label'.
+If we can't find the column label, we default to 'last' (and whine about it unless silent=1).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_clone_column
+	INT_VAR silent=0//boolean
+	STR_VAR array=""//array
+			clone_to=""
+			location=""
+			clone_from=""
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+	PATCH_IF "%array%" STR_EQ "" BEGIN
+		PATCH_WARN "no array specified in 2da_clone_column"
+	END
+	// create a blank row
+	LPF 2da_insert_column INT_VAR silent STR_VAR array column="%clone_to%" location RET_ARRAY array END
+	// get the columns
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+	// clone the data
+	PATCH_IF !"%array%" STR_EQ "array" BEGIN 
+		CLEAR_ARRAY array
+		PHP_EACH "%array%" AS k=>v BEGIN
+			SPRINT $array("%k_0%" "%k_1%") "%v%"
+		END	
+	END
+	warn=1
+	PHP_EACH rows AS row=>discard BEGIN
+		PATCH_IF VARIABLE_IS_SET $"%array%"("%row%" "%clone_from%") BEGIN
+			SPRINT $array("%row%" "%clone_to%") $"%array%"("%row%" "%clone_from%")
+			warn=0
+		END
+	END
+	PATCH_IF (warn && !silent) BEGIN
+		PATCH_WARN "column %clone_from% does not exist, so can't be cloned; new column will be blank"
+	END
+	END
+END		
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_column_to_array}
+{
+Given a 2d array and column label 'column', extract that column as a 1d array indexed by the 
+row labels. 
+
+If we can't find the column label, we return an empty array (and whine about it unless silent=1).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_column_to_array
+	INT_VAR silent=0//boolean
+	STR_VAR column="" 
+			array=""//array
+	RET_ARRAY array_out
+BEGIN
+  OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY array_out
+	found=0
+	PHP_EACH "%array%" AS k=>v BEGIN
+		PATCH_IF "%k_1%" STR_EQ "%column%" BEGIN
+			found=1
+			SPRINT $array_out("%k_0%") "%v%"
+		END
+	END
+	PATCH_IF !(found || silent) BEGIN
+		PATCH_WARN "Column %column% not found in 2da %array%; returning empty array"
+	END
+  END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_row_to_array}
+{
+Given a 2d array and row label 'row', extract that row as a 1d array indexed by the 
+column labels. 
+
+If we can't find the row label, we return an empty array (and whine about it unless silent=1).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_row_to_array
+	INT_VAR silent=0//boolean
+	STR_VAR row="" 
+			array=""//array
+	RET_ARRAY array_out
+BEGIN
+  OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY array_out
+	found=0
+	PHP_EACH "%array%" AS k=>v BEGIN
+		PATCH_IF "%k_0%" STR_EQ "%row%" BEGIN
+			found=1
+			SPRINT $array_out("%k_1%") "%v%"
+		END
+	END
+	PATCH_IF !(found || silent) BEGIN
+		PATCH_WARN "Row %row% not found in 2da %array%; returning empty array"
+	END
+  END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_to_3da}
+{
+Given a 2d array and two column headers, extract a 3d array where the first two keys are the
+values in the new columns and the third is the old column header.
+
+e.g. if row 14 has col1=x, col2=y, then 3da(x,y,z)=2da(14,z).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 2da to 3da - we ignore the row labels, and use 2 columns to construct the new labels
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_to_3da 
+	STR_VAR column1=""
+			column2=""
+			array=""//array
+	RET_ARRAY array_out
+BEGIN
+	OUTER_PATCH "" BEGIN
+		CLEAR_ARRAY array_out
+	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		PHP_EACH rows AS row=>discard BEGIN
+			SPRINT k1 $"%array%"("%row%" "%column1%")
+			SPRINT k2 $"%array%"("%row%" "%column2%")
+			PHP_EACH columns AS column=>discard2 BEGIN
+				PATCH_MATCH "%column%" WITH 
+				"%column1%" "%column2%" BEGIN
+				END
+				DEFAULT
+					SPRINT $array_out("%k1%" "%k2%" "%column%") $"%array%"("%row%" "%column%")
+				END			
+			END	
+		END
+	END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_make}
+{
+Given two arrays in k=>_ format, make a 2da with each character filled with some fixed data
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_DIMORPHIC_FUNCTION 2da_make
+	STR_VAR rows=""//array
+			columns=""//array
+			fill="*"
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+		CLEAR_ARRAY array
+		PHP_EACH "%rows%" AS row=>discard BEGIN
+			PHP_EACH "%columns%" AS col=>discard2 BEGIN
+				SPRINT $array("%row%" "%col%") "%fill%"
+			END
+		END
+	END
+END
+

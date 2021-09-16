@@ -1,0 +1,1090 @@
+/*
+describe-library{
+
+This contains SFO's syntactic sugar, used by 'include', 'run', and anonymous functions.
+
+}
+*/
+
+/*
+document{sugar_apply}
+{
+Apply SFO's syntactic sugar to the current file. If 'patch_only' is set to 1, don't bother with the action parts.
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_apply 
+	INT_VAR patch_only=0
+BEGIN
+	LPF sugar_remove_inline RET quote_index RET_ARRAY quote_array END
+	LPF sugar_remove_quintuple_quotes INT_VAR quote_index RET quote_index RET_ARRAY quote_array END
+	LPF sugar_decomment END
+	LPF sugar_semicolons END
+	PATCH_IF !patch_only BEGIN
+		LPF sugar_action END
+		LPF sugar_remove_quintuple_quotes INT_VAR quote_index RET_ARRAY quote_array END // do this again because sugar_action adds some ~~~~~ ~~~~~ that we don't want sugared (on pain of mangling the file)
+	END
+	LPF sugar_patch END
+	LPF sugar_comparison END
+	LPF sugar_replace_removed_data STR_VAR quote_array END
+	
+
+END
+
+/*
+document{sugar_decomment}
+{
+Remove //-style comments.
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_decomment//internal
+BEGIN
+	REPLACE_TEXTUALLY "//.*" ""
+END
+
+
+/*
+document{sugar_semicolons}
+{
+Replace double semicolons with line breaks. 
+
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_semicolons BEGIN// internal
+	REPLACE_TEXTUALLY ";;" "%WNL%"
+END
+
+/*
+document{sugar_test}
+{
+Copy over the inline file 'sugartest.tp2' (at the end of this library) and apply syntactic sugar to it, then INCLUDE it to check it's well-formed.
+}
+*/
+DEFINE_ACTION_FUNCTION sugar_test BEGIN
+
+COPY + ".../stratagems-inline/sugartext.tp2" "%workspace%"
+	REPLACE_TEXTUALLY inline_start "<<<<<<<<"
+	REPLACE_TEXTUALLY inline_end ">>>>>>>>"
+	LPF sugar_apply END
+	
+INCLUDE "%workspace%/sugartext.tp2"
+
+
+END
+
+/*
+document{sugar_comparison}
+{
+Swap in simpler versions of string comparison
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_comparison//internal
+BEGIN 
+
+	REPLACE_TEXTUALLY ~~~~~\([0-9a-z_%]+\) *!==~~~~~ "\1 STR_CMP " 
+	REPLACE_TEXTUALLY ~~~~~\(~[0-9a-z_%]+~\) *!==~~~~~ "\1 STR_CMP " 
+	REPLACE_TEXTUALLY ~~~~~\("[0-9a-z_%]+"\) *!==~~~~~ "\1 STR_CMP " 
+	REPLACE_TEXTUALLY ~~~~~\([0-9a-z_%]+\) *==~~~~~ "\1 STR_EQ "
+	REPLACE_TEXTUALLY ~~~~~\("[0-9a-z_%]+"\) *==~~~~~ "\1 STR_EQ "
+	REPLACE_TEXTUALLY ~~~~~\(~[0-9a-z_%]+~\) *==~~~~~ "\1 STR_EQ "
+
+END
+
+
+/*
+document{sugar_action}
+{
+Handle SFO abbreviations for action functions
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_action//internal
+BEGIN
+	SPRINT percentage "%"
+
+	// control flow
+	
+	REPLACE_TEXTUALLY "^[ %TAB%]*IF[ %TAB%]*\[\([^]]*\)\]" "ACTION_IF \1 "
+
+	// change context
+	
+
+	REPLACE_TEXTUALLY "^[ %TAB%]*\[\[\[" "%WNL%OUTER_PATCH ~~ BEGIN%WNL%"
+	REPLACE_TEXTUALLY "^[ %TAB%]*\]\]\]" "%WNL%END%WNL%"
+
+	// open/close
+
+	// we're going to risk not checking for newline here (there are some esoteric regexps this might mess up, e.g. some in this code itself, but I think not anything we'll see outside a library
+
+	REPLACE_TEXTUALLY "\[\[" "%WNL%BEGIN%WNL%"
+	REPLACE_TEXTUALLY "\]\]" "%WNL%END%WNL%"
+	
+
+	// array object specials
+
+	REPLACE_EVALUATE "array\.\(new\|add\) *\[\([^]]+\)\][ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]+\)\]" BEGIN
+		SPRINT type "%MATCH1%"
+		SPRINT array "%MATCH2%"
+		SPRINT contents "%MATCH3%"
+		PATCH_IF "%type%" STR_EQ new BEGIN
+			SPRINT output "ACTION_CLEAR_ARRAY %array%%WNL%"
+		END ELSE BEGIN
+			SPRINT output ""
+		END
+	END
+	"%output%ACTION_DEFINE_ASSOCIATIVE_ARRAY %array% BEGIN%WNL%%contents%%WNL%END"
+
+	// id object specials
+	
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_]+\)\.\(int\|sym\)[ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" BEGIN
+		PATCH_IF "%MATCH3%" STR_EQ "int" BEGIN
+			SPRINT out "OUTER_SET %MATCH1%=IDS_OF_SYMBOL(%MATCH2% %MATCH4%)"
+		END ELSE BEGIN
+			SPRINT out ~OUTER_PATCH "" BEGIN LOOKUP_IDS_SYMBOL_OF_INT %MATCH1% %MATCH2% %MATCH4% END~
+		END
+	END
+	"%out%"	
+
+	// strref object special
+	
+	REPLACE_TEXTUALLY "^[ %TAB%]*strref\.patch[ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\][ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" 
+	~OUTER_SET SFO_anon_strref=\1
+	 ACTION_GET_STRREF SFO_anon_strref SFO_anon_str
+	 OUTER_PATCH_SAVE SFO_anon_str "%percentage%SFO_anon_str%percentage%" BEGIN
+	 \2
+	 END
+	 STRING_SET_EVALUATE SFO_anon_strref "%percentage%SFO_anon_str%percentage%"
+	 ~
+
+	// str object specials
+	
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_]+\)\.\(patch\|print\|strref\)[ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" BEGIN
+		PATCH_MATCH "%MATCH3%" WITH
+		"print" BEGIN
+			SPRINT end_command ~PRINT "%percentage%SFO_anon_output%percentage%"%WNL%OUTER_SPRINT %MATCH1% "%percentage%SFO_anon_output%percentage%"%WNL%~
+		END
+		"strref" BEGIN
+			SPRINT end_command ~OUTER_SET %MATCH1%= RESOLVE_STR_REF ("%percentage%SFO_anon_output%percentage%")%WNL%~	
+		END
+		"patch" BEGIN
+			SPRINT end_command ~OUTER_SPRINT %MATCH1% "%percentage%SFO_anon_output%percentage%"%WNL%~	 
+		END
+		DEFAULT
+		END
+	END
+	~OUTER_PATCH_SAVE SFO_anon_output "%percentage%%MATCH2%%percentage%" BEGIN %MATCH4% END%WNL%%end_command%~
+
+
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)\.\(patch\|print\|strref\)[ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" BEGIN
+		PATCH_MATCH "%MATCH2%" WITH
+		"print" BEGIN
+			SPRINT end_command ~PRINT "%percentage%SFO_anon_output%percentage%"%WNL%~
+		END
+		"strref" BEGIN
+			SPRINT end_command ~OUTER_SET SFO_anon_strref= RESOLVE_STR_REF ("%percentage%SFO_anon_output%percentage%")%WNL%~	
+		END
+		"patch" BEGIN
+			SPRINT end_command ""
+		END
+		DEFAULT
+		END
+	END
+	~OUTER_PATCH_SAVE SFO_anon_output "%percentage%%MATCH1%%percentage%" BEGIN %MATCH3% END%WNL%%end_command%~
+
+
+	//function definitions
+	
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*def\.\([apmd]\)[ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\][ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" BEGIN
+		PATCH_MATCH "%MATCH2%" WITH
+		a BEGIN
+			SPRINT fn "DEFINE_ACTION_FUNCTION"
+		END
+		p BEGIN
+			SPRINT fn "DEFINE_PATCH_FUNCTION"
+		END
+		m d BEGIN
+			SPRINT fn "DEFINE_DIMORPHIC_FUNCTION"
+		END
+		DEFAULT
+			PATCH_FAIL "shouldn't happen"
+		END
+		LPF sugar_parse_fundef_args STR_VAR args="%MATCH3%" RET ints strs END
+		LPF sugar_parse_fundef_rets STR_VAR args="%MATCH4%" RET rets retarrays END
+	END
+	"%WNL%%fn% %MATCH1%%WNL%%TAB%INT_VAR%WNL%%ints%%TAB%STR_VAR%WNL%%strs%%TAB%%rets%%TAB%%retarrays%"
+
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*def\.\([a-z]+\)\[\]" BEGIN
+		PATCH_MATCH "%MATCH2%" WITH
+		c BEGIN
+			SPRINT fn "DEFINE_ACTION_FUNCTION"
+			SPRINT strs ~%TAB%%TAB%version=""%WNL%~
+			SPRINT rets ""
+		END
+		s sc BEGIN
+			SPRINT fn "DEFINE_ACTION_FUNCTION"
+			SPRINT strs ""
+			SPRINT rets ""
+		END
+		sfo BEGIN
+			SPRINT fn "DEFINE_PATCH_FUNCTION"
+			SPRINT strs ~%TAB%%TAB%arguments=""%WNL%~
+			SPRINT rets "%TAB%RET%WNL%%TAB%%TAB%value%WNL%"
+		END
+		sfoa BEGIN
+			SPRINT fn "DEFINE_ACTION_FUNCTION"
+			SPRINT strs ~%TAB%%TAB%arguments=""%WNL%~
+			SPRINT rets "%TAB%RET%WNL%%TAB%%TAB%value%WNL%"
+		END		
+		DEFAULT
+			PATCH_FAIL "%MATCH2% is an unrecognized function type"
+		END
+	END
+	"%WNL%%fn% %MATCH1%%WNL%%TAB%STR_VAR%WNL%%strs%%TAB%%rets%"
+
+	// functions with return values
+	// newline crucial here, we don't want to mangle regexps
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-zA-Z0-9_,]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_.]+\)[ %TAB%%WNL%%MNL%%LNL%]*\(\[[^]]*\][ %TAB%%WNL%%MNL%%LNL%]*\[[^]]*\]\|\[[^]]*\]\)" BEGIN
+		
+		LPF sugar_parse_function STR_VAR function="%MATCH2%" RET input input2 function struct type output output2 output_array END
+		LPF sugar_parse_action_arguments STR_VAR args="%MATCH3%" input input2 struct type RET ints strs END
+		LPF sugar_parse_returns INT_VAR output_array STR_VAR returns="%MATCH1%" output output2 struct RET ret END
+	END
+	"LAF %function%%WNL%%TAB%INT_VAR%WNL%%ints%%TAB%STR_VAR%WNL%%strs%%ret%END"
+
+	// functions without return values
+	// newline crucial here, we don't want to mangle regexps
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_.]+\)[ %TAB%%WNL%%MNL%%LNL%]*\(\[[^]]*\][ %TAB%%WNL%%MNL%%LNL%]*\[[^]]*\]\|\[[^]]*\]\)" BEGIN
+		LPF sugar_parse_function STR_VAR function="%MATCH1%" RET input input2 function struct type END
+		LPF sugar_parse_action_arguments STR_VAR args="%MATCH2%" input input2 struct type RET ints strs END
+		PATCH_IF "%struct%" STR_CMP "" BEGIN
+			SPRINT ret "%TAB%RET_ARRAY%WNL%%TAB%%TAB%%struct%=struct%WNL%"
+		END ELSE BEGIN
+			SPRINT ret ""
+		END
+	END
+	"LAF %function%%WNL%%TAB%INT_VAR%WNL%%ints%%TAB%STR_VAR%WNL%%strs%%ret%END"
+
+// quicker string allocations/comparisons
+	REPLACE_TEXTUALLY ~~~~~\([0-9a-z_%]+\) *:==~~~~~ "OUTER_SPRINT \1 "
+	REPLACE_TEXTUALLY ~~~~~\(~[0-9a-z_%]+~\) *:==~~~~~ "OUTER_SPRINT \1 "
+	REPLACE_TEXTUALLY ~~~~~\("[0-9a-z_%]+"\) *:==~~~~~ "OUTER_SPRINT \1 "
+
+
+END
+
+/*
+document{sugar_patch}
+{
+Handle SFO abbreviations for patch functions
+}
+*/
+
+DEFINE_PATCH_FUNCTION sugar_patch//internal
+BEGIN
+	SPRINT percentage "%"
+
+	// control flow
+	
+	REPLACE_TEXTUALLY "^[ %TAB%]*IF[ %TAB%]*{\([^}]*\)}" "PATCH_IF \1 "
+
+	// change context
+	
+	REPLACE_TEXTUALLY "{{{" "%WNL%INNER_ACTION BEGIN%WNL%"
+	REPLACE_TEXTUALLY "}}}" "%WNL%END%WNL%"
+
+	// begin/end
+	// we're going to risk not checking for newline here 
+
+	REPLACE_TEXTUALLY "{{" "%WNL%BEGIN%WNL%"
+	REPLACE_TEXTUALLY "}}" "%WNL%END%WNL%"
+
+	// array object specials
+
+	REPLACE_EVALUATE "array\.\(new\|add\) *{\([^}]+\)}[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]+\)}" BEGIN
+		SPRINT type "%MATCH1%"
+		SPRINT array "%MATCH2%"
+		SPRINT contents "%MATCH3%"
+		PATCH_IF "%type%" STR_EQ new BEGIN
+			SPRINT output "CLEAR_ARRAY %array%%WNL%"
+		END ELSE BEGIN
+			SPRINT output ""
+		END
+	END
+	"%output%DEFINE_ASSOCIATIVE_ARRAY %array% BEGIN%WNL%%contents%%WNL%END"
+
+	// id object specials
+	
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_]+\)\.\(int\|sym\)[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}" BEGIN
+		PATCH_IF "%MATCH3%" STR_EQ "int" BEGIN
+			SPRINT out "SET %MATCH1%=IDS_OF_SYMBOL(%MATCH2% %MATCH4%)"
+		END ELSE BEGIN
+			SPRINT out ~LOOKUP_IDS_SYMBOL_OF_INT %MATCH1% %MATCH2% %MATCH4%~
+		END
+	END
+	"%out%"
+	
+
+	// strref object special
+	
+	REPLACE_TEXTUALLY "^[ %TAB%]*strref\.patch[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}" 
+	~SET SFO_anon_strref=\1
+	 GET_STRREF SFO_anon_strref SFO_anon_str
+	 INNER_PATCH_SAVE SFO_anon_str "%percentage%SFO_anon_str%percentage%" BEGIN
+	 \2
+	 END
+	 INNER_ACTION BEGIN
+		STRING_SET_EVALUATE SFO_anon_strref "%percentage%SFO_anon_str%percentage%"
+	END
+	 ~
+
+	// str object specials
+	
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_]+\)\.\(patch\|print\|strref\)[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}" BEGIN
+		PATCH_MATCH "%MATCH3%" WITH
+		"print" BEGIN
+			SPRINT end_command ~PATCH_PRINT "%percentage%SFO_anon_output%percentage%"%WNL%SPRINT %MATCH1% "%percentage%SFO_anon_output%percentage%"%WNL%~
+		END
+		"strref" BEGIN
+			SPRINT end_command ~SET %MATCH1%= RESOLVE_STR_REF ("%percentage%SFO_anon_output%percentage%")%WNL%~	
+		END
+		"patch" BEGIN
+			SPRINT end_command ~SPRINT %MATCH1% "%percentage%SFO_anon_output%percentage%"%WNL%~	 
+		END
+		DEFAULT
+		END
+	END
+	~INNER_PATCH_SAVE SFO_anon_output "%percentage%%MATCH2%%percentage%" BEGIN %MATCH4% END%WNL%%end_command%~
+
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_]+\)\.\(patch\|print\|strref\)[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}" BEGIN
+		PATCH_MATCH "%MATCH2%" WITH
+		"print" BEGIN
+			SPRINT end_command ~PATCH_PRINT "%percentage%SFO_anon_output%percentage%"%WNL%~
+		END
+		"strref" BEGIN
+			SPRINT end_command ~SET SFO_anon_strref= RESOLVE_STR_REF ("%percentage%SFO_anon_output%percentage%")%WNL%~	
+		END
+		"patch" BEGIN
+			SPRINT end_command ""
+		END
+		DEFAULT
+		END
+	END
+	~INNER_PATCH_SAVE SFO_anon_output "%percentage%%MATCH1%%percentage%" BEGIN %MATCH3% END%WNL%%end_command%~
+
+	// functions with return values
+	// newline crucial here, we don't want to mangle regexps
+	REPLACE_EVALUATE "^[ %TAB%]*\([A-Za-z0-9_,]+\)[ %TAB%%WNL%%MNL%%LNL%]*=[ %TAB%%WNL%%MNL%%LNL%]*\([a-z0-9_.]+\)[ %TAB%%WNL%%MNL%%LNL%]*\({[^}]*}[ %TAB%%WNL%%MNL%%LNL%]*{[^}]*}\|{[^}]*}\)" BEGIN
+		
+		LPF sugar_parse_function STR_VAR function="%MATCH2%" RET input input2 function struct type output output2 output_array END
+		LPF sugar_parse_patch_arguments STR_VAR args="%MATCH3%" input input2 struct type RET ints strs END
+		LPF sugar_parse_returns INT_VAR output_array STR_VAR returns="%MATCH1%" output output2 struct RET ret END
+	END
+	"LPF %function%%WNL%%TAB%INT_VAR%WNL%%ints%%TAB%STR_VAR%WNL%%strs%%ret%END"
+	// functions without return values
+	// newline crucial here, we don't want to mangle regexps
+	REPLACE_EVALUATE "^[ %TAB%]*\([a-z0-9_.]+\)[ %TAB%%WNL%%MNL%%LNL%]*\({[^}]*}[ %TAB%%WNL%%MNL%%LNL%]*{[^}]*}\|{[^}]*}\)" BEGIN
+		LPF sugar_parse_function STR_VAR function="%MATCH1%" RET input input2 function struct type END
+		LPF sugar_parse_patch_arguments STR_VAR args="%MATCH2%" input input2 struct type RET ints strs END
+		PATCH_IF "%struct%" STR_CMP "" BEGIN
+			SPRINT ret "%TAB%RET_ARRAY%WNL%%TAB%%TAB%%struct%=struct%WNL%"
+		END ELSE BEGIN
+			SPRINT ret ""
+		END
+	END
+	"LPF %function%%WNL%%TAB%INT_VAR%WNL%%ints%%TAB%STR_VAR%WNL%%strs%%ret%END"
+
+
+
+
+	REPLACE_TEXTUALLY ~~~~~\([0-9a-z_%]+\) *:=~~~~~ "SPRINT \1 "
+	REPLACE_TEXTUALLY ~~~~~\(~[0-9a-z_%]+~\) *:=~~~~~ "SPRINT \1 "
+	REPLACE_TEXTUALLY ~~~~~\(~[0-9a-z_%]+~\) *:=~~~~~ "SPRINT \1 "
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_fundef_args}
+{
+Parse the function definition for INT_VARs and STR_VARs
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION sugar_parse_fundef_args//internal
+	STR_VAR args=""
+	RET ints strs 
+BEGIN
+	SPRINT ints ""
+	SPRINT strs ""
+	WHILE "%args%" STR_CMP "" BEGIN
+		is_int=0
+		LPF return_first_entry STR_VAR list="%args%" RET entry args=list END
+		PATCH_IF INDEX ("=" "%entry%") >=0 BEGIN
+			INNER_PATCH_SAVE entry "%entry%" BEGIN
+				REPLACE_TEXTUALLY "[ %TAB%]*=[ %TAB%]*" "="
+				REPLACE_TEXTUALLY ":s=" "="
+				REPLACE_EVALUATE ":i=" BEGIN
+					is_int=1
+				END
+				"="
+			END
+		END ELSE BEGIN		
+			INNER_PATCH_SAVE entry "%entry%" BEGIN
+				REPLACE_TEXTUALLY ":s$" ""
+				REPLACE_EVALUATE ":i$" BEGIN
+					is_int=1
+				END
+				""
+			END
+			PATCH_IF is_int BEGIN
+				SPRINT entry "%entry%=0"
+			END ELSE BEGIN
+				SPRINT entry "%entry%=~~"
+			END
+		END
+		PATCH_IF is_int BEGIN
+			SPRINT ints "%ints%%TAB%%TAB%%entry%%WNL%"
+		END ELSE BEGIN
+			SPRINT strs "%strs%%TAB%%TAB%%entry%%WNL%"		
+		END
+	
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_fundef_args}
+{
+Parse the function definition for INT_VARs and STR_VARs
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION sugar_parse_fundef_rets//internal
+	STR_VAR args=""
+	RET rets retarrays
+BEGIN
+	SPRINT rets ""
+	SPRINT retarrays ""
+	WHILE "%args%" STR_CMP "" BEGIN
+		LPF return_first_entry STR_VAR list="%args%" RET var=entry args=list END
+		
+		INNER_PATCH_SAVE var "%var%" BEGIN
+			is_array=0
+			REPLACE_EVALUATE ":a$" BEGIN
+				is_array=1
+			END
+			""
+		END
+		PATCH_IF is_array && "%val%" STR_EQ "" BEGIN
+			val=0
+		END
+		PATCH_IF is_array BEGIN
+			SPRINT rets "%rets%%TAB%%TAB%%var%%WNL%"
+		END ELSE BEGIN
+			SPRINT retarrays "%retarrays%%TAB%%TAB%%var%%WNL%"		
+		END
+	
+	END
+	PATCH_IF "%rets%" STR_CMP "" BEGIN
+		SPRINT rets "%TAB%RET%WNL%%rets%"
+	END
+	PATCH_IF "%retarrays%" STR_CMP "" BEGIN
+		SPRINT retarrays "%TAB%RET_ARRAY%WNL%%retarrays%"
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_function}
+{
+Parse the function for virtual-object data
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION sugar_parse_function//internal
+	STR_VAR function=""
+	RET input input2 function struct output output2 type output_array
+BEGIN
+	output_array=0
+	finished=0
+	SPRINT struct ""
+	SPRINT object ""
+	SPRINT type ""
+	SPRINT input2 ""
+	SPRINT output value
+	SPRINT output2 ""
+	INNER_PATCH "%function%" BEGIN
+		REPLACE_EVALUATE "\([a-z0-9_]+\)\.\([a-z0-9_]+\)\.\(alter\|delete\|clone\|add\)" BEGIN
+			finished=1
+			SPRINT type "%MATCH2%"
+			SPRINT struct "%MATCH1%"
+			SPRINT function "struct_%MATCH3%"
+			PATCH_MATCH "%MATCH3%" WITH
+			alter clone add BEGIN
+				SPRINT input patch
+			END
+			delete BEGIN
+				SPRINT input match
+			END
+			DEFAULT
+			END
+		END
+		""
+	END
+	PATCH_IF !finished BEGIN
+		INNER_PATCH_SAVE function_base "%function%" BEGIN
+			REPLACE_EVALUATE "^\(.*\)\." BEGIN
+				SPRINT object "%MATCH1%"
+			END
+			""
+		END
+		PATCH_IF "%object%" STR_CMP "" BEGIN
+			SPRINT function "%object%_%function_base%"
+		END
+		PATCH_MATCH "%object%" WITH
+		struct BEGIN
+			output_array=1
+			SPRINT input struct
+			SPRINT output struct
+		END
+		2da array BEGIN
+			output_array=1
+			SPRINT input array
+			SPRINT input2 ""
+			SPRINT output array
+		END
+		are cre eff pro itm sto spl BEGIN
+			SPRINT input "%object%"
+			SPRINT input2 "edits"
+			SPRINT output value
+			SPRINT output2 scroll
+		END
+		kit class BEGIN
+			PATCH_IF "%function%" STR_EQ "kit_edit_all" BEGIN
+				SPRINT input "parent_class"
+			END ELSE BEGIN
+				SPRINT input "%object%"
+			END
+			SPRINT input2 "edits"
+		END
+		"" BEGIN
+			SPRINT input "arguments"
+			SPRINT input2 ""
+		END
+		DEFAULT // struct is default		
+			SPRINT input "arguments"
+			SPRINT input2 ""
+			SPRINT output value
+			SPRINT struct "%object%"
+			SPRINT function "%function_base%"
+		END
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_returns}
+{
+Work out the 'RET' and 'RET_ARRAY' section of the function
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_parse_returns//internal 
+	INT_VAR output_array=0
+	STR_VAR returns=""
+			output=""
+			output2=""
+			struct=""
+	RET ret
+BEGIN
+	// process the input
+	LPF return_first_entry STR_VAR list="%returns%" separator="," RET o=entry o2=list END
+	SPRINT temp "%TAB%%TAB%%o%=%output%%WNL%"
+	PATCH_IF "%o2%" STR_CMP "" BEGIN
+		PATCH_IF "%output2%" STR_CMP "" BEGIN
+			SPRINT temp "%temp%%TAB%%TAB%%o2%=%output2%%WNL%"
+		END ELSE BEGIN
+			PATCH_WARN "sugar_parse_returns: second output (%o2%) requested, but this virtual object has no second return type"
+		END
+	END
+	PATCH_IF output_array BEGIN
+		SPRINT strs ""
+		SPRINT arrs "%temp%"
+	END ELSE BEGIN
+		SPRINT strs "%temp%"
+		SPRINT arrs ""
+	END
+	// deal with structs
+	PATCH_IF "%struct%" STR_CMP "" BEGIN
+		SPRINT arrs "%arrs%%TAB%%TAB%%struct%=struct%WNL%"
+	END
+	// make final return
+	SPRINT ret ""
+	PATCH_IF "%strs%" STR_CMP "" BEGIN
+		SPRINT ret "%ret%%TAB%RET%WNL%%strs%"
+	END
+	PATCH_IF "%arrs%" STR_CMP "" BEGIN
+		SPRINT ret "%ret%%TAB%RET_ARRAY%WNL%%arrs%"
+	END
+	
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_action_arguments}
+{
+Preliminary processing: extract the contents of the argument bracket(s)
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_parse_action_arguments//internal
+	STR_VAR args=""
+			input=""
+			input2=""
+			struct=""
+			type=""
+	RET ints strs
+BEGIN
+	SPRINT ints ""
+	SPRINT strs ""
+	// get the contents of brackets
+	SPRINT args1 ""
+	SPRINT args2 ""
+	INNER_PATCH "%args%" BEGIN
+		REPLACE_EVALUATE "\[\([^]]*\)\][ %TAB%%WNL%%MNL%%LNL%]*\[\([^]]*\)\]" BEGIN
+			SPRINT args1 "%MATCH1%"
+			SPRINT args2 "%MATCH2%"
+		END
+		""
+		REPLACE_EVALUATE "\[\([^]]*\)\]" BEGIN
+			SPRINT args1 "%MATCH1%"
+			SPRINT args2 ""
+		END	
+		""
+	END
+	LPF sugar_parse_arguments STR_VAR input input2 args1 args2 struct RET ints strs END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_patch_arguments}
+{
+Exactly like sugar_parse_action_arguments, but with curly brackets instead of square brackets
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_parse_patch_arguments//internal
+	STR_VAR args=""
+			input=""
+			input2=""
+			struct=""
+			type=""
+	RET ints strs
+BEGIN
+	SPRINT ints ""
+	SPRINT strs ""
+	// get the contents of brackets
+	SPRINT args1 ""
+	SPRINT args2 ""
+	INNER_PATCH "%args%" BEGIN
+		REPLACE_EVALUATE "{\([^}]*\)}[ %TAB%%WNL%%MNL%%LNL%]*{\([^}]*\)}" BEGIN
+			SPRINT args1 "%MATCH1%"
+			SPRINT args2 "%MATCH2%"
+		END
+		""
+		REPLACE_EVALUATE "{\([^}]*\)}" BEGIN
+			SPRINT args1 "%MATCH1%"
+			SPRINT args2 ""
+		END	
+		""
+	END
+	LPF sugar_parse_arguments STR_VAR input input2 args1 args2 struct RET ints strs END
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_parse_arguments}
+{
+Work out the STR_VAR/INT_VAR part of the function, using info from sugar_parse_[patch|action]_arguments
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_parse_arguments//internal
+	STR_VAR args1=""
+			args2=""
+			input=""
+			input2=""
+			struct=""
+	RET ints strs
+BEGIN
+	SPRINT strs ""
+	SPRINT ints ""
+	INNER_PATCH_SAVE args1 "%args1%" BEGIN
+		REPLACE_TEXTUALLY "|" " | " // handle {|blah} correctly
+	END
+	// separate out first argument into default and rest
+	PATCH_IF "%args1%" STR_CMP "" BEGIN
+		LPF return_first_entry STR_VAR list="%args1%" separator="|" RET default=entry rest=list END
+		LPF trim_string STR_VAR string="%default%" RET default=string END
+		// default argument
+		PATCH_IF "%default%" STR_CMP "" BEGIN
+			SPRINT strs "%strs%%TAB%%TAB%%input%=~~~~~%default%~~~~~%WNL%"
+		END
+	END ELSE BEGIN
+		SPRINT rest ""
+	END
+	// second default
+	PATCH_IF "%args2%" STR_CMP "" && "%input2%" STR_CMP "" BEGIN
+		SPRINT strs "%strs%%TAB%%TAB%%input2%=~~~~~%args2%~~~~~%WNL%"
+	END
+	// the struct
+	PATCH_IF "%struct%" STR_CMP "" BEGIN
+		SPRINT strs "%strs%%TAB%%TAB%struct=%struct%%WNL%"
+	END
+	// the type
+	PATCH_IF "%type%" STR_CMP "" BEGIN
+		SPRINT strs "%strs%%TAB%%TAB%type=%type%%WNL%"
+	END
+	// the rest
+	WHILE "%rest%" STR_CMP "" BEGIN
+		LPF return_first_entry STR_VAR list="%rest%" RET entry rest=list END
+		is_int=0
+		INNER_PATCH_SAVE entry "%entry%" BEGIN
+			REPLACE_EVALUATE ":i *=" BEGIN
+				is_int=1
+			END
+			"="
+			REPLACE_EVALUATE ":i *$" BEGIN
+				is_int=1
+			END
+			""
+		END
+		PATCH_IF is_int BEGIN
+			SPRINT ints "%ints%%TAB%%TAB%%entry%%WNL%"
+		END ELSE BEGIN
+			SPRINT strs "%strs%%TAB%%TAB%%entry%%WNL%"
+		END
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_remove_inline}
+{
+Extract inlined files (so we don't sugar them - main concern: LUA) and store them for later
+restoration in the format [unique integer]=string. quote_array tracks how many quotes so far, 
+so that sugar_remove_inline and sugar_remove_quintuple_quotes can share. 
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_remove_inline//internal
+	INT_VAR quote_index=0
+	RET quote_index
+	RET_ARRAY quote_array
+BEGIN
+	index=0
+	WHILE index>=0 BEGIN
+		LPF find_parenthesis_range STR_VAR left="<<<<<<<<" right=">>>>>>>>" RET start end END
+		PATCH_IF start>=0 BEGIN
+			READ_ASCII start data (end +8 - start)
+			DELETE_BYTES start (end +8 - start)
+			SPRINT id_string "SFO_QUOTE_PLACEHOLDER_%quote_index%_"
+			len=STRING_LENGTH "%id_string%"
+			INSERT_BYTES start len
+			WRITE_ASCII start "%id_string%"
+			SPRINT $quote_array("%quote_index%") "%data%"
+			++quote_index
+			index=start
+		END ELSE BEGIN
+			index="-1"
+		END
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_remove_quintuple_quotes}
+{
+Extract the contents of ~~~~~ - ~~~~~ -quoted data (so we don't sugar it - main concern: mangling 
+the file when we sugar an anonymous function input to an action function that's itself sugared, e.g.
+the cre.edit interface) and store them for later restoration in the format [unique integer]=string. 
+quote_array tracks how many quotes so far, so that sugar_remove_inline and sugar_remove_quintuple_quotes can share. 
+
+Incidentally, we don't do single-quoted or tilde-quoted data because in a few cases - e.g
+SPRINT var "~" - it will mangle the file.
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_remove_quintuple_quotes//internal
+	INT_VAR quote_index=0
+	RET quote_index
+	RET_ARRAY quote_array
+BEGIN
+	index=0
+	WHILE index>=0 BEGIN
+		LPF find_parenthesis_range STR_VAR left="~~~~~" right="~~~~~" RET start end END
+		PATCH_IF start>=0 BEGIN
+			READ_ASCII start data (end +5 - start)
+			DELETE_BYTES start (end +5 - start)
+			SPRINT id_string "SFO_QUOTE_PLACEHOLDER_%quote_index%_"
+			len=STRING_LENGTH "%id_string%"
+			INSERT_BYTES start len
+			WRITE_ASCII start "%id_string%"
+			SPRINT $quote_array("%quote_index%") "%data%"
+			++quote_index
+			index=start
+		END ELSE BEGIN
+			index="-1"
+		END
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{sugar_replace_removed_data}
+{
+Put back data sequestered by sugar_remove_[whatever]
+}
+*/
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION sugar_replace_removed_data//internal
+	STR_VAR quote_array=""
+BEGIN
+	PHP_EACH "%quote_array%" AS quote_index=>string BEGIN
+		REPLACE_TEXTUALLY "SFO_QUOTE_PLACEHOLDER_%quote_index%_" "%string%"
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/*
+document{test_sugar_helper}
+{Doesn't actually exist: contained in the inline 'sugartext.tp2' (and is well-formed but doesn't work)}
+
+
+
+*/
+
+<<<<<<<<.../stratagems-inline/sugartext.tp2
+
+
+
+
+
+DEFINE_ACTION_FUNCTION test_sugar_helper//internal
+BEGIN
+
+strref.patch[1000][REPLACE_TEXTUALLY "this" "that"]
+
+n=class.int[fighter]
+
+lab=class.sym[1]
+
+
+
+newfunc=def.a[arg1=cat arg2:i=7 arg3:i arg4:s][val1 val2:a]
+[[
+	val1:=="dog"
+	val2:=="mongoose"
+]]
+newfunc=def.p[arg1=cat arg2:i=7 arg3:i arg4:s][val1 val2:a]
+[[
+	val1:="dog"
+	val2:="mongoose"
+]]
+
+
+
+comp=def.c[]
+[[
+// a component
+]]
+
+subcomp=def.sc[]
+[[
+// a component
+]]
+stdfn=def.sfo[]
+[[PATCH_PRINT "a cat"
+]]
+
+[[[
+m=class.int{thief}
+lab2=class.sym{3}
+str:="Minsc is awesome"
+str.print{}
+m=str.patch{ INSERT_BYTES 0x0 3}
+n=m.strref{}
+
+]]]
+
+COPY_EXISTING "minsc.cre" override
+
+{{{
+PRINT "blook"
+}}}
+
+
+BUT_ONLY
+
+OUTER_SPRINT desc "Some data"
+
+desc.echo[]
+
+desc.patch
+[
+
+READ_ASCII 0x0 firstword (4)
+
+]
+
+desc2=desc.patch[REPLACE_TEXTUALLY "Some" "All"]
+str=desc.strref[REPLACE_TEXTUALLY "Some" "Most"]
+
+array.new[testarray]
+[
+ranger=>Minsc
+fighter=>Sarevok
+]
+
+array.add[testarray]
+[
+mage=>Nalia
+]
+
+array.clear[testarray]
+
+var1:==Anomen
+var2:=="Sir Anomen"
+var3:==~Anomen the Annoying~
+
+OUTER_SET value="%cat%" STRING_MATCHES_REGEXP "\[[a]ab[0-9]+\]" // make sure we don't mangle this
+
+run_this[]
+run_that[blook]
+run_the_other[blook|parameter1:i=6 parameter2="wodget"]
+
+m=struct.read[|file=minsc.cre]
+m.cre_enforce_thac0[]
+m.cre_enforce_class[fighter]
+struct.write[m|file=minsc.cre]
+
+spell,scroll=spl.make[WIZARD_SOMETHING_AWESOME]
+[
+blah
+]
+
+testarray=array.map[testarray|map=fn]
+
+
+
+COPY_EXISTING "jaheir.cre" override
+	m=struct.read{}
+	m.fx.alter{opcode=12}
+	m_str=10
+	m_alignment:=neutral_good
+	PATCH_IF this==that BEGIN
+	
+	array.new{myarray}
+	{
+		Anomen=>annoying
+		Sarevok=>treacherous
+	}
+	
+	array.add{myarray}
+	{
+		Aerie=>overpowered
+	}
+	struct.write{m}
+	END
+BUT_ONLY
+
+cre.edit[minsc minsc2 minsc4 minsc6]
+[
+	// this shouldn't be sugared
+	
+	m_both_names:="Minsc the awesome"
+	m.add_fx{opcode=324}
+	m.clone_fx{opcode=123|match="opcode=142" number:i=2}
+	m.cre_strip_scripts{}
+	m.cre_do_something{awesome}
+	
+
+]
+
+// test program should swap 'inline_start' and 'inline_end' appropriately
+
+inline_start .../stratagems-inline/lua_1.lua
+-- some inline text that shouldn't be sugared
+
+array={}
+array[cat]="dog"
+
+inline_end
+
+OUTER_SPRINT text1
+~~~~~ 
+some quintuple-quoted text that shouldn't be sugared
+
+array.add[blook]
+[this=>that]
+
+m.cre.alter{blah}
+
+~~~~~
+
+OUTER_SPRINT text2
+~~~~~ 
+some more quintuple-quoted text that shouldn't be sugared
+
+array.add[blook]
+[this=>that]
+
+m.cre.alter{blah}
+
+~~~~~
+END
+
+>>>>>>>>

@@ -1,0 +1,627 @@
+/////                                                  \\\\\
+///// adding portrait icons                            \\\\\
+/////                                                  \\\\\
+
+DEFINE_ACTION_FUNCTION cd_new_portrait_icon
+  INT_VAR string = 0
+  STR_VAR bam_file = "****"
+  RET     icon
+  BEGIN
+
+  OUTER_SET icon = "-1"
+
+  ACTION_IF enhanced_edition BEGIN
+
+    COPY_EXISTING ~statdesc.2da~ ~override~
+      COUNT_2DA_ROWS 3 count
+      READ_2DA_ENTRY (count - 1) 0 3 icon
+      SET icon += 1
+  
+    APPEND ~statdesc.2da~ ~%icon% %string% %bam_file%~
+
+  END
+
+END
+
+/////                                                  \\\\\
+///// simulate cloud projectiles for vanilla           \\\\\
+/////                                                  \\\\\
+
+/*
+Original idea from DavidW for IWD-in-BG2. Basic idea: cloud spells summon an invisible creature, fooM. In turn
+fooM runs cycles of spawning several fooV, who teleport a short distance away, play a visual, and then disappear.
+fooM also repeatedly casts the actual working spell (with an invisible AoE projectile) to do the work. The working 
+spell also includes a one-round 206 against itself to prevent applying effects to targets more than once a round.
+
+Visual randomness is achieved by fooV using teleport field to jump away from fooM at the center of the cloud, and
+then randomly playing one of the VVCs available. Functionality is achieved by fooM casting the working spell.
+
+If the spell should be cleared out from Zone of Sweet Air, additional steps are taken. Any spell that provides a 
+ZoSA effect is patched to set a global, CDIZOSA. All of the invisible cloud creatures destroy themselves if this 
+variable gets set, and then the main baldur game script resets the variable after a round.
+
+EEs are so, so, SO much easier here. Thanks Laszlo!
+*/
+
+DEFINE_ACTION_FUNCTION cd_create_cloud 
+  INT_VAR cloud_dur = 6 
+          visloop = 5 
+          zosa = 0 
+  STR_VAR code   = null
+          anim   = null
+          dsound = ""
+          ssound = ""
+BEGIN
+
+  ACTION_IF ("%anim%" STRING_COMPARE_CASE "null" = 0) BEGIN
+    
+    OUTER_SPRINT anim ~%code%V~
+    
+  END
+
+  COPY ~%obg2_res_path%/cloud.eff~ ~override/%code%.eff~
+    WRITE_ASCIIE 0x30 ~%code%M~
+
+  COPY ~%obg2_res_path%/cloud.cre~ ~override/%code%M.cre~
+       ~%obg2_res_path%/cloud.cre~ ~override/%code%V.cre~
+    WRITE_ASCIIE 0x248 ~%DEST_RES%~
+    WRITE_ASCIIE 0x280 ~%DEST_RES%~
+
+  EXTEND_TOP ~%code%M.bcs~ ~%obg2_res_path%/cloudmn.baf~ EVALUATE_BUFFER
+  EXTEND_TOP ~%code%V.bcs~ ~%obg2_res_path%/cloudvs.baf~ EVALUATE_BUFFER
+  
+  ACTION_IF zosa BEGIN
+  
+    ACTION_IF NOT FILE_EXISTS ~%obg2_res_path%/cdzosa.baf~ THEN BEGIN // run only once across both components
+  
+      COPY_EXISTING_REGEXP GLOB ~^.+\.spl$~ ~override~
+        LPF CLONE_EFFECT INT_VAR silent = 1 match_opcode = 273 opcode = 265 parameter1 = 1 timing = 1 STR_VAR resource = cdizosa END
+        BUT_ONLY
+      
+      COPY ~%obg2_res_path%/zosa.baf~ ~%obg2_res_path%/cdzosa.baf~
+
+      ACTION_FOR_EACH file IN baldur baldur25 BEGIN
+    
+        ACTION_IF FILE_EXISTS_IN_GAME ~%file%.bcs~ THEN BEGIN
+    
+          EXTEND_BOTTOM ~%file%.bcs~ ~%obg2_res_path%/baldur.baf~
+          
+        END
+      
+      END
+      
+    END
+
+    EXTEND_TOP ~%code%M.bcs~ ~%obg2_res_path%/cdzosa.baf~
+    EXTEND_TOP ~%code%V.bcs~ ~%obg2_res_path%/cdzosa.baf~
+
+  END
+
+  ACTION_IF NOT FILE_EXISTS_IN_GAME cdiclout.spl THEN BEGIN
+    COPY ~%obg2_res_path%/cdiclout.spl~ ~override~ // minions jump away
+  END
+
+  COPY ~%obg2_res_path%/cloudv.spl~ ~override/%code%v.spl~
+    SET step = (100 / (visloop + 1))
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 1 parameter2 = 2 probability1 = step STR_VAR resource = EVALUATE_BUFFER ~%code%0~ END
+    FOR (index = 1 ; index <= visloop ; ++index) BEGIN
+      READ_BYTE 0xac temp_prob
+      LPF ADD_SPELL_EFFECT INT_VAR insert_point = 0 opcode = 215 target = 1 parameter2 = 2 
+        probability2 = (temp_prob + 1) probability1 = (temp_prob + step) STR_VAR resource = EVALUATE_BUFFER ~%code%%index%~ END
+    END
+    WRITE_BYTE 0xac 100
+
+  OUTER_FOR (index = 0 ; index <= visloop ; ++index) BEGIN
+    COPY ~%obg2_res_path%/%code%%index%.vvc~ ~override~
+      WRITE_ASCIIE 0x08 ~%anim%~ #8
+      WRITE_ASCIIE 0x78 ~%ssound%~ #8
+      WRITE_ASCIIE 0x80 ~%dsound%~ #8
+  END
+//  COPY ~iwdification/bam/%anim%.bam~ ~override~
+
+END
+
+/////                                                  \\\\\
+///// ogg > wav conversions                            \\\\\
+/////                                                  \\\\\
+
+DEFINE_ACTION_FUNCTION CD_HANDLE_AUDIO_PREP BEGIN
+
+  OUTER_SPRINT output ~weidu_external/workspace/%spell_list%_audio_temp~
+  MKDIR ~%output%~
+
+  // turn spell copy list into series of A_B_Fs that walk the directories
+  COPY ~%resource_loc%/%spell_list%~ ~%output%/audio.tpa~
+    REPLACE_TEXTUALLY 
+      "^\([^ %LNL%%MNL%%WNL%]+\) .+$" 
+      "ACTION_BASH_FOR ~%resource_loc%/\1~ ~^.+\.wav$~ BEGIN COPY ~%resource_loc%/\1/percentBASH_FOR_RESpercent.wav~ ~%output%~ END"
+      
+  COPY ~%output%/audio.tpa~ ~%output%/audio.tpa~
+    REPLACE_TEXTUALLY ~percent~ ~%~
+    
+  INCLUDE ~%output%/audio.tpa~ // now we run it, copying all wavs to the output folder
+
+  LAF CD_HANDLE_AUDIO STR_VAR audio_path = ~%output%~ output_path = ~%output%~ oggdec_path sox_path END // now we convert to true wavs
+  DELETE ~%output%/audio.tpa~
+  COPY ~%output%~ ~override~ // and dump them into the override
+
+END  
+
+/////                                                  \\\\\
+///// bastardized handle_audio variant                 \\\\\
+/////                                                  \\\\\
+
+// I just made some changes because I want WeiDU to convert (or rename) ogg > wav once, and then leave the resulting wav files to
+// be copied (or not) by the respective components. Basically anything tha moves or copies the files has been removed, so that
+// WeiDU won't remove the wav files if the component that invoked this function gets uninstalled. 
+
+DEFINE_ACTION_FUNCTION CD_HANDLE_AUDIO
+  INT_VAR
+    music = 0
+  STR_VAR
+    audio_path  = ~iwdification/wav~
+    oggdec_path = ~iwdification/wav~
+    sox_path = ~iwdification/wav~
+    output_path = ~iwdification/wav~
+BEGIN
+  /* Early versions of BG:EE do not include bgee.lua and
+   * PST:EE does not include monkfist.2da
+   */
+  ACTION_IF !enhanced_edition
+  BEGIN
+    ACTION_MATCH "%WEIDU_OS%" WITH
+      win32
+      BEGIN
+        ACTION_IF FILE_EXISTS "%oggdec_path%/oggdec.exe" BEGIN
+          ACTION_BASH_FOR ~%audio_path%~ ~.+\.wav$~ BEGIN
+//            OUTER_SPRINT wavfile ~%audio_path%/%BASH_FOR_RES%.wav~
+//            COPY ~.../fl#inlined/null.file~ ~%wavfile%~
+            AT_NOW ~%oggdec_path%/oggdec.exe "%BASH_FOR_FILESPEC%"~
+//            MOVE ~%wavfile%~ ~%output_path%~
+          END
+        END ELSE BEGIN
+          WARN ~WARNING: audio was not installed because oggdec.exe could not be found in %oggdec_path%~
+        END
+      END
+
+      osx
+      BEGIN
+        ACTION_IF FILE_EXISTS ~%sox_path%/sox~ BEGIN
+          AT_NOW ~chmod +x '%sox_path%/sox'~
+          ACTION_BASH_FOR ~%audio_path%~ ~.+\.wav$~ BEGIN
+            OUTER_SPRINT wavfile ~%audio_path%/%BASH_FOR_RES%.wav~
+//            COPY ~.../fl#inlined/null.file~ ~%wavfile%~
+            AT_NOW ~'%sox_path%/sox' '%BASH_FOR_FILESPEC%' '%wavfile%'~
+//            MOVE ~%wavfile%~ ~%output_path%~
+          END
+        END ELSE BEGIN
+          WARN ~WARNING: audio was not installed because sox could not be found in %sox_path%~
+        END
+      END
+
+      unix
+      BEGIN
+        OUTER_SET installed = 1
+        ACTION_BASH_FOR ~%audio_path%~ ~.+\.wav$~ BEGIN
+          OUTER_SPRINT wavfile ~%audio_path%/%BASH_FOR_RES%.wav~
+//          COPY ~.../fl#inlined/null.file~ ~%wavfile%~
+          AT_NOW ~oggdec '%BASH_FOR_FILESPEC%'~
+          ACTION_IF FILE_EXISTS ~%wavfile%~ AND !FILE_SIZE ~%wavfile%~ 0 BEGIN
+//            MOVE ~%wavfile%~ ~%output_path%~
+          END ELSE OUTER_SET installed = 0
+        END
+        ACTION_IF !installed BEGIN
+          WARN "WARNING: audio was not installed because WAV files were not found. Are you sure you have oggdec installed?"
+        END
+      END
+      DEFAULT
+    END
+  END ELSE BEGIN
+    ACTION_IF !music BEGIN
+      OUTER_SPRINT ext "wav"
+    END ELSE BEGIN
+      OUTER_SPRINT ext "acm"
+    END
+    ACTION_BASH_FOR ~%audio_path%~ ~.+\.ogg$~ BEGIN
+      COPY_LARGE + ~%BASH_FOR_FILESPEC%~ ~%output_path%/%BASH_FOR_RES%.%ext%~
+    END
+  END
+END
+
+/////                                                  \\\\\
+///// CD_SPLIT_SAVE_DAMAGE                             \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION CD_SPLIT_SAVE_DAMAGE // turns damage using ee's save-for-half bit into two damage opcodes
+
+  // defines what we're going to check
+  INT_VAR header               = "-1"
+          header_type          = "-1"
+          m_power              = "-1"
+          m_type               = "-1"
+          m_damtype            = "-1"
+          m_timing             = "-1"
+          m_dispel             = "-1"
+          m_duration           = "-1"
+          m_prob1              = "-1"
+          m_prob2              = "-1"
+          m_dicesize           = "-1"
+          m_flags              = "-1"
+BEGIN
+
+  READ_ASCII 0x00 sig (3)
+  SET abil_length = 0x28
+  PATCH_IF ("%sig%" STRING_COMPARE_CASE "ITM" = 0) BEGIN
+    SET abil_length = 0x38
+  END
+  READ_LONG  0x64 abil_off ELSE 0
+  READ_SHORT 0x68 abil_num ELSE 0
+  READ_LONG  0x6a fx_off   ELSE 0
+  SET fx_delta = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+    WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + fx_delta)
+    READ_SHORT  (abil_off +        (abil_length * index)) o_header_type
+    PATCH_IF (((header      = index)         OR (header      < 0)) AND
+              ((header_type = o_header_type) OR (header_type < 0))) BEGIN
+      READ_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+      READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+      FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+        READ_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) opcode
+        READ_LONG  (fx_off + 0x2c + (0x30 * (abil_fx_idx + index2))) o_flags
+        PATCH_IF (((opcode = 12) AND (o_flags & BIT8) = BIT8)) BEGIN
+          READ_BYTE  (fx_off + 0x02 + (0x30 * (abil_fx_idx + index2))) o_power
+          READ_LONG  (fx_off + 0x04 + (0x30 * (abil_fx_idx + index2))) o_amount
+          READ_SHORT (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) o_type
+          READ_SHORT (fx_off + 0x0a + (0x30 * (abil_fx_idx + index2))) o_damtype
+          READ_BYTE  (fx_off + 0x0c + (0x30 * (abil_fx_idx + index2))) o_timing
+          READ_BYTE  (fx_off + 0x0d + (0x30 * (abil_fx_idx + index2))) o_dispel
+          READ_LONG  (fx_off + 0x0e + (0x30 * (abil_fx_idx + index2))) o_duration
+          READ_BYTE  (fx_off + 0x12 + (0x30 * (abil_fx_idx + index2))) o_prob1
+          READ_BYTE  (fx_off + 0x13 + (0x30 * (abil_fx_idx + index2))) o_prob2
+          READ_LONG  (fx_off + 0x1c + (0x30 * (abil_fx_idx + index2))) o_dicenum
+          READ_LONG  (fx_off + 0x20 + (0x30 * (abil_fx_idx + index2))) o_dicesize
+          READ_LONG  (fx_off + 0x24 + (0x30 * (abil_fx_idx + index2))) o_save
+          READ_LONG  (fx_off + 0x28 + (0x30 * (abil_fx_idx + index2))) o_savebonus
+//          READ_LONG  (fx_off + 0x2c + (0x30 * (abil_fx_idx + index2))) o_flags
+          PATCH_IF (((o_power     = m_power)     OR (m_power     < 0)) AND
+                    ((o_type      = m_type)      OR (m_type      < 0)) AND
+                    ((o_damtype   = m_damtype)   OR (m_damtype   < 0)) AND
+                    ((o_timing    = m_timing)    OR (m_timing    < 0)) AND
+                    ((o_dispel    = m_dispel)    OR (m_dispel    < 0)) AND
+                    ((o_duration  = m_duration)  OR (m_duration  < 0)) AND
+                    ((o_prob1     = m_prob1)     OR (m_prob1     < 0)) AND
+                    ((o_prob2     = m_prob2)     OR (m_prob2     < 0)) AND
+                    ((o_dicesize  = m_dicesize)  OR (m_dicesize  < 0)) AND
+                    ((o_flags     = m_flags)     OR (m_flags     < 0))) BEGIN
+            WRITE_LONG   (fx_off + 0x2c + (0x30 * (abil_fx_idx + index2))) (THIS BAND `BIT8) // remove save-for-half flag
+            READ_ASCII   (fx_off +        (0x30 * (abil_fx_idx + index2))) clone (48) // read info for new effect
+            INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + index2))) 0x30       // insert new effect
+            WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + index2))) ~%clone%~  // copy existing effect into new bytes
+            WRITE_LONG   (fx_off + 0x04 + (0x30 * (abil_fx_idx + index2))) ((o_amount + 1) / 2)  // set original damage to half
+            WRITE_LONG   (fx_off + 0x1c + (0x30 * (abil_fx_idx + index2))) ((o_dicenum + 0) / 2)
+            WRITE_LONG   (fx_off + 0x34 + (0x30 * (abil_fx_idx + index2))) ((o_amount + 0) / 2)  // set new damage to half
+            WRITE_LONG   (fx_off + 0x4c + (0x30 * (abil_fx_idx + index2))) ((o_dicenum + 1) / 2) // +1 is fudge factor for rounding odd numbers
+            WRITE_LONG   (fx_off + 0x24 + (0x30 * (abil_fx_idx + index2))) (((((THIS BAND `BIT0) BAND `BIT1) BAND `BIT2) BAND `BIT3) BAND `BIT4) // remove save flags from new effect
+//            WRITE_LONG   (fx_off + 0x24 + (0x30 * (abil_fx_idx + index2))) ((THIS BAND `(BIT0 + BIT1 + BIT2 + BIT3 + BIT4)) // remove save flags from new effect
+            SET index2      += 1
+            SET fx_delta    += 1
+            SET abil_fx_num += 1
+          END // param check
+        END // damage, flag check
+      END // abil fx loop
+      WRITE_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+    END // abil type check
+  END // abil loop
+
+END
+
+/////                                                  \\\\\
+///// CD_CONVERT_333                                   \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION CD_CONVERT_333 
+
+  STR_VAR    
+    333spell       = ""
+
+BEGIN // converts recurring 333s to simple 146s
+
+  READ_ASCII 0x00 sig (3)
+  SET abil_length = 0x28
+  PATCH_IF ("%sig%" STRING_COMPARE_CASE "ITM" = 0) BEGIN
+    SET abil_length = 0x38
+  END
+  READ_LONG  0x64 abil_off ELSE 0
+  READ_SHORT 0x68 abil_num ELSE 0
+  READ_LONG  0x6a fx_off   ELSE 0
+  SET fx_delta = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+    WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + fx_delta)
+    READ_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+    READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+    FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+      READ_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) opcode
+      PATCH_IF opcode = 333 BEGIN
+        READ_ASCII  (fx_off + 0x14 + (0x30 * (abil_fx_idx + index2))) resref
+        PATCH_IF ("%333spell%" STRING_COMPARE_CASE "" = 0) BEGIN // set 333spell if argument blank
+          PATCH_IF ("%resref%" STRING_COMPARE_CASE "" = 0) BEGIN // if no subspell specified, default to <filename>b
+            SPRINT 333spell "%SOURCE_RES%b"
+          END ELSE BEGIN
+            SPRINT 333spell "%resref%"
+          END
+        END
+        READ_LONG    (fx_off + 0x2c + (0x30 * (abil_fx_idx + index2))) delay
+        PATCH_IF !delay BEGIN SET delay = 6 END // if delay is 0, use default 6 instead
+        READ_LONG    (fx_off + 0x04 + (0x30 * (abil_fx_idx + index2))) times
+        READ_LONG    (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) level
+        WRITE_SHORT  (fx_off +        (0x30 * (abil_fx_idx + index2))) 146                   // opcode
+        WRITE_LONG   (fx_off + 0x04 + (0x30 * (abil_fx_idx + index2))) level                 // cast at level
+        WRITE_LONG   (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) 1                     // cast instantly
+        WRITE_BYTE   (fx_off + 0x0c + (0x30 * (abil_fx_idx + index2))) 1                     // timing: delay/perm
+        WRITE_LONG   (fx_off + 0x0e + (0x30 * (abil_fx_idx + index2))) 0                     // delay
+        WRITE_ASCIIE (fx_off + 0x14 + (0x30 * (abil_fx_idx + index2))) ~%333spell%~ #8       // subspell
+        READ_ASCII   (fx_off +        (0x30 * (abil_fx_idx + index2))) clone (48)            // read info for new effect(s)
+        FOR (index3 = 0 ; index3 < times ; ++index3) BEGIN
+          INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + index2))) 0x30                   // insert new effect
+          WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + index2))) ~%clone%~              // copy existing effect into new bytes
+          WRITE_BYTE   (fx_off + 0x0c + (0x30 * (abil_fx_idx + index2))) 4                      // timing: delay/perm
+          WRITE_LONG   (fx_off + 0x0e + (0x30 * (abil_fx_idx + index2))) ((index3 + 1) * delay) // delay
+          SET index2      += 1
+          SET fx_delta    += 1
+          SET abil_fx_num += 1
+        END // new fx loop
+      END // 333 check
+    END // abil fx loop
+    WRITE_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+  END // abil loop
+
+END
+
+/////                                                  \\\\\
+///// CD_CONVERT_9_255                                   \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION CD_CONVERT_9_255 BEGIN // actually convert 8 and 9
+
+  READ_ASCII 0x00 sig (3)
+  SET abil_length = 0x28
+  PATCH_IF ("%sig%" STRING_COMPARE_CASE "ITM" = 0) BEGIN
+    SET abil_length = 0x38
+  END
+  READ_LONG  0x64 abil_off ELSE 0
+  READ_SHORT 0x68 abil_num ELSE 0
+  READ_LONG  0x6a fx_off   ELSE 0
+  SET fx_delta = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+    WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + fx_delta)
+    READ_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+    READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+    FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+      READ_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) opcode
+      PATCH_IF ((opcode = 8) OR (opcode = 9)) BEGIN
+        READ_SHORT (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) loc
+        PATCH_IF loc = 255 BEGIN
+          WRITE_SHORT (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) 6
+          READ_ASCII (fx_off +        (0x30 * (abil_fx_idx + index2))) clone (48)
+          FOR (index3 = 0 ; index3 < 6 ; ++index3) BEGIN
+            INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + index2))) 0x30
+            WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + index2))) ~%clone%~
+            WRITE_SHORT  (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) index3
+          END
+          SET fx_delta += 6
+          SET index2 += 6
+          SET abil_fx_num += 6
+        END
+      END
+    END
+    WRITE_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+  END
+
+END
+
+/////                                                  \\\\\
+///// CD_CONVERT_61                                    \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION CD_CONVERT_61 BEGIN
+
+  READ_ASCII 0x00 sig (3)
+  SET abil_length = 0x28
+  PATCH_IF ("%sig%" STRING_COMPARE_CASE "ITM" = 0) BEGIN
+    SET abil_length = 0x38
+  END
+  READ_LONG  0x64 abil_off ELSE 0
+  READ_SHORT 0x68 abil_num ELSE 0
+  READ_LONG  0x6a fx_off   ELSE 0
+  SET fx_delta = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+    WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + fx_delta)
+    READ_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+    READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+    FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+      READ_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) opcode
+      PATCH_IF (opcode = 61) BEGIN
+        WRITE_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) 50 // change to brief color pulse
+        WRITE_BYTE  (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) 6  // location: hair (cloned into 0-5 in loop)
+        WRITE_BYTE  (fx_off + 0x0c + (0x30 * (abil_fx_idx + index2))) 0  // timing: instant/limited
+        WRITE_LONG  (fx_off + 0x0e + (0x30 * (abil_fx_idx + index2))) 1  // duration
+        READ_ASCII (fx_off +        (0x30 * (abil_fx_idx + index2))) clone (48)
+        FOR (index3 = 0 ; index3 < 6 ; ++index3) BEGIN
+          INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + index2))) 0x30
+          WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + index2))) ~%clone%~
+          WRITE_BYTE   (fx_off + 0x08 + (0x30 * (abil_fx_idx + index2))) index3
+        END
+        SET fx_delta += 6
+        SET index2 += 6
+        SET abil_fx_num += 6
+      END
+    END
+    WRITE_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+  END
+
+END
+
+/////                                                  \\\\\
+///// CD_CONVERT_325                                    \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION CD_CONVERT_325 BEGIN
+
+  READ_ASCII 0x00 sig (3)
+  SET abil_length = 0x28
+  PATCH_IF ("%sig%" STRING_COMPARE_CASE "ITM" = 0) BEGIN
+    SET abil_length = 0x38
+  END
+  READ_LONG  0x64 abil_off ELSE 0
+  READ_SHORT 0x68 abil_num ELSE 0
+  READ_LONG  0x6a fx_off   ELSE 0
+  SET fx_delta = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+    WRITE_SHORT (abil_off + 0x20 + (abil_length * index)) (THIS + fx_delta)
+    READ_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+    READ_SHORT  (abil_off + 0x20 + (abil_length * index)) abil_fx_idx
+    FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+      READ_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) opcode
+      PATCH_IF (opcode = 325) BEGIN
+        WRITE_SHORT (fx_off +        (0x30 * (abil_fx_idx + index2))) 33 // change to brief color pulse
+        READ_ASCII (fx_off +        (0x30 * (abil_fx_idx + index2))) clone (48)
+        FOR (index3 = 34 ; index3 < 38 ; ++index3) BEGIN
+          INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + index2))) 0x30
+          WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + index2))) ~%clone%~
+          WRITE_SHORT  (fx_off +        (0x30 * (abil_fx_idx + index2))) index3 // vycle through individual save bonuses
+        END
+        SET fx_delta += 4
+        SET index2 += 4
+        SET abil_fx_num += 4
+      END
+    END
+    WRITE_SHORT  (abil_off + 0x1e + (abil_length * index)) abil_fx_num
+  END
+
+END
+
+/////                                                  \\\\\
+///// CD_EXTEND-O-MATIC, patent pending                \\\\\
+/////                                                  \\\\\
+
+// this function creates headers and does basic duration extensions to level 30; written for inwd-in-bg2 ages ago
+DEFINE_PATCH_FUNCTION CD_EXTEND-O-MATIC
+  INT_VAR base_dur    =  0 // constant to add to all durations
+          step_dur    =  6 // how much duration to add to each consecutive header
+          step_size   =  1 // how many levels between headers
+          level_cap   = 20 // stop extending at level
+          min_dur     =  4 // ignore effects with durations less than this (e.g. cosmetics)
+          dur_special =  0 // just add step_dur to existing effects (ignore base_dur)
+          min_lev_alt =  0 // if extending from level 1, use this value as its minimum level instead (e.g. fifth slevel spell with only one header, use 9 here)
+BEGIN
+
+  READ_LONG  0x64 abil_off
+  READ_SHORT 0x68 abil_num
+  READ_LONG  0x6a fx_off
+  READ_SHORT (abil_off + 0x10 + (0x28 * (abil_num - 1))) min_lev // read level of last ability
+  PATCH_IF ((min_lev = 1) AND (min_lev_alt != 0)) BEGIN SET min_lev = min_lev_alt END
+  FOR (index = min_lev + step_size ; index < (level_cap + 1) ; index = index + step_size) BEGIN
+    READ_ASCII (abil_off +        (0x28 * (abil_num - 1))) abil (0x28) // read entire ability
+    READ_SHORT (abil_off + 0x1e + (0x28 * (abil_num - 1))) abil_fx_num
+    READ_SHORT (abil_off + 0x20 + (0x28 * (abil_num - 1))) abil_fx_idx
+    READ_ASCII (fx_off +        (0x30 * abil_fx_idx)) effects (abil_fx_num * 0x30) // read entire fx block
+    INSERT_BYTES (fx_off +        (0x30 * (abil_fx_idx + abil_fx_num))) (abil_fx_num * 0x30) // insert bytes for new ability
+    WRITE_ASCIIE (fx_off +        (0x30 * (abil_fx_idx + abil_fx_num))) "%effects%"          // write in effects block
+    FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+      READ_LONG (fx_off + 0x0e + (0x30 * (abil_fx_idx + abil_fx_num + index2))) duration
+      PATCH_IF (duration > min_dur) BEGIN // exclude instant/cosmetic efects
+        PATCH_IF dur_special = 1 BEGIN
+          SET new_dur = duration + step_dur
+        END ELSE BEGIN
+          SET new_dur = (base_dur + (index * step_dur))
+        END
+        WRITE_LONG (fx_off + 0x0e + (0x30 * (abil_fx_idx + abil_fx_num + index2))) new_dur // adjust durations
+      END
+    END
+    INSERT_BYTES (abil_off +        (0x28 * abil_num)) 0x28 // insert new ability
+    WRITE_ASCIIE (abil_off +        (0x28 * abil_num)) "%abil%"
+    WRITE_SHORT  (abil_off + 0x10 + (0x28 * abil_num)) index
+    WRITE_SHORT  (abil_off + 0x20 + (0x28 * abil_num)) (abil_fx_idx + abil_fx_num)
+    SET abil_num += 1
+    SET fx_off   += 0x28
+  END
+  WRITE_SHORT 0x68 abil_num
+  WRITE_LONG  0x6a fx_off
+
+END
+
+/////                                                  \\\\\
+///// ALTER_CREATURE_ITEM on loan from Fixpack         \\\\\
+/////                                                  \\\\\
+
+DEFINE_PATCH_FUNCTION ALTER_CREATURE_ITEM
+
+  // defines what we're going to check
+  INT_VAR expiry           = "-1"
+          charge1          = "-1"
+          charge2          = "-1"
+          charge3          = "-1"
+          flags            = "-1"
+          flag_identified  = "-1"
+          flag_unstealable = "-1"
+          flag_stolen      = "-1"
+          flag_undroppable = "-1"
+  STR_VAR item       = "same"
+          match_item = "same"
+
+BEGIN
+
+  READ_LONG  0x2bc item_off ELSE 0
+  READ_LONG  0x2c0 item_num ELSE 0
+  LPF ALTER_AREA-CREATURE_ITEM INT_VAR expiry charge1 charge2 charge3 flags flag_identified flag_unstealable flag_stolen flag_undroppable item_num item_off
+                               STR_VAR item match_item END
+
+END
+
+DEFINE_PATCH_FUNCTION ALTER_AREA-CREATURE_ITEM
+
+  // defines what we're going to check
+  INT_VAR expiry           = "-1"
+          charge1          = "-1"
+          charge2          = "-1"
+          charge3          = "-1"
+          flags            = "-1"
+          flag_identified  = "-1"
+          flag_unstealable = "-1"
+          flag_stolen      = "-1"
+          flag_undroppable = "-1"
+          item_num         = 0
+          item_off         = 0
+  STR_VAR item       = "same"
+          match_item = "same"
+
+BEGIN
+
+  FOR (index = 0 ; index < item_num ; ++index) BEGIN
+    SET base = (item_off + (index * 0x14))
+    READ_ASCII base o_item
+    PATCH_IF (("%o_item%" STRING_COMPARE_CASE "%match_item%" = 0) OR
+              ("all"      STRING_COMPARE_CASE "%match_item%" = 0)) BEGIN
+      PATCH_IF (expiry >= 0)  BEGIN WRITE_SHORT (base + 0x08) expiry END
+      PATCH_IF (charge1 >= 0) BEGIN WRITE_SHORT (base + 0x0a) charge1 END
+      PATCH_IF (charge2 >= 0) BEGIN WRITE_SHORT (base + 0x0c) charge2 END
+      PATCH_IF (charge3 >= 0) BEGIN WRITE_SHORT (base + 0x0e) charge3 END
+      PATCH_IF (flags >= 0)   BEGIN
+        WRITE_LONG (base + 0x10) flags
+      END ELSE BEGIN // only check individual flags if overall value not given
+        PATCH_IF (flag_identified = 0)  BEGIN WRITE_LONG  (base + 0x10) (THIS & `BIT0) END
+        PATCH_IF (flag_identified = 1)  BEGIN WRITE_LONG  (base + 0x10) (THIS BOR BIT0) END
+        PATCH_IF (flag_unstealable = 0) BEGIN WRITE_LONG  (base + 0x10) (THIS & `BIT1) END
+        PATCH_IF (flag_unstealable = 1) BEGIN WRITE_LONG  (base + 0x10) (THIS BOR BIT1) END
+        PATCH_IF (flag_stolen = 0)      BEGIN WRITE_LONG  (base + 0x10) (THIS & `BIT2) END
+        PATCH_IF (flag_stolen = 1)      BEGIN WRITE_LONG  (base + 0x10) (THIS BOR BIT2) END
+        PATCH_IF (flag_undroppable = 0) BEGIN WRITE_LONG  (base + 0x10) (THIS & `BIT3) END
+        PATCH_IF (flag_undroppable = 1) BEGIN WRITE_LONG  (base + 0x10) (THIS BOR BIT3) END
+      END
+      PATCH_IF ("%item%" STRING_COMPARE_CASE "same") BEGIN
+        WRITE_ASCIIE base ~%item%~ #8
+      END
+    END
+  END
+
+END

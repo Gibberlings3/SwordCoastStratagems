@@ -1,0 +1,83 @@
+DEFINE_DIMORPHIC_FUNCTION include INT_VAR inline=0 STR_VAR file="" location="" locbase="" path="" BEGIN
+
+	ACTION_IF "%location%%locbase%%path%" STR_EQ "" BEGIN
+		OUTER_SPRINT file_path "%MOD_FOLDER%/%component_loc%/%file%"
+	END ELSE BEGIN
+		LAF sfo_path STR_VAR file location locbase path RET file_path END
+	END
+	COPY + "%file_path%" "%workspace%"
+		LPF sugar_apply END
+		
+	REINCLUDE "%workspace%/%file%"
+		
+
+
+
+END
+
+/*
+document{run}
+{
+'file' (synonym: 'files') is a list of tpa files (leave off the suffix), located at the location specified by 'location', 'locbase', and 'path'. (If none are set, assume location is component_loc.) Each is loaded, and then each file's name is run
+as an action function, with the STR_VAR argument 'version' fed to it, and with the tra file 'tra' (english and local-language versions) loaded. (So each tpa should conform to the SFO
+convention of containing an action function of its own name.
+
+When used outside an extant 'run' instruction (in the intended setup, this should be from your tp2 as the only instruction in the component,
+though I can't enforce that), it sets 'component_loc' to 'location', defaults to using 'location' as the name of the tra file, and sets a marker file with 
+name '%marker_prefix%%file%'. 'marker_prefix' defaults to 'sfo_marker_prefix', which in normal usage should have been set in your 'always' file.
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION run 
+	STR_VAR file="" 
+			files=""
+			location="" 
+			locbase="" 
+			path="" 
+			version="" 
+			tra="" 
+BEGIN
+	OUTER_SPRINT file "%file%%files%"
+	ACTION_IF !VARIABLE_IS_SET SFO_batch_mode BEGIN
+		OUTER_SET SFO_batch_mode=0
+	END
+	ACTION_IF !VARIABLE_IS_SET SFO_reserved_outer_run BEGIN // only the outermost-scope 'run' sets the various variables
+		ACTION_IF SFO_batch_mode BEGIN
+			LAF append INT_VAR no_log=1 STR_VAR file="%MOD_FOLDER%.bat" path="%batch_loc%" arguments=" %COMPONENT_NUMBER%" END
+		END ELSE BEGIN
+			OUTER_SET SFO_reserved_outer_run=1
+			ACTION_IF VARIABLE_IS_SET sfo_marker_prefix BEGIN
+				LAF make_label STR_VAR label="%sfo_marker_prefix%%file%" END
+			END
+			OUTER_SPRINT component_loc "%location%"
+			ACTION_IF "%tra%" STR_EQ "" BEGIN
+				OUTER_SPRINT tra "%location%"
+			END
+			OUTER_SPRINT path "%MOD_FOLDER%/%location%"
+		END
+	END ELSE BEGIN
+		LAF sfo_path STR_VAR path location locbase RET path END
+	END
+	
+	ACTION_IF !SFO_batch_mode BEGIN
+		ACTION_IF "%file%" STR_EQ "" BEGIN
+			FAIL "The 'run' function requires an argument"
+		END ELSE BEGIN
+			WITH_TRA "%sfo_tra_loc%/english/%tra%.tra"  "%sfo_tra_loc%/%LANGUAGE%/%tra%.tra" BEGIN 
+				PRINT "Including and running function(s) %file%"
+				OUTER_WHILE "%file%" STR_CMP "" BEGIN
+					LAF return_first_entry STR_VAR list="%file%" RET entry file=list END
+					LAF include STR_VAR file="%entry%.tpa" location locbase path END
+					ACTION_TIME "%entry%_timer" BEGIN
+						ACTION_IF "%version%" STR_EQ "" BEGIN
+							LAF "%entry%" END
+						END ELSE BEGIN
+							LAF "%entry%" STR_VAR version END
+						END
+					END
+				END
+		
+			END
+		END
+	END
+END

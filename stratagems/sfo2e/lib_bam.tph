@@ -1,0 +1,210 @@
+/*
+describe-library{Various editors for BAM files.}
+
+
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{patch_colors}
+{palette editor for BAMs. "condition" should either be blank, or a function that takes as INT_VAR inputs "green", "red" and "blue" and returns 
+"value", which should be 1 (if the color should be patched) or 0 (if not)
+"action" should be a function which takes "green", "red", "blue" as inputs and then outputs "green", "red" and "blue"
+
+The action-context version patches an in-game bam. The patch-context version patches the current bam.
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION bam_patch_colors
+   INT_VAR suppress_warning=0//boolean
+   STR_VAR condition=""//function
+           action=""//function
+           bam=""
+BEGIN
+   ACTION_IF "%bam%" STRING_COMPARE "" BEGIN
+      LAF return_first_entry STR_VAR list="%bam%" RET entry bam=list END
+      ACTION_IF FILE_EXISTS_IN_GAME "%entry%.bam" BEGIN
+         COPY_EXISTING "%entry%.bam" override
+             LPF bam_patch_colors STR_VAR condition action END
+         BUT_ONLY
+      END ELSE BEGIN
+         ACTION_IF !suppress_warning BEGIN
+            LAF warning STR_VAR warning="tried to patch the palette of %entry%.bam but it doesn't exist" END
+         END
+      END
+      LAF bam_patch_colors INT_VAR suppress_warning STR_VAR condition action bam END
+   END
+
+END
+
+DEFINE_PATCH_FUNCTION bam_patch_colors
+    STR_VAR condition=""//function
+            action=""//function
+BEGIN
+   LPF bam_decompress RET was_compressed dl END
+   READ_LONG 0x10 pal_off
+   FOR (i=1;i<256;i+=1) BEGIN // skip top left
+        SET offset= pal_off + i*4
+        LPF bam_read_color INT_VAR offset RET red blue green END
+        PATCH_IF "%condition%" STRING_COMPARE "" BEGIN
+           LPF "%condition%" INT_VAR red green blue RET value END
+        END ELSE BEGIN
+           SET value=1
+        END
+        PATCH_IF value BEGIN
+           LPF "%action%" INT_VAR red blue green RET red blue green END
+           LPF bam_write_color INT_VAR offset red blue green END
+        END
+   END
+   LPF bam_compress INT_VAR was_compressed dl END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION bam_read_color//internal
+   INT_VAR offset=0
+   RET red green blue
+BEGIN
+    READ_BYTE offset blue
+    READ_BYTE (offset+1) green
+    READ_BYTE (offset+2) red
+END
+
+DEFINE_PATCH_FUNCTION bam_write_color//internal
+   INT_VAR red=0 green=0 blue=0 offset=0
+BEGIN
+   LPF bam_legal_byte INT_VAR input=green RET green=output END
+   LPF bam_legal_byte INT_VAR input=blue RET blue=output END
+   LPF bam_legal_byte INT_VAR input=red RET red=output END
+   WRITE_BYTE offset blue
+   WRITE_BYTE (offset+1) green
+   WRITE_BYTE (offset+2) red
+END
+
+DEFINE_PATCH_FUNCTION bam_legal_byte INT_VAR input=0 RET output BEGIN//internal
+   output = input>0x100 ? 0x100 : input
+   output = output<0 ? 0 : output
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION bam_decompress//internal
+	RET was_compressed dl 
+BEGIN
+   SET was_compressed=0
+   SET dl=0
+   READ_ASCII 0x0 sg (4) //Signature
+   PATCH_IF ~%sg%~ STRING_EQUAL_CASE ~BAMC~  BEGIN
+       SET was_compressed=1
+       READ_LONG 0x8 dl //Uncompressed data length
+       DECOMPRESS_REPLACE_FILE 0xc (SOURCE_SIZE - 0xc) dl
+   END
+END
+
+DEFINE_PATCH_FUNCTION bam_compress//internal
+	INT_VAR dl=0 was_compressed=0 BEGIN
+	PATCH_IF was_compressed BEGIN
+		COMPRESS_REPLACE_FILE 0 dl 9
+		INSERT_BYTES 0x0 0xc
+		WRITE_ASCII 0x0 ~BAMCV1  ~
+		WRITE_LONG 0x8 dl
+	END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*document{bam_install_v2}
+{Installer for v2 BAMs. Feed it the lowest mos index you want to try, the name and location of the bam file to be installed (given by path/location/locbase),
+and the location of all the pvrz files associated with the bam (given by pvrz_path,pvrz_location,pvrz_locbase, but defaulting to the bam version in each case)}
+</p>
+<p>(Yeah, this isn't super self-explanatory. Look at wheels_rebuild and write a better one sometime.)
+*/
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION bam_install_v2
+  INT_VAR lowest_mos_index=0
+  STR_VAR bam_name=""
+          path=""
+		  location=""
+		  locbase=""
+		  pvrz_path="%path%"
+		  pvrz_location="%location%"
+		  pvrz_locbase="%locbase%"
+BEGIN
+	// get directories
+	LAF sfo_path STR_VAR path location locbase RET bam_loc=path END
+	LAF sfo_path STR_VAR path="%pvrz_path%" location="%pvrz_location%" locbase="%pvrz_locbase%" RET pvrz_loc=path END
+    // get initial list of PVRZ indices
+    ACTION_CLEAR_ARRAY pvrz_ind_list
+   
+   COPY "%bam_loc%/%bam_name%.bam" override
+     GET_OFFSET_ARRAY bam_array 0x1c 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SPRINT $pvrz_ind_list("%ref%") ""
+     END
+   // end of COPY
+   // go through and sort out the PVRZs' new indices
+   OUTER_SET current=lowest_mos_index
+   ACTION_PHP_EACH pvrz_ind_list AS ind=>discard BEGIN
+      LAF bam_get_available_mos_index INT_VAR current RET new_index=value END
+      LAF bam_pad_to_four INT_VAR arguments=ind RET padded_old=value END
+      LAF bam_pad_to_four INT_VAR arguments=new_index RET padded_new=value END
+      COPY "%pvrz_loc%/mos%padded_old%.pvrz" "override/mos%padded_new%.pvrz"
+
+      OUTER_SET $pvrz_ind_list("%ind%")=new_index
+      OUTER_SET current=new_index+1
+   END
+   // update the bam file
+   COPY_EXISTING "%bam_name%.bam" override
+     GET_OFFSET_ARRAY bam_array 0x1c 4 0x10 4 0 0 0x1c
+     PHP_EACH bam_array AS ind=>offset BEGIN
+        READ_LONG offset ref
+        SET ref_new=$pvrz_ind_list("%ref%")
+        WRITE_LONG offset ref_new
+     END
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION bam_pad_to_four//internal
+   INT_VAR arguments=0
+   RET value
+BEGIN
+   ACTION_IF arguments>9999 BEGIN
+      FAIL "bam_pad_to_four requires an argument <=9999"
+   END
+   ACTION_IF arguments<10 BEGIN
+      OUTER_SPRINT value "000%arguments%"
+   END ELSE
+   ACTION_IF arguments<100 BEGIN
+      OUTER_SPRINT value "00%arguments%"
+   END ELSE
+   ACTION_IF arguments<1000 BEGIN
+      OUTER_SPRINT value "0%arguments%"
+   END ELSE BEGIN
+      OUTER_SPRINT value "%arguments%"
+   END
+END
+
+DEFINE_ACTION_FUNCTION bam_get_available_mos_index//internal
+    INT_VAR current=0
+    RET value
+BEGIN
+    LAF bam_pad_to_four INT_VAR arguments=current RET padded=value END
+    ACTION_IF FILE_EXISTS_IN_GAME "mos%padded%.pvrz" BEGIN
+       OUTER_SET current +=1
+       LAF bam_get_available_mos_index INT_VAR current RET value END
+    END ELSE BEGIN
+       OUTER_SET value=current
+    END
+END
+
+

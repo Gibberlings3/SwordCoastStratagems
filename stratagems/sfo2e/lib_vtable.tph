@@ -1,0 +1,402 @@
+
+DEFINE_ACTION_MACRO vtable_initialize
+BEGIN
+	LOCAL_SPRINT file ""
+	LOCAL_SPRINT array ""
+	LOCAL_SPRINT type ""
+	LOCAL_SPRINT old ""
+	LOCAL_SPRINT new ""
+	LOCAL_SPRINT remap_array ""
+	LOCAL_SPRINT 2dafile ""
+	LOCAL_SPRINT remap_rows ""
+	LOCAL_SPRINT k ""
+	LOCAL_SPRINT v ""
+	
+	ACTION_IF !VARIABLE_IS_SET SFO_vtables_initialized BEGIN
+		OUTER_SET SFO_vtables_initialized=1
+		SILENT
+		ACTION_FOR_EACH file IN kit class BEGIN
+			LAF 2da_read STR_VAR file="vtable_%file%.2da" case=lower path="%MOD_FOLDER%/%sfo_library_path%/vtables" RET_ARRAY array END
+			ACTION_PHP_EACH array AS k=>v BEGIN
+				ACTION_MATCH "%k_1%" WITH 
+				reflect BEGIN
+					OUTER_SPRINT $"sfo_vtable_%file%_files"("%k_0%") ""
+					OUTER_SPRINT $"sfo_vtable_%file%_reflects"("%k_0%") "%v%"
+				END
+				rowname_column BEGIN
+					OUTER_SPRINT $"sfo_vtable_%file%_rowname_columns"("%k_0%") "%v%"			
+				END
+				alias insert_loc BEGIN
+					OUTER_SPRINT $"sfo_vtable_%file%_%k_1%"("%k_0%") "%v%"
+				END
+				DEFAULT
+					// cruft
+				END
+			END
+			ACTION_IF !FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_alias.txt" BEGIN
+				LAF vtable_generate_aliases STR_VAR vtable="%file%" END
+			END
+			LAF array_read STR_VAR case=lower file="%file%_alias.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_alias"=array END
+			LAF array_invert STR_VAR array="sfo_vtable_%file%_alias" RET_ARRAY "sfo_vtable_%file%_alias_backwards"=array END
+
+			ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_strrefs.txt" BEGIN
+				LAF array_read STR_VAR case=lower file="%file%_strrefs.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_strrefs"=array END		
+			END
+			ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_specials.txt" BEGIN
+				LAF array_read STR_VAR case=lower file="%file%_specials.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_specials"=array END	 // keep the full array for debugging	
+				ACTION_PHP_EACH "sfo_vtable_%file%_specials" AS id=>type BEGIN
+					OUTER_PATCH_SAVE type "%type%" BEGIN
+						REPLACE_EVALUATE "\(.*\)(\(.*\))" BEGIN
+							SPRINT args "%MATCH2%"
+						END
+						"%MATCH1%"
+					END
+					ACTION_MATCH "%type%" WITH
+					multiple commalist  mixedcase BEGIN
+						OUTER_SPRINT $"sfo_vtable_%file%_%type%"("%id%") "%args%"
+					END
+					multiple_fill BEGIN
+						OUTER_SPRINT $"sfo_vtable_%file%_multiple_fill"("%id%") "%args%"
+						OUTER_SPRINT $"sfo_vtable_%file%_multiple"("%id%") "%args%"			
+					END
+					DEFAULT
+						WARN "unidentified special %type% for vtable %file%"
+					END
+				END
+			END
+			ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_array
+			ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_rows // in case there's no remap file
+			LAF 2da_read INT_VAR silent=1 STR_VAR type=table_header case=lower file="%file%_remap.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY SFO_reserved_vtable_remap_rows=rows SFO_reserved_vtable_remap_array=array END
+			ACTION_PHP_EACH SFO_reserved_vtable_remap_rows AS row=>discard BEGIN
+				OUTER_SPRINT 2dafile $SFO_reserved_vtable_remap_array("%row%" "2da")
+				OUTER_SPRINT old $SFO_reserved_vtable_remap_array("%row%" "row")
+				OUTER_SPRINT new $SFO_reserved_vtable_remap_array("%row%" "remap")
+				OUTER_SPRINT $"sfo_vtable_%file%_%2dafile%_remap"("%old%") "%new%"
+			END
+		END
+		VERBOSE
+	END
+END
+
+DEFINE_ACTION_FUNCTION vtable_generate_aliases
+	STR_VAR vtable=""
+BEGIN
+	ACTION_CLEAR_ARRAY alias_array
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_reflects" AS file=>reflect BEGIN
+		ACTION_TO_LOWER file
+		OUTER_SPRINT alias $"sfo_vtable_%vtable%_alias"("%file%")
+		ACTION_TO_LOWER alias
+		LAF 2da_read INT_VAR reflect STR_VAR file="%file%.2da" RET_ARRAY columns END
+		ACTION_PHP_EACH columns AS col=>discard BEGIN
+			ACTION_TO_LOWER col
+			ACTION_IF "%alias%" STR_EQ "*" BEGIN
+				OUTER_SPRINT col_new "%col%"
+			END ELSE BEGIN
+				OUTER_SPRINT col_new "%alias%_%col%"
+			END			
+			ACTION_IF !VARIABLE_IS_SET $alias_array("%col_new%") BEGIN
+				OUTER_SPRINT $alias_array("%col_new%") "%file%|%col%"
+			END ELSE BEGIN
+				OUTER_SPRINT old $alias_array("%col_new%")
+				WARN "multiple alias defined: %col_new% is alias for %file%|%col% and %old%"
+			END
+		END	
+	END	
+	LAF array_log INT_VAR permanent=1 STR_VAR array=alias_array file="%vtable%_alias.txt" path="%MOD_FOLDER%/%sfo_library_path%/vtables" END
+END
+
+/*
+document{vtable_read}
+{
+Read a virtual-table row into an array.
+
+This is hardcoded for speed - even using 2daq functions slows things down a bit, and that matters for bulk editing of kits.
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION vtable_read
+	INT_VAR silent=0//boolean
+	STR_VAR row=""
+			vtable=""
+	RET_ARRAY struct
+BEGIN
+	SILENT
+	OUTER_SET found_anything=0
+	ACTION_CLEAR_ARRAY struct
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_reflects" AS file=>reflect BEGIN
+		ACTION_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_%file%_remap"("%row%") BEGIN
+			OUTER_SPRINT row_here $"sfo_vtable_%vtable%_%file%_remap"("%row%")
+		END ELSE BEGIN
+			OUTER_SPRINT row_here "%row%"
+		END		
+		OUTER_SET rowname_column=$"sfo_vtable_%vtable%_rowname_columns"("%file%")
+		ACTION_IF FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+			COPY_EXISTING - "%file%.2da" nowhere
+				COUNT_2DA_COLS colcount
+				PATCH_MATCH "%colcount%" WITH
+				2 BEGIN
+					col_row=2
+					main_row=1
+				END
+				3 BEGIN
+					col_row=1
+					main_row=0
+				END
+				DEFAULT
+					col_row=0
+					main_row=0
+				END
+				READ_2DA_ENTRIES_NOW "vtable_data_%file%" colcount 
+				READ_2DA_ENTRIES_NOW "vtable_data_%file%_cols" ( colcount - 1)
+				PATCH_IF reflect BEGIN
+					// find our column
+					entry_col="-1"
+					FOR (col=1;col<colcount;++col) BEGIN
+						READ_2DA_ENTRY_FORMER "vtable_data_%file%_cols" col_row (col - 1) col_header
+						PATCH_IF "%col_header%" STR_EQ "%row_here%" BEGIN
+							entry_col=col
+							col=colcount
+							found_anything=1
+						END
+					END
+					//get data	
+					PATCH_IF entry_col>=0 BEGIN
+						FOR (this_row=main_row;this_row<"vtable_data_%file%";++this_row) BEGIN			
+							READ_2DA_ENTRY_FORMER "vtable_data_%file%" this_row 0 row_header
+							SPRINT id "%file%|%row_header%"
+							TO_LOWER id
+							PATCH_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_alias_backwards"("%id%") BEGIN
+								SPRINT id $"sfo_vtable_%vtable%_alias_backwards"("%id%")
+							END
+							READ_2DA_ENTRY_FORMER "vtable_data_%file%" this_row entry_col data
+							SPRINT $struct("%id%") "%data%"
+							SPRINT $struct("%id%" "o") "%data%"
+						END
+					END
+				END ELSE BEGIN
+					// find our row
+					row_number="-1"
+					FOR (this_row=main_row;this_row<"vtable_data_%file%";++this_row) BEGIN
+						READ_2DA_ENTRY_FORMER "vtable_data_%file%" this_row rowname_column this_row_name
+						PATCH_IF "%this_row_name%" STR_EQ "%row_here%" BEGIN
+							row_number=this_row
+							this_row="vtable_data_%file%"
+							found_anything=1
+						END
+					END
+					// get data
+					PATCH_IF row_number>=0 BEGIN
+						FOR (col=1;col<colcount;++col) BEGIN
+							READ_2DA_ENTRY_FORMER "vtable_data_%file%_cols" col_row (col - 1) col_header
+							SPRINT id "%file%|%col_header%"
+							TO_LOWER id
+							PATCH_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_alias_backwards"("%id%") BEGIN
+								SPRINT id $"sfo_vtable_%vtable%_alias_backwards"("%id%")
+							END
+							READ_2DA_ENTRY_FORMER "vtable_data_%file%" row_number col data
+							PATCH_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_strrefs"("%id%") BEGIN
+								PATCH_IF data>=0 BEGIN
+									SET $struct("%id%" strref)=data
+									GET_STRREF data data
+								END
+							END 
+							SPRINT $struct("%id%") "%data%"
+							SPRINT $struct("%id%" "o") "%data%"
+						END
+					END
+				END
+			BUT_ONLY
+		END
+	END
+	// fill multiples
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_multiple_fill" AS id=>vars BEGIN
+		LAF return_first_entry STR_VAR list="%vars%" separator="," RET var=entry END
+		OUTER_SPRINT val $struct("%var%")
+		OUTER_SPRINT $struct("%id%") "%val%"
+	END
+	// record ID
+	OUTER_SPRINT $struct("extra_data" "row_id") "%row%"
+	VERBOSE
+	// complain
+	ACTION_IF !found_anything && !silent BEGIN
+		WARN "vtable '%vtable%' contains no entry for %row%"
+	END
+
+
+END
+			
+DEFINE_DIMORPHIC_FUNCTION vtable_write
+	INT_VAR edit_strrefs_in_place=0
+	STR_VAR vtable=""
+			row=""
+			struct=""
+BEGIN
+	SILENT
+	OUTER_SPRINT row_old $"%struct%"(extra_data row_id)
+	OUTER_SET all_new=("%row%" STR_CMP "%row_old%")
+	ACTION_CLEAR_ARRAY file_used
+	// process mixed-case
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_mixedcase" AS id=>vars BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("%id%") BEGIN
+			OUTER_SPRINT mixed $"%struct%"("%id%")
+			OUTER_SPRINT lower "%mixed%"
+			ACTION_TO_LOWER lower
+			LAF return_first_entry STR_VAR list="%vars%" separator="," RET var_mixed=entry var_lower=list END
+			OUTER_SPRINT $"%struct%"("%var_mixed%") "%mixed%"
+			OUTER_SPRINT $"%struct%"("%var_lower%") "%lower%"
+		END
+	END
+	// sweep multiples and comma-lists
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_commalist" AS id=>vars BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("%id%") BEGIN
+			OUTER_SPRINT vals $"%struct%"("%id%")
+			OUTER_WHILE "%vars%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%vars%" separator="," RET var=entry vars=list END
+				LAF return_first_entry STR_VAR list="%vals%" separator="," RET val=entry vals=list END
+				ACTION_IF VARIABLE_IS_SET $"%struct%"("%var%") BEGIN
+					OUTER_SPRINT new $"%struct%"("%var%")
+					OUTER_SPRINT old $"%struct%"("%var%_o")
+					ACTION_IF "%new%" STR_EQ "%old%" BEGIN
+						OUTER_SPRINT $"%struct%"("%var%") "%val%"
+					END
+				END
+			END
+		END
+	END
+	ACTION_CLEAR_ARRAY multiple_assigns // we do it this way so that later multiples can override earlier ones
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_multiple" AS id=>vars BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("%id%") BEGIN
+			OUTER_SPRINT val $"%struct%"("%id%")
+			OUTER_WHILE "%vars%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%vars%" separator="," RET var=entry vars=list END
+				OUTER_SPRINT $multiple_assigns("%var%") "%val%"				
+			END
+		END
+	END	
+	ACTION_PHP_EACH multiple_assigns AS var=>val BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("%var%") BEGIN
+			OUTER_SPRINT new $"%struct%"("%var%")
+			OUTER_SPRINT old $"%struct%"("%var%_o")
+			ACTION_IF "%new%" STR_EQ "%old%" && "%old%" STR_CMP "%val%" BEGIN
+				OUTER_SPRINT $"%struct%"("%var%") "%val%"
+			END
+		END
+	END
+
+	ACTION_PHP_EACH "sfo_vtable_%vtable%_alias" AS key=>id BEGIN
+		ACTION_IF VARIABLE_IS_SET $"%struct%"("%key%") BEGIN
+			OUTER_SPRINT v $"%struct%"("%key%")
+			OUTER_SET is_strref=VARIABLE_IS_SET $"sfo_vtable_%vtable%_strrefs"("%key%")
+			ACTION_IF !VARIABLE_IS_SET $id_col("%id%") BEGIN
+				OUTER_PATCH "%id%" BEGIN
+					REPLACE_EVALUATE "\(.*\)|\(.*\)" BEGIN
+						SPRINT $id_lookup("%id%") "%MATCH1%"
+						SPRINT $id_col("%id%") "%MATCH2%"
+						TO_UPPER "id_col_%id%"
+					END
+					""
+				END
+			END
+			OUTER_SPRINT file $id_lookup("%id%")
+			OUTER_SPRINT col $id_col("%id%")
+			ACTION_IF all_new BEGIN
+				OUTER_SET proceed=1
+			END ELSE BEGIN
+				OUTER_SPRINT v_old $"%struct%"("%key%" "o")
+				OUTER_SET proceed=("%v_old%" STR_CMP "%v%")
+			END
+			ACTION_IF proceed BEGIN
+				ACTION_IF is_strref && !IS_AN_INT v BEGIN
+					ACTION_MATCH "%v%" WITH 
+					"t_[0-9]+" BEGIN
+						OUTER_PATCH_SAVE v "%v%" BEGIN
+							DELETE_BYTES 0x0 2
+						END
+						OUTER_SPRINT v (AT v)
+					END
+					DEFAULT
+					END
+					ACTION_IF edit_strrefs_in_place && IS_AN_INT "%struct%_%key%_strref" && "%struct%_%key%_strref">0 BEGIN
+						STRING_SET_EVALUATE "%struct%_%key%_strref" "%v%"
+						OUTER_SET proceed=0
+					END ELSE BEGIN
+						OUTER_SET v=RESOLVE_STR_REF ("%v%")
+					END
+				END
+				ACTION_IF proceed BEGIN
+					ACTION_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_%file%_remap"("%row%") BEGIN
+						OUTER_SPRINT row_here $"sfo_vtable_%vtable%_%file%_remap"("%row%")
+					END ELSE BEGIN
+						OUTER_SPRINT row_here "%row%"
+					END	
+					ACTION_TO_UPPER row_here
+					OUTER_SPRINT $"sfo_vtable_write_working_array_%file%"("%row_here%" "%col%") "%v%"
+					OUTER_SPRINT $file_used("%file%") ""
+				END
+			END
+		END
+	END
+	ACTION_PHP_EACH file_used AS file=>discard BEGIN
+		OUTER_SET reflect=$"sfo_vtable_%vtable%_reflects"("%file%")
+		OUTER_SET rowname_column=$"sfo_vtable_%vtable%_rowname_columns"("%file%")
+		ACTION_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_%file%_remap"("%row%") BEGIN
+			OUTER_SPRINT row_here $"sfo_vtable_%vtable%_%file%_remap"("%row%")
+		END ELSE BEGIN
+			OUTER_SPRINT row_here "%row%"
+		END				
+
+		COPY_EXISTING "%file%.2da" override
+			COUNT_2DA_COLS colcount
+			PATCH_IF reflect BEGIN
+				LPF 2daq_has_column STR_VAR column="%row_here%" RET value END
+				PATCH_IF !value BEGIN 
+				
+					PATCH_IF $"sfo_vtable_%vtable%_insert_loc"("%file%") STR_EQ "*" BEGIN
+						LPF 2daq_insert_column STR_VAR column="%row_here%" END
+					END ELSE BEGIN
+						SPRINT insert_loc $"sfo_vtable_%vtable%_insert_loc"("%file%")
+						LPF 2daq_insert_column STR_VAR column="%row_here%" insert_loc END
+					END
+				END
+			END ELSE BEGIN
+				LPF 2daq_has_row INT_VAR rowname_column STR_VAR row="%row_here%" RET value END	
+				PATCH_IF !value BEGIN
+					LPF 2daq_insert_row INT_VAR rowname_column STR_VAR row="%row_here%" END
+				END
+			END
+			LPF 2daq_inject INT_VAR reflect rowname_column STR_VAR array="sfo_vtable_write_working_array_%file%" END			
+		BUT_ONLY
+		
+	END
+	VERBOSE
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{vtable_debug} 
+{Checks an expression (assumed to be an anon function) for apparent references to
+nonexistent keys.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION vtable_debug
+	STR_VAR function=""
+			vtable=""
+			struct=""
+BEGIN
+	OUTER_PATCH "%function%" BEGIN
+		REPLACE_TEXTUALLY ";;" "%WNL%"
+		REPLACE_EVALUATE "\(^\|[^a-z]\)%struct%_\([a-z0-9_]+\)" BEGIN
+			PATCH_IF !VARIABLE_IS_SET $"sfo_vtable_%vtable%_alias"("%MATCH2%") &&  !VARIABLE_IS_SET $"sfo_vtable_%vtable%_specials"("%MATCH2%") BEGIN
+				PATCH_WARN "Apparent reference to %struct%_%MATCH2%; %MATCH2% is not a field of the '%vtable%' vtable"
+			END
+		END
+		""
+	END
+END
+
+
+

@@ -1,0 +1,882 @@
+DEFINE_ACTION_FUNCTION obg2_arcane BEGIN
+	INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cdfunctions.tpa"
+
+	OUTER_SPRINT spell_list arcane_resrefs.txt
+
+/* 
+//temp for when testing this as a standalone file
+// LAM data_spell_resrefs 
+*/
+
+/* 
+Converting for non-EE is essentially two parts--exclusion of spells
+that can't be converted (removed from arcane_resrefs.txt prior
+to running this on oBG2) and then this, where we convert EE-only
+opcodes to oBG2 counterparts.
+*/
+
+
+
+
+  LAF CD_HANDLE_AUDIO_PREP END // ogg > wav conversions  
+
+
+
+// stun icons provided by stun effect in EE, need to be done explicitly in oBG2  
+	  COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override~
+					~%WIZARD_ICELANCE%.spl~    ~override~
+		LPF CLONE_EFFECT INT_VAR match_opcode = 45 opcode=142 parameter2 = 55 END 
+
+
+/////                                                  \\\\\
+///// monster summoning		                            \\\\\
+///// 
+
+// build array of new summons; delete 2nd & 3rd columns for oBG2 summon tables, graphics will be specified as 215s in spells
+
+ACTION_CLEAR_ARRAY cd_monster_summoning_script 
+COPY_EXISTING ~caelemw.2da~ ~override~ // conjure lesser air elemental
+              ~ceelemw.2da~ ~override~ // conjure lesser earth elemental
+              ~cfelemw.2da~ ~override~ // conjure lesser fire elemental
+              ~cwelemw.2da~ ~override~ // conjure lesser water elemental
+              ~dsmonst.2da~ ~override~ // demi-shadow monsters
+              ~msummo1.2da~ ~override~ // monster summoning i
+              ~msummo2.2da~ ~override~ // monster summoning ii
+              ~msummo3.2da~ ~override~ // monster summoning iii
+              ~msummo4.2da~ ~override~ // monster summoning iv
+              ~msummo5.2da~ ~override~ // monster summoning v
+              ~msummo6.2da~ ~override~ // monster summoning vi
+              ~msummo7.2da~ ~override~ // monster summoning vii
+              ~shades.2da~  ~override~ // shades
+              ~smonste.2da~ ~override~ // shadow monsters
+              ~sshadow.2da~ ~override~ // summon shadow
+  COUNT_2DA_ROWS 4 rows
+  FOR (index = 0 ; index < rows ; ++index) BEGIN
+    READ_2DA_ENTRY index 1 4 file
+    DEFINE_ASSOCIATIVE_ARRAY cd_monster_summoning_script BEGIN ~%file%~ => ~%default%~ END
+  END  
+  REPLACE_TEXTUALLY ~[ %TAB%]+Hit\(Animation\)?[ %TAB%]+AreaHitAnimation~ ~~
+  REPLACE_TEXTUALLY ~^\([0-9]+[ %TAB%]+[^ %TAB%]+\)[ %TAB%].+$~ ~\1~ 
+  BUT_ONLY 
+
+ACTION_PHP_EACH cd_monster_summoning_script AS file => script BEGIN
+
+  COPY_EXISTING ~%file%.cre~ ~override~
+	PATCH_IF !FILE_EXISTS_IN_GAME "bdsum00.bcs" BEGIN
+		REPLACE_TEXTUALLY "bdsum00" "wtasight" (8)
+	END
+    LPF ADD_CRE_EFFECT INT_VAR opcode = 215 target = 1 parameter2 = 1 duration = 1 STR_VAR resource = msumm1h END 
+    BUT_ONLY IF_EXISTS
+    
+END     
+
+/////                                                  \\\\\
+///// creature animations                              \\\\\
+/////                                                  \\\\\
+
+  OUTER_SET anim_uhulk     = 0x7f11 // sub bg2 umber hulk
+  OUTER_SET anim_welem     = 0xef10 // iwd water elemental
+  OUTER_SET anim_lizman    = 0xe500 // bg2 lacks alternative lizard man animation
+  OUTER_SET anim_shadow_lg = 0x7703 // sub bg2 shadow
+
+  // if infinity animations has added iwd animations, use them
+  ACTION_IF MOD_IS_INSTALLED ~INFINITYANIMATIONS/SETUP-INFINITYANIMATIONS.TP2~ ~400~ BEGIN // 'distinctive undead'
+
+    ACTION_IF IDS_OF_SYMBOL (~animate~ ~SHADOW_LARGE_IWD~) > 0 THEN BEGIN
+      OUTER_SET anim_shadow_lg = IDS_OF_SYMBOL (~animate~ ~SHADOW_LARGE_IWD~)
+    END
+
+  END
+  
+  ACTION_IF MOD_IS_INSTALLED ~INFINITYANIMATIONS/SETUP-INFINITYANIMATIONS.TP2~ ~500~ BEGIN // 'more base animations'
+
+    ACTION_IF IDS_OF_SYMBOL (~animate~ ~LIZARDMAN_GREEN~) > 0 THEN BEGIN
+      OUTER_SET anim_lizman = IDS_OF_SYMBOL (~animate~ ~LIZARDMAN_GREEN~)
+    END
+
+    ACTION_IF IDS_OF_SYMBOL (~animate~ ~UMBERHULK_IWD~) > 0 THEN BEGIN
+      OUTER_SET anim_uhulk = IDS_OF_SYMBOL (~animate~ ~UMBERHULK_IWD~)
+    END
+
+  END
+
+  ACTION_IF MOD_IS_INSTALLED ~INFINITYANIMATIONS/SETUP-INFINITYANIMATIONS.TP2~ ~550~ BEGIN // 'more icewind dale animations'
+
+    ACTION_IF IDS_OF_SYMBOL (~animate~ ~ELEMENTAL_WATER~) > 0 THEN BEGIN
+      OUTER_SET anim_welem = IDS_OF_SYMBOL (~animate~ ~ELEMENTAL_WATER~)
+    END
+
+  END
+  
+  ACTION_CLEAR_ARRAY cd_cre_anim
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_cre_anim BEGIN
+
+     ms7umbh    => ~%anim_uhulk%~
+     ss3umb8    => ~%anim_uhulk%~
+     ss3umb9    => ~%anim_uhulk%~
+     es8watr    => ~%anim_welem%~
+     ~dw#wate2~ => ~%anim_welem%~
+     ~dw#wate3~ => ~%anim_welem%~
+     ~dw#wate4~ => ~%anim_welem%~
+     ms2lizm    => ~%anim_lizman%~
+     ss1liz3    => ~%anim_lizman%~
+     ss1liz4    => ~%anim_lizman%~
+     icliz02    => ~%anim_lizman%~ // not iwdification, but still broek
+     sumshad    => ~%anim_shadow_lg%~
+
+  END
+
+  ACTION_PHP_EACH cd_cre_anim AS file => anim BEGIN
+  
+    COPY_EXISTING ~%file%.cre~ ~override~
+      WRITE_LONG 0x28 anim
+      
+  END
+
+/////                                                  \\\\\
+///// immunity effs                                    \\\\\
+/////                                                  \\\\\ 
+
+  // generating immunity EFFs for various 324 replacements
+  ACTION_CLEAR_ARRAY cd_immunity_eff
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_immunity_eff BEGIN
+
+     ~%WIZARD_EXPEDITIOUS_RETREAT%~      => cdixa126
+     ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%b~ => cdixa204
+     cdideca                             => cdixa216 // for decastave's on-hit hp drain
+     ~%WIZARD_BELTYNS_BURNING_BLOOD%~    => cdixa422
+     ~%WIZARD_EMOTION_FEAR%~             => cdixa428
+     cdidob1                             => cdixa630 // for darts of bone's on-hit effects
+     cdia726                             => cdixa726 // for suffocate's shadow spell
+     ltouch                              => cdixa626 // for lich touch's on-hit effects
+
+  END
+
+  ACTION_PHP_EACH cd_immunity_eff AS imm => file BEGIN
+  
+    COPY ~%obg2_res_path%/immunity.eff~ ~override/%file%.eff~
+      WRITE_ASCIIE 0x30 ~%imm%~ #8  
+      
+  END
+
+/////                                                  \\\\\
+///// self-stacking protection                         \\\\\
+/////                                                  \\\\\          
+
+  // EE generally uses self-referential 321s for better spell stacking
+  // oBG2 has to use 206, which we clone from an existing opcode
+  ACTION_CLEAR_ARRAY cd_206_clone
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_206_clone BEGIN
+
+     ~%WIZARD_CATS_GRACE%~           => 15
+     ~%WIZARD_EMOTION_COURAGE%~      => 54
+     ~%WIZARD_EMOTION_HOPE%~         => 54
+     ~%WIZARD_TROLLISH_FORTITUDE%~   => 142
+     ~%WIZARD_EMOTION_HOPE%~         => 54
+
+  END
+
+  ACTION_PHP_EACH cd_206_clone AS file => clone_op BEGIN
+  
+    COPY_EXISTING ~%file%.spl~ ~override~
+      LPF CLONE_EFFECT INT_VAR match_opcode = clone_op opcode = 206 parameter1 = 0 parameter2 = 0 STR_VAR insert = last resource = EVAL ~%file%~ END  
+      IF_EXISTS // cat's grace won't be here w/o tobex
+
+  END   
+
+/////                                                  \\\\\
+///// op 61                                            \\\\\
+/////                                                  \\\\\
+  
+  // op 61 crashes oBG2, so convert it to seven op 50s for body glow 
+  COPY_EXISTING ~decasta.itm~                          ~override~ // decastave
+                //~dobone.itm~                           ~override~ // this just gets removed below
+                ~#soflamc.spl~                         ~override~
+                ~shadow1.spl~                          ~override~ // shadow on-hit attack from summon shadow
+                ~%WIZARD_EXPEDITIOUS_RETREAT%.spl~     ~override~
+                ~%WIZARD_DECASTAVE%.spl~               ~override~
+                ~%WIZARD_CATS_GRACE%.spl~              ~override~
+                ~%WIZARD_LANCE_OF_DISRUPTION%.spl~     ~override~
+                ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~   ~override~
+                ~%WIZARD_EMOTION_COURAGE%.spl~         ~override~
+                ~%WIZARD_EMOTION_HOPE%.spl~            ~override~
+                ~%WIZARD_EMOTION_FEAR%.spl~            ~override~
+                ~%WIZARD_DARTS_OF_BONE%.spl~           ~override~
+                ~%WIZARD_TROLLISH_FORTITUDE%.spl~      ~override~
+                ~%WIZARD_LICH_TOUCH%.spl~              ~override~
+                ~%WIZARD_MORDENKAINENS_SWORD_IWD%.spl~ ~override~
+                ~%WIZARD_MIND_BLANK%.spl~              ~override~
+                ~%WIZARD_IRON_BODY%.spl~               ~override~
+    LPF CD_CONVERT_61 END 
+    IF_EXISTS // cat's grace won't be here w/o tobex 
+
+/////                                                  \\\\\
+///// portrait icons, op 142                           \\\\\
+/////                                                  \\\\\
+
+  // portrait icons that use IWD-exclusive icons get remapped if
+  // an existing icon works, otherwise get deleted
+  ACTION_CLEAR_ARRAY cd_icon_map
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_icon_map BEGIN
+
+     ~%WIZARD_CATS_GRACE%.spl~            => "-1" // cat's grace > delete
+     ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ => "-1" // beltyn's burning blood > delete
+     ~%WIZARD_EMOTION_COURAGE%.spl~       => "-1" // courage > delete
+     ~%WIZARD_EMOTION_HOPE%.spl~          => 22   // hope > heroism
+     ~%WIZARD_SHROUD_OF_FLAME%.spl~       => "-1" // shroud of flame > delete
+     ~%WIZARD_MIND_BLANK%.spl~            => "-1" // mind blank > delete
+     ~%WIZARD_ANTIMAGIC_SHELL%.spl~       => 83   // antomagic shell > spell failure
+     ~%WIZARD_EXPEDITIOUS_RETREAT%.spl~   => 38   // expeditious retreat > haste
+
+  END
+
+  ACTION_PHP_EACH cd_icon_map AS file => icon BEGIN
+  
+    COPY_EXISTING ~%file%~ ~override~
+      PATCH_IF icon < 0 BEGIN
+        LPF DELETE_EFFECT INT_VAR match_opcode = 142 END
+      END ELSE BEGIN  
+        LPF ALTER_EFFECT INT_VAR match_opcode = 142 parameter2 = icon END  
+      END
+      IF_EXISTS // cat's grace won't be here w/o tobex 
+
+  END  
+
+/////                                                  \\\\\
+///// op 321                                           \\\\\
+/////                                                  \\\\\
+
+  // no op 321 (effect removal by spell) in oBG2; try to manually replace these with 206s elsewhere
+  COPY_EXISTING //~%WIZARD_EMOTION_HOPELESSNESS%.spl~  ~override~
+                ~%WIZARD_EXPEDITIOUS_RETREAT%.spl~   ~override~
+                ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ ~override~
+                ~%WIZARD_EMOTION_COURAGE%.spl~       ~override~
+                ~%WIZARD_EMOTION_HOPE%.spl~          ~override~
+                ~%WIZARD_EMOTION_FEAR%.spl~          ~override~
+                ~spwi411.spl~                        ~override~ // emotion: hopelessness
+                ~%WIZARD_SHROUD_OF_FLAME%.spl~       ~override~
+                ~%WIZARD_CATS_GRACE%.spl~            ~override~ 
+                ~%WIZARD_TROLLISH_FORTITUDE%.spl~    ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+    IF_EXISTS // cat's grace won't be here w/o tobex
+
+/////                                                  \\\\\
+///// op 324                                           \\\\\
+/////                                                  \\\\\
+
+  // try to convert 324s to 177s where possible, but evasion checks get deleted since there's no oBG2 counterpart
+  COPY_EXISTING ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%.spl~ ~override~ // evasion
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 END
+
+/////                                                  \\\\\
+///// op 325                                           \\\\\
+/////                                                  \\\\\
+
+  // convert 325 to individual save opcodes
+  COPY_EXISTING ~%WIZARD_EMOTION_HOPE%.spl~ ~override~
+                //~cdiwdtr1.spl~              ~override~
+    LPF CD_CONVERT_325 END
+
+/////                                                  \\\\\
+///// op 328                                           \\\\\
+/////                                                  \\\\\
+
+  // no op 328 in oBG2
+  COPY_EXISTING ~#soflamc.spl~                 ~override~
+                ~%WIZARD_CATS_GRACE%.spl~      ~override~ 
+                ~%WIZARD_SHROUD_OF_FLAME%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 328 END
+    IF_EXISTS // cat's grace won't be here w/o tobex
+
+/////                                                  \\\\\
+///// op 333                                           \\\\\
+/////                                                  \\\\\    
+
+  // convert 333s to series of cast opcodes
+  COPY_EXISTING ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ ~override~
+    LPF CD_CONVERT_333 END
+
+/////                                                  \\\\\
+///// WIZARD_SNILLOCS_SNOWBALL_SWARM                   \\\\\
+/////                                                  \\\\\ 
+
+  // snilloc has different damage for fire resist > 100; can't convert this acurately
+  // class: fire elem gets routed through EFF to apply c and immunity to b
+  COPY_EXISTING ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%.spl~ ~override~ 
+    LPF ALTER_EFFECT INT_VAR match_opcode = 326 opcode = 177 parameter1 = 187 parameter2 = 5 STR_VAR match_resource = EVAL ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%c~ resource = cdiaa204 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 177 STR_VAR insert = first resource = cdixa204 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 326 opcode = 146 parameter2 = 1 STR_VAR resource = EVAL ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%b~ END
+  
+  // cast snilloc-c
+  COPY ~%obg2_res_path%/cast.eff~ ~override/cdiaa204.eff~
+    WRITE_ASCIIE 0x30 ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%c~ #8    
+
+  // oBG2 does not support the save-for-half flag on op 12
+  COPY_EXISTING ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%b.spl~ ~override~
+                ~%WIZARD_SNILLOCS_SNOWBALL_SWARM%c.spl~ ~override~
+    LPF CD_SPLIT_SAVE_DAMAGE END
+   
+  // change snilloc projectile to known oBG2 type   
+  COPY_EXISTING ~idpro217.pro~ ~override~
+    WRITE_BYTE 0x217 14   
+
+/////                                                  \\\\\
+///// WIZARD_DECASTAVE                                 \\\\\
+/////                                                  \\\\\ 
+
+
+  // oBG2 doesn't support the HP drain flag for damage, so route through external spell; add immunity for undead & golems  
+  // summoning a 2h weapon in BG2 with a shield equipped = crash, so change ot to a 1h weapon like the staff-mace
+  COPY_EXISTING ~decasta.itm~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa216 END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixa216 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 opcode = 146 parameter2 = 1 special = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = cdideca END
+    WRITE_ASCII 0x22 ~MC~ #2 // use mace anim
+    WRITE_LONG  0x18 (THIS BAND `BIT1) // remove 2h flag 
+    
+  COPY ~%obg2_res_path%/cdideca.spl~ ~override~ // decastave's non-EE hp drain
+       ~%obg2_res_path%/decasta.bam~ ~override~ // oBG2 needs two-cycle inv icons    
+
+/////                                                  \\\\\
+///// WIZARD_LANCE_OF_DISRUPTION                       \\\\\
+/////                                                  \\\\\ 
+
+  // convert 318 to prevent self-damage, split damage
+  COPY_EXISTING ~%WIZARD_LANCE_OF_DISRUPTION%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 target = 1 parameter2 = 0 duration = 2 END // stop hitting yourself, stop hitting yourself, stop hitting yourself
+    LPF CD_SPLIT_SAVE_DAMAGE END
+    
+  COPY ~%obg2_res_path%/idpro313.pro~ ~override~ // oBG2 projectile
+
+/////                                                  \\\\\
+///// WIZARD_BELTYNS_BURNING_BLOOD                     \\\\\
+/////                                                  \\\\\ 
+
+  // change 324 to 177 for immunities
+  COPY_EXISTING ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  9 opcode = 177 parameter1 = 145 parameter2 = 4 STR_VAR resource = cdixa422 END // race = elemental
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 55 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixa422 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 = 55 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa422 END // general = undead
+
+/////                                                  \\\\\
+///// WIZARD_EMOTION_COURAGE                           \\\\\
+/////                                                  \\\\\ 
+  
+  // emotion courage already gets self-protection above, also protects from emotion fear  
+  COPY_EXISTING ~%WIZARD_EMOTION_COURAGE%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 206 STR_VAR resource = EVAL ~%WIZARD_EMOTION_FEAR%~ END  
+
+/////                                                  \\\\\
+///// WIZARD_EMOTION_HOPE                              \\\\\
+/////                                                  \\\\\ 
+  
+  // hope also protects against hoplessness  
+  COPY_EXISTING ~%WIZARD_EMOTION_HOPE%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 206 STR_VAR resource = EVAL ~%WIZARD_EMOTION_HOPELESSNESS%~ END 
+
+/////                                                  \\\\\
+///// WIZARD_EMOTION_FEAR                              \\\\\
+/////                                                  \\\\\ 
+
+  // emotion fear also protects from emotion courage; add immunity for undead and golems  
+  COPY_EXISTING ~%WIZARD_EMOTION_FEAR%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa428 END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixa428 END // race = golem
+    LPF CLONE_EFFECT INT_VAR match_opcode =  24 opcode = 206 STR_VAR resource = EVAL ~%WIZARD_EMOTION_COURAGE%~ END  
+
+/////                                                  \\\\\
+///// WIZARD_EMOTION_HOPELESSNESS                      \\\\\
+/////                                                  \\\\\ 
+
+  // emotion hopelessness also protects from emotion hope
+  COPY_EXISTING ~spwi411.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 45 opcode = 206 STR_VAR resource = EVAL ~%WIZARD_EMOTION_HOPE%~ END  
+
+/////                                                  \\\\\
+///// WIZARD_VITRIOLIC_SPHERE                          \\\\\
+/////                                                  \\\\\
+    
+  // vit sphere needs a lot of restructuring to get the delayed saves working
+  COPY_EXISTING ~%WIZARD_VITRIOLIC_SPHERE%.spl~ ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode =  12 match_timing = 4 END // delete any delayed damage
+    LPF DELETE_EFFECT INT_VAR match_opcode = 326 END // to be replaced with dual-146s
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 146 parameter2 = 1 timing = 1 resist_dispel = 3 duration = 0 END // change to straight cast for splash damage
+    READ_SHORT 0x68 abil_num ELSE 0
+    FOR (index = 0 ; index < abil_num ; ++index) BEGIN
+      LPF CLONE_EFFECT INT_VAR header = index match_opcode = 146 parameter1 = (index + 5) timing = 4 duration = 6 STR_VAR resource = EVAL ~%WIZARD_VITRIOLIC_SPHERE%z~ END
+    END  
+    
+  // easier to bring over old iwdification subspells than restructure
+  COPY ~%obg2_res_path%/cdia432z.spl~ ~override/%WIZARD_VITRIOLIC_SPHERE%z.spl~ // recurring main target damage; recasts itself (w/save) at level-2 every iteration
+    LPF ALTER_EFFECT STR_VAR match_resource = cdia432z resource = EVAL ~%WIZARD_VITRIOLIC_SPHERE%z~ END
+    LPF ALTER_EFFECT STR_VAR match_resource = cdiacid resource = acidh END
+    
+  COPY ~%obg2_res_path%/acidh.bam~ ~override~
+       ~%obg2_res_path%/acidh.vvc~ ~override~
+
+/////                                                  \\\\\
+///// WIZARD_SHROUD_OF_FLAME                           \\\\\
+/////                                                  \\\\\
+
+  // Just grab name...
+  COPY_EXISTING ~%WIZARD_SHROUD_OF_FLAME%.spl~ ~override~
+    READ_LONG 0x08 shroud_name1
+    READ_LONG 0x0c shroud_name2
+    READ_LONG 0x50 shroud_desc1
+    READ_LONG 0x54 shroud_desc2
+  
+  // the layered 318/321/333s just make this easier to drop in oBG2 versions
+  COPY ~%obg2_res_path%/cdia524.spl~  ~override/%WIZARD_SHROUD_OF_FLAME%.spl~
+       ~%obg2_res_path%/cdia524b.spl~ ~override/%WIZARD_SHROUD_OF_FLAME%b.spl~
+       ~%obg2_res_path%/cdia524c.spl~ ~override/%WIZARD_SHROUD_OF_FLAME%c.spl~
+    WRITE_LONG   0x08 shroud_name1
+    WRITE_LONG   0x0c shroud_name2
+    WRITE_LONG   0x50 shroud_desc1
+    WRITE_LONG   0x54 shroud_desc2
+    WRITE_ASCIIE 0x3a ~%WIZARD_SHROUD_OF_FLAME%c~ #8
+    LPF ALTER_SPELL_HEADER STR_VAR icon = EVAL ~%WIZARD_SHROUD_OF_FLAME%b~ END
+    LPF ALTER_EFFECT INT_VAR silent = 1 STR_VAR match_resource = spwi524b resource = EVAL ~%WIZARD_SHROUD_OF_FLAME%b~ END
+    LPF ALTER_EFFECT INT_VAR silent = 1 STR_VAR match_resource = spwi524c resource = EVAL ~%WIZARD_SHROUD_OF_FLAME%c~ END
+
+/////                                                  \\\\\
+///// WIZARD_DARTS_OF_BONE                             \\\\\
+/////                                                  \\\\\
+
+  // like decastave, have to farm out on-hit effects to spell so we can avoid stacking and so golems/undead can avoid outright
+  COPY_EXISTING ~dobone.itm~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa630 END // general = undead
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixa630 END // race = golem
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 opcode = 146 parameter2 = 1 special = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = cdidob1 END
+    PATCH_FOR_EACH op IN 321 44 215 174 61 BEGIN
+      LPF DELETE_EFFECT INT_VAR match_opcode = op END
+    END  
+    
+  COPY ~%obg2_res_path%/cdidob1.spl~ ~override~
+    LPF CD_CONVERT_61 END // run this thorugh same conversion for consistency
+    
+  COPY ~%obg2_res_path%/cdidob2.spl~ ~override~ // farm str drain to second spell to prevent stacking
+       ~%obg2_res_path%/idobone.bam~ ~override~ // oBG2 needs two-cycle inv icons
+
+/////                                                  \\\\\
+///// WIZARD_ACID_STORM                                \\\\\
+/////                                                  \\\\\
+
+  // acid storm's main problem for oBG2 is its cloudish animation
+  // so we turn the projectile into a (mostly) invisible AoE and manually play 'random' cloud vvcs
+  ACTION_CLEAR_ARRAY cd_acid_cloud
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_acid_cloud BEGIN
+
+     0,0,0            => 0
+     87,145,2         => 1
+     ~-93~,133,1      => 2
+     ~-173~,~-10~,2   => 3
+     ~-80~,~-160~,1   => 4
+     89,~-140~,2      => 5
+     43,172,1         => 6
+     ~-47~,66,2       => 7
+     ~-87~,~-5~,1     => 8
+     86,0,2           => 9
+     ~-40~,~-80~,1    => x
+     44,~-70~,2       => y
+     171,0,1          => z
+
+  END
+
+  ACTION_PHP_EACH cd_acid_cloud AS coords => letter BEGIN
+  
+    COPY ~%obg2_res_path%/cdia7240.vvc~ ~override/cdia724%letter%.vvc~
+      WRITE_LONG 0x28 ~%coords_0%~ // x position
+      WRITE_LONG 0x2c ~%coords_1%~ // y position
+      WRITE_LONG 0x68 ~%coords_2%~ // starting anim cycle
+      
+  END
+  
+  // need to adjust projectile for manual cloud simulation
+  COPY_EXISTING ~idpro211.pro~ ~override~
+    WRITE_SHORT 0x00a 96      // speed
+    WRITE_LONG  0x00c  0      // remove use_height flag
+    WRITE_ASCII 0x100 ~~ #256 // zero projectile info fields
+    WRITE_SHORT 0x204 0       // trap size
+    WRITE_SHORT 0x206 192     // explosion size
+    WRITE_ASCII 0x208 ~~ #8   // sound
+    WRITE_SHORT 0x210 0       // explosion freq
+    WRITE_BYTE  0x216 0       // reps
+    WRITE_BYTE  0x217 255     // explosion effect
+    WRITE_BYTE  0x218 0       // explosion effect
+    WRITE_ASCII 0x21c ~~ #8   // animation
+
+  // all damage is 1dX, so the CD_SPLIT_SAVE_DAMAGE can't split into separate dice; we manually halve the die size and dupe
+  COPY_EXISTING ~%WIZARD_ACID_STORM%.spl~ ~override~ 
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 match_dicesize = 4 dicesize = 2 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 match_dicesize = 6 dicesize = 3 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 match_dicesize = 8 dicesize = 4 END
+    LPF CLONE_EFFECT INT_VAR match_opcode = 12 savingthrow = BIT24 END
+    PATCH_FOR_EACH res IN 0 1 2 3 4 5 6 7 8 9 x y z BEGIN // simulating clouds in bg2 sucks
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 215 target = 1 parameter2 = 2 resist_dispel = 3 STR_VAR resource = EVAL ~cdia724%res%~ END
+    END
+
+
+/////                                                  \\\\\
+///// WIZARD_SUFFOCATE                                 \\\\\
+/////                                                  \\\\\
+
+  // in oBG2 lingering clouds are basically an invisible creature generating the spell effects and visuals
+  
+  // need to adjust projectile for manual cloud simulation
+  COPY_EXISTING ~idpro317.pro~ ~override~
+    WRITE_SHORT 0x00a 96      // speed
+    WRITE_ASCII 0x18 ~~ #8    // zero sound file
+    WRITE_SHORT 0x204 0       // trap size
+    WRITE_SHORT 0x206 256     // explosion size
+    WRITE_SHORT 0x210 0       // explosion freq
+    WRITE_BYTE  0x216 0       // reps
+    WRITE_BYTE  0x217 255     // explosion effect
+    WRITE_SHORT 0x21a 79      // explosion projectile
+    
+  // dupe suffocate into spell used by invisible creature  
+  COPY_EXISTING ~%WIZARD_SUFFOCATE%.spl~ ~override/cdia726.spl~ 
+      WRITE_LONG 0x08 "-1" // name
+      LPF CLONE_EFFECT INT_VAR match_opcode = 321 opcode = 206 timing = 0 duration = 6 STR_VAR insert = last END
+      LPF DELETE_EFFECT INT_VAR match_opcode = 321 END
+      LPF CLONE_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  9 opcode = 177 parameter1 = 145 parameter2 = 4 STR_VAR resource = cdixa726 END // race = elemental
+      LPF ALTER_EFFECT INT_VAR match_opcode = 324 match_parameter2 =  9 opcode = 177 parameter1 = 144 parameter2 = 4 STR_VAR resource = cdixa726 END // race = golem
+      LPF ALTER_EFFECT INT_VAR match_opcode = 324                       opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa726 END // general = undead
+      LPF ALTER_EFFECT INT_VAR match_opcode = 176 parameter2 = 2 END // mode 5 not available on oBG2
+      LPF ALTER_EFFECT INT_VAR match_opcode = 206 STR_VAR resource = cdia726 END // update self-reference
+      LPF CD_SPLIT_SAVE_DAMAGE END
+
+  // change actual suffocate used into just a summon for the invisible creature     
+  COPY_EXISTING ~%WIZARD_SUFFOCATE%.spl~ ~override~ 
+    LPF DELETE_EFFECT END
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 177 target = 1 timing = 1 parameter2 = 2 STR_VAR resource = cdia726 END
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    
+  LAUNCH_ACTION_FUNCTION cd_create_cloud INT_VAR visloop = 5 cloud_dur = 60 zosa = 1 STR_VAR code = CDIA726 anim = suffoca END
+
+/////                                                  \\\\\
+///// WIZARD_IRON_BODY                                 \\\\\
+/////                                                  \\\\\
+
+// sans tobex, items in the magical weapon slot will always be removed by dispel magic in oBG2. to avoid the incongruous 
+// state of having iron body in effect but without the melee bits, we move all effects to the paw as equipped effects
+  COPY_EXISTING ~%WIZARD_IRON_BODY%.spl~ ~override~ 
+    PATCH_FOR_EACH res IN ~##wi904~ spwi726  BEGIN
+      LPF DELETE_EFFECT INT_VAR match_opcode = 318 STR_VAR match_resource = EVAL ~%res%~ END
+    END  
+    // updating iwd > bg2 refs before moving
+    LPF ALTER_EFFECT INT_VAR match_opcode = 318 opcode = 206 END // make some adjustments before moving
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 172 END // delete iron body icon
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 END // delete self-cast protection
+    LPF DELETE_EFFECT INT_VAR match_opcode = 1 END // delete APR set (fist item already has it)
+    
+  COPY_EXISTING ~%WIZARD_IRON_BODY%.spl~ ~override~ // re-copy to reset SOURCE_SIZE
+    READ_LONG 0x6a fx_off
+    SET fx_num = ((SOURCE_SIZE - fx_off) / 0x30)
+    READ_ASCII fx_off fx (fx_num * 0x30)
+    PATCH_FOR_EACH op IN 7 29 30 44 87 101 126 142 145 169 173 206 267 BEGIN // delete stuff that's moving to the paw
+      LPF DELETE_EFFECT INT_VAR match_opcode = op END
+    END  
+    
+  COPY_EXISTING ~ibody.itm~ ~override~
+    READ_LONG   0x64 abil_off ELSE 0
+    READ_SHORT  0x68 abil_num ELSE 0
+    READ_LONG   0x6a fx_off
+    WRITE_SHORT 0x70 (THIS + fx_num)
+    FOR (index = 0 ; index < abil_num ; ++index) BEGIN // start iterating through abilities
+      WRITE_SHORT  (abil_off + 0x20 + (0x28 * index)) (THIS + fx_num)
+    END
+    INSERT_BYTES fx_off (fx_num * 0x30)
+    WRITE_ASCIIE fx_off ~%fx%~
+    PATCH_FOR_EACH op IN 50 61 111 174 215 BEGIN // remove audio/visual & item creation
+      LPF DELETE_EFFECT INT_VAR match_opcode = op END
+    END
+    LPF ALTER_EFFECT INT_VAR check_headers = 0 power = 0 resist_dispel = 0 timing = 2 duration = 0 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 126 parameter2 = 2 END // mode 5 not available on oBG2
+    FOR (index = 0 ; index < 6 ; ++index) BEGIN
+      LPF CLONE_EFFECT INT_VAR check_headers = 0 match_opcode = 7 match_parameter2 = 255 parameter2 = index END
+    END  
+    LPF ALTER_EFFECT INT_VAR check_headers = 0 match_opcode = 7 match_parameter2 = 255 parameter2 = 6 END
+
+/////                                                  \\\\\
+///// WIZARD_SUMMON_SHADOW                             \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%WIZARD_SUMMON_SHADOW%.spl~ ~override~ // shadows are level 4, so p1=12 should mean 3 shadows
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = msumm1h END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 12 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = sshadow END 
+
+/////                                                  \\\\\
+///// WIZARD_MONSTER_SUMMONING                         \\\\\
+/////                                                  \\\\\
+
+  ACTION_CLEAR_ARRAY cd_monster_summoning_cre
+  ACTION_CLEAR_ARRAY cd_monster_summoning
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_monster_summoning BEGIN
+     // spell, # of monsters summoned => table aka also used as generic power/HD substitute
+     ~%WIZARD_MONSTER_SUMMONING_1%~,5      => 1
+     ~%WIZARD_MONSTER_SUMMONING_2%~,6      => 2
+     ~%WIZARD_MONSTER_SUMMONING_3%~,4      => 3
+     ~%WIZARD_MONSTER_SUMMONING_4%~,3      => 4
+     ~%WIZARD_MONSTER_SUMMONING_5%~,3      => 5
+     ~%WIZARD_MONSTER_SUMMONING_6%~,3      => 6
+     ~%WIZARD_MONSTER_SUMMONING_7%~,2      => 7
+
+  END
+
+  ACTION_PHP_EACH cd_monster_summoning AS spell => table BEGIN
+  
+    // turns single 331 into one 100% 127 plus multiple, staggered 127s to simulate dice rolls
+    COPY_EXISTING ~%spell_0%.spl~ ~override~ 
+      LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 2 resist_dispel = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = msumm1x END // add animation
+      LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = table parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = EVAL ~msummo%table%~ END
+      FOR (index = 1 ; index < spell_1 ; ++index) BEGIN
+        LPF CLONE_EFFECT INT_VAR match_opcode = 127 match_probability1 = 100 probability1 = (((100 * index) / %spell_1%) - 1) END
+      END  
+    
+    // this bit parses the summoning tables and changes the power level for consistent summoning numbers    
+    COPY_EXISTING ~msummo%table%.2da~ ~override~ 
+      REPLACE_EVALUATE ~^\([0-9]+[ %TAB%]+\)\(.+\)$~ BEGIN
+        DEFINE_ASSOCIATIVE_ARRAY cd_monster_summoning_cre BEGIN ~%MATCH2%~ => ~%table%~ END // build table for next step
+      END ~%MATCH1%%MATCH2%~ 
+      BUT_ONLY
+  
+  END  
+
+  ACTION_PHP_EACH cd_monster_summoning_cre AS file => power BEGIN
+
+    COPY_EXISTING ~%file%.cre~  ~override~   
+      WRITE_LONG 0x18 power // set "power level" for consistent summoning
+      BUT_ONLY IF_EXISTS
+      
+  END    
+    
+  COPY_EXISTING ~%WIZARD_MONSTER_SUMMONING_1%.spl~ ~override~ // above shenigans turn MS1 into 1d5 monsters, now make it 1d5+1 (lazy 2d3 mimic)
+    LPF ALTER_EFFECT INT_VAR match_opcode = 127 parameter1 = 2 match_probability1 = 100 END
+    
+  // summons 6 creatures from MS2 table  
+  COPY_EXISTING ~wand10.itm~ ~override~ 
+      LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 2 resist_dispel = 0 dicenumber = 0 dicesize = 0 STR_VAR resource = msumm1x END // add animation
+      LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 12 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = EVAL ~msummo2~ END
+
+/////                                                  \\\\\
+///// WIZARD_CONJURE_LESSER_X_ELEMENTAL                \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%WIZARD_CONJURE_LESSER_EARTH_ELEMENTAL%.spl~ ~override~ 
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = ceelemx END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 8 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = ceelemw END
+
+  COPY_EXISTING ~%WIZARD_CONJURE_LESSER_FIRE_ELEMENTAL%.spl~ ~override~ 
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = cfelemx END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 8 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = cfelemw END
+
+  COPY_EXISTING ~%WIZARD_CONJURE_LESSER_AIR_ELEMENTAL%.spl~ ~override~ 
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = caelemx END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 8 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = caelemw END
+
+  COPY_EXISTING ~%WIZARD_CONJURE_LESSER_WATER_ELEMENTAL%.spl~ ~override~ 
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = cwelemx END // add animation
+    LPF ALTER_EFFECT INT_VAR match_opcode = 331 opcode = 127 parameter1 = 8 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = cwelemw END
+
+/////                                                  \\\\\
+///// WIZARD_MORDENKAINENS_SWORD_IWD                   \\\\\
+/////                                                  \\\\\
+
+  // like iron body, transfer spell effects (in this case, just thac0) to sword
+  // because the thac0 is level-dependent, it means we need multiple summoned swords
+  COPY_EXISTING ~%WIZARD_MORDENKAINENS_SWORD_IWD%.spl~ ~override~ 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 54 END // moving this to the summoned weapon
+    READ_SHORT 0x68 abil_num
+    FOR (index = 2 ; index < abil_num ; ++index) BEGIN // skip first two, as msword becomes msword14
+      PATCH_IF index > 27 BEGIN SET sword = 0 END ELSE BEGIN SET sword = ((28 - index) / 2) END
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 111 STR_VAR resource = EVAL ~msword%sword%~ END // should be 14x2
+    END
+
+  COPY_EXISTING ~msword.itm~ ~override~
+    LPF ADD_ITEM_EQEFFECT INT_VAR opcode = 54 target = 1 parameter1 = 14 parameter2 = 1 timing = 2 END
+    
+  OUTER_FOR (index = sword ; index < 14 ; ++index) BEGIN   
+
+    COPY_EXISTING ~msword.itm~ ~override/msword%index%.itm~
+      LPF ALTER_EFFECT INT_VAR match_opcode = 54 parameter1 = index END
+      
+  END  
+  
+  // antimagic shell also needs to refer to new mordy swords
+  COPY_EXISTING ~%WIZARD_ANTIMAGIC_SHELL%.spl~ ~override~
+    FOR (index = sword ; index < 14 ; ++index) BEGIN 
+      LPF CLONE_EFFECT INT_VAR match_opcode = 112 STR_VAR match_resource = msword resource = EVAL ~msword%index%~ END
+    END    
+
+/////                                                  \\\\\
+///// WIZARD_EXPEDITIOUS_RETREAT                       \\\\\
+/////                                                  \\\\\ 
+
+  // change 324 to 177 for immunities
+  COPY_EXISTING ~%WIZARD_EXPEDITIOUS_RETREAT%.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 = 20 parameter2 = 5 STR_VAR resource = cdixa126 END // class = monk
+    LPF ALTER_EFFECT INT_VAR match_opcode = 126 parameter2 = 2 END // mode 5 not available on oBG2
+
+/////                                                  \\\\\
+///// WIZARD_SHADOW_MONSTERS                           \\\\\
+/////                                                  \\\\\ 
+
+  // change to oBG2 summoning, add graphical effect
+  COPY_EXISTING ~%WIZARD_SHADOW_MONSTERS%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = msumm1h END // add animation
+    READ_SHORT 0x68 abil_num
+    LPF ALTER_EFFECT INT_VAR header = 0 match_opcode = 331 opcode = 127 parameter1 = 1 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = smonste END
+    FOR (index = 1 ; index < abil_num ; ++index) BEGIN
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 331 opcode = 127 parameter1 = (index + 7) parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = smonste END
+    END
+
+/////                                                  \\\\\
+///// WIZARD_DEMI_SHADOW_MONSTERS                      \\\\\
+/////                                                  \\\\\ 
+
+  // change to oBG2 summoning, add graphical effect
+  COPY_EXISTING ~%WIZARD_DEMI_SHADOW_MONSTERS%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = msumm1h END // add animation
+    READ_SHORT 0x68 abil_num
+    LPF ALTER_EFFECT INT_VAR header = 0 match_opcode = 331 opcode = 127 parameter1 = 1 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = dsmonst END
+    FOR (index = 1 ; index < abil_num ; ++index) BEGIN
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 331 opcode = 127 parameter1 = (index + 9) parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = dsmonst END
+    END
+
+/////                                                  \\\\\
+///// WIZARD_LICH_TOUCH                                \\\\\
+/////                                                  \\\\\
+
+  // undead immune to extra cold damage/hold from lich touch
+  COPY_EXISTING ~ltouch.itm~ ~override~
+      LPF ALTER_EFFECT INT_VAR match_opcode = 324 opcode = 177 parameter1 =   4 parameter2 = 3 STR_VAR resource = cdixa626 END // general = undead
+
+/////                                                  \\\\\
+///// WIZARD_SHADES                                    \\\\\
+/////                                                  \\\\\
+
+  // change to oBG2 summoning, add graphical effect
+  COPY_EXISTING ~%WIZARD_SHADES%.spl~ ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 331 opcode = 215 parameter2 = 2 timing = 0 duration = 1 STR_VAR resource = msumm1h END // add animation
+    READ_SHORT 0x68 abil_num
+    LPF ALTER_EFFECT INT_VAR header = 0 match_opcode = 331 opcode = 127 parameter1 = 1 parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = shades END
+    FOR (index = 1 ; index < abil_num ; ++index) BEGIN
+      LPF ALTER_EFFECT INT_VAR header = index match_opcode = 331 opcode = 127 parameter1 = (index + 12) parameter2 = 0 dicesize = 0 dicenumber = 0 STR_VAR resource = shades END
+    END
+
+/////                                                  \\\\\
+///// WIZARD_MALAVONS_RAGE                             \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~%WIZARD_MALAVONS_RAGE%.spl~ ~override~
+    LPF CD_SPLIT_SAVE_DAMAGE END   
+
+/////                                                  \\\\\
+///// WIZARD_MORDENKAINENS_FORCE_MISSILES              \\\\\
+/////                                                  \\\\\
+
+COPY_EXISTING ~%WIZARD_MORDENKAINENS_FORCE_MISSILES%.spl~ ~override~
+  LPF ALTER_EFFECT INT_VAR match_opcode = 333 opcode = 146 parameter1 = 0 parameter2 = 1 END // change to concussive AoE cast
+  READ_SHORT 0x68 abil_num // now swap over to magic missile projectile
+  SET proj = 68
+  SET proj_inc = 0
+  FOR (index = 0 ; index < abil_num ; ++index) BEGIN
+    PATCH_IF proj < 72 BEGIN
+      SET proj_inc += 1
+      PATCH_IF proj_inc = 4 BEGIN SET proj_inc = 1 SET proj += 1 END
+    END  
+    LPF ALTER_SPELL_HEADER INT_VAR header = (index +1) projectile = proj END
+  END  
+  
+/////                                                  \\\\\
+///// WIZARD_SHOUT                                     \\\\\
+/////                                                  \\\\\
+
+  ADD_PROJECTILE ~%obg2_res_path%/cdi315a.pro~ // Animation at speed = 25
+  ADD_PROJECTILE ~%obg2_res_path%/cdi315b.pro~ // Animation at speed = 15
+  COPY_EXISTING ~idpro315.pro~ ~override~
+	   WRITE_BYTE 0x217 255
+
+  COPY_EXISTING ~%WIZARD_SHOUT%.spl~ ~override/cdia431c.spl~ // move main spell to c
+    WRITE_LONG 0x08 "-1" // name
+    WRITE_LONG 0x50 "-1" // desc
+    LPF CD_SPLIT_SAVE_DAMAGE END
+    
+  COPY_EXISTING ~%WIZARD_SHOUT%.spl~ ~override~ // main spell now just casts three subspells
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END // delete all existing effects
+    PATCH_FOR_EACH letter IN a b c BEGIN
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 148 target = 1 parameter2 = 1 STR_VAR resource = EVAL ~cdia431%letter%~ END
+    END  
+  
+  COPY ~%obg2_res_path%/cdia431a.spl~ ~override~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = cdi315a END
+  
+  COPY ~%obg2_res_path%/cdia431a.spl~ ~override/cdia431b.spl~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = cdi315b END
+
+/////                                                  \\\\\
+///// WIZARD_GREAT_SHOUT                               \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~idpro319.pro~ ~override~
+	  WRITE_BYTE 0x217 255
+
+  COPY_EXISTING ~cdi315a.pro~ ~override/cdi319a.pro~
+                ~cdi315b.pro~ ~override/cdi319b.pro~
+	  WRITE_ASCII 0x10 ~#ff_m101~ #8
+
+  ADD_PROJECTILE ~override/cdi319a.pro~
+  ADD_PROJECTILE ~override/cdi319b.pro~
+
+  COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override/cdia806c.spl~ // move main spell to c
+    WRITE_LONG 0x08 "-1" // name
+    WRITE_LONG 0x50 "-1" // desc
+    LPF CD_SPLIT_SAVE_DAMAGE END
+    
+  COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override~ // main spell now just casts three subspells
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = 1 END
+    LPF DELETE_EFFECT END // delete all existing effects
+    PATCH_FOR_EACH letter IN a b c BEGIN
+      LPF ADD_SPELL_EFFECT INT_VAR opcode = 148 target = 1 parameter2 = 1 STR_VAR resource = EVAL ~cdia806%letter%~ END
+    END     
+  
+  COPY ~%obg2_res_path%/cdia431a.spl~ ~override/cdia806a.spl~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = cdi319a END
+  
+  COPY ~%obg2_res_path%/cdia431a.spl~ ~override/cdia806b.spl~
+    LPF ALTER_SPELL_HEADER INT_VAR projectile = cdi319b END
+  
+/////                                                  \\\\\
+///// obg2 graphical fixes                             \\\\\
+/////                                                  \\\\\
+
+  COPY_EXISTING ~msumm1x.vvc~ ~override~
+    WRITE_LONG 0x2c "-100" // y-coordinate
+    WRITE_LONG 0x4c "-1"   // z-coordinate
+    
+
+  // 3d blend flag in VVCs cause them to be virtually transparent in oBG2
+  ACTION_FOR_EACH file IN 
+    ~#antishl~ ~#fireau~ ~#frostau~ ~#genench~ ~#malrage~ ~#ssswarm~ abjurh acidh alterh caelemx 
+    ceelemx cfelemx cwelemx enchah invoch mfmissx msumm1x mswordh necroh ofspheh paralh soflamc vspherx 
+  BEGIN
+
+    COPY_EXISTING ~%file%.vvc~ ~override~
+      WRITE_SHORT 0x18 (THIS BAND `BIT9) 
+
+  END     
+    
+  // ee BAMs have horrible black auras on everything that show up w/o 3d enabled in oBG2; use original IWD BAMs instead  
+  ACTION_FOR_EACH file IN 
+    abjurh acidh alterh amshelc astorma astormx ceelemx cfelemx cwelemx enchah enchanx fiaurac 
+    fraurac gshoutt icelant invoch lodisrt mfmisst mfmissx mrageh mragex msumm1h msumm1x mswordh 
+    necroh ofsphet shoutt soflamc ssswarr ssswart ssswarx suffoca vsphert vspherx
+  BEGIN
+
+    COPY ~%obg2_res_path%/%file%.bam~ ~override~
+
+  END  
+
+END 
+

@@ -1,0 +1,3711 @@
+/*
+
+describe-library{
+Functions to interact with IE resources under the general 'ie-struct' paradigm. i.e. we read in the struct, edit it, and then
+write it back again.
+}
+technical-note{
+The ie struct is organized like this:
+<ul>
+<li>General entries from the header are included in the obvious way, i.e. struct_[whatever].
+<li>$struct("strtype") stores the actual strtype
+<li>Data on extended headers are in struct([type] n), unexpanded (i.e. just raw data).
+<li>struct ([type] blockcount) says how many entries there are for each type.
+<li>struct ([type] lookup n) is a lookup from the nth actual header in the file, to entry n in the extended-header data.
+(The point of doing it this way is that it makes it way more efficient to delete or add data.)
+<li>struct ([parent] n [child] m) is the data for child types of the parent type
+<li>Again struct ([parent] n [child] blockcount) counts the blocks of this data
+<li>struct ([parent] n [child] lookup m) is a child-level lookup table.
+</ul>
+
+}
+
+
+*/
+
+/*
+
+document{struct_read_main_definitions}
+{Read in one of the files that defines a header and return its contents in a bunch of arrays (all with the entry label as key):
+</p>
+<p>
+<ul>
+<li>'offsets': the offset of the entry in the header
+<li>'types': the type of the entry (short, long, byte, lookup, etc)
+<li>'flags' (flag labels only): the bit position of the flag in the byte
+<li>'asciis' (ascii labels only): how long the ascii is
+<li>'ids' (id labels only): the id file being used
+<li>'lookups' (lookup labels only): the section header in str_lookup.ini
+<li>'old': 1 for any entry where we keep the old value and only patch if it changes (useful for certain overlapping entries, e.g. parameter2 vs parameter2a/2b)
+</ul>}
+
+
+
+*/
+
+
+DEFINE_ACTION_FUNCTION struct_read_main_definitions//internal
+	STR_VAR file="" path=""
+	RET has_strrefs has_resrefs
+	RET_ARRAY offsets types flags asciis ids lookups commalists multiples resrefs defaults
+BEGIN
+	COPY - "%path%/%file%" nowhere
+		CLEAR_ARRAY array
+		CLEAR_ARRAY offsets
+		CLEAR_ARRAY types
+		CLEAR_ARRAY defaults
+		CLEAR_ARRAY flags
+		CLEAR_ARRAY asciis
+		CLEAR_ARRAY ids
+		CLEAR_ARRAY lookups
+		CLEAR_ARRAY commalists
+		CLEAR_ARRAY multiples
+		CLEAR_ARRAY resrefs
+		has_strrefs=0
+		has_resrefs=0
+		LPF 2da_read STR_VAR case=lower RET_ARRAY array rows END
+		SET $offsets("strtype")=0
+		SPRINT $types("strtype") special
+		PHP_EACH rows AS row_base=>discard BEGIN
+			SPRINT default ""
+			INNER_PATCH_SAVE row "%row_base%" BEGIN
+				REPLACE_EVALUATE "\[\([^]]+\)\]" BEGIN
+					SPRINT default "%MATCH1%"
+				END
+				""
+			END
+			PATCH_IF "%default%" STR_CMP "" BEGIN
+				SPRINT $defaults("%row%") "%default%" // do it here, not inside INNER_PATCH_SAVE, because we won't know row yet
+			END
+			SET $offsets("%row%")=$array("%row_base%" "offset")
+			SPRINT type $array("%row_base%" "type")
+			INNER_PATCH_SAVE type "%type%" BEGIN
+				old=0
+				REPLACE_EVALUATE "\(.*\)_o$" BEGIN
+					old=1
+				END
+				"%MATCH1%"
+			END
+			// we're experimenting with everything being 'old'
+			LPF return_first_entry STR_VAR list="%type%" separator=_ RET type=entry extra=list END
+			SPRINT $types("%row%") "%type%"
+			PATCH_MATCH "%type%" WITH
+			flag ascii BEGIN
+				SPRINT $"%type%s"("%row%") "%extra%"
+			END
+			"id.*" BEGIN
+				SPRINT $ids("%row%") "%extra%"
+			END
+			"lookup.*" BEGIN
+				SPRINT $lookups("%row%") "%extra%"
+			END
+			"commalist" BEGIN
+				SPRINT $commalists("%row%") "%extra%"
+			END
+			"multiple" BEGIN
+				SPRINT $multiples("%row%") "%extra%"
+			END
+			"strref" BEGIN
+				SPRINT $types("%row%-strref") "long"
+				SET $offsets("%row%-strref")=$offsets("%row%")
+				has_strrefs=1
+			END
+			"resref" BEGIN
+				SPRINT $resrefs("%row%") "%extra%"
+				has_resrefs=1
+				SPRINT $types("%row%") "ascii"
+				SET $asciis("%row%")=8
+			END
+			DEFAULT
+			END			
+		END
+	BUT_ONLY
+END
+
+/*
+document{struct_parent_child_definitions}
+{
+Read in one of the 2das that defines the parent/child relations in a file type.
+(This stores where the child offsets are in the parent, and also serves to tell us
+that the parent/child relation exists). The 2da isn't ordered.
+Return the 2da as a 2d array. Also return lists, in the form k=>_, of the parents, the children,
+and the relation IDs.
+
+
+}
+*/
+
+DEFINE_ACTION_FUNCTION struct_parent_child_definitions//internal
+	STR_VAR file="" path=""
+	RET_ARRAY parent_child_data parent_list child_list parent_child_id
+BEGIN
+	COPY "%path%/%file%" "%workspace%"
+		CLEAR_ARRAY parent_child_data
+		CLEAR_ARRAY parent_list
+		CLEAR_ARRAY child_list
+		CLEAR_ARRAY array
+		LPF 2da_read STR_VAR case=lower RET_ARRAY parent_child_data=array parent_child_id=rows END
+		LPF 2da_column_to_array STR_VAR array=parent_child_data column=child RET_ARRAY child_list=array_out END
+		LPF array_invert STR_VAR array=child_list RET_ARRAY child_list=array END
+		LPF 2da_column_to_array STR_VAR array=parent_child_data column=parent RET_ARRAY parent_list=array_out END
+		LPF array_invert STR_VAR array=parent_list RET_ARRAY parent_list=array END
+	BUT_ONLY
+
+END
+
+/*
+document{struct_initialize}
+{
+This reads in all the defining data for the various game files that lib_struct can patch. It's a macro because
+there are lots of them and they're dispersed over lots of arrays; it's not convenient to bundle them up.
+
+Here's what we do:
+</p>
+<p>
+<ol>
+<li>Read in the various lookups from str_lookup.ini and str_versions.ini, both forwards (for read) and backwards (for write).
+<li>For each file type:
+<ol>
+<li>Read in its main header definitions (see struct_read_main_definitions)
+<li>Read in the contents of the 2da file that gives the offsets and the like for its various extended components
+<li>For each one of those, read in the header for it
+<li>Read in the parent/child data (see struct_parent_child_definitions)
+</ol>
+<li>Read in the default file versions for each filetype and each game
+</ol>
+}
+*/
+DEFINE_ACTION_MACRO struct_initialize
+BEGIN
+	LOCAL_SPRINT strtype ""
+	LOCAL_SPRINT ext ""
+	LOCAL_SPRINT version ""
+	LOCAL_SPRINT type ""
+	LOCAL_SPRINT discard ""
+	LOCAL_SPRINT reuse ""
+	ACTION_IF !VARIABLE_IS_SET SFO_struct_initialized BEGIN
+		SILENT
+		OUTER_SPRINT path "%MOD_FOLDER%/%sfo_library_path%/structures"
+		OUTER_SET SFO_struct_initialized=1
+		// get the lookups
+		LAF ini_read STR_VAR file=str_lookup.ini path RET_ARRAY SFO_lookup_forward=array END
+		LAF ini_read INT_VAR backwards=1 STR_VAR case=lower file=str_lookup.ini path RET_ARRAY SFO_lookup_backward=array END
+		// get the version maps
+		LAF ini_read INT_VAR flat=1 STR_VAR file=str_versions.ini path RET_ARRAY SFO_version_write=array END
+		LAF ini_read INT_VAR backwards=1 flat=1 STR_VAR file=str_versions.ini path RET_ARRAY SFO_version_read=array END
+
+		// get the reused structures
+		LAF ini_read INT_VAR flat=1 STR_VAR file=str_repeats.ini path RET_ARRAY reuse=array END
+
+		// individual entries
+		ACTION_FOR_EACH ext IN are cre dlg eff itm spl pro sto vef vvc BEGIN
+			ACTION_FOR_EACH version IN "v1" "v10" "v11" "v2" "v22" "v9" BEGIN
+				OUTER_SPRINT strtype "%ext%_%version%"
+				ACTION_IF FILE_EXISTS "%path%/str_%strtype%.2da" BEGIN
+					OUTER_SPRINT $SFO_structures_defined("%strtype%") ""
+					OUTER_SPRINT $SFO_struct_primary("%strtype%") ""
+					LAF struct_read_main_definitions STR_VAR file="str_%strtype%.2da" path 
+						RET
+							"SFO_%strtype%_has_strrefs"=has_strrefs
+							"SFO_%strtype%_has_resrefs"=has_resrefs
+						RET_ARRAY
+							"SFO_%strtype%_offsets"=offsets
+							"SFO_%strtype%_types"=types
+							"SFO_%strtype%_flags"=flags
+							"SFO_%strtype%_asciis"=asciis
+							"SFO_%strtype%_ids"=ids
+							"SFO_%strtype%_lookups"=lookups
+							"SFO_%strtype%_commalists"=commalists
+							"SFO_%strtype%_multiples"=multiples
+							"SFO_%strtype%_resrefs"=resrefs
+							"SFO_%strtype%_defaults"=defaults
+					END
+					LAF 2da_read INT_VAR silent=1 STR_VAR case=lower file="str_%strtype%_ext.2da" path RET extensions_exist=value RET_ARRAY "SFO_%strtype%_extended_data"=array "SFO_%strtype%_extended_types"=rows END
+					ACTION_IF extensions_exist BEGIN
+						ACTION_PHP_EACH "SFO_%strtype%_extended_types" AS type=>discard BEGIN
+							ACTION_IF VARIABLE_IS_SET $reuse("%strtype%_%type%") BEGIN
+								OUTER_SPRINT temp $reuse("%strtype%_%type%")
+								OUTER_SPRINT file "str_%temp%.2da"
+							END ELSE BEGIN
+								OUTER_SPRINT file "str_%strtype%_%type%.2da"						
+							END
+							ACTION_IF FILE_EXISTS "%path%/%file%" BEGIN
+								OUTER_SPRINT $SFO_structures_defined("%strtype%_%type%") ""
+								LAF struct_read_main_definitions STR_VAR file path
+									RET
+										"SFO_%strtype%_%type%_has_strrefs"=has_strrefs
+										"SFO_%strtype%_%type%_has_resrefs"=has_resrefs
+									RET_ARRAY
+										"SFO_%strtype%_%type%_offsets"=offsets
+										"SFO_%strtype%_%type%_types"=types	
+										"SFO_%strtype%_%type%_flags"=flags
+										"SFO_%strtype%_%type%_asciis"=asciis
+										"SFO_%strtype%_%type%_ids"=ids
+										"SFO_%strtype%_%type%_lookups"=lookups
+										"SFO_%strtype%_%type%_commalists"=commalists
+										"SFO_%strtype%_%type%_multiples"=multiples
+										"SFO_%strtype%_%type%_resrefs"=resrefs
+										"SFO_%strtype%_%type%_defaults"=defaults
+								END	
+							END
+						END
+					END
+					ACTION_IF FILE_EXISTS "%path%/str_%strtype%_child.2da" BEGIN
+						LAF struct_parent_child_definitions STR_VAR file="str_%strtype%_child.2da" path 
+							RET_ARRAY
+								"SFO_%strtype%_parent_child_data"=parent_child_data
+								"SFO_%strtype%_child_list"=child_list
+								"SFO_%strtype%_parent_list"=parent_list
+								"SFO_%strtype%_parent_child_id"=parent_child_id
+						END
+					END
+					LAF 2da_read INT_VAR silent=1 STR_VAR case=lower file="str_%strtype%_var.2da" path RET "SFO_%strtype%_varlengths_exist"=value RET_ARRAY "SFO_%strtype%_var_data"=array "SFO_%strtype%_var_types"=rows END
+				END
+			END
+		END
+		LAF 2da_read STR_VAR case=lower file="default_versions.2da" path RET_ARRAY SFO_str_defaults=array END
+		VERBOSE
+	END
+END	
+
+DEFINE_PATCH_FUNCTION struct_get_strtype//internal
+	STR_VAR strtype=""
+	RET strtype
+BEGIN
+	PATCH_IF !VARIABLE_IS_SET SFO_struct_initialized BEGIN
+		PATCH_FAIL "lib_struct has not been initialized"
+	END
+	PATCH_IF "%strtype%" STR_EQ "" BEGIN
+		READ_ASCII 0x0 sig (8)
+		PATCH_IF VARIABLE_IS_SET $SFO_version_read("%sig%") BEGIN
+			SPRINT strtype $SFO_version_read("%sig%")
+		END ELSE BEGIN
+			PATCH_WARN "sig <%sig%> does not correspond to any known strtype, returning ~~"
+			SPRINT strtype ""
+		END
+	END
+	TO_LOWER strtype
+END
+	
+DEFINE_PATCH_FUNCTION struct_write_strtype//internal
+	STR_VAR strtype=""
+BEGIN
+	PATCH_MATCH "%strtype%" WITH
+	".+_.+_.+" BEGIN // extended type
+	END
+	DEFAULT
+		PATCH_IF VARIABLE_IS_SET $SFO_version_write("%strtype%") BEGIN
+			SPRINT sig $SFO_version_write("%strtype%")
+			WRITE_ASCII 0x0 "%sig%"
+		END ELSE BEGIN
+			PATCH_WARN "cannot find sig for strtype %strtype%"
+		END
+	END
+	
+END
+
+DEFINE_DIMORPHIC_FUNCTION struct_new
+	STR_VAR strtype="" 
+			ext=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+	CLEAR_ARRAY struct
+	PATCH_IF "%strtype%" STR_EQ "" BEGIN
+		LPF struct_get_default_version STR_VAR ext RET strtype END
+	END
+	PATCH_IF VARIABLE_IS_SET $SFO_structures_defined("%strtype%") BEGIN
+		// set the type
+		SPRINT $struct("strtype") "%strtype%"
+		// do the header	
+		SPRINT $struct("header") ""
+		PHP_EACH "SFO_%strtype%_offsets" AS label=>offset BEGIN
+			special=0
+			PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_defaults"("%label%") BEGIN
+				SPRINT $struct("%label%") $"SFO_%strtype%_defaults"("%label%")
+			END ELSE BEGIN
+				SPRINT type $"SFO_%strtype%_types"("%label%")
+				PATCH_MATCH "%type%" WITH
+				strref BEGIN
+					SET $struct("%label%")="-1"
+				END
+				multiple commalist BEGIN
+					SPRINT $struct("%label%") "SFO_unset"
+				END
+				special BEGIN
+				END
+				DEFAULT
+					SPRINT $struct("%label%") ""
+					SPRINT $struct("%label%" "old") ""
+				END	
+			END
+		END
+		// do extended types
+		SET $struct("extended")=0
+		PHP_EACH "SFO_%strtype%_extended_types" AS type=>discard BEGIN
+			SET $struct("%type%" "blockcount")=0
+			SET $struct("extended")=1
+		END
+	END ELSE BEGIN
+		PATCH_WARN "No structure defined for extension <%strtype%>; returning empty array"
+	END
+	END
+END
+	
+/*
+document{struct_read}
+{
+From 'path/file', or from existing game file 'file' if path is unspecified, or in patch context the currently-open file, 
+read in its contents according to its structure definition, into the structure 'struct'.The file type is specified by 
+'strtype'; note that we might well be editing an extended header in an INNER_PATCH, not the main file.
+
+If strtype isn't specified, we assume we're patching a base file and we try to infer it from the file itself.
+
+If open_header=0, we don't break up the header, we just read it in as one big string. (It takes maybe 5-10ms to process,
+so this is unlikely to be necessary - if you're doing bulk patching, struct is too slow anyway.)
+
+If open_extended=0, just read in the header, don't bother with the extended contents.
+
+}
+
+
+*/
+DEFINE_ACTION_FUNCTION struct_read
+	INT_VAR open_header=1//boolean
+			open_extended=1//boolean
+	STR_VAR strtype=""
+			file=""
+			path=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		COPY_EXISTING - "%file%" nowhere
+			LPF struct_read INT_VAR open_header open_extended STR_VAR strtype RET_ARRAY struct END
+	END ELSE BEGIN
+		COPY - "%path%/%file%" nowhere
+			LPF struct_read INT_VAR open_header open_extended STR_VAR strtype RET_ARRAY struct END	
+	END
+END
+
+
+DEFINE_PATCH_FUNCTION struct_read
+	INT_VAR open_header=1//boolean
+			open_extended=1//boolean
+	STR_VAR strtype=""
+	RET_ARRAY struct
+BEGIN
+	CLEAR_ARRAY struct
+	main_file="%strtype%" STR_EQ "" 
+	open_extended = open_extended && main_file
+	LPF struct_get_strtype STR_VAR strtype RET strtype END
+	
+	PATCH_IF VARIABLE_IS_SET $SFO_structures_defined("%strtype%") BEGIN
+		// set the type
+		SPRINT $struct("strtype") "%strtype%"
+		// initialize if needed
+		LPF struct_init STR_VAR strtype END
+		// get the header	
+		PATCH_IF open_header BEGIN
+		  SPRINT $struct("header") ""
+		  PATCH_IF VARIABLE_IS_SET "SFO_%strtype%_offsets_header_length" BEGIN
+			var_index="SFO_%strtype%_offsets_header_length"
+		  END ELSE BEGIN
+		    var_index=0
+		  END
+		  PHP_EACH "SFO_%strtype%_offsets" AS label=>offset BEGIN
+			is_special=0
+			SPRINT type $"SFO_%strtype%_types"("%label%")
+			PATCH_MATCH "%type%" WITH
+			byte BEGIN
+				READ_BYTE offset value
+			END
+			short BEGIN
+				READ_SHORT offset value
+			END
+			long BEGIN
+				READ_LONG offset value
+			END
+			sbyte BEGIN
+				READ_SBYTE offset value
+			END
+			sshort BEGIN
+				READ_SSHORT offset value
+			END
+			slong BEGIN
+				READ_SLONG offset value
+			END
+			strength BEGIN
+				READ_BYTE offset value1
+				READ_BYTE (offset + 1) value2
+				PATCH_IF value2=0 BEGIN
+					value=value1
+				END ELSE
+				PATCH_IF value2=100 BEGIN
+					SPRINT value "%value1%/00"
+				END ELSE BEGIN
+					SPRINT value "%value1%/%value2%"
+				END
+			END
+			ascii BEGIN
+				length=$"SFO_%strtype%_asciis"("%label%")
+				READ_ASCII offset value (length) NULL
+			END
+			strref BEGIN
+				READ_STRREF offset value
+				READ_STRREF_S offset sound
+				PATCH_MATCH "%value%" WITH
+				"<Invalid Strref -1>" BEGIN
+					value="-1"
+				END
+				DEFAULT
+				END
+				SPRINT $struct("%label%" "sound") "%sound%"
+				SPRINT $struct("%label%" "sound_old") "%sound%"
+			END
+			id id2 id4 id4b BEGIN
+				SPRINT id $"SFO_%strtype%_ids"("%label%")
+				PATCH_MATCH "%type%" WITH
+				id id1 BEGIN
+					READ_BYTE offset value
+				END
+				id2 BEGIN
+					READ_SHORT offset value
+				END
+				id4 BEGIN
+					READ_LONG offset value
+				END
+				id4b BEGIN
+					READ_SHORT offset value1
+					READ_SHORT (offset + 2 ) value2
+					value=value1*0x10000 + value2
+				END
+				DEFAULT
+					PATCH_WARN "unidentified datatype %type% in struct_read (strtype %strtype%)"
+				END
+				LOOKUP_IDS_SYMBOL_OF_INT value "%id%" (value)
+			END
+			itmspl-proj BEGIN
+				READ_SHORT offset value
+				value -=1
+				LOOKUP_IDS_SYMBOL_OF_INT value projectl (value)
+			END
+			flag BEGIN
+				n=$"SFO_%strtype%_flags"("%label%")
+				READ_BYTE offset byte
+				value = (byte BAND (2**n)) >> n
+			END
+			lookup1 lookup2 lookup4 BEGIN
+				PATCH_MATCH "%type%" WITH
+				lookup1 BEGIN
+					READ_BYTE offset value
+				END
+				lookup2 BEGIN
+					READ_SHORT offset value
+				END
+				lookup4 BEGIN
+					READ_LONG offset value
+				END
+				DEFAULT
+					PATCH_WARN "unidentified datatype %type% in struct_read  (strtype %strtype%)"
+				END
+				SPRINT lookup $"SFO_%strtype%_lookups"("%label%")
+				PATCH_IF VARIABLE_IS_SET $SFO_lookup_forward("%lookup%" "%value%") BEGIN
+					SPRINT value $SFO_lookup_forward("%lookup%" "%value%")
+				END
+			END
+			commalist multiple BEGIN 
+				SPRINT value "SFO_unset"
+			END
+			"varlength.*" BEGIN
+				READ_LONG var_index var_length
+				var_index +=4
+				READ_ASCII var_index vardata (var_length)
+				var_index +=var_length
+				SPRINT value "%vardata%"
+			END
+			special BEGIN 
+				is_special=1
+			END
+			DEFAULT
+				PATCH_WARN "unidentified datatype %type% in struct_read (strtype %strtype%)"
+			END
+			PATCH_IF !is_special BEGIN
+				SPRINT $struct("%label%") "%value%"	
+				SPRINT $struct("%label%" "old") "%value%"
+			END
+		  END
+		END ELSE BEGIN
+			header_length=$"SFO_%strtype%_offsets"("header_length")
+			READ_ASCII 0x0 struct_header (header_length)
+		END
+		// get the extended data
+		PATCH_IF open_extended BEGIN
+			SET $struct(extended)=1
+			// cycle through all the types
+			PHP_EACH "SFO_%strtype%_extended_types" AS type=>discard BEGIN
+				PATCH_IF !"SFO_%strtype%_extended_data_%type%_child_only" BEGIN
+						d1="SFO_%strtype%_extended_data_%type%_offset"
+						d2="SFO_%strtype%_extended_data_%type%_offset_length"
+						d3="SFO_%strtype%_extended_data_%type%_number"
+						d4="SFO_%strtype%_extended_data_%type%_number_length"
+						d5="SFO_%strtype%_extended_data_%type%_index"
+						d6="SFO_%strtype%_extended_data_%type%_index_length"
+						d7="SFO_%strtype%_extended_data_%type%_header_length"
+						PATCH_IF d3<0 BEGIN // hardcoded length, stored in d4
+							CLEAR_ARRAY offset_array
+							LPF read_whatever INT_VAR length=d2 offset=d1 RET value END
+							FOR (n=0;n<d4;++n) BEGIN
+								SET $offset_array("%n%")=value+n*d7
+							END
+						END ELSE BEGIN
+							GET_OFFSET_ARRAY offset_array d1 d2 d3 d4 d5 d6 d7 
+						END
+						parent_blockcount=0
+						PHP_EACH offset_array AS parent_ind=>parent_off BEGIN
+							++ parent_blockcount
+							READ_ASCII parent_off entry (d7)
+							PATCH_IF "SFO_%strtype%_varlengths_exist" BEGIN // only dlg, I think
+								LPF struct_read_vartypes STR_VAR data="%entry%" type strtype RET entry=data END
+							END
+							SPRINT $struct("%type%" "%parent_ind%") "%entry%"
+							SET $struct("%type%" "lookup" "%parent_ind%")=parent_ind
+							// get child entries
+							PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+								PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN 
+									SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+									PATCH_FOR_EACH entry IN index_offset index_length number_offset number_length BEGIN
+										SET "%entry%"=$"SFO_%strtype%_parent_child_data"("%pc_id%" "%entry%")
+									END
+									length=$"SFO_%strtype%_extended_data"("%child%" header_length)
+									offset=$"SFO_%strtype%_extended_data"("%child%" offset)
+									offset_length=$"SFO_%strtype%_extended_data"("%child%" offset_length)
+									GET_OFFSET_ARRAY2 child_array parent_off offset offset_length number_offset number_length index_offset index_length length
+									child_blockcount=0
+									PHP_EACH child_array AS child_ind=>child_off BEGIN
+										++child_blockcount
+										READ_ASCII child_off child_data (length)
+										PATCH_IF "SFO_%strtype%_varlengths_exist" BEGIN // only dlg, I think
+											LPF struct_read_vartypes STR_VAR data="%child_data%" type="%child%" strtype RET child_data=data END
+										END
+										SPRINT $struct("%type%" "%parent_ind%" "%pc_id%" "%child_ind%") "%child_data%"
+										SET $struct("%type%"  "%parent_ind%" "%pc_id%" "lookup" "%child_ind%")=child_ind
+									END		
+									SET $struct("%type%" "%parent_ind%" "%pc_id%" "blockcount")=child_blockcount
+								END
+							END
+						END // end of cycle through parent blocks
+						SET $struct("%type%" "blockcount")=parent_blockcount
+				END ELSE BEGIN
+					SET $struct("%type%" "blockcount")=0
+				END
+			END
+		END ELSE BEGIN
+			SET $struct(extended)=0
+		END
+	END ELSE BEGIN
+		PATCH_WARN "No structure defined for extension <%strtype%>; returning empty array"
+	END
+END
+////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_PATCH_FUNCTION struct_read_vartypes
+	STR_VAR strtype=""
+			type="" 
+			data=""
+	RET data
+BEGIN
+	PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+		PATCH_IF $"SFO_%strtype%_var_data"("%vartype%" "type") STR_EQ "%type%" BEGIN
+			offset=$"SFO_%strtype%_var_data"("%vartype%" "offset")
+			length=$"SFO_%strtype%_var_data"("%vartype%" "length")
+			INNER_PATCH "%data%" BEGIN
+				PATCH_MATCH "%strtype%_%vartype%" WITH
+				"dlg_v1_transtrigger" BEGIN
+					READ_BYTE 0x0 flags
+					proceed = ((flags BAND 0b00000010)=0b00000010)
+				END
+				"dlg_v1_action" BEGIN
+					READ_BYTE 0x0 flags
+					proceed = ((flags BAND 0b00000100)=0b00000100)
+				
+				END
+				DEFAULT
+					proceed=1
+				END
+				PATCH_IF proceed BEGIN
+					LPF read_whatever INT_VAR length offset RET table_index=value END
+				END ELSE BEGIN
+					table_index = "-1"
+				END
+			END
+			PATCH_IF table_index>=0 BEGIN
+				offset=$"SFO_%strtype%_var_data"("%vartype%" "index_offset")
+				length=$"SFO_%strtype%_var_data"("%vartype%" "index_length")
+				LPF read_whatever INT_VAR length offset RET table_offset=value END
+				READ_LONG (table_offset + 0x8*table_index) entry_offset
+				READ_LONG (table_offset + 0x8*table_index + 0x4) entry_length
+				READ_ASCII entry_offset entry (entry_length)
+			END ELSE BEGIN
+				SPRINT entry ""
+				entry_length=0
+			END
+			INNER_PATCH_SAVE data "%data%" BEGIN
+				insert_point=BUFFER_LENGTH
+				INSERT_BYTES insert_point 4
+				WRITE_LONG insert_point entry_length
+				insert_point +=4
+				INSERT_BYTES insert_point entry_length
+				WRITE_ASCII insert_point "%entry%"
+			END
+			
+		END
+	END
+END
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_write}
+{
+Given a structure 'struct', write it to 'path/file', or to existing game file 'file' if path is unspecified, or to the currently-open file in patch context.
+The file type is specified by 'strtype'; note that we might well be editing an extended header
+in an INNER_PATCH, not the main file. If strype isn't specified, we assume we're patching a base file and we read it in from the struct itself.
+
+if write_header=0, leave the header alone; similarly for write_extended.
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION struct_write
+	INT_VAR write_header=1//boolean
+			write_extended=1//boolean
+			telemetry=0//boolean
+			overwrite=0//boolean
+			edit_strrefs_in_place=0//boolean
+	STR_VAR strtype=""
+			struct=""
+			file=""
+			path=""
+BEGIN
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		COPY_EXISTING "%file%" override
+			LPF struct_write INT_VAR write_header write_extended telemetry overwrite edit_strrefs_in_place STR_VAR strtype struct file path END
+		BUT_ONLY
+	END ELSE BEGIN
+		COPY "%path%/%file%" "%path%"
+			LPF struct_write INT_VAR write_header write_extended telemetry overwrite edit_strrefs_in_place STR_VAR strtype struct file path END
+	END
+END
+
+DEFINE_PATCH_FUNCTION struct_write
+	INT_VAR write_header=1//boolean
+			write_extended=1//boolean
+			edit_strrefs_in_place=0//boolean
+			telemetry=0//boolean
+			overwrite=0//boolean
+	STR_VAR struct=""
+			strtype=""
+BEGIN
+	PATCH_IF "%strtype%" STR_EQ "" BEGIN
+		SPRINT strtype $"%struct%"("strtype")
+	END
+	PATCH_IF VARIABLE_IS_SET $SFO_structures_defined("%strtype%") BEGIN
+		//overwrite setup
+		header_length="SFO_%strtype%_offsets_header_length"
+		PATCH_IF (BUFFER_LENGTH<header_length) || overwrite BEGIN
+			DELETE_BYTES 0x0 BUFFER_LENGTH
+			INSERT_BYTES 0x0 header_length
+			LPF struct_write_strtype STR_VAR strtype END
+		END
+		//special case: cre items
+		PATCH_MATCH "%strtype%" WITH
+		"cre_v[^_]*" BEGIN
+			PATCH_IF write_extended && "%struct%_extended" BEGIN
+				LPF struct_delete_orphaned_items STR_VAR struct RET_ARRAY "%struct%"=struct END
+			END
+		END
+		DEFAULT END
+		// special-case treatment of some fields
+		PATCH_MATCH "%strtype%" WITH
+		"are_.*_actor" BEGIN
+			PATCH_IF "%%struct%_animation%" STR_EQ "FIRE_RING" BEGIN
+				SPRINT cre EVAL "%%struct%_resref%"
+				PATCH_IF FILE_EXISTS_IN_GAME "%cre%.cre" BEGIN
+					INNER_ACTION BEGIN
+						COPY_EXISTING - "%cre%.cre" nowhere
+							LPF struct_get STR_VAR arguments=animation RET animation=value END
+						BUT_ONLY
+					END
+					SPRINT "%struct%_animation" "%animation%"
+				END
+			END
+		END
+		"are_.*_ambient" BEGIN
+			count=0
+			FOR (n=1;n<=10;++n) BEGIN
+				SPRINT temp EVAL "%%struct%_sound%n%%"
+				PATCH_MATCH "%temp%" WITH "" "none" BEGIN
+				END
+				DEFAULT
+					++count
+				END
+			END
+			"%struct%_sound_count"=count
+		END
+		"are_.*_rest_interruption" BEGIN
+			count=0
+			FOR (n=1;n<=10;++n) BEGIN
+				SPRINT temp EVAL "%%struct%_resref%n%%"
+				PATCH_MATCH "%temp%" WITH "" "none" BEGIN
+				END
+				DEFAULT
+					++count
+				END
+			END
+			"%struct%_spawn_count"=count
+			
+		END
+		DEFAULT
+		
+		END
+		// the header
+		PATCH_IF write_header BEGIN
+			SPRINT header $"%struct%"("header")
+			PATCH_MATCH "%header%" WITH 
+			"" BEGIN
+			// first go through commalists and multiples
+			PHP_EACH "SFO_%strtype%_commalists" AS field=>type_list BEGIN
+				SPRINT list $"%struct%"("%field%")
+				PATCH_IF "%list%" STR_CMP "SFO_unset" BEGIN
+					WHILE "%list%" STR_CMP "" BEGIN
+						LPF return_first_entry STR_VAR list separator="," RET entry list END
+						LPF return_first_entry STR_VAR list="%type_list%" separator="," RET type_entry=entry type_list=list END
+						SPRINT $"%struct%"("%type_entry%") "%entry%"
+					END
+				END
+			END			
+			PHP_EACH "SFO_%strtype%_multiples" AS field=>type_list BEGIN
+				SPRINT value $"%struct%"("%field%")
+				PATCH_IF "%value%" STR_CMP "SFO_unset" BEGIN
+					WHILE "%type_list%" STR_CMP "" BEGIN
+						LPF return_first_entry STR_VAR list="%type_list%" separator="," RET type_entry=entry type_list=list END
+						SPRINT $"%struct%"("%type_entry%") "%value%"
+					END
+				END
+			END	
+			PHP_EACH "SFO_%strtype%_offsets" AS label=>offset BEGIN
+				SPRINT type $"SFO_%strtype%_types"("%label%")
+				SPRINT value $"%struct%"("%label%")
+				PATCH_IF VARIABLE_IS_SET $"%struct%"("%label%" old) BEGIN
+					PATCH_MATCH "%type%" WITH 
+					strref BEGIN
+						SPRINT value_old $"%struct%"("%label%" old)
+						SPRINT value_sound $"%struct%"("%label%" sound)
+						SPRINT value_sound_old $"%struct%"("%label%" sound_old)
+						proceed=!(("%value_old%" STR_EQ "%value%") && ("%value_sound%" STR_EQ "%value_sound_old%"))
+					
+					END
+					DEFAULT
+						SPRINT value_old $"%struct%"("%label%" old)
+						proceed=!("%value_old%" STR_EQ "%value%")
+					END
+				END ELSE BEGIN
+					proceed=1
+				END
+				PATCH_IF proceed BEGIN
+					PATCH_MATCH "%type%" WITH
+					byte sbyte BEGIN
+						WRITE_BYTE offset value
+					END
+					short sshort BEGIN
+						WRITE_SHORT offset value
+					END
+					long slong BEGIN
+						WRITE_LONG offset value
+					END	
+					strength BEGIN
+						ex=0
+						INNER_PATCH_SAVE value "%value%" BEGIN
+							REPLACE_EVALUATE "\([0-9]+\)/\([0-9]+\)" BEGIN
+								PATCH_IF "%MATCH2%" STR_EQ "00" BEGIN
+									ex=100
+								END ELSE BEGIN
+									ex="%MATCH2%"
+								END
+							END
+							"%MATCH1%"
+						END
+						WRITE_BYTE offset value
+						WRITE_BYTE (offset + 1) ex
+						
+					END
+					ascii BEGIN
+						length=$"SFO_%strtype%_asciis"("%label%")
+						WRITE_ASCII offset "%value%" (length)
+					END
+					strref BEGIN
+						SPRINT sound $"%struct%"("%label%" sound)
+						PATCH_IF "%value%" STR_EQ "-1" BEGIN
+							WRITE_LONG offset value
+						END ELSE BEGIN
+							PATCH_MATCH "%value%" WITH
+							"t_[0-9]+" BEGIN
+								INNER_PATCH_SAVE tra_ref "%value%" BEGIN
+									DELETE_BYTES 0x0 2
+								END
+								PATCH_IF edit_strrefs_in_place BEGIN
+									//SPRINT temp (AT tra_ref)
+									INNER_ACTION BEGIN
+										STRING_SET_EVALUATE "%struct%_%label%-strref" (AT tra_ref) //"%temp%"
+									END
+								END ELSE BEGIN
+									SAY offset (AT tra_ref)
+								END
+							END
+							DEFAULT
+								PATCH_IF "%sound%" STR_EQ "" BEGIN
+									PATCH_IF edit_strrefs_in_place BEGIN
+										INNER_ACTION BEGIN
+											STRING_SET_EVALUATE "%struct%_%label%-strref" "%value%"
+										END
+									END ELSE BEGIN
+										SAY offset "%value%"
+									END
+								END ELSE BEGIN
+									PATCH_IF edit_strrefs_in_place BEGIN
+										INNER_ACTION BEGIN
+											STRING_SET_EVALUATE "%struct%_%label%-strref" "%value%" ["%sound%"]
+										END
+									END ELSE BEGIN
+										SAY offset "%value%" ["%sound%"]
+									END
+								END
+							END
+						END
+					END
+					
+					id id2 id4 id4b BEGIN
+						PATCH_IF !IS_AN_INT value BEGIN
+							SPRINT id $"SFO_%strtype%_ids"("%label%")
+							value=IDS_OF_SYMBOL ("%id%" "%value%")
+						END
+						PATCH_MATCH "%type%" WITH
+						id id1 BEGIN
+							WRITE_BYTE offset value
+						END
+						id2 BEGIN
+							WRITE_SHORT offset value
+						END
+						id4 BEGIN
+							WRITE_LONG offset value
+						END
+						id4b BEGIN
+							value1=value MODULO 0x10000
+							value2=value / 0x10000
+							WRITE_LONG offset (value1 * 0x10000 + value2)
+						END
+						DEFAULT
+							PATCH_WARN "unidentified datatype %type% in struct_write"
+						END
+					END
+					itmspl-proj BEGIN
+						PATCH_IF !IS_AN_INT value BEGIN
+							PATCH_IF IDS_OF_SYMBOL("projectl" "%value%")>=0 BEGIN
+								value=1+IDS_OF_SYMBOL("projectl" "%value%")		
+							END ELSE
+							PATCH_IF IDS_OF_SYMBOL("missile" "%value%")>=0 BEGIN
+								value=IDS_OF_SYMBOL("missile" "%value%")
+							END ELSE BEGIN
+								LPF warning STR_VAR warning="lib_struct can't find projectile '%value%' (probably used by %SOURCE_RES%)" END
+								value="-1"
+							END	
+						END
+						WRITE_SHORT offset value
+					END
+					
+					flag BEGIN
+						n=$"SFO_%strtype%_flags"("%label%")
+						PATCH_IF value BEGIN
+							WRITE_BYTE offset ( (BYTE_AT offset) BOR 2**n )
+						END ELSE BEGIN
+							WRITE_BYTE offset ( (BYTE_AT offset) BAND (0b11111111 - 2**n) )
+						END
+					END
+					lookup1 lookup2 lookup4 BEGIN
+						PATCH_IF !IS_AN_INT value BEGIN
+							TO_LOWER value
+							SPRINT lookup $"SFO_%strtype%_lookups"("%label%")
+							PATCH_IF VARIABLE_IS_SET $SFO_lookup_backward("%lookup%" "%value%") BEGIN
+								value=$SFO_lookup_backward("%lookup%" "%value%")
+							END ELSE BEGIN
+								PATCH_WARN "unrecognised value %value% in field %label%; defaulting to 0"
+								value=0
+							END			
+						END
+						PATCH_MATCH "%type%" WITH
+						lookup1 BEGIN
+							WRITE_BYTE offset value
+						END
+						lookup2 BEGIN
+							WRITE_SHORT offset value
+						END
+						lookup4 BEGIN
+							WRITE_LONG offset value
+						END
+						DEFAULT 
+							PATCH_WARN "unidentified datatype %type% in struct_read"
+						END
+					END
+					special commalist multiple BEGIN END
+					DEFAULT
+						PATCH_WARN "unidentified datatype %type% in struct_read"
+					END
+				END
+			END
+		 END
+		 DEFAULT
+			SPRINT 0x0 "%header%"
+		 END
+		END
+		// the extended bit
+		PATCH_IF (write_extended && "%struct%_extended" && VARIABLE_IS_SET $SFO_struct_primary("%strtype%")) BEGIN
+			// initialize any vardata
+			PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+				"vardata_index_%vartype%"=0
+			END
+			// firstly we want to get the index and count data
+			CLEAR_ARRAY write_index
+			CLEAR_ARRAY working_index
+			// count parent and parent/child arrays
+			PHP_EACH "SFO_%strtype%_extended_types" AS parent=>discard BEGIN
+				parent_count=0
+				parent_blockcount=$"%struct%"("%parent%" "blockcount")
+				FOR (parent_ind=0;parent_ind<parent_blockcount;++parent_ind) BEGIN
+					PATCH_IF $"%struct%"("%parent%" "lookup" "%parent_ind%" )>=0 BEGIN
+						parent_lookup=$"%struct%"("%parent%" "lookup" "%parent_ind%" )
+						++parent_count
+						PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard BEGIN
+							PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN
+								child_count=0
+								child_blockcount=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "blockcount")
+								FOR (child_ind=0;child_ind<child_blockcount;++child_ind) BEGIN
+									PATCH_IF $"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "lookup" "%child_ind%")>=0 BEGIN
+										++child_count
+									END						
+								END	
+								SET $write_index("%parent%" "%parent_ind%" "%pc_id%" "count")=child_count
+							END
+						END
+					END
+				END
+				SET $write_index("%parent%" "count")=parent_count
+				SET $working_index("%parent%")=parent_count
+			END
+			// work out the indices
+			// (note that we have to go through by parent entry so that repeated index entries to the same child in the same parent are sequential)
+			
+			
+			PHP_EACH "SFO_%strtype%_parent_list" AS parent=>discard BEGIN
+				parent_count=$write_index("%parent%" "count")
+				FOR (parent_ind=0;parent_ind<parent_count;++parent_ind) BEGIN
+					PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+						PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN		
+							SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+							index=$working_index("%child%") 
+							SET $write_index("%parent%" "%parent_ind%" "%pc_id%" "index") = index
+							count=$write_index("%parent%" "%parent_ind%" "%pc_id%" "count")
+							PATCH_IF telemetry BEGIN
+								PATCH_PRINT "%parent% %pc_id% %parent_ind%: %index% %count%"  
+							END
+							index += count
+						END
+						SET $working_index("%child%") = index
+					END
+				END
+			END
+			PATCH_IF telemetry BEGIN
+				PATCH_PRINT "Contents of write_index:"
+				LPF array_echo STR_VAR array=write_index END
+				PATCH_PRINT "Contents of working_index:"
+				LPF array_echo STR_VAR array=working_index END
+			END
+			// go through the parent blocks, writing them into a WRITE array and updating the indices while we're at 
+			CLEAR_ARRAY write_array
+			PHP_EACH "SFO_%strtype%_extended_types" AS parent=>discard BEGIN
+				parent_count=$write_index("%parent%" "count")
+				FOR (parent_ind=0;parent_ind<parent_count;++parent_ind) BEGIN
+					lookup=$"%struct%"("%parent%" "lookup" "%parent_ind%" )
+					PATCH_IF lookup>=0 BEGIN
+						PATCH_IF telemetry BEGIN
+							PATCH_PRINT "writing lookup/index data for lookup %lookup% of %parent%"
+						END
+						SPRINT data $"%struct%"("%parent%" "%lookup%")
+						
+						// vardata
+						PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+							PATCH_IF $"SFO_%strtype%_var_data"("%vartype%" "type") STR_EQ "%parent%" BEGIN
+								read_point="SFO_%strtype%_%parent%_offsets_header_length"
+								INNER_PATCH_SAVE data "%data%" BEGIN
+									READ_LONG read_point str_length
+									DELETE_BYTES read_point 4
+									PATCH_IF str_length>0 BEGIN
+										READ_ASCII read_point str (str_length)
+										DELETE_BYTES read_point str_length
+										index="vardata_index_%vartype%"
+										SPRINT "vardata_%vartype%_%index%" "%str%"
+										++"vardata_index_%vartype%"								
+									END ELSE BEGIN
+										index=$"SFO_%strtype%_var_data"("%vartype%" "default")
+									END
+									offset=$"SFO_%strtype%_var_data"("%vartype%" "offset")
+									length=$"SFO_%strtype%_var_data"("%vartype%" "length")
+									LPF write_whatever INT_VAR offset length write=index END
+								END
+							END						
+						END						
+						INNER_PATCH_SAVE data "%data%" BEGIN				  
+							PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+								PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN
+									PATCH_IF telemetry BEGIN
+										PATCH_PRINT "writing data for parent-child type %pc_id%"
+									END
+								
+									PATCH_FOR_EACH var IN index_offset index_length number_offset number_length BEGIN
+										"%var%"=$"SFO_%strtype%_parent_child_data"("%pc_id%" "%var%")
+									END		
+									index=$write_index("%parent%" "%parent_ind%" "%pc_id%" "index")
+									count=$write_index("%parent%" "%parent_ind%" "%pc_id%" "count")
+									PATCH_IF telemetry BEGIN
+										PATCH_PRINT "index: writing %index% to %index_offset%"
+										PATCH_PRINT "count: writing %count% to %number_offset%"
+									END
+									LPF write_whatever INT_VAR length=index_length offset=index_offset write=index END
+									LPF write_whatever INT_VAR length=number_length offset=number_offset write=count END
+								END	
+							END	
+						END
+						SPRINT $write_array("%parent%" "%parent_ind%") "%data%"
+					END
+				END		
+			END
+			
+			// wipe what's there now
+			len=$"SFO_%strtype%_offsets"("header_length")
+			DELETE_BYTES len (BUFFER_LENGTH - len)
+			// go through the parent blocks again, physically writing them both as parent and child and noting the offsets
+			PHP_EACH "SFO_%strtype%_extended_types" AS type=>discard BEGIN
+				// get offset data
+				PATCH_FOR_EACH var IN offset offset_length number number_length header_length child_only BEGIN
+					SPRINT x $"SFO_%strtype%_extended_data"("%type%" "%var%")
+					SET "%var%"=$"SFO_%strtype%_extended_data"("%type%" "%var%")
+				END
+				total_count=$working_index("%type%")
+				primary_count=$write_index("%type%" count)
+				current_offset=BUFFER_LENGTH
+				// update the offset entries
+				LPF write_whatever INT_VAR write=current_offset offset length=offset_length END
+				PATCH_IF number>=0 BEGIN
+					PATCH_IF child_only BEGIN
+						LPF write_whatever INT_VAR write=total_count offset=number length=number_length END				
+					END ELSE BEGIN
+						LPF write_whatever INT_VAR write=primary_count offset=number length=number_length END
+					END
+				END
+				// make space
+				INSERT_BYTES current_offset (total_count * header_length)
+				PATCH_IF telemetry BEGIN
+					PATCH_PRINT "Inserting extra bytes to make room for %total_count% type %type% entries; current offset now %current_offset%"
+				END
+				// insert the primary data
+				FOR (type_ind=0;type_ind<primary_count;++type_ind) BEGIN
+					SPRINT data $write_array("%type%" "%type_ind%")
+					WRITE_ASCII current_offset "%data%" (header_length)
+					current_offset +=header_length
+				END
+				// insert any of 'type' appearing as child entries
+				PHP_EACH "SFO_%strtype%_parent_list" AS parent=>discard3 BEGIN
+					parent_count=$write_index("%parent%" "count")
+					FOR (parent_ind=0;parent_ind<parent_count;++parent_ind) BEGIN
+						PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+							PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "child") STR_EQ "%type%" && $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN
+								child_count=$write_index("%parent%" "%parent_ind%" "%pc_id%" "count")
+								parent_lookup=$"%struct%"("%parent%" "lookup" "%parent_ind%")
+								FOR (child_ind=0;child_ind<child_count;++child_ind) BEGIN
+									child_lookup=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "lookup" "%child_ind%" )
+									PATCH_IF child_lookup>=0 BEGIN
+										PATCH_IF telemetry BEGIN
+											PATCH_PRINT "inserting the data at (%parent% %parent_lookup% %pc_id% %child_lookup%) at offset %current_offset%"
+										END
+										SPRINT data $"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "%child_lookup%")
+										
+										PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+											PATCH_IF $"SFO_%strtype%_var_data"("%vartype%" "type") STR_EQ "%type%" BEGIN
+												read_point="SFO_%strtype%_%type%_offsets_header_length"
+												INNER_PATCH_SAVE data "%data%" BEGIN
+													READ_LONG read_point str_length
+													DELETE_BYTES read_point 4
+													PATCH_IF str_length>0 BEGIN
+														READ_ASCII read_point str (str_length)
+														DELETE_BYTES read_point str_length
+														index="vardata_index_%vartype%"
+														SPRINT "vardata_%vartype%_%index%" "%str%"
+														++"vardata_index_%vartype%"	
+													END ELSE BEGIN
+														index=$"SFO_%strtype%_var_data"("%vartype%" "default")
+													END
+													offset=$"SFO_%strtype%_var_data"("%vartype%" "offset")
+													length=$"SFO_%strtype%_var_data"("%vartype%" "length")
+													LPF write_whatever INT_VAR offset length write=index END
+												END
+											END						
+										END	
+										WRITE_ASCII current_offset "%data%" (header_length)
+										current_offset +=header_length
+									END
+								END
+							END
+						END
+					END
+				END
+			END	
+			PATCH_IF "SFO_%strtype%_varlengths_exist" BEGIN
+				LPF struct_write_all_vartypes END
+			END
+
+		END // end of 'write_extended' check
+		LPF struct_write_postprocess STR_VAR strtype END
+		
+	END ELSE BEGIN
+		PATCH_WARN "struct_write: extension %strtype% is not recognized by lib_struct"
+	END
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_write_all_vartypes
+BEGIN
+	// get the total length of the tables
+	count=0
+	PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+		count+="vardata_index_%vartype%"	
+	END
+	// get the starting offset for var data
+	offset=BUFFER_LENGTH + count*8
+	// go through vartypes, physically assembling the data blocks for the tables and inserting them, and assembling the string data block
+	SPRINT vardata ""
+	PHP_EACH "SFO_%strtype%_var_types" AS vartype=>discard BEGIN
+		INNER_PATCH_SAVE table_data "" BEGIN
+			FOR (n=0;n<"vardata_index_%vartype%";++n) BEGIN
+				SPRINT var EVAL "%vardata_%vartype%_%n%%"
+				length = STRING_LENGTH "%var%"
+				INNER_PATCH_SAVE vardata "%vardata%" BEGIN
+					var_insert_point=BUFFER_LENGTH
+					INSERT_BYTES var_insert_point length
+					WRITE_ASCII var_insert_point "%var%"				
+				END
+				insert_point=BUFFER_LENGTH
+				INSERT_BYTES insert_point 8
+				WRITE_LONG insert_point offset
+				WRITE_LONG insert_point+4 length
+				offset+=length				
+			END
+		END
+		PATCH_FOR_EACH entry IN index_offset index_length number_offset number_length BEGIN
+			SET "%entry%" = $"SFO_%strtype%_var_data"("%vartype%" "%entry%")
+		END
+		LPF write_whatever INT_VAR offset=number_offset length=number_length write="vardata_index_%vartype%" END
+		insert_point=BUFFER_LENGTH
+		LPF write_whatever INT_VAR offset=index_offset length=index_length write=insert_point END
+		INSERT_BYTES insert_point (0x8 * "vardata_index_%vartype%" )
+		WRITE_ASCII insert_point "%table_data%"
+		
+	END
+	// insert the string data block
+	insert_point=BUFFER_LENGTH
+	INSERT_BYTES insert_point STRING_LENGTH "%vardata%"
+	WRITE_ASCII insert_point "%vardata%"
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_write_postprocess}
+{
+ARE files need a bit of postprocessing to update the offsets for headers only used in saved-game data. PRO files
+need to be deflated if they don't use the extended header
+}
+
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_write_postprocess//internal 
+	STR_VAR strtype=""
+BEGIN
+	PATCH_MATCH "%strtype%" WITH
+	"are_v1" BEGIN
+		WRITE_LONG 0xa0 (LONG_AT 0xbc) // explored bitmap apparently precedes songs
+		WRITE_LONG 0xb8 (LONG_AT 0x7c) // tiled objects apparently precede vertices
+	END
+	"are_v9_1" BEGIN
+		WRITE_LONG 0xb0 (LONG_AT 0xcc) // explored bitmap apparently precedes songs
+		WRITE_LONG 0xc8 (LONG_AT 0x8c) // tiled objects apparently precede vertices
+	END	
+	"pro.*" BEGIN
+		READ_SHORT 0x8 type
+		PATCH_IF type=1 BEGIN
+			DELETE_BYTES 0x100 (BUFFER_LENGTH - 0x100)
+		END ELSE
+		PATCH_IF type=2 BEGIN
+			DELETE_BYTES 0x200 (BUFFER_LENGTH - 0x200)
+		END
+	END
+	DEFAULT
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_echo}
+{
+Display the contents of the 'header' part of an IE struct. (For debugging.)
+}
+
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION struct_echo
+	STR_VAR struct=""
+			strtype=""
+BEGIN
+	OUTER_PATCH "" BEGIN
+		SPRINT strtype $"%struct%"("strtype")
+		PHP_EACH "SFO_%strtype%_offsets" AS ind=>discard BEGIN
+			PATCH_IF VARIABLE_IS_SET $"%struct%"("%ind%") BEGIN
+				SPRINT out $"%struct%"("%ind%")
+			END ELSE BEGIN
+				SPRINT out undefined
+			END
+			PATCH_PRINT "%ind%: %out%"
+		END
+	END
+
+
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_alter}
+{
+Applies a patch function 'patch' to every extended header of type 'type' that returns true (1) to function 'match',
+or to every such header if no function is specified. 'struct' is the struct in which the data is stored and is passed
+back at the end of the function. 
+
+If 'type' is of form 'parent_child' (e.g. 'ab_fx'), instead apply 'patch' to every child header of type 'child' whose
+parent is type 'parent', and where the child returns true to 'match' and the parent returns true to 'match_parent'.
+
+You can use the anonymous function construct with 'patch', 'match', and 'match_parent'. By default (i.e. unless altered
+by 'auto_open' and 'auto_close'), the anonymous function starts by opening the header into the struct 's', and finishes
+by writing it back. Also by default, the parent (if any) is opened into the struct 'p'.
+
+We can't enforce it, but to be meaningful the in and out 'struct' need to be the same (since we only write the changes).
+
+}
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_alter
+	INT_VAR auto_open=1//boolean
+			auto_close=1//boolean
+			debug=1//boolean
+			equip=0//boolean
+			replace=0//boolean
+	STR_VAR struct=""//array
+			type=""
+			match=""//function
+			patch=""//function
+			match_parent=""//function
+			vertices=""
+			slots=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%struct%" STR_EQ "" BEGIN
+			PATCH_FAIL "no struct specified for struct_alter"
+		END
+		LPF struct_process_vertices STR_VAR vertices RET_ARRAY vertex_data END
+		SPRINT strtype $"%struct%"("strtype")
+		PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%type%") BEGIN
+			LPF struct_alter_child INT_VAR auto_open auto_close debug STR_VAR struct pc_id="%type%" match patch match_parent RET_ARRAY struct END
+		END ELSE BEGIN
+
+			SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+			
+			// anonymous function construct
+			PATCH_IF debug BEGIN
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%match%" END
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%patch%" END
+			END
+			SPRINT strtype_sub "%strtype%_%type%"
+			PATCH_IF auto_open BEGIN
+					SPRINT prepend "LPF struct_read STR_VAR strtype=%strtype_sub% RET_ARRAY s=struct END"
+			END ELSE BEGIN
+				SPRINT prepend ""
+			END
+			PATCH_IF auto_close BEGIN
+					SPRINT append "LPF struct_write STR_VAR strtype=%strtype_sub% struct=s END"
+			END ELSE BEGIN
+				SPRINT append ""
+			END
+			PATCH_IF "%match%" STR_CMP "" BEGIN
+				LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" prepend RET match=function SFO_anon_func_count END
+			END
+			PATCH_IF "%patch%" STR_CMP "" BEGIN
+				LPF anon_check STR_VAR function="%patch%" prepend append RET patch=function SFO_anon_func_count END	
+			END ELSE BEGIN
+				PATCH_IF "%vertices%" STR_EQ "" && "%type%" STR_EQ "" && !equip BEGIN
+					PATCH_WARN "you are calling struct_alter with no patch"
+				END
+			END
+			
+			PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_extended_types"("%type%") BEGIN
+				PATCH_FAIL "%type% is not a recognised extension block for %strtype% files"
+			END
+			blockcount=$"%struct%"("%type%" blockcount)
+			entry_index=0
+			LPF struct_iter STR_VAR struct strtype type RET blockcount RET_ARRAY iter_array END
+			PHP_EACH iter_array AS index=>lookup BEGIN
+				// get the data
+				PATCH_IF "%index%" STR_CMP "null" BEGIN
+					SPRINT data $"%struct%"("%type%" "%lookup%") 
+					// check for a match
+					PATCH_IF "%match%" STR_EQ "" BEGIN
+						match_found=1
+					END ELSE BEGIN
+						INNER_PATCH "%data%" BEGIN
+							LPF "%match%" RET match_found=value END
+						END
+					END
+				END ELSE BEGIN
+					match_found=0
+				END
+				// if there's a match, apply the patch and write the new data
+				PATCH_IF match_found BEGIN
+					INNER_PATCH_SAVE data "%data%" BEGIN								
+						// set BB here if appropriate
+						LPF struct_set_bb END
+						//apply patch						
+						PATCH_IF "%patch%" STR_CMP "" BEGIN
+							LPF "%patch%" END
+						END
+					END
+					SPRINT $struct("%type%" "%lookup%") "%data%"
+					
+					// for creature items, set the item slot
+					PATCH_IF "%strtype%" STR_EQ "cre_v1" && "%type%" STR_EQ "item" BEGIN
+						PATCH_IF "%slots%" STR_CMP "" BEGIN
+							LPF struct_expand_slots STR_VAR slots RET slots END
+							slot_count=$"%struct%"(item_slot blockcount)
+							FOR (n=0;n<slot_count;++n) BEGIN
+								SPRINT slot_data $"%struct%"(item_slot "%n%")
+								INNER_PATCH "%slot_data%" BEGIN
+									READ_SHORT 0x0 item_in_slot
+								END	
+								PATCH_IF item_in_slot=index BEGIN
+									INNER_PATCH_SAVE blank_slot_data "" BEGIN
+										INSERT_BYTES 0x0 2
+										WRITE_SHORT 0x0 "-1"
+									END
+									SPRINT $struct("item_slot" "%n%") "%blank_slot_data%"
+									SPRINT $"%struct%"("item_slot" "%n%") "%blank_slot_data%"
+								END
+							END
+							LPF struct_set_slot INT_VAR item_number=index equip replace STR_VAR slots struct RET slot_number_assigned RET_ARRAY struct END
+							PATCH_IF slot_number_assigned>=0 BEGIN
+								INNER_PATCH_SAVE new_slot_data "" BEGIN
+									INSERT_BYTES 0x0 2
+									WRITE_SHORT 0x0 index
+								END
+								SPRINT $struct("item_slot" "%slot_number_assigned%") "%new_slot_data%"
+								SPRINT $"%struct%"("item_slot" "%slot_number_assigned%") "%new_slot_data%"
+							END
+						END ELSE
+						PATCH_IF equip BEGIN // equipping the current item with no change in slot
+							slot_count=$"%struct%"(item_slot blockcount)
+							FOR (n=0;n<slot_count;++n) BEGIN
+								SPRINT slot_data $"%struct%"(item_slot "%n%")
+								INNER_PATCH "%slot_data%" BEGIN
+									READ_SHORT 0x0 item_in_slot
+								END	
+								PATCH_IF item_in_slot=index BEGIN
+									PATCH_IF n>=9 && n<=12 BEGIN
+										equip_number=n - 9
+										INNER_PATCH_SAVE new_slot_data "" BEGIN
+											INSERT_BYTES 0x0 2
+											WRITE_SHORT 0 equip_number
+										END
+										SPRINT $struct("item_slot" 38) "%new_slot_data%"
+									END
+								END
+							END
+							
+						END
+					END
+					// now handle vertices
+					PATCH_IF "%vertices%" STR_CMP "" BEGIN
+						// set the actual vertices
+						PATCH_MATCH "%type%" WITH
+						container region door BEGIN
+							PATCH_FOR_EACH vertex_type IN
+							base open closed impeded_open impeded_closed BEGIN
+								PATCH_IF VARIABLE_IS_SET $vertex_data("%vertex_type%" count) BEGIN
+									PATCH_IF "%vertex_type%" STR_EQ "base" BEGIN
+										SPRINT pc_id "%type%_vertex"
+									END ELSE BEGIN
+										SPRINT pc_id "%type%_%vertex_type%_vertex"
+									END
+									PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+										vertex_count=$vertex_data("%vertex_type%" count)
+										SET $struct("%type%" "%lookup%" "%pc_id%" "blockcount")=vertex_count
+										FOR (ind=0;ind<vertex_count;++ind) BEGIN
+											x=$vertex_data("%vertex_type%" "%ind%" "x")
+											y=$vertex_data("%vertex_type%" "%ind%" "y")
+											INNER_PATCH_SAVE child_data "" BEGIN
+												INSERT_BYTES 0x0 4
+												WRITE_SHORT 0x0 x
+												WRITE_SHORT 0x2 y
+											END
+											SPRINT $struct("%type%" "%lookup%" "%pc_id%" "%ind%") "%child_data%"
+											SET $struct("%type%" "%lookup%" "%pc_id%" "lookup" "%ind%")=ind
+										END
+									END
+								END
+							END
+						END
+						DEFAULT
+						END
+					END
+				END
+			END	
+		END
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_add}
+{
+Adds 'number' new entries to the list of extended headers of type 'type', and then applies 'patch' to them. Entries are 
+inserted after header 'insert_point', or after the last header if there is no such header (this is the default). 
+'struct' is the struct in which the data is stored and is passed back at the end of the function. 
+
+If 'type' is of form 'parent_child' (e.g. 'ab_fx'), instead add entries of type 'child' as children of type 'parent'
+in the same fashion, whenever the parent returns true to 'match_parent'.
+
+You can use the anonymous function construct with 'patch', and 'match_parent'. By default (i.e. unless altered
+by 'auto_open' and 'auto_close'), the anonymous function starts by opening the header into the struct 's', and finishes
+by writing it back. Also by default, the parent (if any) is opened into the struct 'p'.
+
+We can't enforce it, but to be meaningful the in and out 'struct' need to be the same (since we only write the changes).
+
+If appropriate (e.g. for adding known spells to CRE files) the header array is sorted before reinsertion.
+}
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_add
+	INT_VAR insert_point="-1"
+			number=1
+			auto_open=1//boolean
+			auto_close=1//boolean
+			equip=1//boolean
+			replace=0//boolean
+			debug=1//boolean
+	STR_VAR struct=""
+			type=""
+			patch=""//function
+			match_parent=""//function
+			vertices=""
+			slots=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN	
+		PATCH_IF "%struct%" STR_EQ "" BEGIN
+			PATCH_FAIL "no struct specified for struct_add"
+		END
+		LPF struct_process_vertices STR_VAR vertices RET_ARRAY vertex_data END
+		SPRINT strtype $"%struct%"("strtype")
+		PATCH_IF "%strtype%" STR_EQ "cre_v1" && "%type%" STR_EQ "item" && number>1 BEGIN
+			PATCH_WARN "lib_struct (struct_add) warning: adding multiple creature items at once is not supported"
+		END
+		PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%type%") BEGIN
+			LPF struct_add_child INT_VAR auto_open auto_close number debug STR_VAR  struct pc_id="%type%" patch match_parent RET_ARRAY struct END
+		END ELSE BEGIN
+			SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+			PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_extended_types"("%type%") BEGIN
+				PATCH_FAIL "%type% is not a recognised extension block for %strtype% files"
+			END
+			
+			SPRINT strtype_sub "%strtype%_%type%"
+			PATCH_IF auto_open BEGIN
+					SPRINT prepend "LPF struct_read STR_VAR strtype=%strtype_sub% RET_ARRAY s=struct END"
+			END ELSE BEGIN
+				SPRINT prepend ""
+			END
+			PATCH_IF auto_close BEGIN
+					SPRINT append "LPF struct_write STR_VAR strtype=%strtype_sub% struct=s END"
+			END ELSE BEGIN
+				SPRINT append ""
+			END
+			
+			// anonymous function construct
+			PATCH_IF debug BEGIN
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%patch%" END
+			END
+			PATCH_IF "%patch%" STR_CMP "" BEGIN
+				LPF anon_check STR_VAR function="%patch%" prepend append RET patch=function SFO_anon_func_count END	
+			END 
+			
+			// get a blank copy of the header
+			INNER_PATCH_SAVE data_base "" BEGIN
+				PATCH_WITH_SCOPE BEGIN
+					LPF struct_new STR_VAR strtype="%strtype%_%type%" RET_ARRAY s=struct END
+					LPF struct_write STR_VAR struct=s END
+				END
+				LPF struct_init STR_VAR type strtype END
+			END
+			// we want a new copy of the 'type lookup' bit of the struct.
+			// & we'll add the new data while we're at it
+			CLEAR_ARRAY lookup_array
+			blockcount=$"%struct%"("%type%" blockcount)
+			FOR (i=0;i<blockcount+number;++i) BEGIN
+				SET $lookup_array("%i%")="-1"
+			END
+			count=0 // how far we are through the new array
+			index=0 // how far we are through the old array
+			insert_here="-1"
+			// put the old data into the new array; work out where to put the new data
+			
+			FOR (p=0;p<blockcount;++p) BEGIN
+				PATCH_IF index=insert_point BEGIN
+					insert_here=p
+					count+=number
+				END
+				lookup=$"%struct%"("%type%" lookup "%p%")
+				PATCH_IF lookup>=0 BEGIN
+					SET $lookup_array("%count%")=lookup
+					++index
+					++count		
+				END 
+			END
+
+			PATCH_IF insert_here<0 BEGIN
+				insert_here=index
+				count+=number
+			END
+			// insert the new data
+			FOR (entry_index=0;entry_index<number;++entry_index) BEGIN
+				ind=insert_here+entry_index
+				SET $lookup_array("%ind%")=blockcount
+				INNER_PATCH_SAVE data_new "%data_base%" BEGIN								
+					// set BB here if appropriate
+					LPF struct_set_bb END
+					// apply patch
+					PATCH_IF !("%patch%" STR_EQ "") BEGIN
+						LPF "%patch%" END
+					END
+				END
+				SPRINT $struct("%type%" "%blockcount%") "%data_new%"
+				// child data (including vertices)
+				PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+					PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+						SET $struct("%type%" "%blockcount%" "%pc_id%" "blockcount")=0
+					END
+				END
+				// vertices here
+				PATCH_MATCH "%type%" WITH
+				container region door BEGIN
+					PATCH_FOR_EACH vertex_type IN
+					base open closed impeded_open impeded_closed BEGIN
+						PATCH_IF VARIABLE_IS_SET $vertex_data("%vertex_type%" count) BEGIN
+							PATCH_IF "%vertex_type%" STR_EQ "base" BEGIN
+								SPRINT pc_id "%type%_vertex"
+							END ELSE BEGIN
+								SPRINT pc_id "%type%_%vertex_type%_vertex"
+							END
+							PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+								vertex_count=$vertex_data("%vertex_type%" count)
+								SET $struct("%type%" "%blockcount%" "%pc_id%" "blockcount")=vertex_count
+								FOR (ind=0;ind<vertex_count;++ind) BEGIN
+									x=$vertex_data("%vertex_type%" "%ind%" "x")
+									y=$vertex_data("%vertex_type%" "%ind%" "y")
+									INNER_PATCH_SAVE child_data "" BEGIN
+										INSERT_BYTES 0x0 4
+										WRITE_SHORT 0x0 x
+										WRITE_SHORT 0x2 y
+									END
+									SPRINT $struct("%type%" "%blockcount%" "%pc_id%" "%ind%") "%child_data%"
+									SET $struct("%type%" "%blockcount%" "%pc_id%" "lookup" "%ind%")=ind
+								END
+							END
+						END
+					END
+				END
+				DEFAULT 				
+				END
+				// for creature items, set the item slot
+				PATCH_IF "%strtype%" STR_EQ "cre_v1" && "%type%" STR_EQ "item" BEGIN
+					LPF struct_expand_slots STR_VAR slots RET slots END
+					LPF struct_set_slot INT_VAR item_number=blockcount equip replace STR_VAR item_data="%data_new%" slots struct RET_ARRAY struct END
+				END
+				++blockcount
+			END
+			// if necessary, sort the lookup array
+			PATCH_MATCH "%strtype%-%type%" WITH
+			"cre.*-knownspell" BEGIN
+				LPF array_sort STR_VAR array=lookup_array function=struct_srt_cre_ks RET_ARRAY lookup_array=array END
+			END
+			DEFAULT
+			END
+			// write the changed lookups to struct
+			SET $struct("%type%" blockcount)=blockcount
+			ind=0 // do it this way in case we sort the array
+			PHP_EACH lookup_array AS k=>v BEGIN
+				SET $struct("%type%" lookup "%ind%")=v
+				++ind
+			END	
+		END
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// sorting helper functions
+/// take as input a key in the lookup table. Return something for that key such that sorting wrt it 
+/// correctly orders the lookup table. -1 should always return something that sorts it last.
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//// known spells - need to appear in the order innate-priest-wizard, and then by level
+
+DEFINE_PATCH_FUNCTION struct_srt_cre_ks//internal
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	entry=$lookup_array("%arguments%")
+	PATCH_IF entry>=0 BEGIN
+		PATCH_IF VARIABLE_IS_SET $struct("%type%" "%entry%") BEGIN
+			SPRINT data $struct("%type%" "%entry%")		
+		END ELSE BEGIN
+			SPRINT data $"%struct%"("%type%" "%entry%")
+		END
+		INNER_PATCH "%data%" BEGIN
+			READ_SHORT 0xa spelltype // 0=priest, 1=wizard, 2=innate, but we want innate-priest-wizard
+			READ_SHORT 0x8 level
+		END
+		PATCH_IF spelltype=0 BEGIN
+			SPRINT value "p-%level%"
+		END ELSE
+		PATCH_IF spelltype=1 BEGIN
+			SPRINT value "w-%level%"
+		END ELSE BEGIN
+			SPRINT value "i"
+		END
+	END ELSE BEGIN
+		SPRINT value "z"
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_clone}
+{
+Adds 'number' copies of any extended header of type 'type' which return true to the function 'match', and 
+then applies 'patch' to them. 'struct' is the struct in which the data is stored and is passed back at the end of the function. 
+
+If 'type' is of form 'parent_child' (e.g. 'ab_fx'), instead clone entries of type 'child' as children of type 'parent'
+in the same fashion, under the additional requirement that the parent returns true to 'match_parent'.
+
+You can use the anonymous function construct with 'patch', 'match', and 'match_parent'. By default (i.e. unless altered
+by 'auto_open' and 'auto_close'), the anonymous function starts by opening the header into the struct 's', and finishes
+by writing it back. Also by default, the parent (if any) is opened into the struct 'p'.
+
+We can't enforce it, but to be meaningful the in and out 'struct' need to be the same (since we only write the changes).
+
+}
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_clone
+	INT_VAR number=1
+			multi_match=9999
+			clone_above=0
+			auto_open=1//boolean
+			auto_close=1//boolean
+			open_on_match=0//boolean
+			open_parent=0//boolean
+			debug=1//boolean
+	STR_VAR struct=""
+			type=""
+			match=""//function
+			patch=""//function
+			match_parent=""//function
+			vertices=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%struct%" STR_EQ "" BEGIN
+			PATCH_FAIL "no struct specified for struct_clone"
+		END
+		SPRINT strtype $"%struct%"("strtype")
+		LPF struct_process_vertices STR_VAR vertices RET_ARRAY vertex_data END
+		PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%type%") BEGIN
+			LPF struct_clone_child INT_VAR multi_match number auto_open open_on_match open_parent debug STR_VAR struct pc_id="%type%" match patch match_parent RET_ARRAY struct END
+		END ELSE BEGIN
+			SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+			PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_extended_types"("%type%") BEGIN
+				PATCH_FAIL "%type% is not a recognised extension block for %strtype% files"
+			END
+
+			// anonymous function construct
+
+			PATCH_IF debug BEGIN
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%match%" END
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%patch%" END
+			END
+			SPRINT strtype_sub "%strtype%_%type%"
+			PATCH_IF auto_close BEGIN
+					SPRINT append "LPF struct_write STR_VAR strtype=%strtype_sub% struct=s END"
+			END ELSE BEGIN
+				SPRINT append ""
+			END
+			PATCH_IF "%match%" STR_CMP "" BEGIN
+				LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" RET match=function SFO_anon_func_count END
+			END
+			PATCH_IF "%patch%" STR_CMP "" BEGIN
+				LPF anon_check STR_VAR function="%patch%" append RET patch=function SFO_anon_func_count END	
+			END 
+			SPRINT prepend ""
+			SPRINT append ""
+
+			// we want a new copy of the 'type lookup' bit of the struct.
+			// & we'll add the new data while we're at it
+			blockcount=$"%struct%"("%type%" blockcount)
+			CLEAR_ARRAY lookup_array
+			FOR (i=0;i<blockcount;++i) BEGIN
+				SET $lookup_array("%i%")="-1"
+			END
+			blockcount_old=blockcount
+			count=0 // how far we are through the new array
+			index=0 // how far we are through the old array
+			matches_made=0// how many matches have we made so far
+			FOR (p=0;p<blockcount_old;++p) BEGIN
+				lookup=$"%struct%"("%type%" lookup "%p%")
+				PATCH_IF lookup>=0 BEGIN // a real entry
+					PATCH_IF !clone_above BEGIN
+						SET $lookup_array("%count%")=lookup
+						++count
+						++index
+					END
+					SPRINT data $"%struct%"("%type%" "%lookup%")
+					// check for a match
+					PATCH_IF matches_made<multi_match BEGIN
+						PATCH_IF "%match%" STR_EQ "" BEGIN
+							match_found=1
+							++matches_made
+							PATCH_IF auto_open BEGIN
+								INNER_PATCH "%data%" BEGIN
+									LPF struct_read STR_VAR strtype="%strtype%_%type%" RET_ARRAY s=struct END
+								END
+							END
+						END ELSE BEGIN
+							INNER_PATCH "%data%" BEGIN						
+								LPF struct_read STR_VAR strtype="%strtype%_%type%" RET_ARRAY s=struct END
+								LPF "%match%" RET match_found=value END
+							END
+						END
+					END 
+					ELSE BEGIN
+						match_found=0
+					END
+					PATCH_IF match_found BEGIN
+						// carry out the clone
+						FOR (entry_index=0;entry_index<number;++entry_index) BEGIN
+							INNER_PATCH_SAVE data_new "%data%" BEGIN								
+								// set BB here if appropriate
+								LPF struct_set_bb END
+								// patch if appropriate
+								PATCH_IF !("%patch%" STR_EQ "") BEGIN
+									LPF "%patch%" END
+								END
+							END
+							SPRINT $struct("%type%" "%blockcount%") "%data_new%"
+							// child data (NB 'blockcount' is both the new lookup and the actual location of the new data)
+							PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+								PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN
+									// get the blockcount for this entry and set it
+									blockcount_child=$"%struct%"("%type%" "%lookup%" "%pc_id%" "blockcount")
+									SET $struct("%type%" "%blockcount%" "%pc_id%" "blockcount")=blockcount_child
+									// copy the data for the child over
+									FOR (child_ind=0;child_ind<blockcount_child;++child_ind) BEGIN
+										SPRINT $struct("%type%" "%blockcount%" "%pc_id%" "%child_ind%") $"%struct%"("%type%" "%lookup%" "%pc_id%" "%child_ind%")
+									END
+									// copy over the child lookup data
+									FOR (child_ind=0;child_ind<blockcount_child;++child_ind) BEGIN
+										SET $struct("%type%" "%blockcount%" "%pc_id%" "lookup" "%child_ind%" ) = $"%struct%"("%type%" "%lookup%" "%pc_id%" "lookup" "%child_ind%")
+									END
+								END
+							END
+							// do any vertices
+							PATCH_MATCH "%type%" WITH
+							container region door BEGIN
+								PATCH_FOR_EACH vertex_type IN
+								base open closed impeded_open impeded_closed BEGIN
+									PATCH_IF VARIABLE_IS_SET $vertex_data("%vertex_type%" count) BEGIN
+										PATCH_IF "%vertex_type%" STR_EQ "base" BEGIN
+											SPRINT pc_id "%type%_vertex"
+										END ELSE BEGIN
+											SPRINT pc_id "%type%_%vertex_type%_vertex"
+										END
+										PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+											vertex_count=$vertex_data("%vertex_type%" count)
+											SET $struct("%type%" "%blockcount%" "%pc_id%" "blockcount")=vertex_count
+											FOR (ind=0;ind<vertex_count;++ind) BEGIN
+												x=$vertex_data("%vertex_type%" "%ind%" "x")
+												y=$vertex_data("%vertex_type%" "%ind%" "y")
+												INNER_PATCH_SAVE child_data "" BEGIN
+													INSERT_BYTES 0x0 4
+													WRITE_SHORT 0x0 x
+													WRITE_SHORT 0x2 y
+												END
+												SPRINT $struct("%type%" "%blockcount%" "%pc_id%" "%ind%") "%child_data%"
+												SET $struct("%type%" "%blockcount%" "%pc_id%" "lookup" "%ind%")=ind
+											END
+										END
+									END
+								END
+							END
+							DEFAULT 				
+							END
+							
+							SET $lookup_array("%count%")=blockcount
+							++count
+							++blockcount
+							
+						END			
+					END
+					PATCH_IF clone_above BEGIN
+						SET $lookup_array("%count%")=lookup
+						++count	
+						++index
+					END
+				END 
+			END
+			// write the changed lookups to struct
+			SET $struct("%type%" blockcount)=blockcount
+			FOR (k=0;k<blockcount;++k) BEGIN
+				PATCH_IF VARIABLE_IS_SET $lookup_array("%k%") BEGIN
+					SET $struct("%type%" lookup "%k%")=$lookup_array("%k%")
+				END ELSE BEGIN
+					SET $struct("%type%" lookup "%k%")="-1"
+				END
+			END	
+		END
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{struct_delete}
+{
+Delete any extended headers of type 'type' which return true to the function 'match'. 'struct' is the 
+struct in which the data is stored and is passed back at the end of the function. 
+
+If 'type' is of form 'parent_child' (e.g. 'ab_fx'), instead delete entries of type 'child' as children of type 'parent'
+in the same fashion, under the additional requirement that the parent returns true to 'match_parent'.
+
+You can use the anonymous function construct with 'match' and 'match_parent'. By default (i.e. unless altered
+by 'auto_open' and 'auto_close'), the anonymous function starts by opening the header into the struct 's'. 
+Also by default, the parent (if any) is opened into the struct 'p'.
+
+We can't enforce it, but to be meaningful the in and out 'struct' need to be the same (since we only write the changes).
+
+}
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_delete
+	INT_VAR auto_open=1//boolean
+			debug=1//boolean
+	STR_VAR
+			struct=""
+			type=""
+			match=""//function
+			match_parent=""//function
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%struct%" STR_EQ "" BEGIN
+			PATCH_FAIL "no struct specified for struct_delete"
+		END
+		SPRINT strtype $"%struct%"("strtype")
+		PATCH_MATCH "%strtype%-%type%" WITH
+		"cre.*-item" BEGIN
+			PATCH_FAIL "You can't use struct_delete to remove items (it screws with the item slots). Use cre_remove_items instead."
+		END
+		"cre.*-item_slot" BEGIN
+			PATCH_FAIL "There are a fixed number of item slots; you can't delete them."
+		END
+		DEFAULT
+		END
+		PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%type%") BEGIN
+			LPF struct_delete_child INT_VAR auto_open debug STR_VAR struct pc_id="%type%" match match_parent RET_ARRAY struct END
+		END ELSE BEGIN
+			SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+			PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_extended_types"("%type%") BEGIN
+				PATCH_FAIL "%type% is not a recognised extension block for %strtype% files"
+			END
+			
+			// anonymous function construct
+
+			PATCH_IF debug BEGIN
+				LPF struct_debug STR_VAR strtype="%strtype%_%type%" struct=s function="%match%" END
+			END
+			SPRINT strtype_sub "%strtype%_%type%"
+			PATCH_IF auto_open BEGIN
+					SPRINT prepend "LPF struct_read STR_VAR strtype=%strtype_sub% RET_ARRAY s=struct END"
+			END ELSE BEGIN
+				SPRINT prepend ""
+			END
+			PATCH_IF "%match%" STR_CMP "" BEGIN
+				LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" prepend RET match=function SFO_anon_func_count END
+			END 
+			
+			
+
+			
+			// we want a new copy of the 'type lookup' bit of the struct.
+			// & we'll add the new data while we're at it
+			CLEAR_ARRAY lookup_array
+			blockcount=$"%struct%"("%type%" blockcount)
+			FOR (index=0;index<blockcount;++index) BEGIN
+				SET $lookup_array("%index%")="-1"
+			END
+			count=0 // how far we are through the new array
+			FOR (index=0;index<blockcount;++index) BEGIN
+				lookup=$"%struct%"("%type%" "lookup" "%index%")
+				PATCH_IF lookup>=0 BEGIN
+					SPRINT data $"%struct%"("%type%" "%lookup%")
+					// check for a match
+					PATCH_IF "%match%" STR_EQ "" BEGIN
+						match_found=1
+					END ELSE BEGIN
+						INNER_PATCH "%data%" BEGIN
+							LPF "%match%" RET match_found=value END
+						END
+					END
+					// if no match, write it in
+					PATCH_IF !match_found BEGIN
+						SET $lookup_array("%count%")=lookup
+						++count
+					END
+				END
+			END
+			// write the changed lookups to struct
+			PHP_EACH lookup_array AS k=>v BEGIN
+				SET $struct("%type%" lookup "%k%")=v
+			END	
+			// and that's it!
+		END
+	END
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_alter_child//internal
+	INT_VAR auto_open=1//boolean
+			auto_close=1//boolean
+			debug=1//boolean
+	STR_VAR struct=""
+			pc_id=""
+			match=""//function
+			match_parent=""//function
+			patch=""//function
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+	SPRINT strtype $"%struct%"("strtype")
+	PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%pc_id%") BEGIN
+		PATCH_FAIL "%pc_id% is not a recognised parent/child relation for %strtype% files"
+	END
+	SPRINT parent $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent")
+	SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+	
+	// anonymous function construct
+
+	PATCH_IF debug BEGIN
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match_parent%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%match%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%patch%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%patch%" END
+	END
+	SPRINT strtype_parent "%strtype%_%parent%"
+	SPRINT strtype_child "%strtype%_%child%"
+	PATCH_IF auto_close BEGIN
+		SPRINT append "LPF struct_write STR_VAR strtype=%strtype_child% struct=s END"
+	END ELSE BEGIN
+		SPRINT append ""
+	END
+	PATCH_IF "%match%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" RET match=function SFO_anon_func_count END
+	END
+	PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_parent%" RET match_parent=function SFO_anon_func_count END
+	END
+	PATCH_IF "%patch%" STR_CMP "" BEGIN
+		LPF anon_check STR_VAR function="%patch%" append RET patch=function SFO_anon_func_count END	
+	END 
+
+	
+	// iterate through parent
+	parent_blockcount=$"%struct%"("%parent%" blockcount)
+	parent_index=0 // how far we are through the new array
+	FOR (ind=0;ind<parent_blockcount;++ind) BEGIN
+		parent_lookup=$"%struct%"("%parent%" "lookup" "%ind%")
+		PATCH_IF parent_lookup>=0 BEGIN
+			SPRINT parent_data $"%struct%"("%parent%" "%parent_lookup%")
+			// look for a match; open if necessary
+			INNER_PATCH "%parent_data%" BEGIN
+				PATCH_IF auto_open BEGIN
+					LPF struct_read STR_VAR strtype="%strtype_parent%" RET_ARRAY p=struct END
+				END
+				PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+					LPF "%match_parent%" RET parent_match_found=value END
+				END ELSE BEGIN
+					parent_match_found=1
+				END
+			END
+			// if we have a match, iterate through child data
+			PATCH_IF parent_match_found BEGIN
+				child_blockcount=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" blockcount)
+				child_index=0
+				FOR (ind2=0;ind2<child_blockcount;++ind2) BEGIN
+					child_lookup=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "lookup" "%ind2%")
+					PATCH_IF child_lookup>=0 BEGIN
+						SPRINT child_data $"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "%child_lookup%")
+						// look for a child match
+						PATCH_IF "%match%" STR_EQ "" BEGIN
+							child_match_found=1
+							PATCH_IF auto_open BEGIN
+								INNER_PATCH "%child_data%" BEGIN
+									LPF struct_read STR_VAR strtype="%strtype_child%" RET_ARRAY s=struct END
+								END							
+							END
+						END ELSE BEGIN
+							INNER_PATCH "%child_data%" BEGIN
+								PATCH_IF auto_open BEGIN
+									LPF struct_read STR_VAR strtype="%strtype_child%" RET_ARRAY s=struct END
+								END
+								LPF "%match%" RET child_match_found=value END
+							END
+						END
+						// if matched, patch
+						PATCH_IF child_match_found BEGIN
+							INNER_PATCH_SAVE child_data "%child_data%" BEGIN
+								LPF "%patch%" END					
+							END				
+							// and then write 
+							SPRINT $struct("%parent%" "%parent_lookup%" "%pc_id%" "%child_lookup%") "%child_data%"
+						END						
+						++child_index
+					END			
+				END	
+			END
+		++parent_index	
+		END
+	END
+		
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_add_child//internal
+	INT_VAR auto_open=1//boolean
+			auto_close=1//boolean
+			debug=1//boolean
+			insert_point="-1"
+			number=1
+	STR_VAR struct=""
+			pc_id=""
+			match_parent=""//function
+			patch=""//function
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+	SPRINT strtype $"%struct%"("strtype")
+	PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%pc_id%") BEGIN
+		PATCH_FAIL "%pc_id% is not a recognised parent/child relation for %strtype% files"
+	END
+	SPRINT parent $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent")
+	SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+
+	
+	// anonymous function construct
+
+	SPRINT strtype_parent "%strtype%_%parent%"
+	SPRINT strtype_child "%strtype%_%child%"
+
+	PATCH_IF debug BEGIN
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match_parent%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%patch%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%patch%" END
+	END
+
+	PATCH_IF auto_open BEGIN
+		SPRINT prepend "LPF struct_read STR_VAR strtype=%strtype_child% RET_ARRAY s=struct END"
+	END ELSE BEGIN
+		SPRINT prepend ""
+	END
+	PATCH_IF auto_close BEGIN
+		SPRINT append "LPF struct_write STR_VAR strtype=%strtype_child% struct=s END"
+	END ELSE BEGIN
+		SPRINT append ""
+	END
+	PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_parent%" RET match_parent=function SFO_anon_func_count END
+	END
+	PATCH_IF "%patch%" STR_CMP "" BEGIN
+		LPF anon_check STR_VAR function="%patch%" prepend append RET patch=function SFO_anon_func_count END	
+	END 
+
+	
+	
+	//base data
+	INNER_PATCH_SAVE child_data_base "" BEGIN
+		PATCH_WITH_SCOPE BEGIN
+			LPF struct_new STR_VAR strtype="%strtype_child%" RET_ARRAY s=struct END
+			LPF struct_write STR_VAR struct=s END
+		END
+		LPF struct_init STR_VAR type="%pc_id%" strtype END
+	END
+
+	// iterate through parent
+	parent_blockcount=$"%struct%"("%parent%" blockcount)
+	parent_index=0 // how far we are through the new array
+	FOR (ind=0;ind<parent_blockcount;++ind) BEGIN
+		parent_lookup=$"%struct%"("%parent%" "lookup" "%ind%")
+		PATCH_IF parent_lookup>=0 BEGIN
+			SPRINT parent_data $"%struct%"("%parent%" "%parent_lookup%")
+			// look for a match; open if needed
+			INNER_PATCH "%parent_data%" BEGIN
+				PATCH_IF auto_open BEGIN
+					LPF struct_read STR_VAR strtype="%strtype_parent%" RET_ARRAY p=struct END
+				END
+				PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+					LPF "%match_parent%" RET parent_match_found=value END
+				END ELSE BEGIN
+					parent_match_found=1
+				END
+			END
+			PATCH_IF parent_match_found BEGIN
+				// check how many to do
+				number_here=number>1?number:parent_match_found
+				// if we have a match, iterate through child data
+				child_blockcount=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" blockcount)
+				// we want a new array
+				CLEAR_ARRAY lookup_array
+				FOR (index=0;index<child_blockcount+number_here;++index) BEGIN
+					SET $lookup_array("%index%")="-1"
+				END
+				child_blockcount_old=child_blockcount
+				count=0 // how far we are through the new array
+				index=0 // how far we are through the old array
+				insert_here="-1"
+				// put the old data into the new array; work out where to put the new data
+				FOR (p=0;p<child_blockcount_old;++p) BEGIN
+					PATCH_IF index=insert_point BEGIN
+						insert_here=p
+						count+=number_here
+					END
+					lookup=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" lookup "%p%")
+					PATCH_IF lookup>=0 BEGIN
+						SET $lookup_array("%count%")=lookup
+						++index
+						++count		
+					END 
+				END
+				PATCH_IF insert_here<0 BEGIN
+					insert_here=index
+					count+=number_here
+				END
+				// insert the new data
+				FOR (entry_index=0;entry_index<number_here;++entry_index) BEGIN
+					child_ind=insert_here+entry_index
+					SET $lookup_array("%child_ind%")=child_blockcount
+					INNER_PATCH_SAVE child_data_new "%child_data_base%" BEGIN	
+						PATCH_IF !("%patch%" STR_EQ "") BEGIN
+							LPF "%patch%" END
+						END
+					END
+					SPRINT $struct("%parent%" "%parent_lookup%" "%pc_id%" "%child_blockcount%") "%child_data_new%"
+					++child_blockcount
+				END
+				// write the changed lookups to struct
+				SET $struct("%parent%" "%parent_lookup%" "%pc_id%" blockcount)=child_blockcount
+				PHP_EACH lookup_array AS k=>v BEGIN
+					SET $struct("%parent%" "%parent_lookup%" "%pc_id%" lookup "%k%")=v
+				END	
+			END
+			++parent_index	
+		END
+	END
+	
+END
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_clone_child//internal
+	INT_VAR clone_above=0
+			number=1
+			auto_open=1//boolean
+			open_on_match=0//boolean
+			open_parent=0//boolean
+			debug=1//boolean
+			multi_match=9999
+	STR_VAR struct=""
+			pc_id=""
+			match=""//function
+			match_parent=""//function
+			patch=""//function
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+	SPRINT strtype $"%struct%"("strtype")
+	PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%pc_id%") BEGIN
+		PATCH_FAIL "%pc_id% is not a recognised parent/child relation for %strtype% files"
+	END
+	SPRINT parent $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent")
+	SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+
+	
+	// anonymous function construct
+
+	SPRINT strtype_parent "%strtype%_%parent%"
+	SPRINT strtype_child "%strtype%_%child%"
+
+	PATCH_IF debug BEGIN
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match_parent%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%match%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%patch%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%patch%" END
+	END
+
+	PATCH_IF auto_open || open_on_match BEGIN
+			SPRINT append "LPF struct_write STR_VAR strtype=%strtype_child% struct=s END"
+	END ELSE BEGIN
+			SPRINT append ""
+	END
+	PATCH_IF open_on_match && !auto_open BEGIN
+			SPRINT prepend "LPF struct_read STR_VAR strtype=~%strtype_child%~ RET_ARRAY s=struct END"	
+	END ELSE BEGIN
+		SPRINT prepend ""
+	END
+
+	PATCH_IF "%match%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" RET match=function SFO_anon_func_count END
+	END
+	PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_parent%" RET match_parent=function SFO_anon_func_count END
+	END
+	PATCH_IF "%patch%" STR_CMP "" BEGIN
+		LPF anon_check STR_VAR function="%patch%" prepend append RET patch=function SFO_anon_func_count END	
+	END 
+	
+	// iterate through parent
+	parent_blockcount=$"%struct%"("%parent%" blockcount)
+	parent_index=0 // how far we are through the array
+	FOR (ind=0;ind<parent_blockcount;++ind) BEGIN
+		parent_lookup=$"%struct%"("%parent%" "lookup" "%ind%")
+		PATCH_IF parent_lookup>=0 BEGIN
+			SPRINT parent_data $"%struct%"("%parent%" "%parent_lookup%")
+			// look for a match; open if needed
+			INNER_PATCH "%parent_data%" BEGIN
+				PATCH_IF auto_open || open_parent BEGIN
+					LPF struct_read STR_VAR strtype="%strtype_parent%" RET_ARRAY p=struct END
+				END
+				PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+					LPF "%match_parent%" RET parent_match_found=value END
+				END ELSE BEGIN
+					parent_match_found=1
+				END
+			END
+			PATCH_IF parent_match_found BEGIN
+				// if we have a match, iterate through child data
+				child_blockcount=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" blockcount)
+				// we want a new array
+				CLEAR_ARRAY lookup_array
+				child_blockcount_old=child_blockcount
+				FOR (i=0;i<child_blockcount;++i) BEGIN
+					SET $lookup_array("%i%")="-1"
+				END
+				child_count=0 // how far we are through the new array
+				child_index=0 // how far we are through the old array
+				matches_made=0
+				FOR (p=0;p<child_blockcount_old;++p) BEGIN
+					
+					lookup=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" lookup "%p%")
+					PATCH_IF lookup>=0 BEGIN // a real entry
+						PATCH_IF !clone_above BEGIN
+							SET $lookup_array("%child_count%")=lookup
+							++child_count
+							++child_index
+						END
+						SPRINT child_data $"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "%lookup%")
+						// check for a match
+						PATCH_IF matches_made<multi_match BEGIN
+							PATCH_IF "%match%" STR_EQ "" BEGIN
+								match_found=1
+								PATCH_IF auto_open BEGIN
+									INNER_PATCH "%child_data%" BEGIN
+										LPF struct_read STR_VAR strtype=~%strtype_child%~ RET_ARRAY s=struct END
+									END
+								END						
+							END ELSE BEGIN
+								INNER_PATCH "%child_data%" BEGIN
+									PATCH_IF auto_open BEGIN
+										LPF struct_read STR_VAR strtype=~%strtype_child%~ RET_ARRAY s=struct END
+									END
+									LPF "%match%" RET match_found=value END
+								END
+							END
+						END ELSE BEGIN
+							match_found=0
+						END
+						PATCH_IF match_found BEGIN
+							matches_made +=1
+							// carry out the clone
+							FOR (entry_index=0;entry_index<number;++entry_index) BEGIN
+								SET $lookup_array("%child_count%")=child_blockcount
+								INNER_PATCH_SAVE child_data_new "%child_data%" BEGIN
+									PATCH_IF !("%patch%" STR_EQ "") BEGIN
+										LPF "%patch%" END
+									END								
+								END
+								SPRINT $struct("%parent%" "%parent_lookup%" "%pc_id%" "%child_blockcount%") "%child_data_new%"
+								++child_count
+								++child_blockcount
+							END
+						END
+						PATCH_IF clone_above BEGIN
+							SET $lookup_array("%child_count%")=lookup
+							++child_count
+							++child_index
+						END	
+					END
+				END
+				// write the changed lookups to struct
+				SET $struct("%parent%" "%parent_lookup%" "%pc_id%" blockcount)=child_blockcount
+				FOR (k=0;k<child_blockcount;++k) BEGIN
+					PATCH_IF VARIABLE_IS_SET $lookup_array("%k%") BEGIN
+						SET $struct("%parent%" "%parent_lookup%" "%pc_id%" lookup "%k%")=$lookup_array("%k%")
+					END ELSE BEGIN
+						SET $struct("%parent%" "%parent_lookup%" "%pc_id%" lookup "%k%")="-1"
+					END
+				END
+			END
+			++parent_index	
+		END
+	END
+	
+END
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_delete_child//internal
+	INT_VAR auto_open=1//boolean
+			debug=1//boolean
+	STR_VAR struct=""
+			pc_id=""
+			match=""//function
+			match_parent=""//function
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null_discard") "" // weidu gets upset if you return an empty array into a nonempty one
+	SPRINT strtype $"%struct%"("strtype")
+	PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_parent_child_id"("%pc_id%") BEGIN
+		PATCH_FAIL "%pc_id% is not a recognised parent/child relation for %strtype% files"
+	END
+	SPRINT parent $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent")
+	SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
+
+
+	
+	// anonymous function construct
+
+	SPRINT strtype_parent "%strtype%_%parent%"
+	SPRINT strtype_child "%strtype%_%child%"
+
+	PATCH_IF debug BEGIN
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match_parent%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%child%" struct=s function="%match%" END
+		LPF struct_debug STR_VAR strtype="%strtype%_%parent%" struct=p function="%match%" END
+	END
+
+	PATCH_IF auto_open BEGIN
+			SPRINT prepend "LPF struct_read STR_VAR strtype=%strtype_child% RET_ARRAY s=struct END"
+	END ELSE BEGIN
+		SPRINT prepend ""
+	END
+
+	PATCH_IF "%match%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match%" prepend RET match=function SFO_anon_func_count END
+	END
+	PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+		LPF anon_check INT_VAR has_output=1 STR_VAR function="%match_parent%" RET match_parent=function SFO_anon_func_count END
+	END
+	
+	// iterate through parent
+	parent_blockcount=$"%struct%"("%parent%" blockcount)
+	parent_index=0 // how far we are through the array
+	FOR (ind=0;ind<parent_blockcount;++ind) BEGIN
+		parent_lookup=$"%struct%"("%parent%" "lookup" "%ind%")
+		PATCH_IF parent_lookup>=0 BEGIN
+			// look for a match; open if needed
+			SPRINT parent_data $"%struct%"("%parent%" "%parent_lookup%")
+			INNER_PATCH "%parent_data%" BEGIN
+				PATCH_IF auto_open BEGIN
+					LPF struct_read STR_VAR strtype="%strtype_parent%" RET_ARRAY p=struct END
+				END
+				PATCH_IF "%match_parent%" STR_CMP "" BEGIN
+					LPF "%match_parent%" RET parent_match_found=value END
+				END ELSE BEGIN
+					parent_match_found=1
+				END
+			END
+			PATCH_IF parent_match_found BEGIN
+				// if we have a match, iterate through child data
+				child_blockcount=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" blockcount)
+				// we want a new array
+				CLEAR_ARRAY lookup_array
+				FOR (i=0;i<child_blockcount;++i) BEGIN
+					SET $lookup_array("%i%")="-1"
+				END
+				count=0 // how far we are through the new array
+				FOR (p=0;p<child_blockcount;++p) BEGIN
+					lookup=$"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" lookup "%p%")
+					PATCH_IF lookup>=0 BEGIN // a real entry
+						SPRINT child_data $"%struct%"("%parent%" "%parent_lookup%" "%pc_id%" "%lookup%")
+						// check for a match
+						PATCH_IF "%match%" STR_EQ "" BEGIN
+							match_found=1
+						END ELSE BEGIN
+							INNER_PATCH "%child_data%" BEGIN
+								LPF "%match%" RET match_found=value END
+							END
+						END
+						PATCH_IF !match_found BEGIN
+							SET $lookup_array("%count%")=lookup
+							++count
+						END
+					END
+				END
+				// write the changed lookups to struct
+				PHP_EACH lookup_array AS k=>v BEGIN
+					SET $struct("%parent%" "%parent_lookup%" "%pc_id%" lookup "%k%")=v
+				END
+			END
+			++parent_index	
+		END
+	END
+	
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_display_lookups}
+{
+Display the lookup table for the extended-header types. (For debugging.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION struct_display_lookups 
+	STR_VAR struct=""
+BEGIN
+	OUTER_PATCH "" BEGIN
+		SPRINT strtype $"%struct%"("strtype")
+		PHP_EACH "SFO_%strtype%_extended_types" AS type=>discard BEGIN
+			blockcount=$"%struct%"("%type%" blockcount)
+			PATCH_PRINT "%struct%_%type%_blockcount=%blockcount%"
+			FOR (n=0;n<blockcount;++n) BEGIN
+				lookup=$"%struct%"("%type%" lookup "%n%")
+				PATCH_PRINT "%struct%_%type%_lookup_%n% = %lookup%"
+			END
+			FOR (n=0;n<blockcount;++n) BEGIN
+				PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+					PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+						child_blockcount=$"%struct%"("%type%" "%n%" "%pc_id%" blockcount)
+						PATCH_PRINT "%struct%_%type%_%n%_%pc_id%_blockcount=%child_blockcount%"
+						FOR (m=0;m<child_blockcount;++m) BEGIN
+							child_lookup=$"%struct%"("%type%" "%n%" "%pc_id%" lookup "%m%")
+							PATCH_PRINT "%struct%_%type%_%n%_%pc_id%_lookup_%m%=%child_lookup%"
+						END
+					
+					END
+				END
+			END
+		END
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_init}
+{
+Used internally by struct_add to set some default values when adding structs.
+(Use only if you can't set the default values via the struct-defining 2das.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION struct_init//internal
+	STR_VAR type="toplevel"
+			strtype=""
+BEGIN
+	PATCH_MATCH "%type%" WITH
+	"fx" BEGIN
+		PATCH_MATCH "%strtype%" WITH
+		"itm_.*" BEGIN // global ITM effect
+			WRITE_BYTE 0x2 1
+			WRITE_BYTE 0xc 2 // while equipped
+		END
+		DEFAULT
+		END
+	END
+	toplevel BEGIN
+		PATCH_MATCH "%strtype%" WITH
+		"cre_.*" BEGIN
+			LPF FJ_CRE_VALIDITY END
+		END
+		DEFAULT
+		END
+	END
+	DEFAULT
+	END
+	PATCH_MATCH "%strtype%" WITH
+	"pro.*" BEGIN
+		len=BUFFER_LENGTH
+		INSERT_BYTES len (0x300 - len)
+	END
+	DEFAULT
+	END
+END
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_debug} 
+{Checks an expression (assumed to be an anon function) for apparent references to
+nonexistent keys.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_debug
+	STR_VAR function=""
+			strtype=""
+			struct=""
+BEGIN
+	OUTER_PATCH "%function%" BEGIN
+		REPLACE_EVALUATE "\(^\|[^a-z]\)%struct%_\([a-z0-9_]+\)" BEGIN
+			PATCH_IF !VARIABLE_IS_SET $"SFO_%strtype%_types"("%MATCH2%") BEGIN
+				PATCH_WARN "Apparent reference to %struct%_%MATCH2%; %MATCH2% is not a field of %strtype%"
+			END
+		END
+		""
+	END
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_apply_regexp} 
+{Quickly apply the function 'function' to every header of the specified type where the
+file matches 'regexp'. Return an array of all entries where the fn returns 'value' for 
+at least one entry.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION struct_apply_regexp
+	INT_VAR auto_open=0
+			write=1
+			report_back=1
+	STR_VAR ext=""
+			regexp=".*"
+			function=""
+			type=""
+			strtype=""
+	RET_ARRAY array
+BEGIN
+	ACTION_IF "%type%" STR_EQ "" BEGIN
+		FAIL "You need to specify a type for struct_apply_regexp"
+	END
+  ACTION_CLEAR_ARRAY array
+  LAF anon_check INT_VAR has_output=report_back STR_VAR function RET function END	
+  ACTION_IF "%strtype%" STR_EQ "" BEGIN
+	LAF struct_get_default_version STR_VAR ext RET strtype END
+  END
+  ACTION_IF "%type%" STR_EQ "main" BEGIN
+ 	COPY_EXISTING_REGEXP "%regexp%\.%ext%" override
+		PATCH_IF auto_open BEGIN
+			LPF struct_read INT_VAR open_extended=0 RET_ARRAY m=struct END
+		END
+		LPF "%function%" RET value END
+		PATCH_IF value BEGIN
+			SPRINT filename "%SOURCE_RES%"
+			TO_LOWER filename
+			SPRINT $array("%filename%") ""
+		END
+	BUT_ONLY
+  END ELSE
+  ACTION_IF VARIABLE_IS_SET $"SFO_%strtype%_parent_child_data"("%type%" "parent") BEGIN
+	OUTER_SPRINT parent $"SFO_%strtype%_parent_child_data"("%type%" "parent")
+	OUTER_SPRINT child $"SFO_%strtype%_parent_child_data"("%type%" "child")
+	OUTER_SET read_offsets=0
+	COPY_EXISTING_REGEXP "%regexp%\.%ext%" override
+	    PATCH_IF !read_offsets BEGIN
+			LPF struct_get_strtype RET strtype END
+			d1="SFO_%strtype%_extended_data_%parent%_offset"
+			d2="SFO_%strtype%_extended_data_%parent%_offset_length"
+			d3="SFO_%strtype%_extended_data_%parent%_number"
+			d4="SFO_%strtype%_extended_data_%parent%_number_length"
+			d5="SFO_%strtype%_extended_data_%parent%_index"
+			d6="SFO_%strtype%_extended_data_%parent%_index_length"
+			d7="SFO_%strtype%_extended_data_%parent%_header_length"
+			
+			c1="SFO_%strtype%_extended_data_%child%_offset"
+			c2="SFO_%strtype%_extended_data_%child%_offset_length"
+			c3="SFO_%strtype%_parent_child_data_%type%_number_offset"
+			c4="SFO_%strtype%_parent_child_data_%type%_number_length"
+			c5="SFO_%strtype%_parent_child_data_%type%_index_offset"
+			c6="SFO_%strtype%_parent_child_data_%type%_index_length"
+			c7="SFO_%strtype%_extended_data_%child%_header_length"
+			read_offsets=1
+		END
+		value=0
+		GET_OFFSET_ARRAY parent_array d1 d2 d3 d4 d5 d6 d7 
+		PHP_EACH parent_array AS parent_ind=>parent_off BEGIN
+			GET_OFFSET_ARRAY2 child_array parent_off c1 c2 c3 c4 c5 c6 c7
+			PHP_EACH child_array AS ind=>off BEGIN	
+				READ_ASCII off data (c7)
+				INNER_PATCH_SAVE data "%data%" BEGIN
+					PATCH_IF auto_open BEGIN
+						LPF struct_read STR_VAR strtype="%strtype%_%child%" RET_ARRAY s=struct END
+					END
+					LPF "%function%" RET value_here=value END
+				END
+				value=value || value_here
+				WRITE_ASCII off "%data%"	
+			END
+		END	
+		PATCH_IF value BEGIN
+			SPRINT filename "%SOURCE_RES%"
+			TO_LOWER filename
+			SPRINT $array("%filename%") ""
+		END
+	BUT_ONLY
+  END ELSE BEGIN
+    OUTER_SET read_offsets=0
+	COPY_EXISTING_REGEXP "%regexp%\.%ext%" override
+		PATCH_IF !read_offsets BEGIN
+			d1="SFO_%strtype%_extended_data_%type%_offset"
+			d2="SFO_%strtype%_extended_data_%type%_offset_length"
+			d3="SFO_%strtype%_extended_data_%type%_number"
+			d4="SFO_%strtype%_extended_data_%type%_number_length"
+			d5="SFO_%strtype%_extended_data_%type%_index"
+			d6="SFO_%strtype%_extended_data_%type%_index_length"
+			d7="SFO_%strtype%_extended_data_%type%_header_length"
+			read_offsets=1		
+		END
+		value=0
+		GET_OFFSET_ARRAY offset_array d1 d2 d3 d4 d5 d6 d7 
+		PHP_EACH offset_array AS ind=>off BEGIN
+			READ_ASCII off data (d7)
+			INNER_PATCH_SAVE data "%data%" BEGIN
+				PATCH_IF auto_open BEGIN
+					LPF struct_read STR_VAR strtype="%strtype%_%type%" RET_ARRAY s=struct END
+				END
+				LPF "%function%" RET value_here=value END
+			END
+			value=value || value_here
+			WRITE_ASCII off "%data%"			
+		END	
+		PATCH_IF value BEGIN
+			SPRINT filename "%SOURCE_RES%"
+			TO_LOWER filename
+			SPRINT $array("%filename%") ""
+		END
+	BUT_ONLY
+	
+	
+  
+  END
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_inject} 
+{Put each k1...k_n=>v pair in array_in into the struct.}
+
+The 'struct' variable isn't actually needed, it's just to help with lib_anon syntactic sugar
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_inject
+	STR_VAR array_in=""//array
+			struct="" 
+	RET_ARRAY struct
+BEGIN
+	ACTION_PHP_EACH "%array_in%" AS k=>v BEGIN
+		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+			OUTER_SPRINT $struct("%k_0%") "%v%"
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+			OUTER_SPRINT $struct("%k_0%" "%k_1%") "%v%"		
+		END ELSE		
+		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+			OUTER_SPRINT $struct("%k_0%" "%k_1%" "%k_2%") "%v%"		
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+			OUTER_SPRINT $struct("%k_0%" "%k_1%" "%k_2%" "%k_3%") "%v%"		
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+			OUTER_SPRINT $struct("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") "%v%"		
+		END ELSE BEGIN		
+			WARN "struct_inject can't handle arrays more than 5 levels deep"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_extract} 
+{Given an array of keys, for each key which also keys the struct, set the corresponding
+array value to the struct value.}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION struct_extract
+	STR_VAR array=""//array
+			struct=""//array    
+	RET_ARRAY array
+BEGIN
+	ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%k_0%") BEGIN
+				OUTER_SPRINT $array("%k_0%") $"%struct%"("%k_0%") 
+			END
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%k_0%" "%k_1%") BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%") $"%struct%"("%k_0%" "%k_1%")
+			END
+		END ELSE		
+		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%k_0%" "%k_1%" "%k_2%") BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") $"%struct%"("%k_0%" "%k_1%" "%k_2%") 
+			END
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%k_0%" "%k_1%" "%k_2%" "%k_3%") BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") $"%struct%"("%k_0%" "%k_1%" "%k_2%" "%k_3%")
+			END	
+		END ELSE
+		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") BEGIN
+				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") $"%struct%"("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%")
+			END	
+		END ELSE BEGIN		
+			WARN "struct_extract can't handle arrays more than 5 levels deep"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_iter} 
+{
+For given subtype 'type', return an array k=>v, where k is the index of a 'type' element
+and v is its lookup in the struct; also return 'length', the number of 'type' elements, 
+and 'blockcount', then length of the data block in the struct for that element.
+
+(The struct version of GET_OFFSET_ARRAY)
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_iter
+	STR_VAR struct=""
+			strtype=""
+			type=""
+	RET blockcount
+		length
+	RET_ARRAY iter_array
+BEGIN
+	CLEAR_ARRAY iter_array
+	SPRINT strtype $"%struct%"("strtype")
+
+	blockcount=$"%struct%"("%type%" blockcount)
+	index=0
+	FOR (ind=0;ind<blockcount;++ind) BEGIN
+		lookup=$"%struct%"("%type%" "lookup" "%ind%")
+		PATCH_IF lookup>=0 BEGIN
+			SET $iter_array("%index%")=lookup
+			++index
+		END
+	END
+	length=index
+	PATCH_IF blockcount=0 BEGIN
+		SPRINT $iter_array("null") discard
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION struct_apply_to_strrefs_helper//internal
+	STR_VAR function=""
+			struct=""
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null") discard
+	SPRINT strtype $"%struct%"("strtype")
+	PHP_EACH "SFO_%strtype%_types" AS id=>type BEGIN
+		PATCH_MATCH "%id%" WITH ".*-strref" BEGIN
+			LPF "%function%" STR_VAR arguments=EVAL "%%struct%_%id%%" RET value END
+			SET $struct("%id%")=value
+		END
+		DEFAULT
+		END
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_edit}
+{
+'object' is a list of strings s, interpreted as files. Locate each file at path|location|locbase, defaulting to
+in-game if all are empty. COPY or COPY_EXISTING COPY_EXISTING each s (or s.default_ext if it
+is set) over itself. Apply 'edits' as an anonymous patch function in the process, opening s into struct m in the process and
+writing it at the end.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION struct_edit
+	INT_VAR allow_missing=0//boolean
+			tv=0//boolean
+			debug=0//boolean
+			edit_strrefs_in_place=0//boolean
+			open_extended="-1"//boolean
+	STR_VAR file=""
+			ext=""
+			edits=""
+			path=""
+			location=""
+			locbase=""
+BEGIN
+	// setup
+	LAF sfo_path STR_VAR path location locbase RET path END
+	ACTION_IF open_extended<0 BEGIN
+		OUTER_SET open_extended=INDEX ("\." "%edits%") >=0 //open extended if any functions are present
+	END
+	OUTER_SPRINT prepend ~LPF struct_read INT_VAR open_extended=%open_extended% RET_ARRAY m=struct END~
+	OUTER_SPRINT append  ~LPF struct_write INT_VAR edit_strrefs_in_place STR_VAR struct=m END~
+	LAF anon_define STR_VAR function="%edits%" append prepend RET edit_function=function SFO_anon_func_count END
+	// loop through arguments
+	OUTER_WHILE "%file%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%file%" RET source_file=entry file=list END
+		ACTION_IF "%path%" STR_EQ "" BEGIN
+			OUTER_SPRINT path override
+		END
+		ACTION_IF "%ext%" STR_CMP "" BEGIN
+			OUTER_SPRINT source_file "%source_file%.%ext%"
+		END
+		ACTION_IF tv BEGIN
+			ACTION_IF GAME_IS "tutu tutu_totsc" BEGIN
+				OUTER_SPRINT source_file "_%source_file%"
+			END
+		END
+		LAF return_first_entry STR_VAR list="%source_file%" separator="\." RET filename=entry ext=list END
+		ACTION_IF "%path%" STR_EQ "override" BEGIN 
+			ACTION_IF FILE_EXISTS_IN_GAME "%source_file%" BEGIN
+				COPY_EXISTING "%source_file%" "override"
+					PATCH_IF debug BEGIN
+						LPF struct_get_strtype RET strtype END
+						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
+					END
+					LPF "%edit_function%" END
+			END ELSE BEGIN
+				ACTION_IF !allow_missing BEGIN
+					WARN "supposed in-game object %source_file% is missing, aborting struct_copy operation"
+				END
+			END		
+		END ELSE BEGIN
+			ACTION_IF FILE_EXISTS "%path%/%source_file%" BEGIN
+				COPY "%path%/%source_file%" "%path%"
+					PATCH_IF debug BEGIN
+						LPF struct_get_strtype RET strtype END
+						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
+					END
+					LPF "%edit_function%" END
+			END ELSE BEGIN
+				ACTION_IF !allow_missing BEGIN
+					WARN "supposed file %path%/%source_file% is missing, aborting struct_copy operation"
+				END
+			END		
+		END		
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_make}
+{
+Make a new object of type ext. Open it into a struct m, apply the contents of 'edits' as an anonymous function,
+and then write m back in again. If 'version' is unset, make the current game version.
+
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION struct_make
+	INT_VAR debug=1
+	STR_VAR file=""
+			ext=""
+			edits=""
+			version=""
+			path=""
+			location=""
+			locbase=""
+BEGIN
+	LAF trim_string STR_VAR string="%file%" RET file=string END
+	// find the extension
+	ACTION_IF "%ext%" STR_EQ "" BEGIN
+		OUTER_PATCH_SAVE file "%file%" BEGIN
+			REPLACE_EVALUATE "\.\(.*\)" BEGIN
+				SPRINT ext "%MATCH1%"
+			END
+			""
+		END
+	END
+	// find the version
+	ACTION_IF "%version%" STR_EQ "" BEGIN
+		LAF struct_get_default_version STR_VAR ext RET version END
+	END
+	OUTER_SPRINT strtype "%ext%_%version%"
+	LAF struct_new STR_VAR strtype RET_ARRAY m=struct END
+	// find the location
+	LAF sfo_path STR_VAR path location locbase RET path END
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		OUTER_SPRINT path override
+	END
+	PRINT "copying to %path%/%file%.%ext%"
+	COPY ".../stratagems-inline/blank" "%path%/%file%.%ext%"
+		LPF struct_write STR_VAR struct=m END
+		// setup
+		SPRINT prepend ~LPF struct_read RET_ARRAY m=struct END~
+		SPRINT append  ~LPF struct_write STR_VAR struct=m END~
+		PATCH_IF debug BEGIN
+			LPF struct_debug STR_VAR strtype="%m_strtype%" struct=m function="%edits%" END
+		END
+		LPF anon_eval STR_VAR function="%edits%" append prepend END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_copy}
+{
+'file' is a string of k=>v pairs (or string of single entries, treated as k=. Copy each k to v (or k.default_ext to v.default_ext if it
+is set). k and v are located at SFO-standard locations defined by, respectively, (source_path/source_location/source_locbase)
+and (path/location/locbase), with 'override' as the default in each case.
+
+Apply 'edits' as an anonymous patch function in the process, opening k into struct m in the process and
+writing it at the end.)
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION struct_copy
+	INT_VAR allow_missing=0
+			tv=0
+			debug=1
+	STR_VAR file=""
+			ext=""
+			edits=""
+			path=""
+			location=""
+			locbase=""
+			source_path=""
+			source_location=""
+			source_locbase=""
+BEGIN
+	// setup
+	LAF sfo_path STR_VAR path location locbase RET path END
+	LAF sfo_path STR_VAR path="%source_path%" location="%source_location%" locbase="%source_locbase%" RET source_path=path END
+	OUTER_SPRINT prepend ~LPF struct_read RET_ARRAY m=struct END~
+	OUTER_SPRINT append  ~LPF struct_write STR_VAR struct=m END~
+	LAF anon_define STR_VAR function="%edits%" append prepend RET edit_function=function SFO_anon_func_count END
+	// loop through arguments
+	OUTER_WHILE "%file%" STR_CMP "" BEGIN
+		ACTION_IF INDEX ("=>" "%file%") >=0 BEGIN
+			LAF return_first_pair STR_VAR list="%file%" RET source_file=key dest_file=value file=list END
+		END ELSE BEGIN
+			LAF return_first_entry STR_VAR list="%file%" RET source_file=entry file=list END
+			OUTER_SPRINT dest_file "%source_file%"
+		END	
+		ACTION_IF "%path%" STR_EQ "" BEGIN
+			OUTER_SPRINT path override
+		END
+		ACTION_IF "%ext%" STR_CMP "" BEGIN
+			OUTER_SPRINT source_file "%source_file%.%ext%"
+			OUTER_SPRINT dest_file "%dest_file%.%ext%"
+		END
+		ACTION_IF tv BEGIN
+			ACTION_IF GAME_IS "tutu tutu_totsc" BEGIN
+				OUTER_SPRINT source_file "_%source_file%"
+				OUTER_SPRINT dest_file "_%dest_file%"
+			END
+		END
+		LAF return_first_entry STR_VAR list="%dest_file%" separator="\." RET filename=entry ext=list END
+		ACTION_IF "%source_path%" STR_EQ "" BEGIN //copy_existing
+			ACTION_IF FILE_EXISTS_IN_GAME "%source_file%" BEGIN
+				COPY_EXISTING "%source_file%" "%path%/%dest_file%"
+					PATCH_IF debug BEGIN
+						LPF struct_get_strtype RET strtype END
+						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
+					END
+					LPF "%edit_function%" END
+			END ELSE BEGIN
+				ACTION_IF !allow_missing BEGIN
+					WARN "supposed in-game object %source_file% is missing, aborting struct_copy operation"
+				END
+			END		
+		END ELSE BEGIN
+			ACTION_IF FILE_EXISTS "%source_path%/%source_file%" BEGIN
+				COPY "%source_path%/%source_file%" "%path%/%dest_file%"
+					PATCH_IF debug BEGIN
+						LPF struct_get_strtype RET strtype END
+						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
+					END
+					LPF "%edit_function%" END
+			END ELSE BEGIN
+				ACTION_IF !allow_missing BEGIN
+					WARN "supposed file %source_path%/%source_file% is missing, aborting struct_copy operation"
+				END
+			END		
+		END		
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_get}
+{
+Returns the contents of a field. (Use for quick lightweight edits where it's not worth reading in the struct.)
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_get
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	LPF struct_get_strtype RET strtype END
+	PATCH_IF VARIABLE_IS_SET $"SFO_%strtype%_offsets"("%arguments%") BEGIN
+		offset=$"SFO_%strtype%_offsets"("%arguments%")
+		SPRINT type $"SFO_%strtype%_types"("%arguments%")
+		PATCH_MATCH "%type%" WITH
+		long id4 lookup4 BEGIN
+			READ_LONG offset value
+		END
+		short id2 lookup2 BEGIN
+			READ_SHORT offset value 
+		END
+		byte id1 id lookup1 BEGIN
+			READ_BYTE offset value
+		END
+		slong BEGIN
+			READ_SLONG offset value
+		END
+		sshort BEGIN
+			READ_SSHORT offset value
+		END
+		sbyte BEGIN
+			READ_SBYTE offset value
+		END
+		ascii BEGIN
+			len=$"SFO_%strtype%_asciis"("%arguments%")
+			READ_ASCII offset value (len) NULL
+		END
+		strref BEGIN
+			READ_STRREF offset value
+		END
+		DEFAULT
+			PATCH_WARN "unrecognized type %type% in struct_get"
+		END
+	END ELSE BEGIN
+		PATCH_WARN "struct_get: %arguments% is not a recognized field of strtype %strtype%"
+	END	
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_get_offset_array}
+{
+Returns the offset array for type type of the currently-being-patched strtype
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_get_offset_array
+	STR_VAR type=""
+	RET_ARRAY array
+BEGIN
+	LPF struct_get_strtype RET strtype END
+	d1="SFO_%strtype%_extended_data_%type%_offset"
+	d2="SFO_%strtype%_extended_data_%type%_offset_length"
+	d3="SFO_%strtype%_extended_data_%type%_number"
+	d4="SFO_%strtype%_extended_data_%type%_number_length"
+	d5="SFO_%strtype%_extended_data_%type%_index"
+	d6="SFO_%strtype%_extended_data_%type%_index_length"
+	d7="SFO_%strtype%_extended_data_%type%_header_length"
+	GET_OFFSET_ARRAY array d1 d2 d3 d4 d5 d6 d7 
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_get_offset_array2}
+{
+Returns the secondary offset array at offset 'offset' for parent-child type type of the currently-being-patched strtype
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_get_offset_array2
+	INT_VAR offset=0
+	STR_VAR type=""
+	RET_ARRAY array
+BEGIN
+	LPF struct_get_strtype RET strtype END
+	SPRINT child $"SFO_%strtype%_parent_child_data"("%type%" "child")
+	PATCH_FOR_EACH entry IN index_offset index_length number_offset number_length BEGIN
+		SET "%entry%"=$"SFO_%strtype%_parent_child_data"("%type%" "%entry%")
+	END
+	_length=$"SFO_%strtype%_extended_data"("%child%" header_length)
+	_offset=$"SFO_%strtype%_extended_data"("%child%" offset)
+	offset_length=$"SFO_%strtype%_extended_data"("%child%" offset_length)
+	GET_OFFSET_ARRAY2 array offset _offset offset_length number_offset number_length index_offset index_length _length
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_get_default_version}
+{
+Returns the game-default strtype for a given extension.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+DEFINE_DIMORPHIC_FUNCTION struct_get_default_version
+	STR_VAR ext="" 
+	RET strtype version
+BEGIN
+	ACTION_IF ENGINE_IS "bg2 tob" BEGIN
+		OUTER_SPRINT game bg2
+	END ELSE
+	ACTION_IF ENGINE_IS "bg1 totsc" BEGIN
+		OUTER_SPRINT game bg1
+	END ELSE
+	ACTION_IF ENGINE_IS "bgee bg2ee iwdee eet pstee" BEGIN
+		OUTER_SPRINT game ee
+	END ELSE 
+	ACTION_IF ENGINE_IS pst BEGIN
+		OUTER_SPRINT game pst
+	END ELSE
+	ACTION_IF ENGINE_IS "iwd how totlm" BEGIN
+		OUTER_SPRINT game iwd
+	END ELSE
+	ACTION_IF ENGINE_IS iwd2 BEGIN
+		OUTER_SPRINT game iwd2
+	END ELSE BEGIN
+		OUTER_SPRINT game unknown
+	END
+	ACTION_TO_LOWER ext
+	ACTION_IF VARIABLE_IS_SET $"SFO_str_defaults"("%ext%" "%game%") BEGIN
+		OUTER_SPRINT version $"SFO_str_defaults"("%ext%" "%game%")
+		OUTER_SPRINT strtype "%ext%_%version%"
+	END ELSE BEGIN
+		WARN "failed to find a default file version for game %game%, extension %ext%"
+		OUTER_SPRINT version ""
+		OUTER_SPRINT strtype ""
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{struct_process_vertices}
+{
+Take as input a string in form
+
+(identifier (int,int) list ) list
+
+Return an array of form
+
+vertex_data(identifier x n)=nth x-coordinate under identifier n
+vertex_data(identifier y n)=nth y-coordinate under identifier n
+vertex_data(identifier count)= how many x,y pairs under identifier n
+vertex_data(identifier box [left|right|top|bottom])=BB data for identifier-n coordinates
+
+identifiers are 'base', 'open', 'closed', 'impeded_open', 'impeded_closed'. 'base' can be omitted if it's the first entry.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION struct_process_vertices//internal
+	STR_VAR vertices=""
+	RET_ARRAY vertex_data
+BEGIN
+	CLEAR_ARRAY vertex_data
+	// place terminator
+	PATCH_IF "%vertices%" STR_CMP "" BEGIN
+		SPRINT vertices "%vertices% terminator"
+		// find first identifier
+		LPF return_first_entry INT_VAR STR_VAR list="%vertices%" RET entry list END
+		PATCH_MATCH "%entry%" WITH
+		".*,.*" BEGIN
+			SPRINT identifier "base"
+			SPRINT list "%vertices%"
+		END
+		base open closed impeded_open impeded_closed BEGIN
+			SPRINT identifier "%entry%"
+		END
+		DEFAULT
+			PATCH_WARN "unrecognized identifier %entry% in 'vertices' argument for struct_process_vertices"
+		END
+		box_left=10**6
+		box_right=0
+		box_top=10**6
+		box_bottom=0
+		count=0
+		CLEAR_ARRAY working_array_x
+		CLEAR_ARRAY working_array_y
+		// begin main loop
+		WHILE "%list%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list RET entry list END
+			PATCH_IF INDEX ("," "%entry%")<0 BEGIN // end of block, new identifier
+				// process everything
+				PHP_EACH working_array_x AS ind=>x BEGIN
+					SET $vertex_data("%identifier%" "%ind%" "x")=x
+					SET $vertex_data("%identifier%" "%ind%" "y")=$working_array_y("%ind%")
+				END
+				SET $vertex_data("%identifier%" "count")=count
+				PATCH_FOR_EACH boxtype IN top bottom left right BEGIN
+					SET $vertex_data("%identifier%" box "%boxtype%")="box_%boxtype%"
+				END
+				//sanity-check identifier
+				SPRINT identifier "%entry%"
+				PATCH_MATCH "%identifier%" WITH
+				base open closed impeded_open impeded_closed terminator BEGIN END
+				DEFAULT
+					PATCH_WARN "unrecognized identifier %entry% in 'vertices' argument for struct_process_vertices"	
+				END
+				// reset everything
+				box_left=10**6
+				box_right=0
+				box_top=10**6
+				box_bottom=0
+				count=0
+				CLEAR_ARRAY working_array_x
+				CLEAR_ARRAY working_array_y
+			END ELSE BEGIN
+				// get x,y
+				INNER_PATCH "%entry%" BEGIN
+					REPLACE_EVALUATE "\(.*\),\(.*\)" BEGIN
+						x="%MATCH1%"
+						y="%MATCH2%"
+					END
+					""
+				END
+				// update arrays
+				SET $working_array_x("%count%")=x
+				SET $working_array_y("%count%")=y
+				++count
+				// update BBs
+				box_left=box_left<x?box_left:x
+				box_right=box_right>x?box_right:x
+				box_top=box_top<y?box_top:y
+				box_bottom=box_bottom>y?box_bottom:y
+				
+			END
+		END
+	END ELSE BEGIN
+		SPRINT $vertex_data("null") discard
+	END
+END
+
+/*
+document{struct_set_bb}
+{Not-at-all-encapsulated helper function that just sets the bounding box of a region, door or container according to its vertices}
+
+
+*/
+		
+DEFINE_PATCH_FUNCTION struct_set_bb//internal
+BEGIN
+	PATCH_IF "%vertices%" STR_CMP "" BEGIN
+		PATCH_FOR_EACH vertex_type IN base open closed BEGIN
+			PATCH_IF VARIABLE_IS_SET $vertex_data("%vertex_type%" count) BEGIN
+				PATCH_IF "%vertex_type%" STR_EQ "base" BEGIN
+					SPRINT pc_id "%type%_vertex"
+				END ELSE BEGIN
+					SPRINT pc_id "%type%_%vertex_type%_vertex"
+				END
+				PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN // is there a parent/child relation between these?
+					PATCH_IF "%vertex_type%" STR_EQ "base" BEGIN
+						SPRINT boxbase "box"
+					END ELSE BEGIN
+						SPRINT boxbase "box_%vertex_type%"
+					END
+					PATCH_FOR_EACH dir IN left right top bottom BEGIN
+						WRITE_SHORT $"SFO_%strtype%_%type%_offsets"("%boxbase%_%dir%") $vertex_data("%vertex_type%" box "%dir%")
+					END
+				END
+			END
+		END
+	END
+END
+
+/*
+document{struct_identify_slots}
+{Given a resref (assumed to be of an item), deduce which creature inventory slot(s) it ought to go into}
+
+
+*/
+
+DEFINE_PATCH_FUNCTION struct_identify_slots//internal
+	STR_VAR resref=""
+	RET slot twohanded
+BEGIN
+	twohanded=0
+	INNER_ACTION BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%resref%.itm" BEGIN
+			COPY_EXISTING - "%resref%.itm" nowhere
+				READ_SHORT 0x1c category
+				PATCH_MATCH category WITH
+				1 BEGIN
+					SPRINT slot AMULET
+				END
+				2 60 61 62 63 64 65 66 67 68 BEGIN
+					SPRINT slot ARMOR
+				END
+				3 BEGIN
+					SPRINT slot BELT
+				END
+				4 BEGIN
+					SPRINT slot BOOTS
+				END
+				5 14 31 BEGIN
+					SPRINT slot QUIVER
+				END
+				6 73 77 BEGIN
+					SPRINT slot GLOVES
+				END
+				7 72 BEGIN
+					SPRINT slot HELMET
+				END
+				10 BEGIN
+					SPRINT slot RING
+				END
+				12 41 47 49 53 BEGIN
+					SPRINT slot SHIELD
+				END
+				15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 44 57 69 BEGIN
+					SPRINT slot WEAPON
+				END
+				32 BEGIN
+					SPRINT slot CLOAK
+				END
+				9 11 35 51 BEGIN
+					SPRINT slot QITEM
+				END
+				DEFAULT
+					SPRINT slot INV
+				END
+				PATCH_IF "%slot%" STR_EQ "weapon" BEGIN
+					twohanded=(((BYTE_AT 0x18) BOR 0b11111101)=0b11111111)
+				END
+			BUT_ONLY
+			
+		END ELSE BEGIN
+			LAF warning STR_VAR warning="Unable to identify slot for item %resref%, as it does not exist; defaulting to INVENTORY" END
+			OUTER_SPRINT slot INV
+		END
+	END
+END
+
+DEFINE_PATCH_FUNCTION struct_expand_slots 
+	STR_VAR slots=""
+	RET slots
+BEGIN
+		INNER_PATCH_SAVE slots "%slots% " BEGIN
+			REPLACE_TEXTUALLY "[%TAB%%WNL%%MNL%%LNL% ]+" " "
+			REPLACE_TEXTUALLY "qitem " "qitem1 qitem2 qitem3 "
+			REPLACE_TEXTUALLY "weapon " "weapon1 weapon2 weapon3 weapon4 "
+			REPLACE_TEXTUALLY "quiver " "quiver1 quiver2 quiver3 "
+			REPLACE_TEXTUALLY "inv " "inv1 inv2 inv3 inv4 inv5 inv6 inv7 inv8 inv9 inv10 inv11 inv12 inv13 inv14 inv15 inv16 "
+			REPLACE_TEXTUALLY "ring " "lring rring "
+			REPLACE_TEXTUALLY " $" ""
+		END
+END
+
+DEFINE_PATCH_FUNCTION struct_set_slot//internal
+	INT_VAR item_number=0//the actual struct number, not the lookup
+			replace=0
+			force_inv=0
+			equip=1
+	STR_VAR struct=""
+			slots=""
+			item_data=""
+	RET displaced_item_number
+		slot_number_assigned
+	RET_ARRAY struct
+BEGIN
+	DEFINE_ASSOCIATIVE_ARRAY slot_map BEGIN
+		helmet=>0
+		armor=>1
+		shield=>2
+		gloves=>3
+		lring=>4
+		rring=>5
+		amulet=>6
+		belt=>7
+		boots=>8
+		weapon1=>9
+		weapon2=>10
+		weapon3=>11
+		weapon4=>12
+		quiver1=>13
+		quiver2=>14
+		quiver3=>15
+		quiver4=>16
+		cloak=>17
+		qitem1=>18
+		qitem2=>19
+		qitem3=>20
+		inv1=>21
+		inv2=>22
+		inv3=>23
+		inv4=>24
+		inv5=>25
+		inv6=>26
+		inv7=>27
+		inv8=>28
+		inv9=>29
+		inv10=>30
+		inv11=>31
+		inv12=>32
+		inv13=>33
+		inv14=>34
+		inv15=>35
+		inv16=>36
+		magicweapon=>37
+		weapon_slot_selected=>38
+		weapon_ability_selected=>39		
+	END
+	twohanded="-1"
+	SPRINT $struct("null") "discard"
+	// if slot is unspecified, find it
+	PATCH_IF "%slots%" STR_EQ "" BEGIN
+		// get item resref
+		PATCH_IF "%item_data%" STR_EQ "" BEGIN
+			lookup=$"%struct%"(item lookup "%item_number%")
+			SPRINT item_data $"%struct%"(item "%lookup%")
+		END
+		INNER_PATCH "%item_data%" BEGIN
+			READ_ASCII 0x0 resref
+		END
+		// get slots
+		LPF struct_identify_slots STR_VAR resref RET slots=slot twohanded END
+		PATCH_IF force_inv BEGIN
+			PATCH_IF INDEX ("inv" "%slots%")<0 BEGIN
+				SPRINT slots "%slots% inv"
+			END
+		END
+		// expand slots
+		LPF struct_expand_slots STR_VAR slots RET slots END	
+	END
+	// if we need two-handed status, get it
+	PATCH_IF INDEX ("weapon" "%slots%")>=0 && twohanded<0 BEGIN
+		// get item resref
+		PATCH_IF "%item_data%" STR_EQ "" BEGIN
+			lookup=$"%struct%"(item lookup "%item_number%")
+			SPRINT item_data $"%struct%"(item "%lookup%")
+		END
+		INNER_PATCH "%item_data%" BEGIN
+			READ_ASCII 0x0 resref
+		END
+		// get slots
+		LPF struct_identify_slots STR_VAR resref RET twohanded END	
+	END
+	// do main processing
+	LPF return_first_entry STR_VAR list="%slots%" RET slot=entry rest=list END
+	TO_LOWER slot
+	slot_number=$slot_map("%slot%")
+	SPRINT item_data_here $"%struct%"("item_slot" "%slot_number%")
+	INNER_PATCH_SAVE item_data_here "%item_data_here%" BEGIN
+		READ_SSHORT 0x0 item_here
+		WRITE_SHORT 0x0 item_number
+	END
+	PATCH_IF item_here<0 BEGIN
+		displaced_item_number="-1"
+		SPRINT $struct("item_slot" "%slot_number%") "%item_data_here%"
+		slot_number_assigned=slot_number
+		PATCH_IF INDEX ("WEAPON" "%slot%")>=0 && equip BEGIN
+			INNER_PATCH "%slot%" BEGIN
+				READ_ASCII 0x6 number (1)
+				number -=1
+				INNER_PATCH_SAVE equip_data "" BEGIN
+					INSERT_BYTES 0x0 2
+					WRITE_SHORT 0x0 number
+				END
+				SPRINT $struct("item_slot" 38) "%equip_data%"
+			END
+		END
+		PATCH_IF INDEX ("WEAPON" "%slot%")>=0 && twohanded BEGIN
+			shield_slot_number=$slot_map("shield")
+			SPRINT shield_item_data $"%struct%"("item_slot" "%shield_slot_number%")
+			INNER_PATCH_SAVE shield_item_data "%shield_item_data%" BEGIN
+				READ_SSHORT 0x0 shield_item_number
+				WRITE_SHORT 0x0 "-1"
+			END
+			SPRINT $struct("item_slot" "%shield_slot_number%") "%shield_item_data%"
+			PATCH_IF shield_item_number>=0 BEGIN
+				LPF struct_expand_slots STR_VAR slots=inv RET slots END
+				LPF struct_set_slot INT_VAR item_number=shield_item_number equip=0 STR_VAR slots struct RET_ARRAY struct END
+			END
+		END
+	END ELSE BEGIN
+		PATCH_IF "%rest%" STR_CMP "" BEGIN
+			LPF struct_set_slot INT_VAR item_number equip STR_VAR slots="%rest%" struct item_data RET displaced_item_number slot_number_assigned RET_ARRAY struct END
+		END ELSE BEGIN
+			PATCH_IF "%slot%" STR_EQ inv16 BEGIN
+				LPF warning STR_VAR warning="struct_set_slot: Unable to find a slot for item number %item_number% as all slots are full" END
+				displaced_item_number="-1"
+				slot_number_assigned="-1"
+			END ELSE BEGIN
+				PATCH_IF !replace BEGIN
+					displaced_item_number=item_here
+				END ELSE BEGIN
+					displaced_item_number="-1"
+				END
+				SPRINT $struct("item_slot" "%slot_number%") "%item_data_here%"	
+				slot_number_assigned=slot_number
+			END			
+		END
+	END
+	// handle any displaced item
+	PATCH_IF displaced_item_number>=0 BEGIN
+		LPF struct_set_slot INT_VAR item_number=displaced_item_number equip=0 replace=0 force_inv=1 STR_VAR slots="" struct RET displaced_item_number RET_ARRAY struct END
+	END
+END
+
+DEFINE_PATCH_FUNCTION struct_delete_orphaned_items//internal
+	STR_VAR struct=""
+	RET_ARRAY struct
+BEGIN
+	CLEAR_ARRAY SFO_item_slots
+	// get a list of items used
+	count=$"%struct%"(item_slot blockcount)
+	FOR (n=0;n<(count - 2);++n) BEGIN //last two are for equip
+		SPRINT data $"%struct%"(item_slot "%n%")
+		INNER_PATCH "%data%" BEGIN
+			READ_SSHORT 0x0 item_here
+			PATCH_IF item_here>=0 BEGIN
+				SET $SFO_item_slots("%item_here%")=n
+			END
+		END
+	END	
+	// go through items
+	CLEAR_ARRAY lookup_array
+	count=$"%struct%"(item blockcount)
+	new_ind=0
+	FOR (n=0;n<count;++n) BEGIN
+		lookup=$"%struct%"("item" "lookup" "%n%")
+		PATCH_IF VARIABLE_IS_SET $SFO_item_slots("%n%") BEGIN
+			SET $lookup_array("%new_ind%")="%lookup%"
+			SET slot=$SFO_item_slots("%n%")
+			INNER_PATCH_SAVE data "" BEGIN
+				INSERT_BYTES 0x0 2
+				WRITE_SHORT 0x0 new_ind
+			END
+			SPRINT $struct("item_slot" "%slot%") "%data%"
+			++new_ind
+		END
+	END
+	// read in the new lookup array
+	FOR (n=0;n<count;++n) BEGIN
+		SET $struct("item" "lookup" "%n%")="-1"
+	END
+	PHP_EACH lookup_array AS ind=>lookup BEGIN
+		SET $struct("item" "lookup" "%ind%")=lookup
+	END
+
+END

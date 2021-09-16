@@ -1,0 +1,335 @@
+/*
+document{immunity_spell}
+{
+Given a list of spell resrefs, grants (for an item or creature) while-equipped or permanent immunity.
+On a spell, adds permanent (not just until-death) immunity to target=2 as an ability effect.
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION immunity_spell
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	LAF array_values_from_string STR_VAR string="%arguments%" RET_ARRAY array END
+	LAF array_length STR_VAR array RET number=value END
+	OUTER_SPRINT strtype EVAL "%%struct%_strtype%"
+	ACTION_MATCH "%strtype%" WITH
+	"cre.*" "itm.*" BEGIN
+		LAF struct_add INT_VAR number STR_VAR type=fx struct patch=immunity_spell_helper RET_ARRAY struct END
+	END
+	"spl.*" BEGIN
+		LAF struct_add INT_VAR number STR_VAR type=ab_fx struct patch=immunity_spell_helper RET_ARRAY struct END	
+	END
+	DEFAULT
+		FAIL "immunity_spell only works with cre, itm or spl files"
+	END
+END
+
+DEFINE_PATCH_FUNCTION immunity_spell_helper//internal
+BEGIN
+	SPRINT resref $array("%entry_index%")
+	PATCH_MATCH "%strtype%" WITH
+	"itm.*" BEGIN
+		WRITE_SHORT 0x0 206
+		WRITE_ASCII 0x14 "%resref%"	
+	END
+	"spl.*" BEGIN
+		WRITE_SHORT 0x0 206
+		WRITE_ASCII 0x14 "%resref%"
+		WRITE_BYTE 0x2 2
+		WRITE_BYTE 0xc 9
+	END
+	"cre.*" BEGIN
+		WRITE_SHORT 0x8 206
+		WRITE_ASCII 0x28 "%resref%"	
+	END
+	DEFAULT
+		PATCH_FAIL "shouldn't happen"
+	END
+	
+END	
+
+/*
+document{immunity_effects_load}
+{
+Defines the arrays for the immunity_effect function}
+*/
+
+DEFINE_ACTION_MACRO immunity_effects_load BEGIN
+
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_charm BEGIN
+		strings=>"charmed dominated dire_charmed"
+		icons=>"0 1 43"
+		animations=>"SPNWCHRM"
+		display_icon=>"52"
+		immune_opcode=>5
+		extra_immune_opcode=>""
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_sleep BEGIN
+		strings=>"sleep"
+		icons=>"14"
+		animations=>""
+		display_icon=>""
+		immune_opcode=>39
+		extra_immune_opcode=>""
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_fear BEGIN
+		strings=>"panic morale_failure"
+		icons=>"36"
+		animations=>"CDHORROR"
+		display_icon=>"37"
+		immune_opcode=>24
+		extra_immune_opcode=>"23 106"
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_hold BEGIN
+		strings=>"held paralyzed"
+		icons=>"13"
+		animations=>"SPMINDAT SPFLAYER"
+		display_icon=>""
+		immune_opcode=>175
+		extra_immune_opcode=>109
+	END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_stun BEGIN
+		strings=>"stunned"
+		icons=>"55"
+		animations=>""
+		display_icon=>""
+		immune_opcode=>45
+		extra_immune_opcode=>210
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_poison BEGIN
+		strings=>"poison poisoned"
+		icons=>"6 137" // this includes the 'bleeding' icon, following IWD, but I'm not sure this is right
+		animations=>""
+		display_icon=>"30"
+		immune_opcode=>25
+		extra_immune_opcode=>""
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_diseased BEGIN
+		strings=>"diseased stricken_by_a_foul_disease"
+		icons=>"7" // 
+		animations=>""
+		display_icon=>""
+		immune_opcode=>78
+		extra_immune_opcode=>""
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_energy_drain BEGIN
+		strings=>"one_level_drained two_levels_drained three_levels_drained four_levels_drained five_levels_drained"
+		icons=>"59"
+		animations=>""
+		display_icon=>"90"
+		immune_opcode=>216
+		extra_immune_opcode=>""
+	END
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_blinded BEGIN
+		strings=>"blinded"
+		icons=>"8" 
+		animations=>"illush"
+		display_icon=>""
+		immune_opcode=>74
+		extra_immune_opcode=>""
+	END
+	
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{immunity_find_strings}
+{
+This function gets all the immunity strings - loading them from a premade file if it exists, creating that file
+otherwise. The file is created with COPY + and so persists even when the component is uninstalled.
+
+The 'create file' version only works in English. It shouldn't be run in distributed code.
+Make sure it's run ahead of time (on each of BG2, SoD, IWD) to make the files.
+
+Currently EE-only, though wouldn't be difficult to adapt.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION immunity_find_strings RET_ARRAY immunity_string_array BEGIN
+
+
+  ACTION_IF is_iwd BEGIN
+		OUTER_SPRINT filename "immunity_strings_iwd"
+  END ELSE
+  ACTION_IF is_bg2 BEGIN
+		OUTER_SPRINT filename "immunity_strings_bg2"
+  END ELSE BEGIN
+		OUTER_SPRINT filename "immunity_strings_bg1"	
+  END
+  ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/data/%filename%.2da" BEGIN
+		LAF array_read STR_VAR locbase="%sfo_library_path%/data" file="%filename%.2da" RET_ARRAY immunity_string_array=array END
+  END ELSE BEGIN
+	ACTION_CLEAR_ARRAY patch_data
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
+		"Charmed"=>charmed
+		"Dominated"=>dominated
+		"Dire Charmed"=>dire_charmed
+		"Paralyzed"=>paralyzed
+		"Poison"=>poison
+		"Poisoned"=>poisoned
+		"Morale Failure: Panic"=>morale_failure
+		"Panic"=>panic
+		"Held"=>held
+		"One Level Drained"=>one_level_drained
+		"Two Levels Drained"=>two_levels_drained
+		"Three Levels Drained"=>three_levels_drained
+		"Four Levels Drained"=>four_levels_drained
+		"Five Levels Drained"=>five_levels_drained
+		"Diseased"=>diseased
+		"Stricken by a foul disease"=>stricken_by_a_foul_disease
+		"Sleep"=>sleep
+		"Blinded"=>blinded
+		"Stunned"=>stunned
+		
+	END
+	OUTER_FOR (ind=1;ind<100000;++ind) BEGIN
+		ACTION_GET_STRREF ind string
+		ACTION_IF VARIABLE_IS_SET $patch_data("%string%") BEGIN
+			OUTER_SPRINT label $patch_data("%string%")
+			ACTION_IF VARIABLE_IS_SET $immunity_string_array("%label%") BEGIN
+				OUTER_SPRINT temp $immunity_string_array("%label%")
+				OUTER_SPRINT $immunity_string_array("%label%") "%temp%,%ind%"
+			END ELSE BEGIN
+				OUTER_SPRINT $immunity_string_array("%label%") "%ind%"
+			END
+		END
+	END
+	
+	OUTER_SPRINT output ""
+	ACTION_PHP_EACH immunity_string_array AS label=>data BEGIN
+		OUTER_SPRINT output "%output%%label% %data%%WNL%"
+	END
+<<<<<<<< .../stratagems-inline/data.2da
+%output%
+>>>>>>>>
+
+	COPY + ".../stratagems-inline/data.2da" "%MOD_FOLDER%/%sfo_library_path%/data/%filename%.2da" EVALUATE_BUFFER
+
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+(This is a struct function).</p>
+
+<p>Patches the spell/item/creature to offer immunity to a list of effects. If run in permanent mode (the default) it adds the effect outright
+with timing=9 (2 for items). On a spell, this is added to all abilities; on an item or cre, to the base item/cre.
+If run in non-permanent mode, everything is applied as a clone of the controlling opcode.</p>
+
+<p>The list of effects is: charm, stun, fear, hold, sleep, poison, diseased, energy_drain, blinded
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION immunity_effect 
+	INT_VAR permanent=1 
+	STR_VAR arguments="" 
+			struct=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	LAM immunity_effects_load
+	LAF immunity_find_strings RET_ARRAY immunity_string_array END
+	LAF array_keys_from_string STR_VAR string="%arguments%" RET_ARRAY immune_array=array END
+	OUTER_SPRINT strtype "%%struct%_strtype%"
+	ACTION_MATCH "%strtype%" WITH
+	spl BEGIN
+		OUTER_SPRINT type ab_fx
+		OUTER_SET timing=9
+	END
+	itm BEGIN
+		OUTER_SPRINT type fx
+		OUTER_SET timing=2
+	END
+	DEFAULT
+		OUTER_SPRINT type fx
+		OUTER_SET timing=9
+	END
+	ACTION_PHP_EACH immune_array AS immunity=>discard BEGIN
+		OUTER_SPRINT array "immunity_array_%immunity%"
+		// in permanent mode, add the base effect
+		ACTION_IF permanent BEGIN
+			LAF struct_add STR_VAR type struct patch="s_opcode:=101 s_target=2 s_parameter2=%array%_immune_opcode s_timing=%timing%" RET_ARRAY "%struct%"=struct END
+			LAF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
+		END
+		OUTER_SET count=0
+		ACTION_CLEAR_ARRAY sfo_opcode_array 
+		ACTION_CLEAR_ARRAY sfo_parameter1_array
+		ACTION_CLEAR_ARRAY sfo_parameter2_array
+		// give immunity to strings
+		OUTER_SPRINT list $"%array%"("strings")
+		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET entry list END
+			ACTION_IF VARIABLE_IS_SET $immunity_string_array("%entry%") BEGIN
+			  OUTER_SPRINT strings $immunity_string_array("%entry%")
+			  OUTER_WHILE "%strings%" STRING_COMPARE "" BEGIN
+				LAF return_first_entry STR_VAR list="%strings%" separator="," RET strings=list parameter1=entry END
+				OUTER_SET $sfo_opcode_array("%count%")=267
+				OUTER_SET $sfo_parameter1_array("%count%")=parameter1
+				OUTER_SET $sfo_parameter2_array("%count%")=0
+				OUTER_SPRINT $sfo_resource_array("%count%") ""
+				OUTER_SET ++count
+			  END
+			END
+		END
+		//give immunity to icons
+		OUTER_SPRINT list $"%array%"("icons")
+		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET parameter2=entry list END
+			OUTER_SET $sfo_opcode_array("%count%")=169
+			OUTER_SET $sfo_parameter1_array("%count%")=0
+			OUTER_SET $sfo_parameter2_array("%count%")=parameter2
+			OUTER_SPRINT $sfo_resource_array("%count%") ""
+			OUTER_SET ++count
+		END
+		// give immunity to animations
+		OUTER_SPRINT list $"%array%"("animations")
+		OUTER_WHILE "%list%"  STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET resource=entry list END
+			OUTER_SET $sfo_opcode_array("%count%")=296
+			OUTER_SET $sfo_parameter1_array("%count%")=0
+			OUTER_SET $sfo_parameter2_array("%count%")=0
+			OUTER_SPRINT $sfo_resource_array("%count%") "%resource%"
+			OUTER_SET ++count
+		END
+		// display any appropriate icon
+		OUTER_SPRINT list $"%array%"("display_icon")
+		OUTER_WHILE "%list%"  STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET parameter2=entry list END
+			OUTER_SET $sfo_opcode_array("%count%")=142
+			OUTER_SET $sfo_parameter1_array("%count%")=0
+			OUTER_SET $sfo_parameter2_array("%count%")=parameter2
+			OUTER_SPRINT $sfo_resource_array("%count%") ""
+			OUTER_SET ++count
+		END
+		// give immunity to any subsidiary opcodes
+		OUTER_SPRINT list $"%array%"("extra_immune_opcode")
+		OUTER_WHILE "%list%"  STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET parameter2=entry list END
+			OUTER_SET $sfo_opcode_array("%count%")=101
+			OUTER_SET $sfo_parameter1_array("%count%")=0
+			OUTER_SET $sfo_parameter2_array("%count%")=parameter2
+			OUTER_SPRINT $sfo_resource_array("%count%") ""
+			OUTER_SET ++count
+		END
+		// apply effects
+		LAF struct_clone INT_VAR number=count STR_VAR type struct match="s_opcode=101 && s_parameter2=%array%_immune_opcode" patch="s_opcode=$sfo_opcode_array(~%entry_index%~);; s_parameter1=$sfo_parameter1_array(~%entry_index%~);;s_parameter2=$sfo_parameter2_array(~%entry_index%~);;s_resource:=$sfo_resource_array(~%entry_index%~)" RET_ARRAY "%struct%"=struct END
+		LAF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
+
+	END
+
+END
+

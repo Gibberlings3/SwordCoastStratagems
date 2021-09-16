@@ -16,6 +16,33 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 
    // a (very) few bugfixes
 
+	// Myconid race is not automatically present in oBG2
+	// Add it in 164, or the first available space after 164 in
+	// the (unlikely) event that 164 is taken
+
+	ACTION_IF IDS_OF_SYMBOL (race myconid)<0 BEGIN
+		OUTER_PATCH "" BEGIN
+			found_gap=0
+			ids=164
+			WHILE !found_gap BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT entry race ids
+				PATCH_IF IS_AN_INT entry BEGIN
+					found_gap=1
+				END ELSE BEGIN
+					++ids
+				END
+			END
+		END
+		APPEND "race.ids" "%ids%%TAB%MYCONID"
+		ACTION_FOR_EACH myconid IN icmyc01 icmyc02 BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%myconid%.cre" BEGIN
+				COPY_EXISTING "%myconid%.cre" override
+					WRITE_BYTE 0x272 ids
+				BUT_ONLY
+			END
+		END
+	END
+
    // bizarrely, Shocking Grasp is listed as a Combat Protection 
 
    LAF edit_spell STR_VAR spell=WIZARD_SHOCKING_GRASP editstring="secondary=>10" END
@@ -78,7 +105,7 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    END ELSE BEGIN
 	OUTER_SPRINT object "scrl07.itm"   
    END
-   COPY_EXISTING "scrl07.itm" override
+   COPY_EXISTING "%object%" override
        PATCH_FOR_EACH parameter2 IN 1 2 7 BEGIN
        LPF CLONE_EFFECT INT_VAR match_opcode=142 opcode=221 timing=1 parameter1=10 parameter2 END
        END
@@ -145,7 +172,27 @@ DEFINE_ACTION_FUNCTION initial BEGIN
       ADD_CRE_ITEM "%tutu_var%arow02" #10 #0 #0 NONE QUIVER
      BUT_ONLY
    END
-   
+
+	//bgee gives katanas to a few ogre mages, but messes it up
+	
+	ACTION_IF is_bg1 && enhanced_edition BEGIN
+		COPY_EXISTING 
+			"sw1h43.itm" "override/dw#ogkat.itm"
+			"sw1h44.itm" "override/dw#ogka2.itm"
+		WRITE_ASCII 0x22 S1
+		WRITE_LONG 0x18 THIS BAND (BNOT BIT2)
+		ACTION_FOR_EACH ogremage IN kahrk droth ogrema_d BEGIN
+			COPY_EXISTING "%ogremage%.cre" override
+				REMOVE_CRE_ITEM sw1h43
+				ADD_CRE_ITEM sw1h43 #0 #0 #0 none inv
+				ADD_CRE_ITEM dw#ogkat #0 #0 #0 undroppable weapon EQUIP
+		END
+		COPY_EXISTING "ogrema03.cre" override
+			REMOVE_CRE_ITEM sw1h44
+			ADD_CRE_ITEM sw1h44 #0 #0 #0 none inv
+			ADD_CRE_ITEM dw#ogka2 #0 #0 #0 undroppable weapon EQUIP
+	END
+	
    // a couple of problems in SR v4
    
    ACTION_IF demivrgvs BEGIN
@@ -203,7 +250,7 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    LAF misc_ids END
    
    // spellbook, for debugging
-   LAF run STR_VAR file=universal_spellbook locbase=spell tra=spell END
+	LAF run STR_VAR file=universal_spellbook locbase=spell tra=spell END
 
 ////////////////////////
 ///// BG2
@@ -245,15 +292,6 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    END
 
 ////////////////////////
-///// The old AI-initialise bit - do this before spells, so DS resources are available for scripts
-////////////////////////
-
-   OUTER_SPRINT component_loc caster_shared
-   LAF run STR_VAR file=ai_initialise END
-   OUTER_SPRINT component_loc initial
-   CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
-
-////////////////////////
 ///// Spell core
 ////////////////////////
 
@@ -266,6 +304,17 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 ////////////////////////
 
   LAF run STR_VAR file=correct_antimagic_descriptors locbase=spell tra=spell END
+
+////////////////////////
+///// The old AI-initialise bit 
+////////////////////////
+
+   OUTER_SPRINT component_loc caster_shared
+   LAF run STR_VAR file=ai_initialise END
+   OUTER_SPRINT component_loc initial
+   CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
+
+
 
 ////////////////////////
 ///// Easter egg
@@ -659,6 +708,7 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            freedom_scrolls=>dw#freedomscroll
            elemental_arrows=>dw#elemental_arrows
            extra_healing=>dw#extra_healing
+		   nature_beauty_blindness=>dw#nature_beauty
    END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_no_SR BEGIN
            nerf_greater_restoration => dw#restoration
@@ -678,7 +728,6 @@ DEFINE_ACTION_FUNCTION install_spell_core BEGIN
            skull_trap=>dw#skulltrap
            clone_slots=>dw#clone_slots
            npc_symbols=>dw#npcsymbols
-        //   polymorph_tweaks=>dw#polymorphtweaks
    END
    ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_divine BEGIN
            sanctity_of_mind=>dw#sanctity

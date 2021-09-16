@@ -1,0 +1,276 @@
+/*
+document{strref_apply}
+{
+Apply the (SFO standard patch) function 'function' to every strref in the current file, replacing it with the output. Currently doesn't do wmp files.
+}
+*/
+
+DEFINE_PATCH_FUNCTION strref_apply
+	STR_VAR function=""//function
+BEGIN
+	PATCH_MATCH "%SOURCE_EXT%" WITH
+	2da BEGIN
+		LPF strref_2da STR_VAR function END
+	END
+	baf BEGIN
+		LPF strref_script STR_VAR function END
+	END
+	bcs BEGIN
+		DECOMPILE_AND_PATCH BEGIN
+			LPF strref_script STR_VAR function END
+		END
+	END
+	dlg BEGIN
+		LPF strref_struct STR_VAR function END
+		LPF strref_script STR_VAR function END // no need to decompile, scripts in dlg files aren't compiled
+	END
+	bam wav wed bmp vvc vef pro BEGIN // no strrefs in these
+	END
+	are cre eff itm spl sto BEGIN
+		LPF strref_struct STR_VAR function END
+	END
+	DEFAULT
+		PATCH_WARN "extension %SOURCE_EXT% can't be handled by strref_apply"
+	END
+END
+
+
+
+/*
+document{strref_struct}
+{
+Go through a struct file, applying 'function' to each strref in it and returning the new one. Also does opcodes.
+}
+*/
+
+DEFINE_PATCH_FUNCTION strref_struct//internal
+	STR_VAR function=""//function
+BEGIN
+	// main struct loop
+	// load the struct
+	LPF struct_read RET_ARRAY m=struct END
+	//main header
+	LPF strref_struct_helper STR_VAR struct=m strtype="%m_strtype%" function RET_ARRAY m=struct END
+	//extended headers
+	PHP_EACH "SFO_%m_strtype%_extended_types" AS type=>discard BEGIN
+		PATCH_IF "SFO_%m_strtype%_%type%_has_strrefs" BEGIN
+			LPF struct_iter STR_VAR struct=m strtype="%m_strtype%" type RET length RET_ARRAY iter_array END
+			PATCH_IF length>0 BEGIN
+				PHP_EACH iter_array AS index=>lookup BEGIN
+					// get the data
+					SPRINT data $m("%type%" "%lookup%") 
+					INNER_PATCH_SAVE data "%data%" BEGIN
+						LPF struct_read STR_VAR strtype="%m_strtype%_%type%" RET_ARRAY s=struct END
+						LPF strref_struct_helper STR_VAR struct=s strtype="%m_strtype%_%type%" function RET_ARRAY s=struct END
+						LPF struct_write STR_VAR strtype="%m_strtype%_%type%" struct=s END
+					END
+					SPRINT $m("%type%" "%lookup%") "%data%"
+				END	
+			END					
+		END			
+	END
+	// write back
+	LPF struct_write STR_VAR struct=m END
+	//opcodes
+	PATCH_MATCH "%m_strtype%" WITH
+	"itm_.*" "spl_.*" BEGIN
+		LPF struct_get_offset_array STR_VAR type=fx RET_ARRAY offset_array=array END
+		PHP_EACH offset_array AS ind=>offset BEGIN
+			opcode_offset=offset
+			parameter1_offset=offset+0x4
+			parameter2_offset=offset+0x8
+			resref_offset=offset+0x14
+			special_offset=offset+0x2a
+			LPF strref_opcode INT_VAR opcode_offset parameter1_offset parameter2_offset special_offset STR_VAR function END
+		END
+		LPF struct_get_offset_array STR_VAR type=ab RET_ARRAY offset_array=array END
+		PHP_EACH offset_array AS ab_ind=>ab_offset BEGIN
+			LPF struct_get_offset_array2 INT_VAR offset=ab_offset STR_VAR type=ab_fx RET_ARRAY offset_array2=array END
+			PHP_EACH offset_array2 AS ind=>offset BEGIN
+				opcode_offset=offset
+				parameter1_offset=offset+0x4
+				parameter2_offset=offset+0x8
+				resref_offset=offset+0x14
+				special_offset=offset+0x2a
+				LPF strref_opcode INT_VAR opcode_offset parameter1_offset parameter2_offset special_offset STR_VAR function END
+			END
+		END	
+	END
+	"cre_.*" BEGIN
+		LPF FJ_CRE_VALIDITY END
+		LPF struct_get_offset_array STR_VAR type=fx RET_ARRAY offset_array=array END
+		PHP_EACH offset_array AS ind=>offset BEGIN
+			opcode_offset=offset+0x8
+			parameter1_offset=offset+0x14
+			parameter2_offset=offset+0x18
+			special_offset=offset+0x40
+			LPF strref_opcode INT_VAR opcode_offset parameter1_offset parameter2_offset special_offset STR_VAR function END
+		END
+	END
+	"eff_.*" BEGIN
+		opcode_offset=0x10
+		parameter1_offset=0x1c
+		parameter2_offset=0x20
+		special_offset=0x48
+		LPF strref_opcode INT_VAR opcode_offset parameter1_offset parameter2_offset special_offset STR_VAR function END
+	END
+	DEFAULT
+	END
+END
+
+DEFINE_PATCH_FUNCTION strref_struct_helper//internal
+	STR_VAR struct=""//array
+			strtype=""
+			function=""//function
+	RET_ARRAY struct
+BEGIN
+	SPRINT $struct("null") discard
+	PHP_EACH "SFO_%strtype%_types" AS label=>type BEGIN
+		PATCH_IF "%type%" STR_EQ strref BEGIN
+			arguments=$"%struct%"("%label%-strref")
+			LPF "%function%" STR_VAR arguments="%arguments%" RET value END
+			SET $"struct"("%label%-strref")=value
+		END
+	END
+END
+
+/*
+document{strref_opcode}
+{
+Read the opcode at opcode_offset and, if appropriate, apply 'function' to any strref encoded in it
+}
+*/
+DEFINE_PATCH_FUNCTION strref_opcode//internal
+	INT_VAR opcode_offset=0
+			parameter1_offset=0
+			parameter2_offset=0
+			special_offset=0
+	STR_VAR function=""
+BEGIN
+	READ_SHORT opcode_offset opcode
+	match=0
+	PATCH_IF is_bg2 || is_bg1 || enhanced_edition BEGIN
+		PATCH_MATCH "%opcode%" WITH
+		103 139 180 206 253 254 267 290 330 338 BEGIN
+			READ_LONG parameter1_offset strref
+			LPF "%function%" STR_VAR arguments="%strref%" RET value END
+			WRITE_LONG parameter1_offset value
+		END
+		181 BEGIN
+			READ_LONG special_offset strref
+			LPF "%function%" STR_VAR arguments="%strref%" RET value END
+			WRITE_LONG special_offset value
+		END
+		319 BEGIN
+			READ_LONG special_offset strref
+			LPF "%function%" STR_VAR arguments="%strref%" RET value END
+			WRITE_LONG special_offset value
+			READ_LONG parameter2_offset value
+			PATCH_IF value=10 BEGIN
+				READ_LONG parameter1_offset strref
+				LPF "%function%" STR_VAR arguments="%strref%" RET value END
+				WRITE_LONG parameter1_offset value			
+			END
+		END
+		DEFAULT
+		END
+	END ELSE BEGIN
+		PATCH_FAIL "iter_opcode currently doesn't handle this game type. Edit it in lib_iter to add support"
+	END
+
+END
+
+/*
+document{strref_script}
+{
+Acting on the current file, assumed to be a decompiled script, apply 'function' to each of the strrefs in it
+}
+*/
+
+
+DEFINE_PATCH_FUNCTION strref_script
+   STR_VAR function=""
+BEGIN
+   REPLACE_EVALUATE "DisplayString\([A-Za-z]*\)(\([^,]+\),\([0-9]+\))" BEGIN
+        LPF "%function%" STR_VAR arguments="%MATCH3%" RET value END
+   END
+   "DisplayString%MATCH1%(%MATCH2%,%value%)"
+   REPLACE_EVALUATE "AddJournalEntry(\([0-9]+\)" BEGIN
+        LPF "%function%" STR_VAR arguments="%MATCH1%" RET value END
+   END
+   "AddJournalEntry(%value%"
+END
+
+/*
+document{strref_2da}
+{
+Acting on the current file, assumed to be a 2da file, apply 'function' to each of the strrefs in it.</p>
+<p>
+Note that detection of which numbers in a 2da file are strrefs is of necessity a bit
+heuristic. We assume that 
+<ul>
+<li>no integer lower than 160 is a strref (the actual values from 1-100 in BG2 are
+dialog strings not referenced in 2das)
+<li>no integer larger than 299999 is a strref (this is way bigger than any actual dlg)
+<li>no integer in the following 2das is a strref:
+   banttimg clearair extanim extspeed happy pplane raisdead randcolr repmodst splashs2 splashsc startare startbp startpos strmod strmodex xpbonus xpcap xplevel xplist
+<li>no integer <10000 in the following is a strref:
+end15fps endmve1 endmve2 endmve3 intro intro15f melissan xnewarea
+<li>no integer in columns 0-2 of clastext is a strref
+<li>nothing in hex notation is a strref
+<li>all other integers are strrefs
+</ul>
+}
+*/
+
+DEFINE_PATCH_FUNCTION strref_2da
+   STR_VAR function=""
+BEGIN
+   SPRINT filename "%SOURCE_RES%"
+   TO_LOWER filename
+   PATCH_MATCH "%filename%" WITH 
+        banttimg clascolr clearair extanim extspeed happy pplane raisdead randcolr repmodst splashs2 splashsc startare startbp startpos strmod strmodex xpbonus xpcap xplevel xplist
+   BEGIN
+      SET min=0
+      SET max=0
+      SET col=0
+   END
+       end15fps endmve1 endmve2 endmve3 intro intro15f melissan xnewarea
+   BEGIN
+      SET min=10000
+      SET max=299999
+      SET col=0
+   END
+      clastext
+   BEGIN
+      SET min=160
+      SET max=299999
+      SET col=3
+   END
+      statdesc
+   BEGIN
+      SET min=256
+      SET max=299999
+      SET col=0
+   END
+   DEFAULT
+      SET min=160
+      SET max=299999
+      SET col=0
+   END
+   PATCH_IF max>0 BEGIN
+    COUNT_2DA_COLS colcount
+    COUNT_2DA_ROWS colcount rowcount
+    FOR (row=0;row<rowcount;row+=1) BEGIN
+     FOR (col=0;col<colcount;col+=1) BEGIN
+          READ_2DA_ENTRY row col colcount strref
+          PATCH_IF !"%strref%" STRING_MATCHES_REGEXP "[0-9]+$" & STRING_LENGTH "%strref%" <7  BEGIN // we check length here to avoid overflow
+            PATCH_IF (min<= strref & strref<= max) BEGIN
+             LPF "%function%" STR_VAR arguments="%strref%" RET strref_new=value  END
+             SET_2DA_ENTRY row col colcount "%strref_new%"
+            END
+          END
+    END // end of col FOR
+   END // wind of FOR
+  END // end_of PATCH_IF
+END // end of function

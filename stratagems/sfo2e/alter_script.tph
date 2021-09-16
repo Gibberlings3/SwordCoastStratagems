@@ -1,0 +1,389 @@
+/* 
+describe-library{
+A collection of functions to edit blocks of a BCS file. Common structure: we go through the in-game BCS 'script'.bcs block by block. We specify up to 5 regexps (match and match1-match5), and check each against the decompiled block. On a match, we then do something (what, depends on the function). If the Boolean 'only_once' is set, we stop after the first match. If 'recompile' is set to 0, we don't recompile the script afterwards (this is mostly for debugging).</p>
+
+<p>Alternately or additionally, a patch function 'match_function' can be specified, which should return one Boolean, 'value'. match_function is run on each decompiled block, and that block is only matched if the function returns 1. You can use the anonymous-function construct.</p>
+
+<p>This library formally depends on other libraries through the anonymous-function construct and through using SFO path/location/locbase syntax. However, if you eschew both, the library works as a self-contained library. (It should be kept that way.)
+}
+*/
+
+
+/*
+document{INSERT_SCRIPT_BLOCK}
+{
+'insert' should be either a complete path to a BAF file, or the filename of a BAF file with location given in sfo fashion by 'location'/'locbase'/'path'. That file is inserted after (or, if insert_above=1, before) any matched block.
+}
+*/
+
+DEFINE_ACTION_FUNCTION INSERT_SCRIPT_BLOCK
+INT_VAR insert_above=0//boolean
+        only_once=0//boolean
+        recompile=1//boolean
+STR_VAR script=""
+        match_function=""//function
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+        insert=""
+		location=""
+		locbase=""
+		path=""
+BEGIN
+	ACTION_IF "%location%%locbase%%path%" STR_CMP "" BEGIN
+		LAF sfo_path STR_VAR file="%insert%" location locbase path RET insert=file_path END
+	END
+   // sanity check
+   COPY - "%insert%" override EVALUATE_BUFFER
+       READ_ASCII 0x0 internal_insert_data (BUFFER_LENGTH)
+       PATCH_TRY COMPILE_BAF_TO_BCS WITH DEFAULT
+          PATCH_PRINT ~"%insert%" is not a legal BAF file, INSERT_SCRIPT_BLOCK will fail~
+          PATCH_RERAISE
+       END
+   BUT_ONLY
+   OUTER_SPRINT internal_insert_data "%internal_insert_data%"^"%WNL%"
+   LAF internal_script_block_master 
+     INT_VAR only_once insert_above replace=0 recompile
+     STR_VAR internal_insert_data script match_function
+           match match1 match2 match3 match4 match5
+           type=insert 
+   END
+END
+
+/*
+document{REPLACE_SCRIPT_BLOCK}
+{
+'insert' should be either a complete path to a BAF file, or the filename of a BAF file with location given in sfo fashion by 'location'/'locbase'/'path'. That file is substituted in to replace any matched block.
+}
+*/
+
+DEFINE_ACTION_FUNCTION REPLACE_SCRIPT_BLOCK
+INT_VAR only_once=0//boolean
+        recompile=1//boolean
+STR_VAR script=""
+        match_function=""//function
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+        insert=""
+		location=""
+		locbase=""
+		path=""
+BEGIN
+	ACTION_IF "%location%%locbase%%path%" STR_CMP "" BEGIN
+		LAF sfo_path STR_VAR file="%insert%" location locbase path RET insert=file_path END
+	END
+   // sanity check
+   COPY - "%insert%" override EVALUATE_BUFFER
+       READ_ASCII 0x0 internal_insert_data (BUFFER_LENGTH)
+       PATCH_TRY COMPILE_BAF_TO_BCS WITH DEFAULT
+          PATCH_PRINT ~"%insert%" is not a legal BAF file, INSERT_SCRIPT_BLOCK will fail~
+          PATCH_RERAISE
+       END
+   BUT_ONLY
+   OUTER_SPRINT internal_insert_data "%internal_insert_data%"^"%WNL%"
+   LAF internal_script_block_master 
+     INT_VAR only_once replace=1 recompile
+     STR_VAR internal_insert_data script match_function
+           match match1 match2 match3 match4 match5
+           type=insert 
+   END
+END
+
+/*
+document{DELETE_SCRIPT_BLOCK}
+{
+Any matched block is deleted.
+}
+*/
+
+DEFINE_ACTION_FUNCTION DELETE_SCRIPT_BLOCK
+INT_VAR only_once=0//boolean
+		recompile=1//boolean
+STR_VAR script=""
+        match_function=""//function
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+BEGIN
+   LAF internal_script_block_master INT_VAR only_once recompile STR_VAR script match_function match match1 match2 match3 match4 match5 type=delete END
+END
+
+/*
+document{CLONE_SCRIPT_BLOCK}
+{
+Any matched block is copied directly below (or, if insert_above=1, directly above) the matched block. Up to 6 regexps ('swap_out', and 'swap_out1'-'swap_out5') are specified. Each is matched against the (decompiled) copied block via REPLACE_TEXTUALLY, and on a match, is swapped for (respectively) 'swap_in' or 'swap_in1'-'swap_in5'. The same happens to the original block, using 'original_swap_out'/'original_swap_out[1-5]' and 'original_swap_in'/'original_swap_in[1-5]'.
+}
+*/
+
+DEFINE_ACTION_FUNCTION CLONE_SCRIPT_BLOCK
+INT_VAR insert_above=0//boolean
+        only_once=0//boolean
+        recompile=1//boolean
+STR_VAR script=""
+        patch=""//function
+		function=""//function
+        patch_original=""//function
+		function_original=""//function
+        match_function=""//function
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+        swap_out=""
+        swap_out1=""
+        swap_out2=""
+        swap_out3=""
+        swap_out4=""
+        swap_out5=""
+        swap_in=""
+        swap_in1=""
+        swap_in2=""
+        swap_in3=""
+        swap_in4=""
+        swap_in5=""
+        original_swap_out=""
+        original_swap_out1=""
+        original_swap_out2=""
+        original_swap_out3=""
+        original_swap_out4=""
+        original_swap_out5=""
+        original_swap_in=""
+        original_swap_in1=""
+        original_swap_in2=""
+        original_swap_in3=""
+        original_swap_in4=""
+        original_swap_in5=""
+BEGIN
+   LAF internal_script_block_master
+     INT_VAR only_once insert_above
+     STR_VAR script match_function patch="%patch%%function%" patch_original="%patch_original%%function_original%"
+           match match1 match2 match3 match4 match5 
+           swap_out swap_out1 swap_out2 swap_out3 swap_out4 swap_out5
+           swap_in swap_in1 swap_in2 swap_in3 swap_in4 swap_in5
+           original_swap_out original_swap_out1 original_swap_out2 original_swap_out3 original_swap_out4 original_swap_out5
+           original_swap_in original_swap_in1 original_swap_in2 original_swap_in3 original_swap_in4 original_swap_in5
+           type=clone
+   END
+END
+
+/*
+document{ALTER_SCRIPT_BLOCK}
+{
+Up to 6 regexps ('swap_out', and 'swap_out1'-'swap_out5') are specified. Each is matched against any matched block via REPLACE_TEXTUALLY, and on a match, is swapped for (respectively) 'swap_in' or 'swap_in1'-'swap_in5'. 
+}
+*/
+
+DEFINE_ACTION_FUNCTION ALTER_SCRIPT_BLOCK
+INT_VAR only_once=0//boolean
+        recompile=1//boolean
+STR_VAR script=""
+        patch=""//function
+		function=""//function
+        match_function=""//function
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+        swap_out=""
+        swap_out1=""
+        swap_out2=""
+        swap_out3=""
+        swap_out4=""
+        swap_out5=""
+        swap_in=""
+        swap_in1=""
+        swap_in2=""
+        swap_in3=""
+        swap_in4=""
+        swap_in5=""
+BEGIN
+   LAF internal_script_block_master
+     INT_VAR only_once recompile
+     STR_VAR script match_function patch="%patch%%function%"
+           match match1 match2 match3 match4 match5 
+           swap_out swap_out1 swap_out2 swap_out3 swap_out4 swap_out5
+           swap_in swap_in1 swap_in2 swap_in3 swap_in4 swap_in5
+           type=alter
+   END
+END
+
+/*
+document{internal_script_block_master}
+{
+This is actually the innards of the various functions in this library, all of which are hooks into it.
+}
+*/
+
+DEFINE_ACTION_FUNCTION internal_script_block_master//internal
+INT_VAR insert_above=0//boolean
+        only_once=0//boolean
+        recompile=1//boolean
+        replace=0//boolean
+STR_VAR script=""
+        patch=""
+        patch_original=""
+        match_function=""
+        match=""
+        match1=""
+        match2=""
+        match3=""
+        match4=""
+        match5=""
+        internal_insert_data=""
+        swap_out=""
+        swap_out1=""
+        swap_out2=""
+        swap_out3=""
+        swap_out4=""
+        swap_out5=""
+        swap_in=""
+        swap_in1=""
+        swap_in2=""
+        swap_in3=""
+        swap_in4=""
+        swap_in5=""
+        original_swap_out=""
+        original_swap_out1=""
+        original_swap_out2=""
+        original_swap_out3=""
+        original_swap_out4=""
+        original_swap_out5=""
+        original_swap_in=""
+        original_swap_in1=""
+        original_swap_in2=""
+        original_swap_in3=""
+        original_swap_in4=""
+        original_swap_in5=""
+		type=""
+BEGIN
+COPY_EXISTING "%script%.bcs" "override"
+     SET found_match=0
+     SPRINT new_script ""
+     SET start=INDEX_BUFFER("CR")
+	 // anonymous function checks (manual so we don't rely on lib_anon)
+	 PATCH_IF INDEX ("[ <>=\+/*{}]" "%match_function%")>=0 BEGIN
+		LPF anon_define STR_VAR function="%match_function%" RET match_function=function SFO_anon_func_count END
+	 END
+	 PATCH_IF INDEX ("[ <>=\+/*{}]" "%patch%")>=0 BEGIN
+		LPF anon_define STR_VAR function="%patch%" RET patch=function SFO_anon_func_count END
+	 END
+	 PATCH_IF INDEX ("[ <>=\+/*{}]" "%patch_original%")>=0 BEGIN
+		LPF anon_define STR_VAR function="%patch_original%" RET patch_original=function SFO_anon_func_count END
+	 END
+     WHILE start>0 BEGIN
+          SET end=INDEX_BUFFER ("RS%LNL%CR%LNL%")
+          SET length=(end - start) + 6
+          READ_ASCII start data (length)
+          DELETE_BYTES start length
+          INNER_PATCH_SAVE data "SC%LNL%%data%SC%LNL%" BEGIN
+             DECOMPILE_BCS_TO_BAF
+             SET proceed=0
+             PATCH_IF (!found_match || !only_once) BEGIN
+              PATCH_IF "%match_function%" STRING_COMPARE "" BEGIN
+                READ_ASCII 0x0 data_temp (BUFFER_LENGTH)  // we do this to avoid side-effects
+			   INNER_PATCH "%data_temp%" BEGIN
+                    LPF "%match_function%" RET v_func=value END
+                END
+              END ELSE BEGIN
+                SET v_func=1
+              END
+              PATCH_IF
+             ( INDEX_BUFFER ("%match%")>=0     AND
+               INDEX_BUFFER ("%match1%")>=0    AND
+               INDEX_BUFFER ("%match2%")>=0    AND
+               INDEX_BUFFER ("%match3%")>=0    AND
+               INDEX_BUFFER ("%match4%")>=0    AND
+               INDEX_BUFFER ("%match5%")>=0    AND
+               v_func=1
+              )
+              BEGIN
+                SET proceed=1
+              END
+             END
+             PATCH_IF proceed BEGIN
+                 SET found_match=1
+                 PATCH_MATCH "%type%" WITH
+                 alter BEGIN
+                     PATCH_IF "%patch%" STRING_COMPARE "" BEGIN LPF "%patch%" END END
+                     PATCH_IF "%swap_out%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out%" "%swap_in%" END
+                     PATCH_IF "%swap_out1%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out1%" "%swap_in1%" END
+                     PATCH_IF "%swap_out2%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out2%" "%swap_in2%" END
+                     PATCH_IF "%swap_out3%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out3%" "%swap_in3%" END
+                     PATCH_IF "%swap_out4%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out4%" "%swap_in4%" END
+                     PATCH_IF "%swap_out5%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out5%" "%swap_in5%" END
+                 END
+                 clone BEGIN
+                    READ_ASCII 0x0 data2 (BUFFER_LENGTH)
+                    INNER_PATCH_SAVE data2 "%data2%" BEGIN
+                       PATCH_IF "%patch%" STRING_COMPARE "" BEGIN LPF "%patch%" END END
+                       PATCH_IF "%swap_out%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out%" "%swap_in%" END
+                       PATCH_IF "%swap_out1%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out1%" "%swap_in1%" END
+                       PATCH_IF "%swap_out2%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out2%" "%swap_in2%" END
+                       PATCH_IF "%swap_out3%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out3%" "%swap_in3%" END
+                       PATCH_IF "%swap_out4%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out4%" "%swap_in4%" END
+                       PATCH_IF "%swap_out5%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%swap_out5%" "%swap_in5%" END
+                    END
+                    PATCH_IF "%patch_original%" STRING_COMPARE "" BEGIN LPF "%patch_original%" END END
+                    PATCH_IF "%original_swap_out%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out%" "%original_swap_in%" END
+                    PATCH_IF "%original_swap_out1%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out1%" "%original_swap_in1%" END
+                    PATCH_IF "%original_swap_out2%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out2%" "%original_swap_in2%" END
+                    PATCH_IF "%original_swap_out3%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out3%" "%original_swap_in3%" END
+                    PATCH_IF "%original_swap_out4%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out4%" "%original_swap_in4%" END
+                    PATCH_IF "%original_swap_out5%" STRING_COMPARE "" BEGIN REPLACE_TEXTUALLY "%original_swap_out5%" "%original_swap_in5%" END
+                    PATCH_IF insert_above BEGIN
+                       SET insert_point=0
+                    END ELSE BEGIN
+                       SET insert_point=BUFFER_LENGTH
+                    END
+                    INSERT_BYTES insert_point (STRING_LENGTH "%data2%")
+                    WRITE_ASCIIE insert_point "%data2%"
+                 END
+                 delete BEGIN
+                    DELETE_BYTES 0x0 BUFFER_LENGTH
+                 END
+                 insert BEGIN
+                    PATCH_IF replace BEGIN
+                       DELETE_BYTES 0x0 BUFFER_LENGTH
+                    END
+                    PATCH_IF insert_above BEGIN
+                       SET insert_point=0
+                    END ELSE BEGIN
+                       SET insert_point=BUFFER_LENGTH
+                    END
+                    INSERT_BYTES insert_point (STRING_LENGTH "%internal_insert_data%")
+                    WRITE_ASCIIE insert_point "%internal_insert_data%"
+                 END
+                 DEFAULT
+                    PATCH_FAIL "internal error in ALTER_SCRIPT suite"
+                 END
+             END
+          END
+          SPRINT new_script "%new_script%%data%"
+          SET start=INDEX_BUFFER("CR")
+     END
+     DELETE_BYTES 0x0 BUFFER_LENGTH
+     INNER_PATCH_SAVE new_script "%new_script%" BEGIN
+        PATCH_IF recompile BEGIN
+           COMPILE_BAF_TO_BCS
+        END
+        SET new_length=BUFFER_LENGTH
+     END
+     INSERT_BYTES 0x0 new_length
+     WRITE_ASCIIE 0x0 "%new_script%"
+BUT_ONLY
+END
+

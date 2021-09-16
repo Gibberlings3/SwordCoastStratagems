@@ -1,0 +1,88 @@
+Alright, so the basic idea is this: 
+
+Each component has some late INCLUDEs in the various postproduction tpa files. 
+  * One includes a tpa for additional functions
+  * One includes the code for de-EE-ification and misc fixes
+  * The arcane and divine components also cross-patch one another in a third include. 
+  
+These are INCLUDEd within the postproduction instead of the tp2 so that they can use
+all of the vars defined in the main install_iwd_spell_resources function when the 
+spells are installed, e.g. WIZARD_ANTIMAGIC_SHELL. I've tried to patch to future-proof 
+against IWDEE releases, but in a few cases (notably Shroud of Flame) I'm forced to 
+directly insert new resources.
+
+I've stayed out of the /dw_iwdspells_resource except for one, absolutely needed change:
+I did a search-and-replace in isdwpells.tra to replace em-dashes with normal dashes.
+The former just get corrupted when used in oBG2. 
+  
+For the most part I've tried to stay out of the /lib folder; all resources and 
+includes are in this obg2_res folder. Define the path in the tp2 and you're good to go:
+
+    OUTER_SPRINT obg2_res_path      ~iwdification/obg2_res~  
+
+Changes I've had to make to the /lib folder are documented below:
+
+always.tph
+  Removed the EE/FAIL check right at the top and the EE check for DS installation 
+  (install otherwise fails as a DS function gets invoked).
+
+elemental_summoning.tpa
+  Adjusted GAME_IS check around line 27 as it would use BG string values for oBG2. 
+  Also ran the EFF swap through an ALTER_EFFECT because the text replacement wasn't 
+  catching the higher-level spair2 and spair3 references. 
+  
+install_iwd_spell_resources.tpa
+  Added new iwdification_extra variable that will scatter spell scrolls throughout the 
+  game and add a few arcane spells to joinable NPC spellbooks. Default is zero and is
+  used solely to include scroll_placement.tpa. Disabled install_iwd_icons so as to
+  avoid destructive states.bam overwrite in favor of extending statdesc.2da. Added
+  missile.ids appends for new projectiles by adding two lines around line 560.  
+  
+arcane_spells_postproduction.tpa
+  Inserted the INCLUDEs as noted above.
+
+bardsong_spells_postproduction.tpa
+  Inserted the INCLUDEs as noted above. fjbard.spl is from an optional Fixpack 
+  component, so I've added a file existance check around line 6. Similarly, 
+  clastext.2da is also an EE-only resource, so I hardcode the oBG2 bard
+  class description around line 29 and then pull the various kit descriptions
+  from kitlist.2da instead of clastext; this required a little re-jiggering of
+  the patching. 
+
+divine_spells_postproduction.tpa
+  Inserted the INCLUDEs as noted above. The hidespl APPENDs are now gated on
+  EE-game checks. The Entropy Shield/Flame Strike modification was deleting
+  all effects in the subspell instead of leaving the damage opcodes, so I've
+  reworked it slightly using old school DELETE_EFFECTs. 
+
+tp2
+  I outright remove the spells that won't work on oBG2 by creating an alternate 
+  X_resrefs_obg2.txt and handing that to the function instead. Ideally, this would go into 
+  weidu_external so as to preserve immutability, but the function hardcodes the path partially:
+  trying to hand off spell_list=EVAL ~weidu_external/%scsroot%/arcane_resrefs_obg2.txt~ will 
+  cause it to fail as it looks for ~%resource_loc%/weidu_external/%scsroot%/arcane_resrefs_obg2.txt~. 
+  
+  The hotkey routine gets gated behind an EE check since it has no relvance for oBG2. 
+  
+  Scripting is another issue; in the arcane component you can see where I try to work around
+  the EE-only scripting. ogremasu.baf in particular also looks like it's been SCS-ized. Rather
+  than trying to reverse SSL, I just copy over the default ogremasu from oBG2. 
+  
+data/scroll_prices_arcane.txt
+  The following price adjustments were made to the scrolls:  
+    * Snilloc's Snowball Swarm 900 > 300 - other level 2 scrolls range 200-300
+    * Icelance 900 > 400 - other level 3 scrolls range 300-400
+    * Lance of Disruption 600 > 400 - other level 3 scrolls range 300-400
+    * Emotion, Hope - 600 > 500 - level 4 scrolls are 400-500
+    * Shout - 1200 > 500 - level 4 scrolls are 400-500
+    * Vitriolic Sphere - 1600 > 500 - level 4 scrolls are 400-500
+    * Shadow Monsters - 1200 > 500 - level 4 scrolls are 400-500
+    * All level 5 spells - 1500 > 1000 - All others, save two, are 1000
+    * All level 6 spells - 600 to 1800 > 2000 - All others are 2000
+    * All level 7 spells - 700 to 2100 > 3000 - All others are 3000
+    * All level 8 spells - 800 to 2400 > 5000 - All others are 5000
+    * Monster Summoning VI - 2700 > 5000 - All others are 5k, 10k save Freedom
+  
+data/scroll_prices_divine.txt
+  Adjusted Symbol, Pain from 700 to 3000 to bring it inline with others.
+  

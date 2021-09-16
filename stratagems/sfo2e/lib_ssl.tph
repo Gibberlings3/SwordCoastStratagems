@@ -1,0 +1,235 @@
+/*
+
+describe-library{Functions for compiling ssl scripts.}
+
+*/
+
+/*
+
+document{ssl_core}
+{
+Take 'script'.ssl, located at locbase|location|path (or located at .../stratagems-inline if inline=1), and compile it to a baf file of the same name, living in workspace/ssl_out.
+If it's missing, whine unless silent=1. Return 1 if file exists to compile, 0 otherwise.
+SSL input: variables are the concatenation of the external string 'sslvariables' and the function argument 'variables'; booleans are given by the eponymous function argument;
+libraries are the concatenation of the external string 'ssllibrary' and '%data_loc%\autolib'.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION ssl_core
+	INT_VAR inline=0//boolean
+			silent=0//boolean
+	STR_VAR script=""
+			variables=""
+			booleans=""
+			location=""
+			locbase=""
+			path=""
+	RET value
+BEGIN
+	// sanity check
+	ACTION_IF !FILE_EXISTS "%ssl_loc%/ssl.exe" BEGIN
+		FAIL "SSL is not installed. To use .ssl files, make sure ssl.exe and ssl.pl are located at %ssl_loc%."
+	END
+	// blank library//sslvariables variable if not set
+	ACTION_IF !VARIABLE_IS_SET ssllibrary BEGIN
+		OUTER_SPRINT ssllibrary ""
+	END
+	ACTION_IF !VARIABLE_IS_SET sslvariables BEGIN
+		OUTER_SPRINT sslvariables "defaultvariable=0"
+	END
+	ACTION_TO_LOWER script
+	// join local 'variables' onto main 'sslvariables'
+	ACTION_IF "%variables%" STR_CMP "" && "%sslvariables%" STR_CMP "" BEGIN
+		OUTER_SPRINT sslvariables "%sslvariables%&%variables%"
+	END ELSE BEGIN
+		OUTER_SPRINT sslvariables "%sslvariables%%variables%"
+	END
+	// setup for booleans
+	ACTION_IF "%booleans%" STRING_COMPARE_CASE "" BEGIN
+		OUTER_SPRINT booleanstring "-b %booleans%"
+	END ELSE BEGIN
+		OUTER_SPRINT booleanstring ""
+	END
+	// create blank autolib if one not already present
+	ACTION_IF !FILE_EXISTS "%data_loc%/autolib.slb" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc%/autolib.slb"
+	END
+	// find location
+	ACTION_IF inline BEGIN
+		COPY ".../stratagems-inline/%script%.ssl" "%workspace%"
+		OUTER_SPRINT path "%workspace%"
+	END ELSE BEGIN
+		LAF sfo_path STR_VAR location locbase path RET path END
+	END
+	OUTER_SET value=1
+	ACTION_IF !FILE_EXISTS "%path%/%script%.ssl" BEGIN
+		OUTER_SET value=0
+		ACTION_IF !silent BEGIN
+			WARN "ssl_core error: supposed ssl file %script%.ssl not present at %path%"
+		END
+	END
+	ACTION_IF value BEGIN
+		// delete any previous version (we want failed SSL compilation to cause install-time failures, not be missed if there's a previous version there)
+		DELETE "%workspace%/ssl_out/%script%.baf"
+		// compile
+		// Windows system
+		ACTION_IF "%WEIDU_OS%" STR_EQ "WIN32" BEGIN 
+			OUTER_PATCH_SAVE ssl_loc "%ssl_loc%" BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH "/" "\\"
+			END
+			OUTER_INNER_PATCH_SAVE scsargs "%path%/%script%" BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH "/" "\\"
+			END
+			LAF check_ini INT_VAR silent=1 STR_VAR ini=Use_Perl_Natively RET perl_natively=value END 
+			ACTION_IF !perl_natively BEGIN // default, use the exe
+				AT_NOW ~%ssl_loc%\ssl.exe %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %data_loc%\autolib %booleanstring%~		
+			END ELSE BEGIN // use an assumed win32 version of Perl
+				AT_NOW ~perl %ssl_loc%\ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %data_loc%\autolib %booleanstring%~		
+			END	
+		END ELSE BEGIN // something else, assumed to have perl natively present
+			OUTER_PATCH_SAVE ssl_loc "%ssl_loc%" BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH "/" "\"
+			END
+			OUTER_INNER_PATCH_SAVE scsargs "%path%/%script%" BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH "\" "/"
+			END
+			AT_NOW ~chmod 755 %ssl_loc%/ssl.pl~
+			AT_NOW ~/usr/bin/perl %ssl_loc%/ssl.pl %scsargs% "%sslvariables%" -o %workspace%/ssl_out -l %ssllibrary% %data_loc%/autolib %booleanstring%~ EXACT	  
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+
+document{ssl_to_bcs}
+{
+Take a list of ssl files 'script' (synonyms: 'arguments', 'scripts'), each located at locbase|location|path (or located at .../stratagems-inline if inline=1), and compile them all the way to bcs, processing
+SSL line_if commands and carrying out EE-to-oBG2 swaps and custom-hotkey swaps as appropriate. If any are missing, whine unless silent=1.</p>
+<p>If input is instead in the form "k=>v list", compile each k.ssl to v.bcs.</p>
+
+<p>SSL input: variables are the concatenation of the external string 'sslvariables' and the function argument 'variables'; booleans are given by the eponymous function argument;
+libraries are the concatenation of the external string 'ssllibrary' and '%data_loc%\autolib'.
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ssl_to_bcs
+	INT_VAR inline=0//boolean
+			silent=0//boolean
+	STR_VAR script=""
+			arguments=""
+			scripts=""
+			variables=""
+			booleans=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	OUTER_SPRINT arguments "%arguments%%script%%scripts%"
+	ACTION_IF "%arguments%" STR_CMP "" BEGIN 
+		ACTION_IF INDEX ("=>" "%arguments%")>=0 BEGIN
+			LAF return_first_pair STR_VAR list="%arguments%" RET script=key bcs=value arguments=list END
+		END ELSE BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET script=entry arguments=list END
+			OUTER_SPRINT bcs "%script%"
+		END
+		LAF ssl_core INT_VAR inline silent STR_VAR script variables booleans location locbase path RET file_found=value END
+		ACTION_IF file_found BEGIN
+			ACTION_IF FILE_EXISTS "%workspace%/ssl_out/%script%.baf" BEGIN
+				COPY "%workspace%/ssl_out/%script%.baf" "override/%bcs%.bcs"
+					LPF ssl_implement_line_if END
+					LPF script_ee_to_vanilla END
+					LPF script_custom_hotkeys END
+					EVALUATE_BUFFER
+					COMPILE_BAF_TO_BCS			
+			END ELSE BEGIN
+				WARN "WARNING: %script%.ssl failed to compile to BAF."
+			END
+		END
+		// recurse
+		LAF ssl_to_bcs INT_VAR inline silent STR_VAR arguments variables booleans location locbase path END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+
+document{ssl_to_baf}
+{
+Take a list of ssl files 'script' (synonyms: 'arguments', 'scripts'), each located at locbase|location|path (or located at .../stratagems-inline if inline=1), 
+and compile them to baf (leaving them at [workspace]/ssl_out), processing SSL line_if commands and carrying out EE-to-oBG2 swaps and custom-hotkey swaps as appropriate. 
+If any are missing, whine unless silent=1. Evaluate variables unless evaluate_variables=0.</p>
+
+<p>If input is instead in the form "k=>v list", compile each k.ssl to v.baf.</p>
+
+<p>SSL input: variables are the concatenation of the external string 'sslvariables' and the function argument 'variables'; booleans are given by the eponymous function argument;
+libraries are the concatenation of the external string 'ssllibrary' and '%data_loc%\autolib'.
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION ssl_to_baf
+	INT_VAR inline=0//boolean
+			silent=0//boolean
+			evaluate_variables=1//boolean
+	STR_VAR script=""
+			arguments=""
+			scripts=""
+			variables=""
+			booleans=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	OUTER_SPRINT arguments "%arguments%%script%%scripts%"
+	ACTION_IF "%arguments%" STR_CMP "" BEGIN 
+		ACTION_IF INDEX ("=>" "%arguments%")>=0 BEGIN
+			LAF return_first_pair STR_VAR list="%arguments%" RET script=key baf=value arguments=list END
+		END ELSE BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET script=entry arguments=list END
+			OUTER_SPRINT baf "%script%"
+		END
+		LAF ssl_core INT_VAR inline silent STR_VAR script variables booleans location locbase path RET file_found=value END
+		ACTION_IF file_found BEGIN
+			ACTION_IF FILE_EXISTS "%workspace%/ssl_out/%script%.baf" BEGIN
+				COPY "%workspace%/ssl_out/%script%.baf" "%workspace%/ssl_out/%baf%.baf"
+					LPF ssl_implement_line_if END
+					LPF script_ee_to_vanilla END
+					LPF script_custom_hotkeys END
+					PATCH_IF evaluate_variables BEGIN
+						EVALUATE_BUFFER
+					END
+			END ELSE BEGIN
+				WARN "WARNING: %script%.ssl failed to compile to BAF."
+			END
+		END
+		// recurse
+		LAF ssl_to_baf INT_VAR inline silent evaluate_variables STR_VAR arguments variables booleans location locbase path END
+
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION ssl_implement_line_if//internal
+BEGIN
+   REPLACE_EVALUATE "LineIf<\([^>]*\)> *<\([^>]*\)>"
+   BEGIN
+      PATCH_IF IS_AN_INT MATCH2 BEGIN
+         PATCH_IF MATCH2 BEGIN
+            SPRINT output "%MATCH1%"
+         END ELSE BEGIN
+            SPRINT output ""
+         END
+      END ELSE BEGIN
+         SPRINT output ""
+      END
+   END
+   "%output%"
+END

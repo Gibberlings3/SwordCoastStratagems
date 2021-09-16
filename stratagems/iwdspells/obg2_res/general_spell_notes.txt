@@ -1,0 +1,124 @@
+First step, read David's notes from the converter, specifically the 'Modifications
+made to the spell system' section:
+
+https://raw.githubusercontent.com/Gibberlings3/IWDSpells/master/dw_iwdspells/readme.txt
+
+Everything else here are notes from Cam. For the most part it's a running list of changes
+made for oBG2 compatibility (mainly so I can update the readme easier) but in a few cases 
+I've made changes that contradict or enhance changes from the converter. 
+
+One quick note: this is not, by any means, final. I'm open to discussion on any of this. 
+
+Alignment-restricted spells: The converter correctly identifies (and corrects) that the 
+various inverse divine necromantics spells (Cause Disease, Cause X Wounds, etc.) are
+alignment-restricted in IWD but not in BG/2 and removes these restrictions upon import. 
+However, it does this with a slightly too-broad brush, and the following spells are
+re-restricted:
+
+  * (Greater) Shield of Lathander: unavailable to evil characters. Greater Shield is also
+    restricted from neutrals in IWDEE, but given that Lathander clerics can be LN I've
+    only made this non-evil.
+  * Cloud of Pestilence: only available to evil characters
+  * Mass Cause Light Wounds: Made cleric-only, as druids can't cast any of the Cause X
+    Wounds series. This is a change from IWDEE.
+
+Old IWD resources: The imported spells had a few leftover calls (mainly 318/206) against
+IWD spells not present in BG/2, and these are purged. I've also re-instituted the
+cross-patches, where e.g. divine spells are checked against arcane spells and these
+protections re-added as appropriate.
+
+Scroll usability fixes: Arcane spell scrolls were still using the IWD school system, so
+kit usabilities were generally wrong. The divine scrolls were not reflecting the underlying
+spell restrictions (e.g. druid vs. cleric). In both cases, I iterate through the scrolls
+and dynamically apply the underlying spell's restrictions to the scroll.
+
+Summons: I just run everything through a check and make sure the inventory is undroppable
+and that they use the correct summon AI script. In oBG2, the mod will check if expanded
+animations are available through Infinity Animations are use the IWD versions as
+appropriate, but otherwise will use existing oBG2 animations. oBG2 also doesn't allow
+the cool animations defined by the tables so these spells just play some generic
+summoning animations.
+
+The Song of Kaudies: The 50% protection from 'any other sound-based attacks' is open to
+a lot of interpretation. In addition to its existing protections against silence, (Great) 
+Shout, (Greater) Command, and Wail of the Banshee, we've extended protections for War
+Cry, Demilich Howl, and Moon Dog Howl. In previous versions this song also protected
+against Power Words, but after some discussion these protections have been dropped. 
+
+The rest of these notes apply only to oBG2.
+
+General opcode changes:
+  * Visual opcodes 7, 8, and 9 are fine unless they use 255 (everything) as param2.
+    These are converted to a series targeting param2 values of 0-6 (various body parts).
+  * Op 12 (damage) is problematic if it's flagged as 'split for half', an EE-exclusive
+    flag. These are systematically split into two op 12s. Similarly, HP drains are
+    also converted to plain damage + HP gains.
+  * Op 61 gets converted to a series of op 50s. I'm looking into whether this is the
+    best soilution.
+  * Op 126/176: Movement speed increase does not have a mode 5 in oBG2 (multiply %)
+    so these are shifted to mode 2 (set % of).
+  * Op 318/324: For the most part these are converted to 177 opcodes, using EFFs 
+    targeting the underlying group. In some cases they cannot be converted.
+  * Op 321: Unfortunately, oBG2 lacks this awesome opcode, and generally one of
+    three solutions were used: using op 206 with a duration equal to the spell
+    to prevent stacking; deletion; or knocking certain effects into a subspell
+    and preventing that from stacking.
+  * Op 325 (all save bonus) is converted to five save bonus opcodes (33-37).
+  * Op 333 is transformed into a series of time-delayed cast opcodes (146).
+
+Spells that won't work on oBG2: (Great) Shout, Soul Eater, Seven Eyes, Mold Touch, Favor
+of Ilmater, Smashing Wave, Wall of Moonlight, and Spiritual Wrath are unavailable in oBG2.
+Cat's Grace works on oBG2 with TobEx installed, and Giant Insect will be installed if
+the beetle animation from Infinity Animations is installed. Mordenkainen's Force Missiles
+are currently skipped, though I've been told someone else has amde it work so I'm currently
+looking into it. 
+
+Spells with 'cloud' animations: oBG2 is a lot more restricted on projectiles, so these
+spells simulate a cloud-based effect: Suffocate, Spike Growth, Cloudburst, Cloud of
+Pestilence, Spike Stones, Mist of Eldath. While the AoE is correct, the way these are
+simulated (an invisible creature spawning further invisible creatures to play VVCs) 
+means that the visuals are likely underselling the AoE.
+
+Portrait Icons: Unlike the EEs, there's no way to easily extend states.bam to support
+additional portrait icons. For spells these are either purged or substitued. I do have
+an expanded states.bam from a pull request that I will likely make available on oBG2
+as a separate component, as it will overwrite anyone else's changes to states.bam.
+
+Shroud of Flame is basically rebuilt from the ground up. It's simualted well except
+for the spread from creature to creature. I've been unable to get this to work reliably
+so for now it does everything except that. 
+
+Iron Body: Since 'paws' are always dispelled in oBG2, I've moved all of the effects from
+the spell to the paw. This is to avoid the awkward situation where the iron fist has 
+been dispelled but the other spell effects remain active.
+
+Mordenkainen's Force Blade: Like Iron Body above, the spell effects are moved to the
+sword. Unfortunately since this spell varies based on level, a series of Force Blades 
+are created. 
+
+Static Charge: In oIWD and EEs, this is a spell applied to the caster that zaps a
+nearby target once per turn. In oBG2 this spell is reduced to something you cast
+on another creature that will simply zap them until they die or the spell ends.
+
+Blood Rage: There's no way to mask hit points in oBG2, and the only-ally casting
+is also problematic. Instead the spell is restricted to green-circled creatures
+by using EFFs targeting EA values. I could not get this to work with an ally-only
+projectile. 
+
+Thorn Spray: Basically uses a Cone of Cold-style projectile on oBG2. 
+
+Righteous Wrath of the Faithful: Works, but uses a ton of EFFs and subspells. 
+
+Undead Ward: This spell summons an invisble cleric to turn undead, so its AoE
+is effectively visual range instead of the listed 10-ft. radius. 
+
+Whirlwind: Another projectile issue, this spell basically creates an invisible
+creature with the Whirlwind animation and then moves him about randomly. Any
+creature that gets too close gets hit with a subspell like Globe of Blades. 
+
+
+
+
+
+
+

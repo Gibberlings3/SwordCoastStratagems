@@ -1,0 +1,1260 @@
+/*
+describe-library{
+Library of functions to move spells from an EE game to another (possibly not EE) game. This library should be game-neutral and must not use syntactic sugar.
+}
+
+
+*/
+
+
+/*
+document{get_spell_resources}
+{Take as input:
+<ul>
+<li>SFO path locators (path,location,locbase)
+<li>'file', a 2da file (in headed-table format) that lists the IDS of the spells to copy over
+and (if relevant) the scroll shadows for the spells
+<li>'do_not_copy', a text file listing files to exclude from copying
+<li>'dest_spell_ids', a copy of the spell.ids file of the destination game
+<li>'ids_remaps', a set of remaps for ids entries in the old game that gives their ids entries in the new game
+<li>'resource_loc', a directory (in the base game directory) into which all the resources will be put
+<li>'prefix', a string that determines the prefix for the various data files to be created
+<li>optionally, 'iter_start', which says where the iteration for a resource should start
+</ul>
+
+Copy over all the resources used by the spells in 'file', along with the auxiliary data required
+to install them via install_spell_resources.</p>
+<p>process_tra_entries_all will have to be run after any runs of get_spell_resources.
+
+
+}
+
+
+
+*/
+
+
+DEFINE_ACTION_FUNCTION get_spell_resources
+	STR_VAR file=""
+			do_not_copy=""
+			dest_spell_ids=""
+			ids_remaps=""
+			prefix=""
+			resource_loc=""
+			location="" 
+			locbase=""
+			path=""
+			iter_start=""
+			
+BEGIN
+
+// load generally-required data
+
+	LAF spell_comparison STR_VAR dest_spell_ids path location locbase RET_ARRAY not_in_dest END
+	LAF array_read STR_VAR file="%do_not_copy%" path location locbase case=lower RET_ARRAY do_not_copy=array END
+	LAF array_read INT_VAR firstrow=1 STR_VAR file path location locbase RET_ARRAY main_array=array END
+
+// load any extra resources we want to hand-add
+
+	ACTION_IF "%iter_start%" STR_CMP "" BEGIN
+		LAF array_read STR_VAR file="%iter_start%" path location locbase RET_ARRAY iter_start=array END
+	END
+
+// wipe the smtables list
+
+	COPY ".../stratagems-inline/blank" "%data_loc%/smtable_entries.2da"
+
+// initialize the spells-used list
+
+	ACTION_IF !FILE_EXISTS "%resource_loc%/spells_used.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%resource_loc%/spells_used.txt"
+		APPEND_OUTER "%resource_loc%/spells_used.txt" "spell_used_resref spell_used_ids resource_using	resource_using_ext"
+	END
+
+// load SPELL.IDS data if not already loaded; do any overrides
+	ACTION_IF !VARIABLE_IS_SET SFO_internal_spells_read BEGIN
+		LAM data_spell_resrefs
+	END
+	LAF array_read STR_VAR file="%ids_remaps%" path location locbase RET_ARRAY ids_remaps=array END
+	ACTION_PHP_EACH ids_remaps AS old=>new BEGIN
+		OUTER_SPRINT "%new%" "%%old%%"
+	END
+
+// make any resource-storing files we need
+
+	ACTION_IF !FILE_EXISTS "%data_loc%/strings_used.txt" BEGIN
+	 COPY ".../stratagems-inline/blank" "%data_loc%/strings_used.txt"
+	END
+	COPY ".../stratagems-inline/blank" "%data_loc%/icons_used.txt"
+	APPEND_OUTER "%data_loc%/icons_used.txt" "resource%TAB%spell_id%TAB%icon"
+
+// get a copy of missile.ids and animate.ids
+
+	ACTION_FOR_EACH ids IN missile animate BEGIN
+		COPY_EXISTING "%ids%.ids" "%resource_loc%"
+	END
+
+// run the main iteration
+	
+	ACTION_PHP_EACH main_array AS spell=>discard BEGIN
+		PRINT "Collecting resources for %spell%"
+		// make a directory
+		MKDIR "%resource_loc%/%spell%"
+		// find the spell resref
+		OUTER_SPRINT spell_resref EVAL "%%spell%%"
+		// record it 
+		LAF log_this STR_VAR file="%prefix%_resrefs.txt" path="%resource_loc%" input="%spell% %spell_resref%" END
+		ACTION_TO_LOWER spell_resref
+		// collect all related resources
+		ACTION_IF VARIABLE_IS_SET $iter_start("%spell%") BEGIN
+			OUTER_SPRINT start $iter_start("%spell%")
+		END ELSE BEGIN
+			OUTER_SPRINT start "%spell_resref%.spl"
+		END
+		LAF iter_resource STR_VAR start ignore=ignore_spells spell_use_function=log_spell_uses icon_function=log_icons RET_ARRAY resource_array=array END
+		// add the spell itself, and the scroll icon, to the list
+		OUTER_SPRINT $resource_array("%spell_resref%.spl") ""
+		ACTION_IF FILE_EXISTS_IN_GAME "%spell_resref%a.bam" BEGIN
+			OUTER_SPRINT $resource_array("%spell_resref%a.bam") ""
+		END
+		// go through the resource list and process them
+		ACTION_PHP_EACH resource_array AS resource=>discard BEGIN
+			ACTION_MATCH "%resource%" WITH
+            "null" 
+			"cas.*\.wav" 			
+			BEGIN // common or equivalent
+            END
+			".*\.bcs" BEGIN
+				ACTION_IF !VARIABLE_IS_SET $do_not_copy("%resource%") BEGIN
+					OUTER_PATCH_SAVE resref "%resource%" BEGIN
+						REPLACE_TEXTUALLY "\..*" ""
+					END
+					COPY_EXISTING "%resource%" "%resource_loc%/%spell%/%resref%.baf"
+						DECOMPILE_BCS_TO_BAF
+						LPF strref_script STR_VAR function=log_strref END
+				
+				END
+			END
+			".*\.pro" BEGIN
+				OUTER_PATCH_SAVE resref "%resource%" BEGIN
+						REPLACE_TEXTUALLY "\..*" ""
+				END
+				ACTION_IF "%resref%" STR_EQ "mfmiss" || "%resref%" STR_EQ "mfmiss2" BEGIN
+					// we hardcode IWDEE's Mordenkainen's Force Missiles projectiles, since they appear multiple times.
+					// temporarily we pretend they're all individually named
+					ACTION_IF !VARIABLE_IS_SET done_mfm BEGIN
+						OUTER_SET done_mfm=1
+						LAF log_this INT_VAR repeat=0 STR_VAR path="%resource_loc%" file="%prefix%_proj.txt" input="mfmiss 436" END
+						OUTER_FOR (i=437;i<=446;i+=1) BEGIN
+							LAF log_this INT_VAR repeat=0 STR_VAR path="%resource_loc%" file="%prefix%_proj.txt" input="mfmiss2_%i% %i%" END
+						END
+						COPY_EXISTING "mfmiss.pro" "%resource_loc%/%spell%"
+						COPY_EXISTING "mfmiss2.pro" "%resource_loc%/%spell%"
+					END	
+				END ELSE BEGIN
+					OUTER_SET int=IDS_OF_SYMBOL (projectl "%resref%")
+					ACTION_IF int>=40 BEGIN
+						LAF log_this INT_VAR repeat=0 STR_VAR path="%resource_loc%" file="%prefix%_proj.txt" input="%resref% %int%" END
+						ACTION_IF !VARIABLE_IS_SET $do_not_copy("%resource%") BEGIN
+							COPY_EXISTING "%resource%" "%resource_loc%/%spell%"
+						END
+					END
+				END
+			END
+			DEFAULT
+				ACTION_IF !VARIABLE_IS_SET $do_not_copy("%resource%") BEGIN
+					COPY_EXISTING "%resource%" "%resource_loc%/%spell%"
+						LPF strref_apply STR_VAR function=log_strref END
+					//BUT_ONLY
+				END
+			END
+		END
+	END
+	
+      // get entries for SMTABLES
+
+    ACTION_IF FILE_EXISTS "%data_loc%/smtable_entries.2da" BEGIN
+        COPY "%data_loc%/smtable_entries.2da" "%resource_loc%/%prefix%_smtables.txt"
+    END
+	
+	// process icons
+	
+	MKDIR "%resource_loc%/icons"
+	LAF 2da_read STR_VAR file="icons_used.txt" path="%data_loc%" RET_ARRAY icons_used_rows=rows icons_used=array END
+	LAF 2da_read STR_VAR file=statdesc.2da RET_ARRAY statdesc=array END
+	LAF 2da_read STR_VAR file=iwd_icons.2da location=data RET_ARRAY statdesc_extra=array END
+	LAF array_join STR_VAR array1=statdesc array2=statdesc_extra RET_ARRAY statdesc=array END
+	ACTION_CLEAR_ARRAY icon_add
+	OUTER_SET count=0
+	ACTION_PHP_EACH icons_used_rows AS row=>discard BEGIN
+		OUTER_SPRINT $icon_add("%count%" resource) $icons_used("%row%" resource) 
+		OUTER_SPRINT id $icons_used("%row%" spell_id)
+		ACTION_IF VARIABLE_IS_SET $ids_remaps("%id%") BEGIN
+			OUTER_SPRINT id $ids_remaps("%id%")
+		END
+		OUTER_SPRINT $icon_add("%count%" spell_id) "%id%"
+		OUTER_SET icon=$icons_used("%row%" icon)
+		OUTER_SET $icon_add("%count%" old_id)=icon
+		OUTER_SET strref=$statdesc("%icon%" DESCRIPTION)
+		LAF log_strref STR_VAR arguments="%strref%" END
+		OUTER_SET $icon_add("%count%" desc)=strref
+		OUTER_SPRINT bam_file $statdesc("%icon%" BAM_FILE)
+		ACTION_IF FILE_EXISTS_IN_GAME "%bam_file%.bam" BEGIN
+			COPY_EXISTING "%bam_file%.bam" "%resource_loc%/icons"
+		END ELSE
+		ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" BEGIN
+			COPY "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" "%resource_loc%/icons"
+		END ELSE BEGIN
+			LAF warning STR_VAR warning="Cannot find bam file %bam_file%.bam, associated to icon %icon%" END
+		END
+		OUTER_SPRINT $icon_add("%count%" bam) "%bam_file%"
+		OUTER_SET ++count	
+	END
+	ACTION_IF count>0 BEGIN
+		LAF 2da_write STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" array=icon_add END
+	END
+
+	
+	
+END
+
+// ignore_spells doesn't ignore class spells, basically as a (mildly hacky) way to get bard songs
+
+DEFINE_ACTION_FUNCTION ignore_spells//internal
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	ACTION_MATCH "%arguments%" WITH
+	"\(spwi\|sppr\|spin\)[0-9]+\.spl" BEGIN
+		OUTER_SET value=1
+	END
+	DEFAULT
+		OUTER_SET value=0
+	END
+END
+
+/*
+document{log_strref}
+{
+Log a strref that needs to be copied over from the game we're moving resources from.
+Strrefs are recorded in [data_loc]/strings_used.txt, and have 1000000 added to them so as
+to guarantee no substring of a strref is also needed. 
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION log_strref
+	STR_VAR arguments="" 
+	RET value 
+BEGIN
+	OUTER_PATCH "" BEGIN
+		SET value=arguments
+		SET strref=arguments+1000000 // slightly hacky way to ensure no strref is a substring of another
+		LPF log_this INT_VAR repeat=0 STR_VAR file="strings_used.txt" input="%strref%" END
+	END
+END
+
+
+/*
+document{process_tra_refs}
+{
+Resolve the strrefs to be carried over into the new tlk, and output a lookup table in the form old_tlk_strref=>new_tlk_strref. Also save that table in data_loc/strref_map.txt.</p>
+
+<p>If it's already been done, just load the lookup table.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION process_tra_refs 
+	RET_ARRAY strref_map 
+BEGIN
+	// do tra refs
+	ACTION_IF !FILE_EXISTS "%data_loc%/strref_map.txt" BEGIN
+		LAF array_read STR_VAR file="strref_lookup.txt" path="%resource_loc%" RET_ARRAY tra_array=array END
+		ACTION_IF !enhanced_edition BEGIN
+			LAF check_ini INT_VAR silent=1 STR_VAR ini=obg2_language_override RET value END
+			ACTION_IF "%value%" STR_EQ "0" BEGIN
+				OUTER_SPRINT lang "%LANGUAGE%"
+			END ELSE BEGIN
+				OUTER_SPRINT lang "%value%"
+			END
+			ACTION_TO_LOWER lang
+			LAF array_read STR_VAR file="obg2_lang_map.txt" location=data RET_ARRAY lang_array=array END
+			OUTER_SPRINT tra_lang $lang_array("%lang%")
+			LAF HANDLE_CHARSETS 
+				INT_VAR infer_charsets=1
+					from_utf8=1
+				STR_VAR	tra_path="%resource_loc%/tra"
+						language="%tra_lang%" // who says you never have to alter this variable!
+						out_path="%workspace%/temp_tra"
+						iconv_path="%MOD_FOLDER%/%sfo_iconv_path%"
+			END		
+			OUTER_SPRINT tra_file "%workspace%/temp_tra/%tra_lang%/spells_copied.tra"
+		END ELSE BEGIN
+			ACTION_IF !FILE_EXISTS "%resource_loc%/tra/%EE_LANGUAGE%/spells_copied.tra" BEGIN
+				OUTER_SPRINT tra_lang "en_us"
+			END ELSE BEGIN
+				OUTER_SPRINT tra_lang "%EE_LANGUAGE%"
+			END
+			OUTER_SPRINT tra_file "%resource_loc%/tra/%tra_lang%/spells_copied.tra"
+		END		
+		WITH_TRA "%tra_file%" BEGIN
+			ACTION_PHP_EACH tra_array AS strref_old=>tra BEGIN
+				ACTION_IF strref_old>0 && strref_old<1000000 BEGIN
+					OUTER_SET $strref_map("%strref_old%")=RESOLVE_STR_REF ( (AT tra) )
+				END
+			END
+		END
+		LAF array_log STR_VAR array=strref_map file="strref_map.txt" END // sometimes useful to have a copy
+	END ELSE BEGIN
+		LAF array_read STR_VAR file="strref_map.txt" path="%data_loc%" RET_ARRAY strref_map=array END
+	END	
+END
+
+
+
+
+
+
+/*
+document{install_spell_resources}
+{
+Take as input:
+<ul>
+<li>'resource_loc', the location of a directory of resources created by get_spell_resources
+<li>'prefix', a prefix specified in get_spell_resources
+<li>'location','locbase','path', specifying the location of a separate data directory
+<li>'file', a table of spells previously used as input to get_spell_resources and located in the data directory
+<li>optionally, 'anim_remaps', a table in the data directory specifying pairs of animate.ids entries
+<li>optionally, 'overwrite_these_spells' and/or 'skip_these_spells', each a table in the data directory listing spell.ids entries
+<li>optionally, 'resource_overwrite', a table in the data directory listing game resources
+<li>optionally, 'old_style' and 'new_style', style files for the lib_spellstyle library
+<li>optionally, a positive integer 'truncate_at_level'
+<li>optionally, a tpa file 'afterwards' (in lib) which handles post-production, and a tra file 'afterwards_tra' for it 
+<li>optionally, a list 'custom_includes' of file-paths relativised to the mod folder, which are INCLUDEd just before the crosspatch.
+<li>a boolean, overwrite_always (default=0)
+<li>a boolean, overwrite_scrolls (default=1)
+</ul>
+<p>Copy over all the resources in 'file', except for any in skip_these_spells, as new spells, adding them to spell.ids. Spells are skipped if they are already present, 
+unless they are listed in overwrite_these_spells or unless overwrite_always=1.</p>
+<p>Animations used by .cre files are remapped according to anim_remaps. In the case of namespace conflict, we copy over only those resources listed in resource_overwrite.</p>
+<p>Spells are adjusted to use the current game's rules for barred schools, updated from old_style to new_style, and (if it's set) truncated so that their level-dependent effects
+stop at level truncate_at_level. (Obviously we don't auto-update the description to reflect this.)</p>
+<p>Each spell is given a scroll, created using CamDawg's naming conventions (unless it already exists, in which case overwrite existing scroll)
+and SFO's standard pricing. If the scroll_shadow entry in 'file' is set, the scroll is copied into every
+store in which the shadow spell's scroll is present (with the same number of copies as the shadow spell).
+
+
+}
+*/
+
+
+
+DEFINE_ACTION_FUNCTION install_spell_resources
+	INT_VAR overwrite_always=0//boolean
+			truncate_at_level="-1"
+			overwrite_scrolls=1//boolean
+	STR_VAR file=""
+			prefix=""
+			resource_loc=""
+			location=""
+			locbase=""
+			path=""
+			anim_remaps=""
+			resource_overwrite=""
+			skip_these_spells=""
+			overwrite_these_spells=""
+			old_style=""
+			new_style=""
+			log=""
+			afterwards=""
+			afterwards_tra=""
+			custom_includes=""
+BEGIN
+	// load spell-level and scroll data
+	
+	LAM data_spells_by_level
+	LAM data_scroll_resrefs
+
+	// load overrides and excludes
+	
+	ACTION_IF "%skip_these_spells%" STR_CMP "" BEGIN
+		LAF array_read STR_VAR file="%skip_these_spells%" path location locbase case=upper RET_ARRAY skip_array=array END
+	END
+	ACTION_IF "%overwrite_these_spells%" STR_CMP "" BEGIN
+		LAF array_read STR_VAR file="%overwrite_these_spells%" path location locbase case=upper RET_ARRAY overwrite_array=array END
+	END
+	
+	// load resrefs
+	
+	LAF array_read STR_VAR file="%prefix%_resrefs.txt" path="%resource_loc%" RET_ARRAY old_resref_array=array END
+	
+	// load resource overwrites
+	
+	LAF array_read STR_VAR file="%resource_overwrite%" path location locbase case=lower RET_ARRAY file_overwrites=array END
+	
+	// get anim remaps
+	
+	ACTION_IF "%anim_remaps%" STR_CMP "" BEGIN
+		LAF array_read INT_VAR firstrow=1 STR_VAR case=lower file="%anim_remaps%" path location locbase RET_ARRAY anim_remap_array=array END
+		LAF array_read INT_VAR backwards=1 STR_VAR case=lower file=animate.ids path="%resource_loc%" RET_ARRAY animate_ids_old=array END
+		ACTION_PHP_EACH anim_remap_array AS old=>new BEGIN
+			OUTER_SET old_int=$animate_ids_old("%old%")
+			OUTER_SET $anim_map("%old_int%")=IDS_OF_SYMBOL (animate "%new%")
+		END
+	END
+	
+	// do projectiles
+	ACTION_IF FILE_EXISTS "%resource_loc%/%prefix%_proj.txt" BEGIN
+	
+		LAF array_read STR_VAR file="missile.ids" path="%resource_loc%" RET_ARRAY missile_array=array END	
+		LAF array_read STR_VAR file="%prefix%_proj.txt" path="%resource_loc%" RET_ARRAY proj_array=array END
+		ACTION_PHP_EACH proj_array AS resref=>int_old BEGIN
+			LAF ids_resolve INT_VAR min=300 STR_VAR ids="%resref%" idsfile=projectl RET int_new=value END
+			OUTER_SET $proj_map("%int_old%")=int_new
+			OUTER_SET int_old+=1
+			OUTER_SET int_new+=1
+			OUTER_SPRINT missile_name $missile_array("%int_old%")
+			APPEND missile.ids "%int_new%%TAB%%missile_name%" UNLESS "%int_new%[ %TAB%]+%missile_name%"
+		END
+	END
+	COPY_EXISTING "projectl.ids" override
+		REPLACE_TEXTUALLY "mfmiss2_[0-9]+" "mfmiss2"  // handle Mordenkainen's Force Missiles hardcoding
+	BUT_ONLY
+	
+	// do smtable entries
+	ACTION_IF enhanced_edition && FILE_EXISTS "%resource_loc%/%prefix%_smtables.txt" BEGIN
+		LAF array_read STR_VAR file="%prefix%_smtables.txt" path="%resource_loc%" RET_ARRAY smtable_array=array END
+		COPY_EXISTING "smtables.2da" override
+			READ_2DA_ENTRIES_NOW smtable_data 2
+			next_val=smtable_data - 1
+			FOR (row=1;row<smtable_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER smtable_data row 1 table
+				int=row - 1
+				TO_LOWER table
+				SET $smtable_extant("%table%")=int
+			END
+			SPRINT data ""
+			PHP_EACH smtable_array AS int_old=>resref BEGIN
+				TO_LOWER resref
+				PATCH_IF VARIABLE_IS_SET $smtable_extant("%resref%") BEGIN
+					SET $smtable_map("%int_old%")=$smtable_extant("%resref%")
+				END ELSE BEGIN
+					SPRINT data "%data%%next_val%_%resref%%TAB%%resref%%WNL%"
+					SET $smtable_map("%int_old%")=next_val
+					++next_val
+				END
+			END
+			insert_point=BUFFER_LENGTH
+			INSERT_BYTES insert_point STRING_LENGTH "%data%"
+			WRITE_ASCII insert_point "%data%"
+			PRETTY_PRINT_2DA
+		BUT_ONLY
+	END
+	
+	// get tra refs
+	LAF process_tra_refs RET_ARRAY strref_map END
+
+	// do main copying
+	MKDIR "%workspace%/baf_loc"
+	LAF 2da_read STR_VAR file path location locbase case=mixed type=table_header RET_ARRAY main_rows=rows main_array=array END
+	ACTION_PHP_EACH main_rows AS row=>discard BEGIN
+		OUTER_SPRINT spell $main_array("%row%" "new_spell")
+		ACTION_IF VARIABLE_IS_SET $main_array("%row%" "scroll_shadow") BEGIN
+			OUTER_SPRINT scroll_shadow $main_array("%row%" "scroll_shadow")
+		END ELSE BEGIN
+			OUTER_SPRINT scroll_shadow "*"
+		END
+		ACTION_IF VARIABLE_IS_SET $main_array("%row%" "condition") BEGIN
+			OUTER_SPRINT condition $main_array("%row%" "condition")
+		END ELSE BEGIN
+			OUTER_SPRINT condition "*"
+		END		
+		// check if we're skipping it
+		ACTION_IF "%condition%" STR_CMP "*" BEGIN
+			OUTER_SET skip=1
+			OUTER_WHILE "%condition%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%condition%" separator="|" RET var=entry condition=list END
+				ACTION_IF EVAL "%%var%%" STR_EQ 1 BEGIN
+					OUTER_SET skip=0
+				END
+			END
+		END ELSE BEGIN
+			OUTER_SET skip=0
+		END		
+		ACTION_IF !skip && !VARIABLE_IS_SET $skip_array("%spell%") BEGIN
+			// we're not, so proceed
+			OUTER_SET exists=0
+			// check if it already exists
+			OUTER_SET check=IDS_OF_SYMBOL(spell "%spell%")
+			ACTION_IF check>=0 BEGIN
+				LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="%spell%" RET spell_res END
+				OUTER_SET exists=FILE_EXISTS_IN_GAME "%spell_res%.spl"
+			END ELSE BEGIN
+				OUTER_SET exists=0
+			END
+			ACTION_IF !exists || overwrite_always || VARIABLE_IS_SET $overwrite_array("%spell%") BEGIN
+				// log that we're adding it
+				ACTION_IF "%log%" STR_CMP "" BEGIN
+					LAF log_this STR_VAR file="%log%" input="%spell%" END
+				END
+				// add to the ids
+				OUTER_SPRINT old_resref $old_resref_array("%spell%")
+				PRINT "Copying resources for %spell%"
+				LAF spl_resref_to_type_level STR_VAR resref="%old_resref%" RET type level END
+				LAF spl_resolve_ids INT_VAR level STR_VAR type ids="%spell%" RET new_resref=resref END
+				// check if there are any 2da entries (if so, we'll check for smtables updates)
+				OUTER_SET any_2das=0
+				ACTION_BASH_FOR "%resource_loc%/%spell%" ".*\.2da" BEGIN
+					OUTER_SET any_2das=1
+				END
+				// copy over, doing the following:
+				// - replace old_resref with new_resref both in the resource name and the resource contents
+				// - run strref_apply to swap the old for the new strrefs
+				// - on projectiles, spells, and items, swap the projectile code
+				// - if 'truncate_at_level' is set, truncate any spell effects at that level
+				ACTION_BASH_FOR "%resource_loc%/%spell%" ".*" BEGIN
+					OUTER_PATCH_SAVE newname "%BASH_FOR_RES%" BEGIN
+						REPLACE_TEXTUALLY CASE_INSENSITIVE "%old_resref%" "%new_resref%"
+					END
+					ACTION_MATCH "%BASH_FOR_EXT%" WITH
+					baf BEGIN
+						OUTER_SPRINT dest "%workspace%/baf_loc"
+						OUTER_SPRINT $compile_these("%newname%") ""
+					END
+					DEFAULT
+						OUTER_SPRINT dest override
+					END
+					OUTER_SPRINT new_file_spec "%newname%.%BASH_FOR_EXT%"
+					ACTION_TO_LOWER new_file_spec
+					ACTION_IF 	!FILE_EXISTS_IN_GAME "%new_file_spec%" 
+								|| VARIABLE_IS_SET $file_overwrites("%new_file_spec%") 
+								|| VARIABLE_IS_SET $file_copied("%new_file_spec%") 
+								|| INDEX (CASE_INSENSITIVE "%new_resref%" "%newname%")>=0 
+					BEGIN
+						OUTER_SET proceed=1
+					END ELSE BEGIN
+						// are they identical?
+						COPY - "%BASH_FOR_FILESPEC%" nowhere
+							READ_ASCII 0x0 checksum1 (BUFFER_LENGTH)
+						BUT_ONLY
+						COPY_EXISTING - "%new_file_spec%" nowhere
+							READ_ASCII 0x0 checksum2 (BUFFER_LENGTH)
+						BUT_ONLY
+						OUTER_SET proceed="%checksum1%" STR_EQ "%checksum2%"
+					END
+					ACTION_IF proceed BEGIN
+						OUTER_SPRINT $file_copied("%new_file_spec%") ""
+						COPY "%BASH_FOR_FILESPEC%" "%dest%/%newname%.%BASH_FOR_EXT%"
+							REPLACE_TEXTUALLY CASE_INSENSITIVE "%old_resref%" "%new_resref%" (7)
+							LPF strref_apply STR_VAR function=swap_spell_strrefs END
+							PATCH_MATCH "%BASH_FOR_EXT%" WITH
+							cre BEGIN
+								READ_LONG 0x28 anim
+								PATCH_IF VARIABLE_IS_SET $anim_map("%anim%") BEGIN
+									anim_new=$anim_map("%anim%")
+									WRITE_LONG 0x28 anim_new
+								END
+							END
+							spl itm BEGIN
+								LPF struct_get_offset_array STR_VAR type=ab RET_ARRAY offset_array=array END
+								PATCH_IF "%BASH_FOR_EXT%" STR_EQ spl BEGIN
+									delta=0x26
+								END ELSE BEGIN
+									delta=0x2a
+								END
+								PHP_EACH offset_array AS ind=>offset BEGIN
+									READ_SHORT delta+offset proj_old
+									PATCH_IF VARIABLE_IS_SET $proj_map("%proj_old%") BEGIN
+										proj_old -=1
+										proj_new =$proj_map("%proj_old%")
+										WRITE_SHORT delta+offset (proj_new+1)
+									END
+								END
+								// check for smtables updates
+								PATCH_IF enhanced_edition && any_2das BEGIN
+									LPF ALTER_EFFECT INT_VAR silent=1 match_opcode=331 STR_VAR function=~param2=LONG_AT 0x8;; WRITE_LONG 0x8 $smtable_map("%param2%")~ END
+								END
+								// delete any evasions
+								// (they only exist on IWDEE, so if they're there we're copying away from IWDEE to a game without evasion)
+								LPF DELETE_EFFECT INT_VAR match_opcode=324 match_parameter2=63 END
+								// impose truncation
+								PATCH_IF "%BASH_FOR_EXT%" STR_EQ spl && truncate_at_level>=0 BEGIN
+									LPF struct_read RET_ARRAY m=struct END
+									LPF struct_delete STR_VAR struct=m type=ab match="s_level>truncate_at_level" RET_ARRAY m=struct END
+									LPF struct_write STR_VAR struct=m END
+								END
+							END
+							pro BEGIN
+								PATCH_IF BUFFER_LENGTH>0x200 BEGIN
+									READ_SHORT 0x214 proj_old
+									PATCH_IF VARIABLE_IS_SET $proj_map("%proj_old%") BEGIN
+										proj_new =$proj_map("%proj_old%")
+										WRITE_SHORT 0x214 proj_new			
+									END
+									READ_SHORT 0x21a proj_old
+									PATCH_IF VARIABLE_IS_SET $proj_map("%proj_old%") BEGIN
+										proj_old -=1
+										proj_new =$proj_map("%proj_old%")
+										WRITE_SHORT 0x214 (proj_new+1)			
+									END						
+								END
+							END
+							wav BEGIN 
+							END
+							DEFAULT
+							END
+						// end of copy
+					END ELSE BEGIN
+						// don't complain about namespace conflict for these wavs
+						ACTION_MATCH "%BASH_FOR_FILE%" WITH
+							"\(tra\|eff\|aft\).*\.wav" BEGIN END
+						DEFAULT
+							LAF warning STR_VAR warning="Not copying resource %BASH_FOR_FILE% of spell %spell%: namespace conflict" END
+						END
+					END
+				END
+				// on the primary spell, update spell school rules and style, then make a scroll
+				COPY_EXISTING "%new_resref%.spl" override
+					PATCH_IF INDEX ("SPWI" "%new_resref%")>=0 BEGIN
+						LPF struct_read RET_ARRAY m=struct END
+						LPF spl_enforce_school INT_VAR sounds_colors=0 STR_VAR struct=m RET_ARRAY m=struct END
+						LPF struct_write STR_VAR struct=m END
+					END
+					PATCH_IF "%old_style%" STR_CMP "" BEGIN
+						LPF spellstyle_update_style STR_VAR old_style new_style END
+					END
+				BUT_ONLY
+				ACTION_MATCH "%new_resref%" WITH
+				"SP\(WI\|PR\).*" BEGIN
+					ACTION_IF VARIABLE_IS_SET "%spell%_SCROLL" && overwrite_scrolls BEGIN
+						LAF spl_make_scroll STR_VAR spell_resref="%new_resref%" scroll_resref=EVAL "%%spell%_SCROLL%" END			
+					END ELSE BEGIN
+						LAF spl_make_scroll STR_VAR spell_resref="%new_resref%" RET scroll_resref END
+						// note the scroll for shadowing if appropriate
+						ACTION_IF "%scroll_shadow%" STR_CMP "*" && "%scroll_shadow%" STR_CMP "" BEGIN
+							OUTER_SPRINT scroll_shadow "WIZARD_%scroll_shadow%"
+							ACTION_IF VARIABLE_IS_SET "%scroll_shadow%_SCROLL" BEGIN
+								OUTER_SPRINT scroll_resref_old EVAL "%%scroll_shadow%_SCROLL%"
+								ACTION_TO_LOWER scroll_resref_old
+								OUTER_SPRINT $shadow_map("%scroll_resref_old%") "%scroll_resref%"
+							END
+						END
+					END 
+				END
+				DEFAULT
+				END
+			END
+		END
+	END
+	
+	//do icons
+	ACTION_IF FILE_EXISTS "%resource_loc%/%prefix%_icons.2da" BEGIN
+		LAM data_spell_resrefs
+		LAF 2da_read STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" case=mixed RET_ARRAY icon_array=array icon_rows=rows END
+		ACTION_PHP_EACH icon_rows AS row=>discard BEGIN
+			// get data
+			OUTER_SPRINT resource $icon_array("%row%" resource)
+			OUTER_SPRINT id $icon_array("%row%" spell_id)
+			OUTER_SPRINT bam_name auto
+			OUTER_SET proceed=1
+			ACTION_IF "%id%" STR_CMP "*" BEGIN
+				ACTION_IF VARIABLE_IS_SET "%id%" BEGIN
+					OUTER_SPRINT resref_core EVAL "%%id%%"
+					ACTION_IF !FILE_EXISTS_IN_GAME "%resref_core%D" BEGIN
+						OUTER_SPRINT bam_name "%resref_core%D"
+					END 
+					OUTER_PATCH_SAVE resource "%resource%" BEGIN
+						REPLACE_TEXTUALLY CASE_INSENSITIVE "SP\(PR\|WI\|IN\|CL\)[0-9][0-9][0-9]" "%resref_core%"
+					END
+				END ELSE BEGIN
+					OUTER_SET proceed=0
+				END
+			END
+			ACTION_IF proceed BEGIN
+				OUTER_SET old_id=$icon_array("%row%" old_id)
+				OUTER_SPRINT bam $icon_array("%row%" bam)
+				OUTER_SET desc=$icon_array("%row%" desc)
+				LAF swap_spell_strrefs STR_VAR arguments="%desc%" RET desc=value END
+				// resolve statdesc
+				LAF resolve_statdesc INT_VAR strref=desc /*check_first=old_id*/ STR_VAR bam bam_name path="%resource_loc%/icons" RET new_id=stat_num END
+				// update resource
+				COPY_EXISTING "%resource%" override
+					LPF ALTER_EFFECT INT_VAR match_parameter2=old_id parameter2=new_id STR_VAR match_function="READ_SHORT 0x0 opcode;; value=(opcode=142 || opcode=169 || opcode=240)" END
+				BUT_ONLY
+			END
+			
+		END
+	END
+	
+	// do the shadow map
+	COPY_EXISTING_REGEXP ".*\.sto" override
+		proceed=0
+		PHP_EACH shadow_map AS old=>discard BEGIN
+			PATCH_IF INDEX_BUFFER (CASE_INSENSITIVE "%old%")>=0 BEGIN
+				proceed=1
+			END
+		END
+		PATCH_IF proceed BEGIN
+			LPF struct_read RET_ARRAY m=struct END
+			LPF struct_clone 
+				STR_VAR 
+					type=item 
+					struct=m 
+					match="resref_here:=~%s_resref%~;; TO_LOWER resref_here;; value=VARIABLE_IS_SET $shadow_map(~%resref_here%~)" 
+					patch="resref_here:=~%s_resref%~;; TO_LOWER resref_here;; s_resref:=$shadow_map(~%resref_here%~)"
+				RET_ARRAY m=struct END
+			LPF struct_write STR_VAR struct=m END
+		END
+	BUT_ONLY
+	
+
+	// compile scripts (do this late, so spells are added to ids)
+	
+	ACTION_PHP_EACH compile_these AS script=>discard BEGIN
+		COMPILE "%workspace%/baf_loc/%script%.baf" 
+	END
+
+	// postproduction
+
+	ACTION_IF "%afterwards%" STR_CMP "" BEGIN
+		// because IWDspells assumes UTF-8 encoding, whereas e.g. SCS assumes localized encoding, we need special attention to the tra file, and can't just load it from sfo_tra_loc
+		WITH_SCOPE BEGIN
+			ACTION_IF !VARIABLE_IS_SET sfo_iwdspells_extern_loaded || !sfo_iwdspells_extern_loaded BEGIN
+				OUTER_SPRINT ext_lang_loc "%workspace%/temp_lang"
+				LAF sfo_handle_charsets 
+					INT_VAR sfo_from_utf8=1
+					STR_VAR sfo_tra_path="%component_loc%/lang"
+							sfo_iconv_path
+					RET sfo_tra_loc
+				END
+			END
+			LAF run STR_VAR file="%afterwards%" location=lib tra="%afterwards_tra%" END		
+		END
+	END
+	
+	// custom TPAs
+	
+	ACTION_IF "%custom_includes%" STR_CMP "" BEGIN
+		LAM data_spell_resrefs
+		LAM data_scroll_resrefs
+		OUTER_WHILE "%custom_includes%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%custom_includes%" RET include=entry custom_includes=list END
+			WITH_SCOPE BEGIN
+				INCLUDE "%MOD_FOLDER%/%include%"
+			END
+		END
+	END
+
+
+	// process spell-resref updates (must be last, given that we stash stuff)
+	
+	LAF update_spell_resrefs STR_VAR resource_loc END
+
+
+END
+
+/*
+document{update_spell_resrefs}
+{
+(i) If we haven't already done it, copy 'spells_used.txt' over to data_loc and add a column saying which spell renames have been done.
+(ii) process any not-already-done spell renames that can be done at this point, i.e. where the resource that uses the spell and the spell itself are both present.
+(iii) stash any spells that need renames but can't be done yet
+(iv) remove any non-enactable spell actions from the override (non-stash) copy
+
+(NB: you can't just do all this by REPLACE_TEXTUALLY; it might be that the new name of one resource is the old name of another resource.)
+}
+
+*/
+
+
+DEFINE_ACTION_FUNCTION update_spell_resrefs//internal
+	STR_VAR resource_loc=""
+BEGIN
+	OUTER_SPRINT stash_loc "%data_loc%/spell_stash"
+	MKDIR "%stash_loc%"
+	ACTION_CLEAR_ARRAY stashdeletelist
+	ACTION_CLEAR_ARRAY updatelist
+	// make sure we've got spell data
+	LAM data_spell_resrefs
+	// load the table 
+	ACTION_IF !FILE_EXISTS "%data_loc%/spells_used.txt" BEGIN
+		LAF 2da_read STR_VAR file=spells_used.txt path="%resource_loc%" type=table_header RET_ARRAY rows array END	
+	END ELSE BEGIN
+		LAF 2da_read STR_VAR case=lower file=spells_used.txt path="%data_loc%" type=2da RET_ARRAY rows array END		
+	END
+	// collect arrays of all the swaps to do
+	ACTION_PHP_EACH rows AS row=>discard BEGIN
+		OUTER_SPRINT spell_used_ids $array("%row%" "spell_used_ids")
+		OUTER_SPRINT resource_using $array("%row%" "resource_using")
+		OUTER_SPRINT resource_using_ext $array("%row%" "resource_using_ext")
+		ACTION_IF "%resource_using_ext%" STR_EQ "spl" BEGIN
+			ACTION_MATCH "%resource_using%" WITH ".*-[a-z]" BEGIN
+				OUTER_PATCH "%resource_using%" BEGIN
+					REPLACE_EVALUATE CASE_INSENSITIVE "\(.*\)-\([a-z]\)" BEGIN
+						SPRINT ids "%MATCH1%"
+						SPRINT resref_base EVAL "%%ids%%"
+						SPRINT resref "%resref_base%%MATCH2%"
+					END
+					""
+				END
+			END
+			DEFAULT
+				ACTION_IF VARIABLE_IS_SET "%resource_using%" BEGIN
+					OUTER_SPRINT resref EVAL "%%resource_using%%"
+				END ELSE BEGIN
+					OUTER_SPRINT resref "%resource_using%"
+				END
+			END
+		END ELSE BEGIN
+			OUTER_SPRINT resref "%resource_using%"
+		END
+		OUTER_SPRINT resource "%resref%.%resource_using_ext%"
+		ACTION_IF FILE_EXISTS_IN_GAME "%resource%" BEGIN
+			// stash, recover files from previous stash
+			ACTION_IF !FILE_EXISTS "%stash_loc%/%resource%" BEGIN
+				COPY_EXISTING "%resource%" "%stash_loc%"
+			END ELSE BEGIN
+				COPY "%stash_loc%/%resource%" override
+			END		
+			OUTER_SPRINT $updatelist("%resource%") ""	
+			OUTER_SPRINT resref_old $array("%row%" "spell_used_resref")
+			ACTION_TO_UPPER resref_old
+			ACTION_IF VARIABLE_IS_SET "%spell_used_ids%" BEGIN
+				OUTER_SPRINT resref_new EVAL "%%spell_used_ids%%"
+				ACTION_TO_UPPER resref_old
+				ACTION_TO_UPPER resource
+				OUTER_SPRINT $sfo_update_spell_refs_swaps("%resource%" "%resref_old%") "%resref_new%"
+			END ELSE BEGIN
+				ACTION_TO_UPPER resource
+				OUTER_SPRINT $sfo_delete_spell_refs("%resource%" "%resref_old%") ""
+			END
+		END
+	END
+	// do the swaps
+	ACTION_PHP_EACH updatelist AS resource=>discard BEGIN
+		ACTION_MATCH "%resource%" WITH
+		".*\.\(itm\|spl\|cre\)" BEGIN
+			COPY_EXISTING "%resource%" override
+				LPF DELETE_EFFECT STR_VAR match_function="update_spell_resrefs_helper2(%resource%)" END // must be this way round, otherwise we might delete renamed resrefs
+				LPF ALTER_EFFECT STR_VAR function="update_spell_resrefs_helper(%resource%)" END
+			BUT_ONLY
+		END
+		".*\.2da" BEGIN // I think only 7 eyes at present, but we might as well be systematic
+			ACTION_TO_UPPER resource
+			LAF 2da_read STR_VAR file="%resource%" RET_ARRAY res_rows=rows res_columns=columns res_array=array END
+			ACTION_PHP_EACH res_rows AS row=>discard BEGIN
+				ACTION_PHP_EACH res_columns AS column=>discard BEGIN
+					OUTER_SPRINT resref_old $res_array("%row%" "%column%")
+					ACTION_IF VARIABLE_IS_SET $sfo_update_spell_refs_swaps("%resource%" "%resref_old%") BEGIN
+						OUTER_SPRINT $res_array("%row%" "%column%") $sfo_update_spell_refs_swaps("%resource%" "%resref_old%")
+					END
+				END
+			END
+			LAF 2da_write STR_VAR file="%resource%" array=res_array END
+		END
+		DEFAULT
+			WARN "resource %resource% can't be handled by update_spell_resrefs" 
+		END
+	END
+	
+	// write the data
+	LAF 2da_write STR_VAR array file=spells_used.txt path="%data_loc%" type=2da END
+	
+END
+DEFINE_PATCH_FUNCTION update_spell_resrefs_helper// internal
+	STR_VAR arguments=""
+BEGIN
+	READ_ASCII 0x14 resref_old
+	TO_UPPER resref_old
+	TO_UPPER arguments
+	PATCH_IF VARIABLE_IS_SET $sfo_update_spell_refs_swaps("%arguments%" "%resref_old%") BEGIN
+		SPRINT resref_new $sfo_update_spell_refs_swaps("%arguments%" "%resref_old%")
+		WRITE_ASCII 0x14 "%resref_new%"
+	END
+
+END
+DEFINE_PATCH_FUNCTION update_spell_resrefs_helper2// internal
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	READ_ASCII 0x14 resref_old
+	TO_UPPER resref_old
+	TO_UPPER arguments
+	value=VARIABLE_IS_SET $sfo_delete_spell_refs("%arguments%" "%resref_old%") 
+END
+
+
+
+/*
+document{get_spell_bams}
+{
+Given a file (with location given by path/location/locbase) listing a bunch of spells by idsname, 
+and a directory 'resource_loc' get their BAM files and store them in %resource_loc%/bam in the format
+"%idsname%_ANIMATION_%letter%.bam
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION get_spell_bams 
+	STR_VAR file="" 
+			resource_loc=""
+			path=""
+			location=""
+			locbase=""
+BEGIN
+	LAF array_read STR_VAR file path location locbase RET_ARRAY array END
+	ACTION_PHP_EACH array AS spell_name=>discard BEGIN
+	    LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name RET resref=spell_res END
+		ACTION_FOR_EACH letter IN A B C BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%resref%%letter%.bam" BEGIN
+				COPY_EXISTING "%resref%%letter%.bam" "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam"
+			END
+		END
+	END
+END
+
+/*
+document{install_spell_bams}
+{
+Given a file (with location given by path/location/locbase) listing a bunch of spells by idsname, 
+and a directory 'resource_loc', copy all idsname_ANIMATION_letter.bam bams in resource_loc/bam into the game,
+replacing idsname with the resref appropriate for this game.
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION install_spell_bams 
+	STR_VAR file="" 
+			path=""
+			location=""
+			locbase=""
+			resource_loc="" 
+			
+BEGIN
+
+	LAF array_read STR_VAR file path location locbase RET_ARRAY array END
+	ACTION_PHP_EACH array AS spell_name=>discard BEGIN
+	    LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name RET resref=spell_res END
+		ACTION_FOR_EACH letter IN A B C BEGIN
+			ACTION_IF FILE_EXISTS "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" BEGIN
+				COPY "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" "override/%resref%%letter%.bam"
+            END
+        END
+    END
+END
+
+/*
+document{swap_spell_strrefs}
+{
+swap the old for the new strref
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION swap_spell_strrefs//internal 
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	
+	ACTION_IF arguments<=0 || arguments>1000000 BEGIN
+		OUTER_SET value="-1"
+	END ELSE BEGIN
+		OUTER_SET value=$strref_map("%arguments%")
+	END
+
+
+END
+
+/*
+document{spell_comparison}
+{Return a k=>varray of the uppercased resrefs=>uppercased idsnames of spell.ids spells in the source game but not the destination game 
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION spell_comparison//internal
+	STR_VAR dest_spell_ids=""
+			path=""
+			location=""
+			locbase=""
+	RET_ARRAY not_in_dest
+BEGIN
+// load the spells in spell.ids
+	LAF 2da_read STR_VAR file=spell.ids RET_ARRAY source_array=array END
+	LAF 2da_extract_array STR_VAR domain=sym range=int array=source_array RET_ARRAY source_ids=array END
+// load the spells in the dest spell.ids
+	LAF 2da_read STR_VAR file="%dest_spell_ids%" path location locbase RET_ARRAY dest_array=array END
+	LAF 2da_extract_array STR_VAR domain=sym range=int array=dest_array RET_ARRAY dest_ids=array END
+// go through
+	ACTION_PHP_EACH source_ids AS sym=>int BEGIN
+		ACTION_IF !VARIABLE_IS_SET $dest_ids("%sym%") BEGIN
+			LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=int RET spell_name spell_res END
+			ACTION_TO_UPPER spell_res
+			ACTION_TO_UPPER spell_name
+			OUTER_SPRINT $not_in_dest("%spell_res%") "%spell_name%"
+		END
+	END
+
+
+END
+		
+
+DEFINE_DIMORPHIC_FUNCTION log_spell_uses//internal
+ STR_VAR resref="" ext="" source=""  source_ext=""
+// we only care about spells, only if they're in the spell.ids, only if they're not the parent spell, and only if they're not in the target-game spell.ids
+BEGIN
+    ACTION_IF "%ext%" STRING_EQUAL_CASE SPL BEGIN
+        ACTION_MATCH "%resref%" WITH
+        "SP\(IN\|WI\|PR\|CL\)[0-9]+" BEGIN
+                              ACTION_TO_UPPER resref
+							  ACTION_IF INDEX ("%source%" "%resref%")<0 BEGIN
+								  ACTION_IF VARIABLE_IS_SET $not_in_dest("%resref%") BEGIN
+									 OUTER_SPRINT idsname $not_in_dest("%resref%")
+									 ACTION_IF VARIABLE_IS_SET $ids_remaps("%idsname%") BEGIN
+										OUTER_SPRINT idsname $ids_remaps("%idsname%")
+									 END
+									 ACTION_IF "%source_ext%" STRING_EQUAL_CASE "SPL" BEGIN
+										ACTION_MATCH "%source%" WITH
+										"SP\(IN\|WI\|PR\|CL\)[0-9]+" BEGIN
+											LAF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%source%" RET source=spell_name END
+										END
+										"SP\(IN\|WI\|PR\)[0-9]+[A-Z]" BEGIN
+											OUTER_PATCH "%source%" BEGIN
+												REPLACE_EVALUATE CASE_INSENSITIVE "SP\(IN\|WI\|PR\)\([0-9]+\)\([A-Z]\)" BEGIN
+													SPRINT base "SP%MATCH1%%MATCH2%"
+													SPRINT letter "%MATCH3%"
+												END
+												""
+											END
+											LAF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%base%" RET source=spell_name END
+											OUTER_SPRINT source "%source%-%letter%"
+										END
+										DEFAULT
+										END
+									 END
+									 LAF log_this INT_VAR repeat=0 STR_VAR file="spells_used.txt" path="%resource_loc%" input="%resref% %idsname% %source% %source_ext%" END
+								  END
+							  END
+        END
+        DEFAULT
+        END
+
+
+    END
+END		
+
+DEFINE_ACTION_FUNCTION make_bams_green 
+	STR_VAR resref=""
+BEGIN
+   LAF bam_patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%a %resref%c" condition=is_red action=col_swap END
+   LAF bam_patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%b" condition=is_dark_red action=col_swap_2 END
+END
+
+
+DEFINE_PATCH_FUNCTION col_swap//internal
+    INT_VAR red=0 green=0 blue=0
+    RET red green blue
+BEGIN
+    SET green_old=green
+    SET blue_old=blue
+    SET red_old=red
+
+    SET red = 35
+    SET green = red_old - 50
+    SET blue = blue_old - 20
+END
+
+DEFINE_PATCH_FUNCTION col_swap_2//internal
+    INT_VAR red=0 green=0 blue=0
+    RET red green blue
+BEGIN
+    SET green_old=green
+    SET blue_old=blue
+    SET red_old=red
+
+    SET red = 50
+    SET green = red_old - 50
+    SET blue = 40
+END
+
+DEFINE_PATCH_FUNCTION is_red//internal
+    INT_VAR red=0 green=0 blue=0
+    RET value
+BEGIN
+    SET value=1
+    PATCH_IF (red<160 || green>90) BEGIN
+       SET value=0
+    END
+END
+
+DEFINE_PATCH_FUNCTION is_dark_red//internal
+    INT_VAR red=0 green=0 blue=0 
+    RET value
+BEGIN
+    SET value=1
+    PATCH_IF (red<60) BEGIN
+       SET value=0
+    END
+END
+
+//       LAF log_this STR_VAR file=strings_used.txt input="119397" END // Cure Moderate Wounds temple string - includes the +100000
+
+
+
+
+/* 
+document{process_tra_entries}
+{
+Used by process_tra_entries_all to do the tra entries for a single language.
+Must be self-contained (no dependencies) as we use it in an external tp2.
+}
+
+
+
+*/
+
+DEFINE_ACTION_FUNCTION process_tra_entries//internal
+     INT_VAR make_lookup=1//boolean
+     STR_VAR tra="" lookup=""
+BEGIN
+    OUTER_SPRINT traloc "%resource_loc%/tra/%tra%"
+    COPY ".../stratagems-inline/blank" "%traloc%"
+    ACTION_IF make_lookup BEGIN
+		OUTER_SPRINT lookuploc "%resource_loc%/strref_lookup.txt"
+		ACTION_IF !FILE_EXISTS "%lookuploc%" BEGIN
+			COPY ".../stratagems-inline/blank" "%lookuploc%"
+		END
+    END
+	ACTION_CLEAR_ARRAY strings_used
+	COPY - "%data_loc%/strings_used.txt" nowhere
+		REPLACE_EVALUATE "\([0-9]+\)" BEGIN
+			SET $strings_used("%MATCH1%")=1
+		END
+		""
+	//end of COPY
+    OUTER_SET tra_ind=1
+	ACTION_PHP_EACH strings_used AS strref=>discard BEGIN
+        OUTER_SET strref=strref - 1000000 // reverse the transformation in log_strref
+        ACTION_IF !VARIABLE_IS_SET $processed("%strref%") BEGIN
+			ACTION_GET_STRREF strref temp
+            OUTER_SPRINT $tra_output("%strref%") "%atsymbol%%tra_ind%=~%temp%~"
+            OUTER_SPRINT $tra_map("%strref%") "%tra_ind%"
+            OUTER_SET tra_ind +=1
+            OUTER_SET $processed("%strref%")=1
+        END
+    END
+    COPY_EXISTING "%traloc%" "%traloc%"
+	OUTER_SPRINT data ""
+    ACTION_PHP_EACH tra_output AS null=>line BEGIN
+        OUTER_SPRINT data "%data%%line%%WNL%"
+    END
+	APPEND_OUTER "%traloc%" "%data%" KEEP_CRLF
+    ACTION_IF make_lookup BEGIN
+		COPY "%lookuploc%" "%lookuploc%"
+			SPRINT data ""
+			PHP_EACH tra_map AS strref=>tra_ind BEGIN
+				SPRINT data "%data%%strref% %tra_ind%%WNL%"
+			END
+			INSERT_BYTES 0x0 STRING_LENGTH "%data%"
+			WRITE_ASCII 0x0 "%data%"
+        BUT_ONLY
+    END
+END
+
+
+/*
+document{process_tra_entries_all}
+{
+Go through all the languages in the current game, and collect all the strrefs used into a tra file for each language.
+Also create a lookup table connecting strrefs to tra entries. 'library_path' is the (mod-folder-relative) path to this
+library.
+
+}
+*/
+
+DEFINE_ACTION_FUNCTION process_tra_entries_all
+	STR_VAR library_path=""
+			resource_loc=""
+BEGIN
+	GET_DIRECTORY_ARRAY lang_dirs "lang" "[a-z].*"
+	ACTION_PHP_EACH lang_dirs AS discard=>language BEGIN
+		OUTER_PATCH_SAVE language "%language%" BEGIN
+			REPLACE_TEXTUALLY "lang." ""
+		END
+		ACTION_IF !("%language%" STRING_EQUAL_CASE "%EE_LANGUAGE%") BEGIN // do your current language last, so WEIDU doesn't save your change
+			MKDIR "%resource_loc%/tra/%language%"
+			COPY ".../stratagems-inline/process_strref.tp2" "%workspace%" EVALUATE_BUFFER
+			AT_NOW "setup-%MOD_FOLDER% %workspace%\process_strref.tp2 --no-auto-tp2 --use-lang %language% --force-install 1000 --yes"
+		END		
+	END
+	OUTER_SPRINT language "%EE_LANGUAGE%"
+	COPY ".../stratagems-inline/process_strref.tp2" "%workspace%" 
+		EVALUATE_BUFFER
+		REPLACE_TEXTUALLY "make_lookup=0" "make_lookup=1"
+	AT_NOW "setup-%MOD_FOLDER% %workspace%\process_strref.tp2 --no-auto-tp2 --use-lang %language% --force-install 1000 --yes"
+END
+
+
+
+/*
+document{log_icons}
+{
+We record any icon used > 165 (the point when BG/IWD icons start to diverge)
+}
+*/
+
+DEFINE_PATCH_FUNCTION log_icons
+	INT_VAR icon=0 
+			opcode=0
+	STR_VAR source=""
+			source_ext=""
+BEGIN
+	PATCH_IF icon>165 BEGIN
+		SPRINT id "*"
+		PATCH_IF "%source_ext%" STR_EQ "spl" BEGIN
+			INNER_PATCH "%source%" BEGIN
+				REPLACE_EVALUATE CASE_INSENSITIVE "SP\(PR\|WI\|IN\|CL\)\([0-9]+\)" BEGIN
+					SPRINT spell_res "SP%MATCH1%%MATCH2%"
+					LPF NAME_NUM_OF_SPELL_RES STR_VAR spell_res RET id=spell_name END
+				END
+				""
+			END
+		
+		END
+		
+		LPF log_this INT_VAR repeat=0 STR_VAR file="icons_used.txt" input="%source%.%source_ext% %id% %icon%" END
+	END
+END
+
+
+	
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+ //// Inlined files
+ ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// we need a copy of this to be used when this library is INCLUDEd by process_strref.tp2
+
+<<<<<<<<.../stratagems-inline/blank
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/process_strref.tp2
+BACKUP "weidu_external/backup/get_spells_auto"
+AUTHOR ~DavidW~
+VERSION ~v1~
+
+AUTO_EVAL_STRINGS
+
+BEGIN "Automated conversion of strings" DESIGNATED 1000 NO_LOG_RECORD
+
+OUTER_SPRINT resource_loc "%resource_loc%"
+OUTER_SPRINT data_loc "%data_loc%"
+OUTER_SPRINT language "%language%"
+OUTER_SPRINT workspace "%workspace%"
+OUTER_SPRINT atsymbol "@"
+
+INCLUDE "%MOD_FOLDER%/%library_path%/move_spell_resources.tph"
+LAF process_tra_entries INT_VAR make_lookup=0 STR_VAR tra="%language%/spells_copied.tra" END
+
+>>>>>>>>

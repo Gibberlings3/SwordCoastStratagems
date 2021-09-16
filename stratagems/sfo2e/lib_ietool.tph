@@ -1,0 +1,541 @@
+/*
+document{ext}
+{Returns the extension of the currently-being-patched file, if we can tell.
+(we can tell for 2da, are, chr, cre, dlg, gam, itm, pro, spl, sto, vef, vvc, wed, and wmp)
+Also return its version
+
+By default we return lowercase; if you want it in uppercase, set uppercase=1.
+}
+
+*/
+
+DEFINE_PATCH_FUNCTION ext 
+	INT_VAR uppercase=0//boolean 
+	RET ext 
+		version
+BEGIN
+
+	READ_ASCII 0x0 ext (3)
+	READ_ASCII 0x4 version (4)
+	INNER_PATCH_SAVE version "%version%" BEGIN
+		REPLACE_TEXTUALLY " " ""
+	END
+	PATCH_MATCH "%ext%" WITH
+	2da are chr cre dlg gam itm pro spl sto vef vvc wed
+	BEGIN END
+	wma BEGIN
+		SPRINT ext wmp
+	END	
+	DEFAULT
+		PATCH_WARN "unable to identify file type; defaulting to '' " 
+		SPRINT ext ""
+		SPRINT version ""
+	END
+	PATCH_IF uppercase BEGIN
+		TO_UPPER ext
+		TO_UPPER version
+	END ELSE BEGIN
+		TO_LOWER ext
+		TO_LOWER version
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{merge_scripts}
+{
+If both 'top' and 'bottom' exist, merge them into a new script, and give it a guaranteed-unique name unless a name
+is specified. In any case, return the name.
+If one doesn't exist, return the name of the other.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION merge_scripts
+   STR_VAR top=""
+           bottom=""
+           script=""
+   RET script
+BEGIN
+	ACTION_IF FILE_EXISTS_IN_GAME "%top%.bcs" BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%bottom%.bcs" BEGIN
+			ACTION_IF "%script%" STR_EQ "" BEGIN
+				LAF GET_UNIQUE_FILE_NAME STR_VAR extension=bcs RET script=filename END
+			END
+			COPY_EXISTING "%bottom%.bcs" "%workspace%/%bottom%.baf"
+				DECOMPILE_BCS_TO_BAF
+			COPY_EXISTING "%top%.bcs" "override/%script%.bcs"
+				DECOMPILE_BCS_TO_BAF
+				APPEND_FILE TEXT "%workspace%/%bottom%.baf"
+			COMPILE_BAF_TO_BCS
+		END ELSE BEGIN
+			OUTER_SPRINT script "%top%"
+		END
+	END ELSE BEGIN
+		OUTER_SPRINT script "%bottom%"
+	END
+
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{insert_script}
+{
+Given a numbered-from-0 array of scripts 'script_array', and a new  script 'script' (synonym: 'arguments'), insert the new script in position 'loc'. 
+Insert position can be 'high', 'low', 'after x' (defaults to 'high' if
+x isn't present), or 'before x' (defaults to 'low' if x isn't present).
+If there isn't space, merge the two lowest scripts to make space.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION insert_script
+	STR_VAR script_array=""
+			script=""
+			arguments=""
+			loc=""
+	RET_ARRAY script_array
+BEGIN
+	OUTER_PATCH "" BEGIN
+		SPRINT script "%arguments%%script%"
+		// write into new array
+		PHP_EACH "%script_array%" AS k=>v BEGIN
+			SPRINT $script_array("%k%") "%v%"
+		END
+		LPF array_length STR_VAR array=script_array RET length END
+		// check for space
+		space=0
+		PHP_EACH script_array AS ind=>this_script BEGIN
+			PATCH_MATCH "%this_script%" WITH
+			"" "none" "null" BEGIN
+				space=1
+			END
+			DEFAULT
+			END
+		END
+		// if necessary, make space
+		PATCH_IF !space BEGIN
+			i1=length - 2
+			i2=length - 1
+			SPRINT top $script_array("%i1%")
+			SPRINT bottom $script_array("%i2%")
+			LPF merge_scripts STR_VAR top bottom RET new_script=script END
+			SPRINT $script_array("%i1%") "%new_script%"
+			SPRINT $script_array("%i2%") ""
+		END
+		// carry out insertion
+		PATCH_MATCH "%loc%" WITH
+		low BEGIN
+			SPRINT buffer "%script%"
+			FOR (ind=length - 1; ind>=0;ind=ind - 1) BEGIN
+				SPRINT this_script $script_array("%ind%")
+				PATCH_IF "%buffer%" STR_CMP "" BEGIN
+					SPRINT $script_array("%ind%") "%buffer%"
+					PATCH_MATCH "%this_script%" WITH
+					"" "none" "null" BEGIN
+						SPRINT buffer ""
+					END
+					DEFAULT
+						SPRINT buffer "%this_script%"
+					END				
+				END			
+			
+			END
+		END
+		high BEGIN
+			SPRINT buffer "%script%"
+			PHP_EACH script_array AS ind=>this_script BEGIN
+				PATCH_IF "%buffer%" STR_CMP "" BEGIN
+					SPRINT $script_array("%ind%") "%buffer%"
+					PATCH_MATCH "%this_script%" WITH
+					"" "none" "null" BEGIN
+						SPRINT buffer ""
+					END
+					DEFAULT
+						SPRINT buffer "%this_script%"
+					END				
+				END			
+			END
+		END
+		"after .*" BEGIN
+			INNER_PATCH "%loc%" BEGIN
+				REPLACE_EVALUATE "after \(.*\)" BEGIN
+					SPRINT match_script "%MATCH1%"
+				END
+				""
+			END
+			// find index of 'match_script'
+			match_index="-1"
+			PHP_EACH script_array AS ind=>this_script BEGIN
+				PATCH_IF "%this_script%" STR_EQ "%match_script%" BEGIN
+					match_index=ind
+				END
+			END
+			PATCH_IF match_index<0 BEGIN
+				LPF insert_script STR_VAR script_array script loc=high RET_ARRAY script_array END
+			END ELSE BEGIN
+			// is there room below?
+				space_below=0
+				FOR (ind=match_index;ind<length;++ind) BEGIN
+					SPRINT this_script $script_array("%ind%")
+					PATCH_MATCH "%this_script%" WITH
+					"" "none" "null" BEGIN
+						space_below=1
+					END
+					DEFAULT
+					END
+				END
+				PATCH_IF space_below BEGIN
+					SPRINT buffer "%script%"
+					FOR (ind=match_index+1;ind<length;++ind) BEGIN
+						PATCH_IF "%buffer%" STR_CMP "" BEGIN
+							SPRINT this_script $script_array("%ind%")
+							SPRINT $script_array("%ind%") "%buffer%"
+							PATCH_MATCH "%this_script%" WITH
+							"" "none" "null" BEGIN
+								SPRINT buffer ""
+							END
+							DEFAULT
+								SPRINT buffer "%this_script%"
+							END
+						END
+					
+					END		
+				END ELSE BEGIN
+					// if there's no space below, there's space above
+					SPRINT buffer "%script%"
+					FOR (ind=match_index;ind>=0;ind=ind - 1) BEGIN
+						PATCH_IF "%buffer%" STR_CMP "" BEGIN
+							SPRINT this_script $script_array("%ind%")
+							SPRINT $script_array("%ind%") "%buffer%"
+							PATCH_MATCH "%this_script%" WITH
+							"" "none" "null" BEGIN
+								SPRINT buffer ""
+							END
+							DEFAULT
+								SPRINT buffer "%this_script%"
+							END
+						END				
+					END
+				END
+		
+			END
+		
+		END
+		"before .*" BEGIN
+			INNER_PATCH "%loc%" BEGIN
+				REPLACE_EVALUATE "before \(.*\)" BEGIN
+					SPRINT match_script "%MATCH1%"
+				END
+				""
+			END
+			// find index of 'match_script'
+			match_index="-1"
+			PHP_EACH script_array AS ind=>this_script BEGIN
+				PATCH_IF "%this_script%" STR_EQ "%match_script%" BEGIN
+					match_index=ind
+				END
+			END
+			PATCH_IF match_index<0 BEGIN
+				LPF insert_script STR_VAR script_array script loc=low RET_ARRAY script_array END
+			END ELSE BEGIN
+			// is there room above?
+				space_above=0
+				FOR (ind=0;ind<=match_index;++ind) BEGIN
+					SPRINT this_script $script_array("%ind%")
+					PATCH_MATCH "%this_script%" WITH
+					"" "none" "null" BEGIN
+						space_above=1
+					END
+					DEFAULT
+					END
+				END
+				PATCH_IF space_above BEGIN
+					SPRINT buffer "%script%"
+					FOR (ind=match_index - 1;ind>=0;ind=ind - 1) BEGIN
+						PATCH_IF "%buffer%" STR_CMP "" BEGIN
+							SPRINT this_script $script_array("%ind%")
+							SPRINT $script_array("%ind%") "%buffer%"
+							PATCH_MATCH "%this_script%" WITH
+							"" "none" "null" BEGIN
+								SPRINT buffer ""
+							END
+							DEFAULT
+								SPRINT buffer "%this_script%"
+							END
+						END
+					
+					END		
+				END ELSE BEGIN
+					// if there's no space above, there's space below
+					SPRINT buffer "%script%"
+					FOR (ind=match_index;ind<length;++ind) BEGIN
+						PATCH_IF "%buffer%" STR_CMP "" BEGIN
+							SPRINT this_script $script_array("%ind%")
+							SPRINT $script_array("%ind%") "%buffer%"
+							PATCH_MATCH "%this_script%" WITH
+							"" "none" "null" BEGIN
+								SPRINT buffer ""
+							END
+							DEFAULT
+								SPRINT buffer "%this_script%"
+							END
+						END				
+					END
+				END
+		
+			END
+		
+		END
+		
+		
+		
+		DEFAULT
+			PATCH_WARN "unrecognised location %loc% in insert_script"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{install}
+{
+'arguments' (synonym: 'files'; synonym:'file') is a list of files (including extensions) located at the location given by path/location/locbase. Each is copied over to the override;
+if any are BAF/D, they are COMPILE EVALUATE_BUFFERred. If none of 'location', 'locbase', and 'path' are set, set location=resource. If overwrite=0, don't overwrite already-present files (does not affect scripts).
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION install
+	INT_VAR overwrite=1//boolean
+	STR_VAR arguments=""
+			files=""
+			file=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	ACTION_IF "%location%%locbase%%path%" STR_EQ "" BEGIN
+		OUTER_SPRINT location resource
+	END
+	ACTION_IF "%files%%file%" STR_CMP "" BEGIN
+		OUTER_SPRINT arguments "%files%%file%"
+	END
+	LAF sfo_path STR_VAR path location locbase RET path END
+	OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%arguments%" RET file=entry arguments=list END
+		LAF sfo_path STR_VAR file path location locbase RET file_path END
+		ACTION_MATCH "%file%" WITH
+		".*\.\(baf\|d\)" BEGIN
+			COMPILE "%file_path%" EVALUATE_BUFFER
+		END
+		DEFAULT
+			ACTION_IF overwrite || !FILE_EXISTS_IN_GAME "%file%" BEGIN
+				COPY "%file_path%" override
+			END
+		END
+	END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{resolve_splprot_entry}
+{
+Given 'stat', 'val' (legacy synonym: 'value'), and either 'relation_number' or 'relation', return an appropriate entry in splprot.2da, adding
+it if necessary. (see IESDP opcode documentation for opcode 324).</p>
+
+<p>'Relation' can be:
+<ul>
+<li>'equals'/'equal' (resolves to 1)
+<li>'less'/'less_than' (resolves to 2)
+<li>'greater'/'greater_than' (resolves to 3)
+<li>'less_than_equal'/'less_than_equals'/'less_equal' (resolves to 0)
+<li>'greater_equal'/'greater_equals' (resolves to 4)
+<li>'not_equal' (resolves to 5)
+</ul>
+}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION resolve_splprot_entry 
+      INT_VAR 	stat=0
+				val=0
+				value=0
+				relation_number=0
+      STR_VAR 	relation=""
+      RET value
+BEGIN
+      ACTION_IF !(value=0) BEGIN
+		OUTER_SET val=value
+	  END
+      ACTION_MATCH "%relation%" WITH
+         equals equal BEGIN 
+            OUTER_SET relation_number=1
+         END
+         greater greater_than BEGIN
+            OUTER_SET relation_number=3
+         END
+         less less_than BEGIN
+            OUTER_SET relation_number=2
+         END
+         greater_equal greater_equals BEGIN
+            OUTER_SET relation_number= 4
+         END
+         less_than_equal less_equal less_than_equals BEGIN
+            OUTER_SET relation_number=0
+         END
+         not_equal BEGIN
+            OUTER_SET relation_number=5
+         END
+         "" BEGIN END
+      DEFAULT
+         LAF warning STR_VAR warning="unrecognised relation %relation% in resolve_splprot_entry; defaulting to 0" END
+         OUTER_SET relation_number=0
+      END
+      COPY_EXISTING "splprot.2da" override
+            READ_2DA_ENTRIES_NOW splprot_array 4
+            SET value="-1"
+            FOR (i=0;i<splprot_array;i+=1) BEGIN
+                   READ_2DA_ENTRY_FORMER splprot_array i 1 this_stat
+                   READ_2DA_ENTRY_FORMER splprot_array i 2 this_val
+                   READ_2DA_ENTRY_FORMER splprot_array i 3 this_relation
+                   PATCH_IF (IS_AN_INT this_stat && IS_AN_INT this_val && IS_AN_INT this_relation) BEGIN
+                     PATCH_IF (stat=this_stat && val=this_val && relation_number=this_relation) BEGIN
+                      SET value=i
+                      SET i=splprot_array
+                     END
+                   END
+            END
+            PATCH_IF value<0 BEGIN
+               INSERT_2DA_ROW splprot_array 4 "%splprot_array%%TAB%%stat%%TAB%%val%%TAB%%relation_number%"
+               SET value=splprot_array
+            END
+      BUT_ONLY
+END
+
+//////////////////////////////////////////////////////////////
+/*
+
+*/
+//////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION resolve_statdesc
+	INT_VAR check_first="-1"
+			strref="-1"
+	STR_VAR string=""
+			bam=""
+			bam_name=""
+			path=""
+			location=""
+			locbase=""
+	RET stat_num
+BEGIN
+	COPY_EXISTING "statdesc.2da" override
+		LPF 2da_read RET_ARRAY array END
+		stat_num="-1"
+		new="-1"
+		PATCH_IF "%string%" STR_CMP "" BEGIN
+			strref=RESOLVE_STR_REF ("%string%")
+		END
+		PATCH_IF VARIABLE_IS_SET $array("%check_first%" DESCRIPTION) BEGIN
+			PATCH_IF $array("%check_first%" DESCRIPTION)=strref BEGIN
+				stat_num=check_first
+				new=0
+			END ELSE
+			PATCH_IF $array("%check_first%" DESCRIPTION)="-1" BEGIN
+				SET $array("%check_first%" DESCRIPTION)=strref	
+				stat_num=check_first
+				new=1
+			END 
+		END
+		PATCH_IF stat_num<0 BEGIN
+			stat_num=200
+			WHILE VARIABLE_IS_SET $array("%stat_num%" DESCRIPTION) BEGIN
+				++stat_num
+			END
+			SET $array("%stat_num%" DESCRIPTION)=strref	
+			new=1
+		END
+		PATCH_IF new BEGIN
+			PATCH_MATCH "%bam_name%" WITH
+			"" BEGIN
+				SPRINT bam_name "%bam%"
+			END 
+			"auto" BEGIN
+				n=1
+				WHILE FILE_EXISTS_IN_GAME "dwicon%n%.bam" BEGIN
+					++n
+				END
+				SPRINT bam_name "dwicon%n%"
+			END
+			DEFAULT
+			END
+			PATCH_IF "%bam%" STR_CMP "****" BEGIN
+				LPF sfo_path STR_VAR file="%bam%" location locbase path RET file_path END
+				PATCH_IF FILE_EXISTS "%file_path%.bam" BEGIN
+				INNER_ACTION BEGIN
+					COPY "%file_path%.bam" "override/%bam_name%.bam"
+				END
+				END ELSE BEGIN
+					LPF warning STR_VAR warning="supposed icon BAM file %bam% does not exist at the specified location (%file_path%.bam)" END 
+				END
+			END
+			SPRINT $array("%stat_num%" BAM_FILE) "%bam_name%"
+		END
+		LPF 2da_write STR_VAR array default="-1" END
+	BUT_ONLY
+END
+			
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////  Statdesc patcher  - we ignore missing rows
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION add_to_statdesc
+    INT_VAR start_row=190
+			string= "-1"
+    STR_VAR bam = "****"
+    RET stat_num
+BEGIN
+    COPY_EXISTING statdesc.2da override
+       COUNT_2DA_ROWS 3 rowcount
+       LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
+       SET_2DA_ENTRY row 1 3 "%string%"
+       SET_2DA_ENTRY row 2 3 "%bam%"
+    BUT_ONLY
+END
+
+DEFINE_PATCH_FUNCTION add_to_statdesc_helper
+      INT_VAR start_row=0
+              rowcount=0
+      RET stat_num
+          row
+BEGIN
+   PATCH_IF start_row>= rowcount BEGIN
+       READ_2DA_ENTRY (rowcount - 1) 0 3 last_entry
+       SET stat_num=last_entry + 1
+       SET row=rowcount
+       INSERT_2DA_ROW rowcount 3 "%stat_num% -1 ****"
+   END ELSE BEGIN
+     READ_2DA_ENTRY start_row 1 3 entry
+     PATCH_IF entry<=0 BEGIN
+        READ_2DA_ENTRY start_row 0 3 stat_num
+        SET row=start_row
+     END ELSE BEGIN
+        SET start_row +=1
+        LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
+     END
+   END
+END

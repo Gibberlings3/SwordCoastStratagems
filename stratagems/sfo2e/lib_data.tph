@@ -1,0 +1,471 @@
+///////////////////////////////////////////////////////////////////////////////
+/*
+document{data_spell_resrefs}
+{
+Read in every entry in spell.ids and set a variable with that name whose
+value is the spell resref, and store the data in the sfo_spell_resrefs array
+
+e.g. WIZARD_FIREBALL = SPWI304
+     $sfo_spell_resrefs("WIZARD_FIREBALL") = SPWI304
+
+Also, for wizard/priest spells, store the spell level in the format
+
+WIZARD_FIREBALL_LEVEL=3
+
+}
+*/
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_spell_resrefs BEGIN
+    LOCAL_SPRINT idsname ""
+	LOCAL_SPRINT resref ""
+	LAF data_internal_spell_resrefs RET_ARRAY sfo_spell_resrefs sfo_spell_levels END
+    ACTION_PHP_EACH sfo_spell_resrefs AS idsname=>resref BEGIN
+        OUTER_SPRINT "%idsname%" "%resref%"
+		ACTION_IF VARIABLE_IS_SET $sfo_spell_levels("%idsname%") BEGIN
+			OUTER_SPRINT "%idsname%_LEVEL" $sfo_spell_levels("%idsname%")
+		END
+    END
+    OUTER_SET SFO_internal_spells_read=1 
+END
+
+DEFINE_ACTION_FUNCTION data_internal_spell_resrefs//internal
+    RET_ARRAY sfo_spell_resrefs
+			  sfo_spell_levels
+BEGIN
+    SILENT
+    // first get data from spell.ids
+    COPY_EXISTING spell.ids override
+        READ_2DA_ENTRIES_NOW spell_resref_entries 2
+        FOR (this_row=0;this_row<spell_resref_entries;this_row +=1) BEGIN
+            READ_2DA_ENTRY_FORMER spell_resref_entries this_row 1 idsname
+            READ_2DA_ENTRY_FORMER spell_resref_entries this_row 0 idsnum
+            PATCH_IF IS_AN_INT idsnum BEGIN
+				INNER_PATCH_SAVE idsref "%idsnum%" BEGIN
+					 SET $sfo_spell_levels("%idsname%")="-1"
+					 REPLACE_EVALUATE "\([12]\)\([1-9]\)\([0-9][0-9]\)" BEGIN
+						SET $sfo_spell_levels("%idsname%")="%MATCH2%"					
+					 END
+					 "%MATCH1%%MATCH2%%MATCH3%"
+					 REPLACE_TEXTUALLY "1\([0-9][0-9][0-9]\)" "SPPR\1"
+					 REPLACE_TEXTUALLY "2\([0-9][0-9][0-9]\)" "SPWI\1"
+					 REPLACE_TEXTUALLY "3\([0-9][0-9][0-9]\)" "SPIN\1"
+					 REPLACE_TEXTUALLY "4\([0-9][0-9][0-9]\)" "SPCL\1"
+				END
+                SPRINT $sfo_spell_resrefs("%idsname%") "%idsref%"
+            END
+        END
+    BUT_ONLY
+	// add some bespoke ones
+	LAF array_read STR_VAR file=extra_spell_ids.txt locbase="%sfo_library_path%/data" RET_ARRAY bespoke_ids=array END
+	ACTION_PHP_EACH bespoke_ids AS idsname=>idsref BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+			COPY_EXISTING - "%resref%.spl" nowhere
+				READ_LONG 0x34 level
+				SET $sfo_spell_levels("%idsname%")=level
+			BUT_ONLY
+		END
+		OUTER_SPRINT $sfo_spell_resrefs("%idsname%") "%idsref%"
+		
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+document{data_scroll_resrefs}
+{
+Reads in every divine and arcane
+spell, and stores them like this:
+
+WIZARD_FIREBALL_SCROLL=scrl1g
+$sfo_arcane_scrolls("WIZARD_FIREBALL")=scrl1g
+CLERIC_FREE_ACTION_SCROLL=scrl58
+$sfo_divine_scrolls("CLERIC_FREE_ACTION")=scrl58
+}
+*/
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_scroll_resrefs
+BEGIN
+	LOCAL_SPRINT idsname ""
+	LOCAL_SPRINT resref ""
+	LAF data_internal_scroll_resrefs RET_ARRAY sfo_arcane_scrolls sfo_divine_scrolls END
+    ACTION_PHP_EACH sfo_arcane_scrolls AS idsname=>resref BEGIN
+        OUTER_SPRINT "%idsname%_SCROLL" "%resref%"
+    END
+    ACTION_PHP_EACH sfo_divine_scrolls AS idsname=>resref BEGIN
+        OUTER_SPRINT "%idsname%_SCROLL" "%resref%"
+    END
+END
+
+
+DEFINE_ACTION_FUNCTION data_internal_scroll_resrefs//internal
+    RET_ARRAY sfo_arcane_scrolls
+              sfo_divine_scrolls
+BEGIN
+    SILENT
+	ACTION_IF !VARIABLE_IS_SET SFO_internal_spells_read BEGIN
+		FAIL "data_scroll_resrefs requires data_spell_resrefs to have been run"
+	END
+    // go through the item files
+    COPY_EXISTING_REGEXP ".*\.itm$" override
+        // handle TUTU file conventions, we want "_SCRL" prioritised over "SCRL"
+        PATCH_IF FILE_EXISTS_IN_GAME ~_%SOURCE_RES%.itm~ BEGIN
+           SPRINT filename ~_%SOURCE_RES%~
+        END ELSE BEGIN
+           SPRINT filename ~%SOURCE_RES%~
+        END
+        TO_LOWER filename
+        PATCH_MATCH "%filename%" WITH
+        TTSCRL01 TTSCRL02 BEGIN END // tutorial scrolls - skip them
+        DEFAULT
+			INNER_ACTION BEGIN
+				// the core spell edit
+				COPY_EXISTING - ~%filename%.itm~ nowhere
+					PATCH_IF SHORT_AT 0x1c=11 BEGIN // scroll
+						PATCH_IF (INDEX_BUFFER (CASE_INSENSITIVE SPWI)>=0 || INDEX_BUFFER (CASE_INSENSITIVE SPPR)>=0) BEGIN // probably a spell scroll, go through carefully
+							SET success=0
+							GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+							PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+								GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+								PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+									READ_SHORT fx_off opcode
+									PATCH_IF (opcode=146 || opcode=147 || opcode=148) & !success BEGIN
+										SET success=1
+										READ_ASCII (0x14 + fx_off) resref
+										TO_UPPER resref
+										SPRINT $internal_scroll_map("%resref%") "%filename%"
+									END
+								END
+							END
+						END
+					END
+				BUT_ONLY // end of the core spell edit
+			END // end of inner_action
+        END
+    BUT_ONLY // end of the outer item edit
+    // match up the arrays
+    ACTION_PHP_EACH sfo_spell_resrefs AS idsname=>resref BEGIN
+        ACTION_IF VARIABLE_IS_SET $internal_scroll_map("%resref%") BEGIN
+			ACTION_MATCH "%idsname%" WITH 
+			"WIZARD_.*" BEGIN
+				  OUTER_SPRINT $sfo_arcane_scrolls("%idsname%") $internal_scroll_map("%resref%")
+			END
+			"CLERIC_.*" BEGIN
+				  OUTER_SPRINT $sfo_divine_scrolls("%idsname%") $internal_scroll_map("%resref%")
+			END
+			DEFAULT 
+			END
+        END
+    END
+END
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+document{data_saving_throws}
+{
+Read in saving throws for all classes and store in a 3da, in the form 
+$sfo_saves("class" "level" "type")=n
+
+Here type is 'poison','wands','polymorph','breath', or 'spells', and class is lowercased.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_saving_throws 
+BEGIN
+	LOCAL_SPRINT type ""
+	LOCAL_SPRINT class ""
+	LOCAL_SPRINT n ""
+	LOCAL_SPRINT savetype ""
+	ACTION_CLEAR_ARRAY class_map
+	ACTION_CLEAR_ARRAY save_name_map
+	OUTER_SET sfo_saves_read=1
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY class_map BEGIN
+        mage=> WIZ
+        fighter=> WAR
+        cleric=> PRS
+        thief=> ROG
+        bard=> ROG
+        paladin=> WAR
+        druid=> PRS
+        ranger=> WAR
+        monk=> MONK
+        sorcerer=> WIZ
+		shaman=>PRS
+	END
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY save_name_map BEGIN
+		DEATH=>death
+		WANDS=>wands
+		POLY=>polymorph
+		BREATH=>breath
+		SPELL=>spells
+	END
+	ACTION_FOR_EACH type IN WIZ WAR PRS ROG MONK BEGIN
+		SILENT
+		LAF 2da_read STR_VAR file="SAVE%type%.2da" rowmap="value:=$save_name_map(~__~)" RET_ARRAY "SFO_reserved_array_%type%"=array SFO_reserved_columns=columns SFO_reserved_rows=rows END
+	END
+	VERBOSE
+	ACTION_PHP_EACH class_map AS class=>type BEGIN
+		ACTION_PHP_EACH SFO_reserved_columns AS n=>discard BEGIN
+			ACTION_PHP_EACH SFO_reserved_rows AS savetype=>discard2 BEGIN
+				OUTER_SET "sfo_saves_%class%_%n%_%savetype%" = $"SFO_reserved_array_%type%"("%savetype%" "%n%")
+			END
+		END
+	END
+	ACTION_CLEAR_ARRAY class_map
+	ACTION_CLEAR_ARRAY save_name_map
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+document{data_spells_by_level}
+{
+Read in spell slots for all classes and store in a struct 'sfo_spell_level', in the form
+
+sfo_spell_level_%class%_%level%_%spell_level%"=n (# spells known at level)
+sfo_spell_level_sl_to_cl_%class%_%level%=n (minimum level at which caster gets spells of this level)
+sfo_spell_level_cl_to_sl_%class%_%level%=n (maximum level of spells known at caster level)
+sfo_spell_level_max_%class%=n (max level of spells known)
+
+}
+*/
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_spells_by_level
+
+BEGIN
+	LOCAL_SPRINT type ""
+	LOCAL_SPRINT k ""
+	LOCAL_SPRINT v ""
+	LOCAL_SPRINT class ""
+	LOCAL_SET spell_level=0
+	LOCAL_SET class_level=0
+	LOCAL_SET max=0
+	LOCAL_SET max_global=0
+	LOCAL_SET n=0
+	ACTION_IF !VARIABLE_IS_SET sfo_data_spells_by_level_set BEGIN
+		OUTER_SET sfo_data_spells_by_level_set=1
+		ACTION_CLEAR_ARRAY SFO_reserved_data_class_map
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY SFO_reserved_data_class_map BEGIN
+			mage=> WIZ
+			fighter=> "NULL"
+			cleric=> PRS
+			thief=> "NULL"
+			bard=> BRD
+			paladin=> PAL
+			druid=> DRU
+			ranger=> RAN
+			monk=> "NULL"
+			sorcerer=> SRC
+		END
+		SILENT
+		ACTION_FOR_EACH type IN WIZ PRS BRD PAL RAN SRC DRU BEGIN
+			LAF 2da_read STR_VAR file="MXSPL%type%.2da" RET_ARRAY "sfo_mxspl_%type%"=array END
+		END
+		ACTION_IF enhanced_edition BEGIN
+			OUTER_SPRINT $SFO_reserved_data_class_map("shaman") SHM
+			LAF 2da_read STR_VAR file="MXSPLSHM.2da" RET_ARRAY sfo_mxspl_SHM=array END
+		END
+		VERBOSE
+		ACTION_PHP_EACH SFO_reserved_data_class_map AS class=>type BEGIN
+			// get the main array
+			OUTER_FOR (class_level=1;class_level<=50;++class_level) BEGIN
+				OUTER_FOR (spell_level=1;spell_level<=9;++spell_level) BEGIN
+				//	OUTER_SET $sfo_spell_level("%class%" "%class_level%" "%spell_level%")=0
+				//OUTER_SET $"sfo_spell_level_%class%"("%class_level%" "%spell_level%")=0
+				OUTER_SET "sfo_spell_level_%class%_%class_level%_%spell_level%"=0
+				END
+			END
+			ACTION_PHP_EACH "sfo_mxspl_%type%" AS k=>v BEGIN
+				OUTER_SET "sfo_spell_level_%class%_%k_0%_%k_1%"=v
+			END
+			 // infer the maxima
+			 
+			OUTER_SET max_global=0
+			OUTER_SET max=0
+			OUTER_FOR (n=1;n<=9;++n) BEGIN
+				OUTER_SET "sfo_spell_level_sl_to_cl_%class%_%n%"=99
+			END
+			OUTER_FOR (class_level=1;class_level<=50;++class_level) BEGIN
+				// intentionally don't reset max, it's nondecreasing
+				OUTER_FOR (spell_level=max+1;spell_level<=9;++spell_level) BEGIN
+					ACTION_IF "sfo_spell_level_%class%_%class_level%_%spell_level%">0 BEGIN
+						OUTER_SET max=spell_level // take advantage of no gaps
+						OUTER_SET max_global=spell_level
+						ACTION_IF "sfo_spell_level_sl_to_cl_%class%_%spell_level%"=99 BEGIN
+							OUTER_SET "sfo_spell_level_sl_to_cl_%class%_%spell_level%"=class_level
+						END
+					END
+				END
+				OUTER_SET "sfo_spell_level_cl_to_sl_%class%_%class_level%"=max
+			END
+			OUTER_SET "sfo_spell_level_max_%class%"=max_global
+			
+		END
+	END
+	
+END
+
+///////////////////////////////////////////////////////////////////////
+/*
+document{data_priest_spells}
+{
+Return arrays "sfo_druid_spells" and "sfo_cleric_[alignment]_spells_n", containing the learnable cleric and druid spells of in resref=>level form.
+[alignment] is each of the nine alignments as presented in align.ids, lowercased. Arrays are ordered from highest to lowest level and from highest-numbered
+to lowest-numbered spell (this facilitates correctly (or at least intuitively) ordering the learned-spell lists if we use cre_quickset_known_spells).
+}
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_priest_spells
+BEGIN
+	SILENT
+	LAF data_priest_spells_core 
+	RET_ARRAY sfo_cleric_lawful_good_spells
+			  sfo_cleric_neutral_good_spells
+			  sfo_cleric_chaotic_good_spells
+			  sfo_cleric_lawful_neutral_spells
+			  sfo_cleric_neutral_spells
+			  sfo_cleric_chaotic_neutral_spells
+			  sfo_cleric_lawful_evil_spells
+			  sfo_cleric_neutral_evil_spells
+			  sfo_cleric_chaotic_evil_spells
+			  sfo_druid_spells 
+	END
+	VERBOSE
+	OUTER_SET sfo_data_priest_spells_loaded=1
+END
+
+DEFINE_ACTION_FUNCTION data_priest_spells_core//internal
+	RET_ARRAY sfo_cleric_lawful_good_spells
+			  sfo_cleric_neutral_good_spells
+			  sfo_cleric_chaotic_good_spells
+			  sfo_cleric_lawful_neutral_spells
+			  sfo_cleric_neutral_spells
+			  sfo_cleric_chaotic_neutral_spells
+			  sfo_cleric_lawful_evil_spells
+			  sfo_cleric_neutral_evil_spells
+			  sfo_cleric_chaotic_evil_spells
+			  sfo_druid_spells
+BEGIN
+	// load hidespl (note that 2.6 doesn't use the is_final thing)
+	ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
+		LAF 2da_read STR_VAR file=hidespl.2da RET_ARRAY rows array END
+		ACTION_IF enhanced_edition BEGIN
+			LAF 2da_extract_array STR_VAR array range=IS_HIDDEN RET_ARRAY hidden_spells=array END
+		END ELSE BEGIN
+			ACTION_PHP_EACH rows AS k=>v BEGIN
+				OUTER_SET $hidden_spells("%k%")=1
+			END	
+		END
+	END
+	// go through the spells
+	OUTER_FOR (level=7;level>=1;level=level - 1) BEGIN
+		OUTER_SET max=enhanced_edition?50:(level=7?20:50)
+		OUTER_FOR (number=level*100+max;number>=level*100+1;number=number - 1) BEGIN
+			OUTER_SPRINT resref "SPPR%number%"
+			ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" && (!VARIABLE_IS_SET $hidden_spells("%resref%") || $hidden_spells("%resref%")=0 ) BEGIN
+				COPY_EXISTING - "%resref%.spl" nowhere
+					READ_BYTE 0x21 usable_class
+					usable_druid=((usable_class BAND 0b10000000) = 0)
+					usable_cleric=((usable_class BAND 0b01000000) = 0)
+					PATCH_IF usable_druid BEGIN
+						SET $sfo_druid_spells("%resref%")=level
+					END
+					PATCH_IF usable_cleric BEGIN
+					READ_BYTE 0x1e alignment
+						PATCH_IF ((alignment BAND 0b00010100)=0) BEGIN
+							SET $sfo_cleric_lawful_good_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00100100)=0) BEGIN
+							SET $sfo_cleric_neutral_good_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00000101)=0) BEGIN
+							SET $sfo_cleric_chaotic_good_spells("%resref%")=level
+						END						
+						PATCH_IF ((alignment BAND 0b00011000)=0) BEGIN
+							SET $sfo_cleric_lawful_neutral_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00101000)=0) BEGIN
+							SET $sfo_cleric_neutral_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00001001)=0) BEGIN
+							SET $sfo_cleric_chaotic_neutral_spells("%resref%")=level
+						END						
+						PATCH_IF ((alignment BAND 0b00010010)=0) BEGIN
+							SET $sfo_cleric_lawful_evil_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00100010)=0) BEGIN
+							SET $sfo_cleric_neutral_evil_spells("%resref%")=level
+						END
+						PATCH_IF ((alignment BAND 0b00000011)=0) BEGIN
+							SET $sfo_cleric_chaotic_evil_spells("%resref%")=level
+						END	
+					END
+				//BUT_ONLY
+			
+			
+			END
+		END
+		
+	END
+
+END
+
+///////////////////////////////////////////////////////////////////////
+/*
+document{data_joinable_dvs}
+{
+Returns the array 'sfo_joinable_dvs', in k=>_ form, containing the lowercased dvs of all joinable creatures
+}
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_joinable_dvs BEGIN
+	LAF data_joinable_dvs_core RET_ARRAY sfo_joinable_dvs END
+	OUTER_SET sfo_data_joinable_dvs_loaded=1
+END
+
+DEFINE_ACTION_FUNCTION data_joinable_dvs_core//internal
+	RET_ARRAY sfo_joinable_dvs
+BEGIN
+	// main npcs
+	LAF 2da_read STR_VAR file=pdialog.2da case=lower RET_ARRAY sfo_joinable_dvs=rows END
+	// campaign npcs
+	ACTION_IF FILE_EXISTS_IN_GAME "campaign.2da" BEGIN
+		COPY_EXISTING - campaign.2da nowhere
+			COUNT_2DA_ROWS 0 rowcount 
+			PATCH_IF rowcount>3 BEGIN
+				LPF 2da_read RET_ARRAY campaign_array=array END
+				LPF 2da_extract_array STR_VAR array=campaign_array range=PDIALOG RET_ARRAY pdialog_array=array END
+				INNER_ACTION BEGIN
+					ACTION_PHP_EACH pdialog_array AS file=>discard BEGIN
+						ACTION_IF FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+							LAF 2da_read STR_VAR file="%file%.2da" caet=lower RET_ARRAY rows END
+							LAF array_join STR_VAR array1=sfo_joinable_dvs array2=rows RET_ARRAY sfo_joinable_dvs=array END
+						END
+					END
+				END
+			END
+		BUT_ONLY
+	END
+	// the tutorial NPCs from Candlekeep
+	ACTION_IF is_bg1 BEGIN
+		ACTION_FOR_EACH dv IN arkanis canderous deder mordaine osprey BEGIN
+			OUTER_SPRINT $sfo_joinable_dvs("%dv%") ""
+		END
+	END
+	// set all values to ""
+	ACTION_PHP_EACH sfo_joinable_dvs AS k=>v BEGIN
+		OUTER_SPRINT $sfo_joinable_dvs("%k%") ""
+	END
+
+END
+
+
+

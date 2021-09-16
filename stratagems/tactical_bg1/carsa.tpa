@@ -1,0 +1,152 @@
+DEFINE_ACTION_FUNCTION carsa BEGIN
+
+	// set journal entries
+	
+	ADD_JOURNAL @10020 @10021 @10022 @10023 @10024 @10025
+
+	// remove save vs spells
+
+	COPY_EXISTING "%tutu_var%carsa.cre" override
+		FOR (offset=0x54;offset<=0x58;++offset) BEGIN
+			WRITE_BYTE offset 21 // automatically fail saving throw
+		END
+			
+	// build spells that disable/reenable Carsa
+	// on Calling, just install them (grab the SCS-made ones, put them in 'resource')
+	
+	ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/resource/dw#ckslp.spl" BEGIN
+		ACTION_FOR_EACH spell IN dw#ckslp dw#ckhld dw#ckcnf dw#ckdsp BEGIN
+			COPY "%MOD_FOLDER%/%component_loc%/resource/%spell%.spl" override
+		END
+	END ELSE BEGIN
+	
+		LAF make_spell STR_VAR spell=dw#ckslp editstring="add_basic_ability=>null add_effect_inline=>~opcode=>39 target=>2 parameter2=>1 resist_dispel=>1 duration=>300~" END
+		LAF make_spell STR_VAR spell=dw#ckhld editstring="add_basic_ability=>null add_effect_inline=>~opcode=>175 target=>2 parameter2=>2 resist_dispel=>1 duration=>60~" END
+		LAF make_spell STR_VAR spell=dw#ckcnf editstring="add_basic_ability=>null add_effect_inline=>~opcode=>128 target=>2 resist_dispel=>1 duration=>60~" END
+		LAF make_spell STR_VAR spell=dw#ckdsp editstring="add_basic_ability=>null add_effect_inline=>~opcode=>58 target=>2 timing=>1~" END
+
+	END
+
+	// get strings from the dialog
+
+	COPY_EXISTING "%tutu_var%carsa.dlg" override
+		GET_OFFSET_ARRAY say_arr 0xc 4 0x8 4 0 0 0x10
+		PHP_EACH say_arr AS say_ind=>say_off BEGIN
+			READ_LONG say_off strref
+			SET $carsa_say_strref("%say_ind%")=strref
+			GET_STRREF strref string
+			SPRINT $carsa_say("%say_ind%") "%string%"
+		END
+		GET_OFFSET_ARRAY resp_arr 0x14 4 0x10 4 0 0 0x20
+		PHP_EACH resp_arr AS resp_ind=>resp_off BEGIN
+			READ_LONG (0x4+resp_off) strref
+			SET $carsa_response_strref("%resp_ind%")=strref
+			GET_STRREF strref string
+			SPRINT $carsa_response("%resp_ind%") "%string%"
+		END
+
+	// update the dialog
+
+	COMPILE "%MOD_FOLDER%/%component_loc%/resource/carsa_add.d" EVALUATE_BUFFER
+
+	// on EE, don't bother erasing journal entries
+	
+	ACTION_IF enhanced_edition BEGIN
+		COPY_EXISTING "carsa.dlg" override
+			DECOMPILE_AND_PATCH BEGIN
+				REPLACE_TEXTUALLY "EraseJournalEntry([^)]*)" ""
+			END
+		BUT_ONLY
+	END
+
+	// handle the scripts
+
+	EXTEND_BOTTOM "%tutu_var%carsa.bcs" "%MOD_FOLDER%/%component_loc%/resource/carsa_add.baf"
+	COPY_EXISTING - "%FirewineBridge%.are" nowhere
+		READ_ASCII 0x94 script
+	ACTION_IF !FILE_EXISTS_IN_GAME "%script%.bcs" BEGIN
+		COPY "%MOD_FOLDER%/%component_loc%/resource/carsa_area_add.baf" "override/%script%.bcs"
+			EVALUATE_BUFFER
+			COMPILE_BAF_TO_BCS
+	END ELSE BEGIN
+		EXTEND_BOTTOM "%script%.bcs" "%MOD_FOLDER%/%component_loc%/resource/carsa_area_add.baf"
+	END
+
+	// make the spawn-Kahrk spell and effect
+	// on the Calling, just copy them over (put the already-built SCS ones into resource)
+	
+	ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/resource/dw#kahrk.spl" BEGIN
+		COPY "%MOD_FOLDER%/%component_loc%/resource/dw#kahrk.spl" override
+		COPY "%MOD_FOLDER%/%component_loc%/resource/dw#kahrk.eff" override
+			WRITE_ASCIIE 0x30 "%tutu_var%kahrk" (8)
+	END ELSE BEGIN
+	
+		LAF make_spell STR_VAR spell=dw#kahrk editstring="add_basic_ability=>null add_effect_inline=>~opcode=>177 target=>1 timing=>1 parameter2=>2 resource=>dw#kahrk~" END
+		LAF make_effect STR_VAR effect=dw#kahrk editstring="opcode=>67 target=>1 parameter2=>2 timing=>1 resource=>%tutu_var%kahrk resource2=>spportal" END
+	
+	END
+	
+	// make clone of Carsa in Gullykin
+	
+	COPY_EXISTING "%tutu_var%carsa.cre" "override/dw#carsa.cre"
+		WRITE_ASCII SCRIPT_OVERRIDE "" (8)
+		WRITE_ASCIIE DIALOG "dw#carsa"
+	
+	// give her a dialog
+	
+	COMPILE "%MOD_FOLDER%/%component_loc%/resource/dw#carsa.d" EVALUATE_BUFFER
+	
+	// put her in Gullykin temple
+	
+	COPY_EXISTING - "%Gullykin_Winery_L1%.are" nowhere
+		READ_ASCII 0x94 script
+	ACTION_IF !FILE_EXISTS_IN_GAME "%script%.bcs" BEGIN
+		COPY "%MOD_FOLDER%/%component_loc%/resource/carsa_gullykin.baf" "override/%script%.bcs"
+			EVALUATE_BUFFER
+			COMPILE_BAF_TO_BCS
+	END ELSE BEGIN
+		EXTEND_BOTTOM "%script%.bcs" "%MOD_FOLDER%/%component_loc%/resource/carsa_gullykin.baf"
+	END
+	
+	LAF check_ini STR_VAR ini=No_Kahrk_Treasure RET value END
+	ACTION_IF !value BEGIN
+		// make Kahrk's katana
+		// there are no +2 katanas in BGEE/SoD, so we'll just use the unadjusted graphic
+		
+		OUTER_SET bonus=2
+		OUTER_SET speed=(4 - bonus)
+		OUTER_SPRINT desc @10007
+		OUTER_PATCH_SAVE desc "%desc%" BEGIN
+			REPLACE_TEXTUALLY "KATANA_BONUS" "%bonus%"
+			REPLACE_TEXTUALLY "KATANA_SPEED" "%speed%"
+		END
+		OUTER_SPRINT name @10006
+		OUTER_PATCH_SAVE name "%name%" BEGIN
+			REPLACE_TEXTUALLY "KATANA_BONUS" "%bonus%"
+		END
+		
+		COPY_EXISTING "sw1h55.itm" "override/dw#kakat.itm"
+			SAY 0xc "%name%"
+			SAY 0x54 "%desc%"
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=191 target=1 timing=2 parameter1=1 parameter2=0 END // +1 CL
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=189 target=1 timing=2 parameter1=1 END // +1 casting speed
+			
+		// make undroppable copy (remove the +2 to hit, that's double-counting)
+
+		COPY_EXISTING "dw#kakat.itm" "override/dw#udkak.itm"
+			WRITE_ASCII 0x22 S1
+			WRITE_LONG 0x18 THIS BAND (BNOT BIT2)
+			LPF ALTER_ITEM_HEADER INT_VAR thac0_bonus=0 END
+			
+		// give him the katana, plus undroppable copy
+		
+		COPY_EXISTING "%tutu_var%kahrk.cre" override
+					REMOVE_CRE_ITEM sw1h43 // katana (might be on EE)
+					REMOVE_CRE_ITEM dw#ogkat // SCS undroppable katana
+					REMOVE_CRE_ITEM "_SW1H04" // TUTU item
+					REMOVE_CRE_ITEM "SW1H04" // BGT item
+					ADD_CRE_ITEM "dw#kakat" #0 #0 #0 none inv
+					ADD_CRE_ITEM "dw#udkak" #0 #0 #0 undroppable weapon EQUIP
+	END
+	
+END

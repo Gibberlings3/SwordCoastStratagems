@@ -1,0 +1,89 @@
+DEFINE_ACTION_FUNCTION iwd_bardsong_postproduction BEGIN
+		
+		LAM data_spell_resrefs 
+		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cd_bardic_post.tpa" // just in case Cam's code isn't SFO-sugar-compliant
+		LAF cd_bardic_post END
+
+		ACTION_IF !enhanced_edition BEGIN
+			OUTER_SPRINT obg2_res_path "%MOD_FOLDER%/%component_loc%/obg2_res"
+			INCLUDE "%MOD_FOLDER%/%component_loc%/lib/obg2_bard.tpa"
+			LAF obg2_bard END
+		END
+
+
+   //  change FJBARD/CDIBARD to point at the Ballad of Three Heroes
+	ACTION_IF FILE_EXISTS_IN_GAME "fjbard.spl" BEGIN
+		OUTER_SPRINT bard_applicator fjbard
+	END ELSE BEGIN
+		OUTER_SPRINT bard_applicator cdibard
+	END
+	
+	spl.edit["%bard_applicator%"]
+	[
+		m.ab_fx.alter{s_resource:=%BARD_SONG_BALLAD%}
+	]
+
+   // add the new powers in the CLAB; update regular bard description
+
+	class.edit[bard|edit_strrefs_in_place:i=0]
+	[
+		k.kit_grant_powers{#BARD1 1,#BARD2 3,#BARD3 5,#BARD4 7,#BARD5 9,#BARD6 11}	
+		INNER_PATCH_SAVE k_desc "%k_desc%" BEGIN
+			LPF bard_desc_helper END
+		END
+	]
+	
+	// update bard kit descriptions
+	
+	kit.edit_all[bard|edit_strrefs_in_place:i=0 skip_trueclass:i=1]
+	[
+		INNER_PATCH_SAVE k_desc "%k_desc%" BEGIN
+			LPF bard_kit_desc_helper END
+		END	
+	]
+
+	// sort out Enhanced Bard Song HLA
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "spcl920.spl" BEGIN
+		WITH_SCOPE BEGIN
+			LAF struct_read STR_VAR file=spcl920.spl RET_ARRAY m0=struct END
+			spl.copy[#bard1=>dw-920]
+			[
+				m.fx.alter{s_resource:=dw-920}
+				m.ab_fx.alter{s_resource:=spcl920a}
+				m.ab.alter{s_icon:=spenbarb}
+				m_name:="%m0_name%"
+				INNER_PATCH_SAVE m_description "%m0_description%" BEGIN
+					old:=@223
+					REPLACE_TEXTUALLY "%old%" ""
+				END
+			]
+		END
+		COPY_EXISTING "luba0.2da" override
+			REPLACE_TEXTUALLY "AP_SPCL920" "GA_DW-920"
+
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION bard_desc_helper BEGIN
+	SPRINT old @201
+	REPLACE_TEXTUALLY "\(.*\)%old%.*" "\1DW_PLACEHOLDER"
+	PATCH_FOR_EACH tra_ref IN 202 203 204 BEGIN
+		SPRINT old (AT tra_ref)
+		REPLACE_TEXTUALLY "[%WNL%%LNL%%MNL%].*%old%" ""
+	END
+	PATCH_FOR_EACH tra_ref IN 216 215 214 213 212 211 210 BEGIN
+		SPRINT new (AT tra_ref)
+		REPLACE_TEXTUALLY "\(.*\)DW_PLACEHOLDER.*\([%WNL%%LNL%%MNL%]\)" "\1DW_PLACEHOLDER\2\1%new%\2"		
+	END
+	REPLACE_TEXTUALLY "\(.*\)DW_PLACEHOLDER.*\([%WNL%%LNL%%MNL%]\)" ""	
+END
+
+DEFINE_PATCH_FUNCTION bard_kit_desc_helper BEGIN
+	SPRINT discard @221
+	SPRINT disadvantages @222
+	SPRINT newline @220
+	REPLACE_TEXTUALLY "%disadvantages%\(.*[%WNL%%MNL%%LNL%][^a-zA-Z0-9]*\)\([a-zA-Z0-9].*\)" "%disadvantages%\1%newline%\1\2"
+	REPLACE_TEXTUALLY "[%WNL%%MNL%%LNL%][^a-zA-z]*%discard%.*" ""
+END

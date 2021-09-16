@@ -1,0 +1,215 @@
+/*
+
+describe-library{
+
+The anonymous function construct. Functions here should build and apply anonymous functions, and not interact with IE resources.
+
+Functions here should start with 'anon_'.
+
+}
+
+*/
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{anon_define}
+{Define the string 'function' as an anonymous patch function (setting its single STR_VAR input to 'input' and its single output to 'output'), and return the name of the function and an integer keeping track of how many anonymous functions have been defined.
+
+The point of the integer is to avoid namespace collisions. By leaving it in scope for other calls of anon_define, we guarantee distinct functions.
+
+We allow the following syntactic sugar for anon_define:
+
+- '__' evaluates to '%input%'
+- 'SFO_args' evaluates ro 'input'
+- '{' and '}' evaluate to '%'
+
+If 'has_output' is set to 1, but the output string doesn't appear in the function string, we assume it's an expression, and prepend a '[output]='.
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION anon_define
+	INT_VAR has_output=0//boolean
+			action_function=0//boolean
+			return_array=0//boolean
+	STR_VAR function=""
+			input=arguments
+			output=value
+			prepend=""
+			append=""
+	RET	function 
+		SFO_anon_func_count
+BEGIN
+	OUTER_SPRINT percentage "%"
+	OUTER_SPRINT function_old "%function%" // keep a copy
+	// does it contain 'output'? (We'll check now to avoid collision with syntactic sugar)
+	OUTER_SET contains_output=INDEX ("%output%" "%function%")>=0
+	// carry out substitutions
+	OUTER_PATCH_SAVE function_data "%function%" BEGIN
+		SPRINT arg_string "%percentage%"^"arguments"^"%percentage%"
+		REPLACE_TEXTUALLY "__" "%arg_string%"
+		REPLACE_TEXTUALLY "SFO_args" arguments
+		REPLACE_TEXTUALLY "arguments" "%input%"
+		REPLACE_TEXTUALLY "value" "%output%"
+		LPF sugar_apply INT_VAR patch_only=1 END
+	END
+	// if we need an output and don't get one, we assume it's an expression
+	ACTION_IF has_output AND !contains_output BEGIN
+		OUTER_SPRINT function_data "%output%=%function_data%"
+		
+	END
+	// find the next free name
+	ACTION_IF !VARIABLE_IS_SET SFO_anon_func_count BEGIN
+		OUTER_SET SFO_anon_func_count=0
+	END
+	OUTER_SPRINT function "SFO_anon_func_%SFO_anon_func_count%"
+	OUTER_SET ++ SFO_anon_func_count
+	// copy the file and reinclude it
+	ACTION_IF return_array BEGIN
+		OUTER_SPRINT return_type "RET_ARRAY"
+	END ELSE BEGIN
+		OUTER_SPRINT return_type "RET"
+	END
+	ACTION_IF action_function BEGIN
+		COPY + ".../strategems_inline/SFO_anon_func_action.tph" "%workspace%/%function%.tph" EVALUATE_BUFFER // + so we can debug more easily		
+	END ELSE BEGIN
+		COPY + ".../strategems_inline/SFO_anon_func.tph" "%workspace%/%function%.tph" EVALUATE_BUFFER // + so we can debug more easily
+	END
+	ACTION_TRY
+		SILENT
+		REINCLUDE "%workspace%/%function%.tph"
+		VERBOSE
+	WITH DEFAULT
+		WARN "'%function_old%' is not a well-defined anonymous function; aborting."
+		OUTER_SPRINT function "undefined"
+	END
+	// PRINT "%function% is set to %function_data%" // uncomment for telemetry
+END
+
+
+<<<<<<<< .../strategems_inline/SFO_anon_func.tph
+DEFINE_PATCH_FUNCTION %function%
+	STR_VAR %input%=""
+	%return_type% %output%
+BEGIN
+	%output%=0
+	%prepend%
+	%function_data%
+	%append%
+END
+>>>>>>>>
+
+<<<<<<<< .../strategems_inline/SFO_anon_func_action.tph
+DEFINE_ACTION_FUNCTION %function%
+	STR_VAR %input%=""
+	%return_type% %output%
+BEGIN
+	OUTER_SET %output%=0
+	%prepend%
+	%function_data%
+	%append%
+END
+>>>>>>>>
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+
+document{anon_check}
+{
+Check if 'function' is an anonymous function definition, and if so create it and return its name; if not, return 'function' itself.
+
+A string is an anonymous function definition if it contains any of these: [ <>/=+*%curly_left%%curly_right%].  (If you somehow manage to define an anonymous function that doesn't
+use any of these, just add a space at the beginning.)
+
+}
+
+*/
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION anon_check
+	INT_VAR has_output=0
+	STR_VAR function=""
+			input=arguments
+			output=value
+			prepend=""
+			append=""
+	RET	function 
+		SFO_anon_func_count
+BEGIN
+	ACTION_IF INDEX ("[ <>=\+/*{}]" "%function%")>=0 BEGIN
+		LAF anon_define INT_VAR has_output STR_VAR function input output prepend append RET function SFO_anon_func_count END
+	END
+	ACTION_IF !VARIABLE_IS_SET SFO_anon_func_count BEGIN 
+		OUTER_SET SFO_anon_func_count=0
+	END
+
+
+END
+	
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+
+document{anon_eval}
+{
+Evaluate 'function' as an anonymous patch function, apply it to 'arguments', and return the result.
+NB: anon_eval is not dimorphic. The action version runs on a blank patch. The patch version runs on whatever is
+currently being patched.
+}
+
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION anon_eval
+	INT_VAR has_output=0
+	STR_VAR arguments=""
+			function=""
+			append=""
+			prepend=""
+	RET value
+BEGIN
+	OUTER_SET value=0
+	LAF anon_define INT_VAR has_output STR_VAR function append prepend RET function SFO_anon_func_count END
+	ACTION_IF "%function%" STR_CMP "undefined" BEGIN
+		OUTER_PATCH "" BEGIN
+			LPF "%function%" STR_VAR arguments RET value END	
+		END
+	END
+END
+
+DEFINE_PATCH_FUNCTION anon_eval
+	INT_VAR has_output=0
+	STR_VAR arguments=""
+			function=""
+			append=""
+			prepend=""
+	RET value
+BEGIN
+	value=0
+	LPF anon_define INT_VAR has_output STR_VAR function append prepend RET function SFO_anon_func_count END
+	PATCH_IF "%function%" STR_CMP "undefined" BEGIN
+		LPF "%function%" STR_VAR arguments RET value END	
+	END
+END
+
+
+
+
+
+

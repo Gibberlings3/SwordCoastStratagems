@@ -1,0 +1,64 @@
+DEFINE_ACTION_FUNCTION cd_arcane_post BEGIN
+
+	INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cdfunctions.tpa"
+	COPY_EXISTING ~spwi114.spl~ ~override~ // update shield to block MFM, too
+	  LPF CLONE_EFFECT INT_VAR match_opcode = 206 STR_VAR match_resource = ~spwi112~ resource = EVAL ~%WIZARD_MORDENKAINENS_FORCE_MISSILES%~ END
+	  LPF CLONE_EFFECT INT_VAR match_opcode = 206 STR_VAR match_resource = ~spwi112~ resource = EVAL ~%WIZARD_MORDENKAINENS_FORCE_MISSILES%b~ END 
+	  
+	// update wand of monster summoning to use new tables
+	// first, find table value
+	COPY_EXISTING ~%WIZARD_MONSTER_SUMMONING_2%.spl~ ~override~
+	  READ_LONG 0x6a fx_off
+	  SET total_fx = ((SOURCE_SIZE - fx_off) / 0x30)
+	  FOR (index = 0 ; index < total_fx ; ++index) BEGIN
+		READ_SHORT (fx_off +        (index * 0x30)) opcode
+		PATCH_IF opcode = 331 BEGIN
+		  READ_LONG (fx_off + 0x08 + (index * 0x30)) ms2table
+		  SET index = total_fx // kill loop
+		END
+	  END
+	  BUT_ONLY
+	  
+	COPY_EXISTING ~wand10.itm~ ~override~
+	  LPF ALTER_EFFECT INT_VAR match_opcode = 127 opcode = 331 parameter1 = 12 parameter2 = ms2table END // six creatures
+
+
+	// clone IWD references into BG2; remove all bg2 shapeshifting references
+	COPY_EXISTING ~%WIZARD_ANTIMAGIC_SHELL%.spl~ ~override~
+	  LPF CLONE_EFFECT INT_VAR match_opcode = 123 STR_VAR match_resource = goodber resource = gberry END // good berries
+	  LPF CLONE_EFFECT INT_VAR match_opcode = 123 STR_VAR match_resource = fseeds  resource = fireseed END // fire seeds
+	 
+
+	 PATCH_FOR_EACH file IN brblp wolfm brbrp plyjelly plyspid plyfist plymstar mindflay goliro trollall wolfgr firern earthrn 
+		chillt cdia480 cdia481 cdia482 cdidree cdidrfe cdidrwe cdidrbr BEGIN // chill touch, new polys 
+		LPF CLONE_EFFECT INT_VAR match_opcode = 112 STR_VAR match_resource = smcudge resource = EVAL ~%file%~ END // clone from star-metal cudgel
+	  END
+
+	  
+	  
+	// shadow trolls need to lose death-and-revive script. regen item also provides EE death-and-revive sequence; kill item and apply regen directly to cre  
+	COPY_EXISTING ~SS3trl7.cre~ ~override~ // troll
+				  ~SS3trl8.cre~ ~override~ // troll
+	  WRITE_ASCII 0x258 ~~ #8 // nuke eftrolg reference, even though script is blank
+	  LPF DELETE_CRE_ITEM STR_VAR item_to_delete = reg1hp2 END // in helm slot
+	  LPF ADD_CRE_EFFECT INT_VAR opcode = 98 parameter1 = 2 parameter2 = 3 timing = 1 END
+ 
+	ACTION_IF enhanced_edition BEGIN
+	  // don't have IWD's random treasure table to assign weapon
+	  COPY_EXISTING ~ad3sklm.cre~ ~override~ // soul eater skeleton
+		LPF ALTER_CREATURE_ITEM INT_VAR flag_unstealable = 1 STR_VAR match_item = rndtre40 item = hamm01 END 
+		WRITE_ASCII  0x248 ~cd3sklm~   #8 // override script; randomizes weapon
+		WRITE_ASCIIE 0x268 ~%default%~ #8 // default script
+	  
+	  COMPILE ~%MOD_FOLDER%/%component_loc%/resource/cd3sklm.baf~  
+	  
+	  ACTION_IF ((MOD_IS_INSTALLED ~iwdification/setup-iwdification.tp2~ ~120~) AND (FILE_EXISTS ~iwdification/evasion/evasion_arcane.2da~)) BEGIN
+
+		INCLUDE ~iwdification/evasion/evasion.tpa~
+		LAF cd_add_evasion STR_VAR 2da_file = ~iwdification/evasion/evasion_arcane.2da~ END 
+	  
+	  END  
+	END
+		
+
+END

@@ -1,0 +1,805 @@
+DEFINE_ACTION_FUNCTION cre_edit
+	INT_VAR tv=0
+			allow_missing=0
+			debug=1
+			edit_strrefs_in_place=0
+	STR_VAR cre=""
+			path=""
+			location=""
+			locbase=""
+			edits=""
+BEGIN
+	LAF struct_edit INT_VAR edit_strrefs_in_place tv allow_missing debug STR_VAR file="%cre%" ext=cre path location locbase edits END
+END
+			
+DEFINE_ACTION_FUNCTION cre_copy
+	INT_VAR tv=0
+			allow_missing=0
+			debug=1
+	STR_VAR cre=""
+			source_path=""
+			source_location=""
+			source_locbase=""
+			path=""
+			location=""
+			locbase=""
+			edits=""
+BEGIN
+	LAF struct_copy INT_VAR tv allow_missing debug STR_VAR file="%cre%" ext=cre path location locbase source_path source_location source_locbase edits END
+END
+
+DEFINE_ACTION_FUNCTION cre_make
+	INT_VAR debug=1
+	STR_VAR	cre=""
+			version=""
+			path=""
+			location=""
+			locbase=""
+			edits=""
+BEGIN
+	LAF struct_make INT_VAR debug STR_VAR file="%cre%" ext=cre path location locbase edits END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_insert_script}
+{
+(This is a struct function.)</p>
+
+<p>Given the usual array of combat scripts (override/class/race/general/default), and a script 'script' (synonym: 'arguments'), insert a new one in position 'loc'. 
+Insert position can be 'high', 'low', 'after x' (defaults to 'high' if x isn't present), or 'before x' (defaults to 'low' if x isn't present).
+If there isn't space, merge the two lowest scripts to make space.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_insert_script
+	STR_VAR struct=""
+			arguments=""
+			script=""
+			loc=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		// write the scripts into an array
+		count=0
+		PATCH_FOR_EACH slot IN override class race general default BEGIN
+			SPRINT $script_array("%count%") EVAL "%%struct%_script_%slot%%"
+			++count
+		END
+		// sort the array
+		LPF insert_script STR_VAR script arguments script_array loc RET_ARRAY script_array END
+		// write it back
+		count=0
+		PATCH_FOR_EACH slot IN override class race general default BEGIN
+			SPRINT $struct("script_%slot%") $script_array("%count%") 
+			++count
+		END
+		
+	END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_add_items}
+{
+(This is a struct function.)</p>
+
+<p>Add a list of items. Each can have, in parentheses, a list of comma-separated instructions, which can be either:
+<ul>
+<li>'unequipped', in which case the item isn't equipped even if it's a weapon. (By default, it is.)
+<li>'undroppable',unstealable', 'identified', 'stolen', in which case the appropriate flag is set
+<li>An integer, interpreted successively as the first, second, third charge number
+<li>A slot. (If no slots are specified, we choose on the basis of the item type.)
+</ul>
+You can set 'default' and it will be added to the instructions for each item
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_add_items
+	STR_VAR struct=""
+			arguments=""
+			default=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		CLEAR_ARRAY struct
+		SPRINT $struct("null") "discard"
+		WHILE "%arguments%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+			INNER_PATCH_SAVE resref "%entry%" BEGIN
+				SPRINT instructions ""
+				REPLACE_EVALUATE "(\([^)]+\))" BEGIN
+					SPRINT instructions "%MATCH1%"
+				END
+				""	
+				PATCH_IF "%instructions%" STR_CMP "" BEGIN
+					PATCH_IF "%default%" STR_CMP "" BEGIN
+						SPRINT instructions "%instructions%,%default%"
+					END 
+				END ELSE BEGIN
+					SPRINT instructions "%default%"
+				END
+			END
+			SPRINT patch "s_resref:=%resref%;;"
+			SPRINT slots " "
+			equip=1
+			int_count=1
+			WHILE "%instructions%" STR_CMP "" BEGIN
+				LPF return_first_entry STR_VAR list="%instructions%" separator="," RET inst=entry instructions=list END
+				PATCH_IF IS_AN_INT inst BEGIN
+					SPRINT patch "%patch%s_charges%int_count%=%inst%;;"
+					++int_count
+				END ELSE BEGIN
+					PATCH_MATCH "%inst%" WITH 
+					unstealable undroppable identified stolen BEGIN
+						SPRINT patch "%patch%s_%inst%=1;;"
+					END
+					unequipped BEGIN
+						equip=0
+					END
+					DEFAULT
+						SPRINT slots "%slots%%inst% "
+					END
+				END
+			END
+			INNER_PATCH_SAVE slots "%slots%" BEGIN
+				REPLACE_TEXTUALLY " $" ""
+			END
+			LPF struct_add INT_VAR equip STR_VAR struct="%struct%" type=item slots patch RET_ARRAY "%struct%"=struct END 	
+			LPF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_swap_items}
+{
+(This is a struct function.)</p>
+
+<p>Input a list of resref1=>resref2 pairs. Swap each resref1 for resref2 in the creature item list.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_swap_items
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		TO_LOWER arguments
+		LPF array_from_string STR_VAR string="%arguments%" RET_ARRAY array END
+		LPF struct_alter STR_VAR struct type=item match="TO_LOWER s_resref;;value=VARIABLE_IS_SET $array(~%s_resref%~)" patch="TO_LOWER s_resref;;s_resref:=$array(~%s_resref%~)" RET_ARRAY struct END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_remove_items}
+{
+(This is a struct function.)</p>
+
+<p>Input a list of resrefs. Remove any items matching the list from item slots. (The items are then deleted when the struct is written back into the cre file.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_remove_items
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		TO_LOWER arguments
+		LPF array_keys_from_string STR_VAR string="%arguments%" RET_ARRAY array END
+		FOR (n=0;n<37;++n) BEGIN
+			SPRINT slot_data $"%struct%"("item_slot" "%n%")
+			INNER_PATCH_SAVE $struct("item_slot" "%n%") "%slot_data%" BEGIN
+				READ_SSHORT 0x0 item_index
+				PATCH_IF item_index>=0 BEGIN
+					lookup=$"%struct%"("item" "lookup" "%item_index%")
+					SPRINT item_data $"%struct%"("item" "%lookup%")
+					INNER_PATCH "%item_data%" BEGIN
+						READ_ASCII 0x0 resref
+						TO_LOWER resref
+					END
+					LPF array_contains STR_VAR array key="%resref%" RET value END
+					PATCH_IF value BEGIN
+						WRITE_SHORT 0x0 "-1"
+					END
+				END
+			END
+		END
+	END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_add_spells}
+{
+(This is a struct function.)</p>
+
+<p>Add a list of spells, by default to both the 'known' and 'memorized' lists (set 'known' or 'memorized' to 0 to override this). You can use the ids name or the resref, and you can omit 'wizard_' or 'cleric_' where that's unambiguous. Adding (n) after the spell
+adds it n times (to the memorized list only). 
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_add_spells
+	INT_VAR known=1//boolean
+			memorized=1//boolean
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_CLEAR_ARRAY struct
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		TO_LOWER arguments
+		CLEAR_ARRAY spell_array
+		PATCH_FOR_EACH type IN wizard priest innate BEGIN
+			FOR (n=0;n<9;++n) BEGIN
+				SET $spell_array("%type%" "%n%" count)=0
+			END
+		END
+		known_count=0
+		WHILE "%arguments%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+			INNER_PATCH_SAVE spell "%entry%" BEGIN
+				number=1
+				REPLACE_EVALUATE "(\([0-9]+\))" BEGIN
+					number="%MATCH1%"
+				END
+				""
+			END
+			LPF spl_deabbreviate STR_VAR spell RET resref level type END
+			TO_LOWER resref
+			level -=1
+			PATCH_MATCH "%type%" WITH
+			priest BEGIN
+				type_number=0
+			END
+			wizard BEGIN 
+				type_number=1
+			END
+			DEFAULT
+				type_number=2
+				SPRINT type innate
+			END			
+			SPRINT $known_spells("%known_count%") "%resref%"
+			SPRINT $SFO_remove_spell_array("%resref%") ""
+			SET $known_spells_level("%known_count%")=level
+			SET $known_spells_type("%known_count%")=type_number
+			++known_count
+			ind=$spell_array("%type%" "%level%" count)
+			FOR (n=0;n<number;++n) BEGIN
+				PATCH_IF STRING_LENGTH "%resref%" <=8 BEGIN
+					SPRINT $spell_array("%type%" "%level%" "%ind%") "%resref%"
+					++ind
+				END ELSE BEGIN
+					LPF warning STR_VAR warning="Not adding spell %resref% to creature (probably %SOURCE_RES%.cre) as we can't resolve the resref correctly" END
+				END
+			END
+			SET $spell_array("%type%" "%level%" count)=ind
+		END
+		PATCH_IF known && memorized BEGIN
+			// clear out known spells
+			LPF struct_delete STR_VAR struct type=knownspell match=cre_remove_spells_helper RET_ARRAY "%struct%"=struct END
+			LPF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
+			// add known spells
+			LPF struct_add INT_VAR number=known_count STR_VAR struct type=knownspell patch=cre_add_known_spells_helper RET_ARRAY struct2=struct END
+			LPF array_join STR_VAR array1=struct array2=struct2 RET_ARRAY struct=array END
+			// add memorized spells
+			LPF struct_add STR_VAR struct type=memorization_spell match_parent=cre_add_spells_helper_match patch=cre_add_spells_helper_patch RET_ARRAY struct3=struct END
+			LPF array_join STR_VAR array1=struct array2=struct3 RET_ARRAY struct=array END
+		END ELSE 
+		PATCH_IF known BEGIN
+			//clear out known spells
+			LPF struct_delete STR_VAR struct type=knownspell match=cre_remove_spells_helper RET_ARRAY "%struct%"=struct END
+			LPF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
+			// add known spells
+			LPF struct_add INT_VAR number=known_count STR_VAR struct type=knownspell patch=cre_add_known_spells_helper RET_ARRAY struct2=struct END
+			LPF array_join STR_VAR array1=struct array2=struct2 RET_ARRAY struct=array END	
+		END ELSE
+		PATCH_IF memorized BEGIN
+			// add memorized spells
+			LPF struct_add STR_VAR struct type=memorization_spell match_parent=cre_add_spells_helper_match patch=cre_add_spells_helper_patch RET_ARRAY struct END
+		END ELSE BEGIN
+			LPF warning STR_VAR warning="cre_add_spells called (probably on %SOURCE_RES%.cre) with both known=0 and memorized=0, which is a bit pointless" END
+		END
+	END
+END
+
+DEFINE_PATCH_FUNCTION cre_add_spells_helper_match//internal
+RET value
+BEGIN
+	TO_LOWER p_type
+	value=$spell_array("%p_type%" "%p_level%" count)
+END
+
+DEFINE_PATCH_FUNCTION cre_add_spells_helper_patch//internal
+BEGIN
+	TO_LOWER p_type
+	SPRINT resref $spell_array("%p_type%" "%p_level%" "%entry_index%")
+	WRITE_ASCII 0x0 "%resref%"
+END
+
+DEFINE_PATCH_FUNCTION cre_add_known_spells_helper//internal
+BEGIN
+	SPRINT resref $known_spells("%entry_index%")
+	WRITE_ASCII 0x0 "%resref%"
+	WRITE_SHORT 0x8 $known_spells_level("%entry_index%")
+	WRITE_SHORT 0xa $known_spells_type("%entry_index%")
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_remove_spells}
+{
+(This is a struct function.)</p>
+
+<p>Delete a list of spells, by default from both the known and memorized lists (you can override this by setting  'known' or 'memorized' to 0). You can use the ids name or the resref, and you can omit 'wizard_' or 'cleric_' where that's unambiguous. Using 'all'
+removes all spells.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_remove_spells
+	INT_VAR known=1//boolean
+			memorized=1//boolean
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		SPRINT $struct("null") discard
+		PATCH_MATCH "%arguments%" WITH
+		" *all *" BEGIN
+			PATCH_IF known && memorized BEGIN
+				LPF struct_delete STR_VAR type=memorization_spell struct RET_ARRAY struct1=struct END
+				LPF struct_delete STR_VAR type=knownspell struct RET_ARRAY struct2=struct END
+				LPF array_join STR_VAR array1=struct1 array2=struct2 RET_ARRAY struct=array END
+			END ELSE 
+			PATCH_IF known BEGIN
+				LPF struct_delete STR_VAR type=knownspell struct RET_ARRAY struct END
+			END ELSE
+			PATCH_IF memorized BEGIN
+				LPF struct_delete STR_VAR type=memorization_spell struct RET_ARRAY struct END	
+			END ELSE BEGIN
+				LPF warning STR_VAR warning="You called 'cre_remove_spells' with both known=0 and memorized=0, which is a bit pointless" END
+			END
+		END
+		DEFAULT
+			CLEAR_ARRAY SFO_remove_spell_array
+			WHILE "%arguments%" STR_CMP "" BEGIN
+				LPF return_first_entry STR_VAR list="%arguments%" RET spell=entry arguments=list END
+				LPF spl_deabbreviate STR_VAR spell RET resref END
+				TO_LOWER resref
+				SPRINT $SFO_remove_spell_array("%resref%") ""
+			END
+			PATCH_IF known && memorized BEGIN
+				LPF struct_delete STR_VAR struct type=knownspell match=cre_remove_spells_helper RET_ARRAY struct2=struct END
+				LPF struct_delete STR_VAR struct type=memorization_spell match=cre_remove_spells_helper RET_ARRAY struct1=struct END
+				LPF array_join STR_VAR array1=struct1 array2=struct2 RET_ARRAY struct=array END
+			END ELSE 
+			PATCH_IF known BEGIN
+				LPF struct_delete STR_VAR struct type=knownspell match=cre_remove_spells_helper RET_ARRAY struct END
+			END ELSE
+			PATCH_IF memorized BEGIN
+				LPF struct_delete STR_VAR struct type=memorization_spell match=cre_remove_spells_helper RET_ARRAY struct END		
+			END ELSE BEGIN
+					LPF warning STR_VAR warning="You called 'cre_remove_spells' with both known=0 and memorized=0, which is a bit pointless" END
+			END
+		END
+	END
+END
+
+DEFINE_PATCH_FUNCTION cre_remove_spells_helper//internal
+	RET value
+BEGIN
+	READ_ASCII 0x0 s_resref
+	TO_LOWER s_resref
+	value=VARIABLE_IS_SET $SFO_remove_spell_array("%s_resref%") 
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_swap_scripts}
+{
+(This is a struct function.)</p>
+
+<p>Input a k=>v list of pairs of scripts. Swap any k script for a v script.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_swap_scripts
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		TO_LOWER arguments
+		LPF array_from_string STR_VAR string="%arguments%" RET_ARRAY array END
+		PATCH_FOR_EACH slot IN override class race general default BEGIN
+			SPRINT old EVAL "%%struct%_script_%slot%%"
+			PHP_EACH array AS k=>v BEGIN
+				PATCH_IF "%k%" STR_EQ "%old%" BEGIN
+					SPRINT $struct("script_%slot%") "%v%"
+				END
+			END
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_strip_scripts}
+{
+(This is a struct function.)</p>
+
+<p>Input a list of scripts. Remove any script on the list from the creature. If 'all' is inputted, remove all scripts.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_strip_scripts
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		TO_LOWER arguments
+		LPF array_keys_from_string STR_VAR string="%arguments%" RET_ARRAY array END
+		PATCH_FOR_EACH slot IN override class race general default BEGIN
+			SPRINT old EVAL "%%struct%_script_%slot%%"
+			PHP_EACH array AS k=>discard BEGIN
+				PATCH_IF "%k%" STR_EQ "%old%" || "%k%" STR_EQ "all" BEGIN
+					SPRINT $struct("script_%slot%") ""
+				END
+			END
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_set_proficiencies}
+{
+(This is a struct function.)</p>
+
+<p>Input a k=>v list. Each k is a proficiency; each v is its value. Set each of them.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_set_proficiencies
+	STR_VAR struct=""
+			arguments=""
+			default=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		CLEAR_ARRAY prof_vals
+		CLEAR_ARRAY profs
+		count=0
+		WHILE "%arguments%" STR_CMP "" BEGIN
+			LPF return_first_pair STR_VAR list="%arguments%" RET key value arguments=list END
+			SET $prof_vals("%count%")=value
+			SPRINT $profs("%count%") "%key%"
+			++count
+		END
+		LPF struct_add INT_VAR number=count STR_VAR type=fx struct patch=cre_set_proficiencies_helper RET_ARRAY struct END
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION cre_set_proficiencies_helper//internal
+BEGIN
+	SPRINT prof $profs("%entry_index%")
+	prof_num=IDS_OF_SYMBOL (stats "proficiency%prof%")
+	prof_val=$prof_vals("%entry_index%")
+	WRITE_SHORT 0x8 233
+	WRITE_LONG 0x14 prof_val
+	WRITE_LONG 0x18 prof_num
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_enforce_saves}
+{
+(This is a struct function.)</p>
+
+<p>Set the creature's saving throws to their legal values. 'arguments' can be blank (the default), 'at_worst', 'at_best', and
+'within_tolerance', where tolerance is set by the ini value 'save_tolerance' and saves are modified if the old and new versions
+are close enough.
+
+Requires data_saving_throws macro to have been run
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_enforce_saves
+	STR_VAR struct=""
+			arguments=""//[at_worst|at_best|within_tolerance]
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		// sanity check
+		PATCH_IF !VARIABLE_IS_SET sfo_saves_read BEGIN
+			PATCH_FAIL "To use the cre_enforce_saves function, you need to have run the data_saving_throws macro first."
+		END
+		//get correct values
+		PATCH_FOR_EACH save IN death wands polymorph breath spells BEGIN
+			SET $correct("%save%")=20
+		END
+		SPRINT list EVAL "%%struct%_class%"
+		class_count=1
+		WHILE "%list%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list separator="_" RET class=entry list END
+			TO_LOWER class
+			level="%struct%_level%class_count%"
+			PHP_EACH correct AS type=>value BEGIN
+				PATCH_IF VARIABLE_IS_SET "sfo_saves_%class%_%level%_%type%" BEGIN
+					value_here="sfo_saves_%class%_%level%_%type%"
+				END ELSE BEGIN
+					value_here="sfo_saves_fighter_%level%_%type%"
+				END
+				SET $correct("%type%")=value_here<value?value_here:value
+			END
+			++class_count
+		END
+		// set values
+		PHP_EACH correct AS type=>value BEGIN
+			value_old="%struct%_save_vs_%type%"
+			PATCH_MATCH "%arguments%" WITH
+			at_worst BEGIN
+				PATCH_IF value<value_old BEGIN
+					SET $struct("save_vs_%type%")=value
+				END
+			END
+			at_best BEGIN
+				PATCH_IF value>value_old BEGIN
+					SET $struct("save_vs_%type%")=value
+				END		
+			END
+			within_tolerance BEGIN
+				LPF check_ini STR_VAR ini=save_tolerance RET tolerance=value END
+				PATCH_IF ABS(value - value_new)<=tolerance BEGIN
+					SET $struct("save_vs_%type%")=value
+				END
+			END
+			DEFAULT
+				SET $struct("save_vs_%type%")=value
+			END		
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_quickset_memorized_spells}
+{
+Given a 2d array 'arguments' in the form (level,resref)=>number_memorized, and 'type' either 'wizard', 'priest', or 'innate', add the spells to the creature's
+memorized spells. The spells are added in place using WEIDU's built-in ADD_MEMORIZED_SPELL function (i.e. this is not a struct function). Use this for bulk spell
+adding when speed matters: it's much faster than the struct system.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION cre_quickset_memorized_spells
+	STR_VAR arguments=""
+			type=""//[wizard|priest|innate]
+BEGIN
+	CLEAR_ARRAY count
+	PHP_EACH "%arguments%" AS k=>v BEGIN
+		PATCH_IF k_0=1 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #0 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=2 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #1 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=3 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #2 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=4 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #3 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=5 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #4 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=6 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #5 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=7 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #6 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=8 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #7 "%type%" (v)
+		END ELSE
+		PATCH_IF k_0=9 BEGIN
+			ADD_MEMORIZED_SPELL "%k_1%" #8  "%type%" (v)
+		END 
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_quickset_known_spells}
+{
+Given an array 'arguments' in the form resref=>level, and 'type' either 'wizard', 'priest', or 'innate', add the spells to the creature's
+known spells (removing any previous version if appropriate). The spells are added in place using WEIDU's built-in ADD_KNOWN_SPELL function (i.e. this is not a struct function). 
+Use this for bulk spell adding when speed matters: it's much faster than the struct system.</p>
+
+<p>If max_level is set, add spells only up to this level.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION cre_quickset_known_spells
+	INT_VAR max_level=9
+	STR_VAR arguments=""
+			type=""//[wizard|priest|innate]
+BEGIN
+	CLEAR_ARRAY count
+	PHP_EACH "%arguments%" AS k=>v BEGIN
+		PATCH_IF v<=max_level BEGIN
+			REMOVE_KNOWN_SPELL "%k%"
+			PATCH_IF v=1 BEGIN
+				ADD_KNOWN_SPELL "%k%" #0 "%type%" 
+			END ELSE
+			PATCH_IF v=2 BEGIN
+				ADD_KNOWN_SPELL "%k%" #1 "%type%" 
+			END ELSE
+			PATCH_IF v=3 BEGIN
+				ADD_KNOWN_SPELL "%k%" #2 "%type%" 
+			END ELSE
+			PATCH_IF v=4 BEGIN
+				ADD_KNOWN_SPELL "%k%" #3 "%type%" 
+			END ELSE
+			PATCH_IF v=5 BEGIN
+				ADD_KNOWN_SPELL "%k%" #4 "%type%" 
+			END ELSE
+			PATCH_IF v=6 BEGIN
+				ADD_KNOWN_SPELL "%k%" #5 "%type%" 
+			END ELSE
+			PATCH_IF v=7 BEGIN
+				ADD_KNOWN_SPELL "%k%" #6 "%type%" 
+			END ELSE
+			PATCH_IF v=8 BEGIN
+				ADD_KNOWN_SPELL "%k%" #7 "%type%" 
+			END ELSE
+			PATCH_IF v=9 BEGIN
+				ADD_KNOWN_SPELL "%k%" #8  "%type%" 
+			END 
+		END
+	END
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_set_known_priest_spells}
+{
+On the current creature, set the appropriate priest spells as known, based on class, level and alignment.
+(This is fairly hardcoded as it'll tend to be applied in bulk.)</p>
+
+<p>Requires the data_priest_spells and data_spells_by_level functions/macros to have been run
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION cre_set_known_priest_spells 
+BEGIN
+	// check we have the required resources
+	PATCH_IF !VARIABLE_IS_SET sfo_data_spells_by_level_set BEGIN
+		PATCH_FAIL "cre_set_known_priest_spells requires data_spells_by_level to have been run"
+	END
+	PATCH_IF !VARIABLE_IS_SET sfo_data_priest_spells_loaded BEGIN
+		PATCH_FAIL "cre_set_known_priest_spells requires data_priest_spells to have been run"
+	END
+	// get class
+	LOOKUP_IDS_SYMBOL_OF_INT full_class class BYTE_AT 0x273
+	proceed=1
+	PATCH_MATCH "%full_class%" WITH
+	CLERIC CLERIC_RANGER CLERIC_MAGE CLERIC_THIEF BEGIN
+		SPRINT class cleric
+		SPRINT list cleric
+		level=BYTE_AT 0x234
+	END
+	FIGHTER_CLERIC BEGIN
+		SPRINT class cleric
+		SPRINT list cleric
+		level=BYTE_AT 0x235
+	END
+	FIGHTER_MAGE_CLERIC BEGIN
+		SPRINT class cleric
+		SPRINT list cleric
+		level=BYTE_AT 0x236
+	END
+	DRUID BEGIN
+		SPRINT class druid
+		SPRINT list druid
+		level=BYTE_AT 0x234
+	END
+	PALADIN BEGIN
+		SPRINT class paladin
+		SPRINT list cleric
+		level=BYTE_AT 0x234
+	END
+	RANGER BEGIN
+		SPRINT class ranger
+		SPRINT list druid
+		level=BYTE_AT 0x234
+	END
+	FIGHTER_DRUID BEGIN
+		SPRINT class druid
+		SPRINT list druid
+		level=BYTE_AT 0x235
+	END
+	DEFAULT
+		proceed=0
+	END
+	PATCH_IF proceed BEGIN
+		max_level="sfo_spell_level_cl_to_sl_%class%_%level%"
+		PATCH_IF "%list%" STR_EQ "cleric" BEGIN
+			LOOKUP_IDS_SYMBOL_OF_INT alignment align BYTE_AT 0x27b
+			TO_LOWER alignment
+			PATCH_IF "%alignment%" STR_EQ "none" BEGIN
+				SPRINT alignment neutral
+			END
+			SPRINT list "cleric_%alignment%"
+		END
+		LPF cre_quickset_known_spells INT_VAR max_level STR_VAR arguments="sfo_%list%_spells" type=priest END
+	END
+
+
+END
+
+/////////////////////////////////////////////////////////////////
+/*
+document{cre_set_joinable_priest_spells}
+{Assign the correct known spells to all party-joinable characters who can cast (non-spontaneous) priest spells. Requires data_joinable_dvs to have been run}
+*/
+/////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION cre_set_joinable_priest_spells 
+BEGIN
+	// sanity check
+	ACTION_IF !VARIABLE_IS_SET sfo_data_joinable_dvs_loaded BEGIN
+		FAIL "The cre_set_joinable_priest_spells function requires 'data_joinable_dvs' to have been run."
+	END
+	// load required resources
+	LAM data_spells_by_level
+	LAM data_priest_spells
+
+	// run through all cre files
+	COPY_EXISTING_REGEXP ".*\.cre" override
+		READ_ASCII DEATHVAR dv
+		TO_LOWER dv
+		PATCH_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN
+			LPF cre_set_known_priest_spells END
+		END
+	BUT_ONLY
+
+
+END
