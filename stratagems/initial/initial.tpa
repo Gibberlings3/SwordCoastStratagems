@@ -252,6 +252,7 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    // spellbook, for debugging
 	LAF run STR_VAR file=universal_spellbook locbase=spell tra=spell END
 
+
 ////////////////////////
 ///// BG2
 ////////////////////////
@@ -292,27 +293,37 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    END
 
 ////////////////////////
-///// Spell core
-////////////////////////
-
-   LAF speed_debug STR_VAR string="Running spell edits" END
-
-   LAF install_spell_core END
-
-////////////////////////
-///// Update antimagic descriptions to reflect any changes
-////////////////////////
-
-  LAF run STR_VAR file=correct_antimagic_descriptors locbase=spell tra=spell END
-
-////////////////////////
-///// The old AI-initialise bit 
+///// The old AI-initialise bit (must *precede* spell_core because if SR is installed we need to load friendly_fiends, which has high-level scripting that needs DS and the difficulty system) 
 ////////////////////////
 
    OUTER_SPRINT component_loc caster_shared
    LAF run STR_VAR file=ai_initialise END
    OUTER_SPRINT component_loc initial
    CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
+
+
+
+////////////////////////
+///// Spell core
+////////////////////////
+
+
+	LAF install_spell_core END
+
+////////////////////////
+///// Prebuffs (must *follow* spell_core so we replicate the modified spells)
+////////////////////////
+	
+	OUTER_SPRINT component_loc caster_shared
+	LAF build_prebuff_spells END
+	OUTER_SPRINT component_loc initial // yes, the architecture here has got hideously tangled, why do you ask?
+	
+	
+////////////////////////
+///// Update antimagic descriptions to reflect any changes
+////////////////////////
+
+  LAF run STR_VAR file=correct_antimagic_descriptors locbase=spell tra=spell END
 
 
 
@@ -471,15 +482,15 @@ END
 ///////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION detectable_items BEGIN
-  LAF check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET value END
-  ACTION_IF !value BEGIN
-    LAF check_ini STR_VAR ini=~AI_Is_Omniscient~ RET omniscient=value END
+	LAF check_ini STR_VAR ini=~AI_Does_Not_Detect_Items~ RET do_not_detect=value END
+	LAF check_ini STR_VAR ini=~AI_Is_Omniscient~ RET omniscient=value END
     LAF include STR_VAR file=item_labels.tpa END
-    LAF item_labels INT_VAR omniscient END
-    LAF run STR_VAR file=immunity_labels END
-  END ELSE BEGIN // need a blank autolib.slb
-    COPY ~.../stratagems-inline/blank~ ~%workspace%/autolib.slb~
-  END
+    LAF item_labels INT_VAR omniscient do_not_detect END
+	ACTION_IF do_not_detect BEGIN
+		LAF ds_resolve_stat STR_VAR id=ENCHANTMENT_IMMUNITY END
+	END ELSE BEGIN
+		LAF run STR_VAR file=immunity_labels END
+	END
 END
 
 ///////////////////////////////////////////////////////////////////////////
