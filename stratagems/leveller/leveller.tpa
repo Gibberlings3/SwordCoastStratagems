@@ -363,6 +363,7 @@ BEGIN
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_RANGER RET stat_ind_from_ranger=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_THIEF RET stat_ind_from_thief=stat_ind END
     LAF ds_resolve_stat STR_VAR id=DEACTIVATE_AUTOLEVEL_DRUID RET stat_ind_from_druid=stat_ind END
+	LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_GRANT_MAGE_SPELLS RET stat_ind_mage_spells=stat_ind END
     LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_HIT_POINTS RET stat_ind_hp=stat_ind END
 
     // secondary spell that removes the splstate, and clears up other cruft
@@ -386,6 +387,7 @@ BEGIN
        add_effect_inline'14=>"opcode=>321 target=>2 resource=>dwaumglb"
        add_effect_inline'15=>"opcode=>326 target=>2 parameter1=>%stat_ind_hp% parameter2=>%splprot_splstate% resource=>dw#aulhr" // remove the 10 hp extra
        add_effect_inline'16=>"opcode=>282 target=>2 timing=>1 parameter1=>0 parameter2=>0"
+       add_effect_inline'17=>"opcode=>321 target=>2 timing=>4 duration=>1 resource=>dw#augms"
     END
     LAF make_spell STR_VAR spell=dw#aule2 edits=patch_data END
     COPY_EXISTING "dw#aule2.spl" override
@@ -423,7 +425,6 @@ BEGIN
       add_effect_inline'=>"opcode=>221 target=>2 parameter1=>10 parameter2=>%autoleveller2_sectype% timing=>1"
     END
     LAF make_spell STR_VAR spell=dw#aulel edits=patch_data END
-
 
     // primary spell
 
@@ -661,12 +662,14 @@ BEGIN
     END
     LAF ds_resolve_stat STR_VAR id=MARKED_FOR_AUTOLEVEL RET stat_ind END
     LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_HIT_POINTS RET stat_ind_hp=stat_ind END
+    LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_GRANT_MAGE_SPELLS RET stat_ind_mage_spells=stat_ind END
     MAKE_PATCH
        FJ_CRE_VALIDITY=>null // because we patch mod-added NPCs and because there are many incompetent writers of such
        delete_effect=>"opcode=233" // zap all proficiencies
        add_effect_inline=>"target=>2 timing=>1 opcode=>328 mode=>1 parameter2=>%stat_ind% parent_resource=>DW#AULEL"
        add_effect_inline'0=>"target=>2 timing=>1 opcode=>328 mode=>1 parameter2=>%stat_ind_hp% parent_resource=>DW#AULEL"
-       add_effect_inline'1=>"target=>2 timing=>1 opcode=>208 parameter1=>1 parent_resource=>DW#AULEL" // min hp=1
+       add_effect_inline'1=>"target=>2 timing=>1 opcode=>328 mode=>1 parameter2=>%stat_ind_mage_spells% parent_resource=>DW#AUGMS"
+       add_effect_inline'2=>"target=>2 timing=>1 opcode=>208 parameter1=>1 parent_resource=>DW#AULEL" // min hp=1
        level=>0
        level2=>0
        level3=>0
@@ -1143,6 +1146,8 @@ PICK_POCKETS    dwlvts17 3
               LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=class_id parameter2=splprot_class STR_VAR resource="dwlvtsa%value%" END
            END
         END
+		// make sure it only applies once, even if you're kicked out and rejoin
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=318 target=1 timing=4 duration=1 STR_VAR resource="dw#levth" END
      BUT_ONLY
 
      COPY_EXISTING "dwauth1.spl" override
@@ -1657,7 +1662,7 @@ BEGIN
 END
 
 ///////////////////////////////////////////////////
-//// Imoen needs special treatment. She (a) can have too
+//// Imoen (in BG2) needs special treatment. She (a) can have too
 //// few XP to reactivate her thief class, and (b) can
 //// join the party before the script has had a chance to
 //// sort out her level
@@ -1678,60 +1683,3 @@ DEFINE_ACTION_FUNCTION leveller_imoen BEGIN
 
 END
 
-
-///////////////////////////////////////////////////
-//// Innate spells remapper (so they're not wiped on
-//// initial level-up)
-////
-//// obsolete
-////////////////////////////////////////////////////
-
-/*
-DEFINE_ACTION_FUNCTION remap_innate_spells // presumption is that the variables in the array leveller_remap are set to record the remaps
-     INT_VAR initial=0
-     STR_VAR creature=""
-             prefix=""
-     RET initial_next
-     RET_ARRAY new_maps
-BEGIN
-   OUTER_SET initial_next=initial
-   OUTER_SPRINT $new_maps("null") ""
-   ACTION_IF FILE_EXISTS_IN_GAME "%creature%.cre" BEGIN
-        COPY_EXISTING "%creature%.cre" override
-             // get location for innate abilities in the spell list
-             SET innates=0
-             GET_OFFSET_ARRAY spell_array CRE_V10_KNOWN_SPELLS
-             PHP_EACH spell_array AS ind=>spell_off BEGIN
-                 PATCH_IF SHORT_AT (0xa + spell_off) = 2 BEGIN
-                  READ_ASCII spell_off resref
-                  TO_UPPER resref
-                  PATCH_MATCH "%resref%" WITH
-                  "SP\(PR\|WI\|CL\|IN\).*" BEGIN
-                    PATCH_IF VARIABLE_IS_SET $leveller_remap("%resref%") BEGIN
-                       SPRINT replace $leveller_remap("%resref%")
-                    END ELSE BEGIN
-                       SPRINT replace "%prefix%%initial_next%"
-                       SPRINT $new_maps("%resref%") "%replace%"
-                       INNER_ACTION BEGIN
-                          LAF remap_innate_spells_helper STR_VAR old="%resref%" new="%replace%" END
-                       END
-                       initial_next +=1
-                    END
-                    WRITE_ASCIIE spell_off "%replace%" (8)
-                  END
-                  DEFAULT END
-                 END
-             END
-        BUT_ONLY
-   END
-END
-
-DEFINE_ACTION_FUNCTION remap_innate_spells_helper
-   STR_VAR old="" new=""
-BEGIN
-   MAKE_PATCH
-      resource=>"if resource=%old% then %new% else no_change"
-   END
-   LAF clone_spell INT_VAR allow_missing=1 STR_VAR spell="%old%=>%new%" editstring="patch_effect=>patch_data" END
-END
-*/
