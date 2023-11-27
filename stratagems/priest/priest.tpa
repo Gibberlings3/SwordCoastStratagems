@@ -10,7 +10,7 @@
 
 LAF include STR_VAR file=priest_shared.tph END
 
-DEFINE_ACTION_FUNCTION priest
+DEFINE_ACTION_FUNCTION priest STR_VAR version=0
 BEGIN
 
 
@@ -18,16 +18,24 @@ BEGIN
          OUTER_SET version=0
    END
 
+
       OUTER_SPRINT type priest
+	  OUTER_SET priest_tra_loaded=1
       // data read-in
-      LAUNCH_ACTION_MACRO read_in_spells_per_level
+      LAUNCH_ACTION_MACRO data_spells_by_level
       LAUNCH_ACTION_MACRO read_in_spell_choices
       LAUNCH_ACTION_MACRO read_in_individual_overrides
       LAUNCH_ACTION_MACRO read_in_priest_scripts
+	  LAM read_extra_tof_priest_spells
+	  LAF find_cleric_kits RET_ARRAY gods_installed cleric_kit_array kit_god_map END
+	  LAF check_label STR_VAR label=dw_rebalance_lathander RET shield_of_lathander_rebalance=value END
+	  OUTER_SET found_cleric_kits=1
+	  LAF read_tof_war_cries RET_ARRAY tof_war_cries END
       ACTION_IF !disable_hlas BEGIN
          LAM read_in_hla_choices
       END
-      
+      LAF check_if_hlas_are_innate RET hla_innate END
+     
       LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
       LAF define_difficulty STR_VAR type=priest_prep RET prep_difficulty_variable=difficulty_variable END
       ACTION_IF is_bg2 BEGIN
@@ -43,6 +51,20 @@ BEGIN
 
       // resources
       LAF make_priest_resources END
+
+	  // on ToF, we need to make sure all the W->P spells we use are actually present (they might not be if we ini-skipped or story-skipped installing a kit)
+	  // do this in main code so variables get set
+	  
+	  ACTION_IF enhanced_edition && FILE_EXISTS_IN_GAME "m_dw_ssd.lua" BEGIN
+			LAF array_read STR_VAR file=tof_wizard_spells_used.txt location=data RET_ARRAY tof_extra_array=array END
+			ACTION_PHP_EACH tof_extra_array AS spell=>discard BEGIN
+				LAF splconv STR_VAR spell new_type=priest RET new_resref END
+				OUTER_SPRINT "CLERIC_%spell%_TYPE" priest
+				COPY_EXISTING - "%new_resref%.spl" nowhere
+					SET "%CLERIC_%spell%_LEVEL"=LONG_AT 0x34
+			END
+	  END
+
 
    END
 
@@ -96,8 +118,10 @@ BEGIN
 
     LAF innocent_priests RET list END
 
-    // get a list of priests and append to the innocent list (this is hardcoded, on speed grounds)
 
+	LAF run STR_VAR file=handle_missiles locbase=caster_shared END
+    // get a list of priests and append to the innocent list (this is hardcoded, on speed grounds)
+	OUTER_SPRINT list ""
     COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
 	 PATCH_TRY
         READ_BYTE 0x273 class
@@ -287,13 +311,14 @@ DEFINE_ACTION_FUNCTION priest_edits_before BEGIN
 
 	>>>>>>>>
 
-        LAF install STR_VAR file=dw#send2.baf inline=yes END
+        LAF install INT_VAR inline=1 STR_VAR file=dw#send2.baf  END
         LAF edit_creature STR_VAR creature=sendai2 editstring=~insert_script_high=>dw#send2~ END
 
 
-        // Berenn is too big to get certain protective effects (he looks stupid)
+        // Berenn is too big to get certain protective effects (he looks stupid) and shouldn't get regeneration (moot on non-EE)
         
-        LAF edit_creature STR_VAR creature=hgber01 editstring=~add_items=>dw#prbig~ END
+        LAF edit_creature STR_VAR creature=hgber01 editstring=~add_items=>dw#prbig delete_effect=>"opcode=98"~ END
+
 
 	// Dawnmaster Kreel is supposed to wander around
 
@@ -308,7 +333,7 @@ THEN
 END
         >>>>>>>>
 
-        LAF install STR_VAR file=dw#kreel.baf inline=yes END
+        LAF install INT_VAR inline=1 STR_VAR file=dw#kreel.baf END
         LAF edit_creature STR_VAR creature=dawnmas editstring=~insert_script=>"dw#kreel below sht0902"~ END
 
       
@@ -464,7 +489,7 @@ END
 
 DEFINE_ACTION_FUNCTION make_priest_resources BEGIN
 
-    // required for BG1 and BG2
+    // required for all
 
     LAF check_ini STR_VAR ini=no_swift_shapeshift RET no_swift_shapeshift=value END
     ACTION_IF !no_swift_shapeshift BEGIN
@@ -478,9 +503,9 @@ DEFINE_ACTION_FUNCTION make_priest_resources BEGIN
     
     ACTION_IF is_bg2 || is_iwd BEGIN
 
-    // Greater Command should be party-friendly
+		// Greater Command should be party-friendly
 
-    LAF edit_spell STR_VAR spell=CLERIC_GREATER_COMMAND editstring=~patch_ability_inline=>"projectile=>159"~ END
+		LAF edit_spell STR_VAR spell=CLERIC_GREATER_COMMAND editstring=~patch_ability_inline=>"projectile=>159"~ END
 
 
     END
@@ -505,7 +530,8 @@ DEFINE_ACTION_FUNCTION make_priest_resources BEGIN
         LAF clone_item STR_VAR item=~misc16=>dw#prbig~ editstring=~droppable=>0~ END // too large to use Shield of the Archons (looks stupid)
         LAF install STR_VAR files=~dw#bear.spl dw#ctrlu.spl dw#destu.spl~ location=resource END
 
-      END // end of BG2-only block
+    END // end of BG2-only block
+
 
 END
 
@@ -532,12 +558,12 @@ DEFINE_PATCH_MACRO read_in_priest_scripts BEGIN
           SPRINT $priest_script_bg1(~%script%~) ~~
        END
        PATCH_FOR_EACH script IN
-AMERAL DEMPRI      GENPRST1 PAINA     PRIES10A PRIES10B  PRIES10C PRIES12A
-PRIES12C PRIES14A  PRIES14T PRIES18A  PRIES18B PRIES18C  PRIES18D PRIES6A
-PRIES6B  PRIES6C   PRIES8A  PRIES8B   PRIES8C  PRIEST12  PRIET12B SAHPRI12  DAQILUE  HGNYA01
-GPHEALER BERENN    BARL     CCLER20B  DRSHNL01 DRSHNL11  DRUID10A  DRUID10B DRUID12A
-DRUID12B DRUID14G  DRUID6A  DRUID8A   DRUID8B  KBSHAM01  GORPRI1  HGSHAM01
-SENDAI2  GORCAMB3  HGBER01  CEFALD01  SAHAMB03 SAHAMB06 THICLR10
+AMERAL DEMPRI      GENPRST1 PAINA     PRIES10A PRIES10B PRIES10C PRIES12A
+PRIES12C PRIES14A  PRIES14T PRIES18A  PRIES18B PRIES18C PRIES18D PRIES6A
+PRIES6B  PRIES6C   PRIES8A  PRIES8B   PRIES8C  PRIEST12 PRIET12A  PRIET12B  SAHPRI12  DAQILUE  HGNYA01
+GPHEALER BERENN    BARL     CCLER20B  DRSHNL01 DRSHNL11 DRUID10A  DRUID10B DRUID12A
+DRUID12B DRUID14G  DRUID6A  DRUID8A   DRUID8B  KBSHAM01 GORPRI1  HGSHAM01
+SENDAI2  GORCAMB3  HGBER01  CEFALD01  SAHAMB03 SAHAMB06 THICLR10 OHPRDD01
 BEGIN
           TO_LOWER ~script~
           SPRINT $priest_script_bg2(~%script%~) ~~

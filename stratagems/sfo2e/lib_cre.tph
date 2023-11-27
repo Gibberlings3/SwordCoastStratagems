@@ -96,12 +96,16 @@ document{cre_add_items}
 <li>An integer, interpreted successively as the first, second, third charge number
 <li>A slot. (If no slots are specified, we choose on the basis of the item type.)
 </ul>
-You can set 'default' and it will be added to the instructions for each item
+You can set 'default' and it will be added to the instructions for each item.</p>
+
+<p>If 'replace' is set to 1 (default 0) then the item in the slot will be replaced; if not it will be bumped.
+
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_DIMORPHIC_FUNCTION cre_add_items
+	INT_VAR replace=0
 	STR_VAR struct=""
 			arguments=""
 			default=""
@@ -133,7 +137,7 @@ BEGIN
 			WHILE "%instructions%" STR_CMP "" BEGIN
 				LPF return_first_entry STR_VAR list="%instructions%" separator="," RET inst=entry instructions=list END
 				PATCH_IF IS_AN_INT inst BEGIN
-					SPRINT patch "%patch%s_charges%int_count%=%inst%;;"
+					SPRINT patch "%patch%s_charges_%int_count%=%inst%;;"
 					++int_count
 				END ELSE BEGIN
 					PATCH_MATCH "%inst%" WITH 
@@ -151,7 +155,7 @@ BEGIN
 			INNER_PATCH_SAVE slots "%slots%" BEGIN
 				REPLACE_TEXTUALLY " $" ""
 			END
-			LPF struct_add INT_VAR equip STR_VAR struct="%struct%" type=item slots patch RET_ARRAY "%struct%"=struct END 	
+			LPF struct_add INT_VAR equip replace STR_VAR struct="%struct%" type=item slots patch RET_ARRAY "%struct%"=struct END 	
 			LPF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
 		END
 	END
@@ -188,6 +192,7 @@ document{cre_remove_items}
 (This is a struct function.)</p>
 
 <p>Input a list of resrefs. Remove any items matching the list from item slots. (The items are then deleted when the struct is written back into the cre file.)
+If the argument is 'all', everything is deleted.
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -213,7 +218,7 @@ BEGIN
 						TO_LOWER resref
 					END
 					LPF array_contains STR_VAR array key="%resref%" RET value END
-					PATCH_IF value BEGIN
+					PATCH_IF value || "%arguments%" STR_EQ "all" BEGIN
 						WRITE_SHORT 0x0 "-1"
 					END
 				END
@@ -521,6 +526,121 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
+document{cre_enforce_thac0}
+{
+(This is a struct function.)</p>
+
+<p>Set the creature's thac0 to its legal value. 'arguments' can be blank (the default), 'at_worst', 'at_best', and
+'within_tolerance', where tolerance is set by the ini value 'save_tolerance' and thac0 is modified if the old and new versions
+are close enough.
+
+Requires data_thac0 macro to have been run
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_enforce_thac0
+	STR_VAR struct=""
+			arguments=""//[at_worst|at_best|within_tolerance]
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	OUTER_PATCH "" BEGIN
+		PATCH_IF !VARIABLE_IS_SET sfo_thac0_read BEGIN
+			PATCH_FAIL "To use the cre_enforce_thac0 function, you need to have run the data_thac0 macro first."
+		END
+		//get correct value
+		correct=20
+		SPRINT list EVAL "%%struct%_class%"
+		class_count=1
+		WHILE "%list%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list separator="_" RET class=entry list END
+			TO_LOWER class
+			level="%struct%_level%class_count%"
+			level=(level>0)?level:1
+			PATCH_IF VARIABLE_IS_SET "sfo_thac0_%class%_%level%" BEGIN
+				value_here="sfo_thac0_%class%_%level%"
+			END ELSE BEGIN
+				value_here="sfo_thac0_fighter_%level%"
+			END
+			SET correct=value_here<correct?value_here:correct
+			++class_count
+		END
+		// set value
+		value_old="%struct%_thac0"
+		PATCH_MATCH "%arguments%" WITH
+		at_worst BEGIN
+			PATCH_IF correct<value_old BEGIN
+				SET $struct("save_vs_%type%")=correct
+			END
+		END
+		at_best BEGIN
+			PATCH_IF correct>value_old BEGIN
+				SET $struct("save_vs_%type%")=correct
+			END		
+		END
+		within_tolerance BEGIN
+			LPF check_ini STR_VAR ini=save_tolerance RET tolerance=value END
+			PATCH_IF ABS(value_old - correct)<=tolerance BEGIN
+				SET $struct("save_vs_%type%")=correct
+			END
+		END
+		DEFAULT
+			SET $struct("save_vs_%type%")=correct
+		END		
+
+	
+	
+	END
+
+
+
+
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{cre_min_stats}
+{
+(This is a struct function.)</p>
+
+<p>Supply a space-separated list of 6 integers (the first can be a strength score like 18/76). Set the creatures STR/DEX/CON/INT/WIS/CHA to those integers, if lower.</p>
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION cre_min_stats
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_SPRINT $struct("null") discard
+	// first needs special handling because of ex.str
+	LAF return_first_entry STR_VAR list="%arguments%" RET str_new=entry arguments=list END
+	ACTION_IF IS_AN_INT str_new BEGIN
+		OUTER_SET str_base=str_new
+		OUTER_SET str_ex=0
+	END ELSE BEGIN
+		LAF return_first_entry STR_VAR list="%str_new%" separator="/" RET str_base=entry STR_ex=list END
+		ACTION_IF !IS_AN_INT str_ex BEGIN
+			OUTER_SET str_ex=0
+		END
+	END
+	OUTER_SET $struct(str_base)=str_base>"%struct%_str_base"?str_base:"%struct%_str_base"
+	OUTER_SET $struct(str_ex)=str_ex>"%struct%_str_ex"?str_ex:"%struct%_str_ex"
+	ACTION_FOR_EACH abil IN dex con int wis cha BEGIN
+		LAF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+		OUTER_SET abil_old="%struct%_%abil%"
+		ACTION_IF "%struct%_%abil%"<entry BEGIN
+			OUTER_SET $struct("%abil%")=entry
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
 document{cre_enforce_saves}
 {
 (This is a struct function.)</p>
@@ -555,6 +675,7 @@ BEGIN
 			LPF return_first_entry STR_VAR list separator="_" RET class=entry list END
 			TO_LOWER class
 			level="%struct%_level%class_count%"
+			level=(level>0)?level:1
 			PHP_EACH correct AS type=>value BEGIN
 				PATCH_IF VARIABLE_IS_SET "sfo_saves_%class%_%level%_%type%" BEGIN
 					value_here="sfo_saves_%class%_%level%_%type%"
@@ -581,7 +702,7 @@ BEGIN
 			END
 			within_tolerance BEGIN
 				LPF check_ini STR_VAR ini=save_tolerance RET tolerance=value END
-				PATCH_IF ABS(value - value_new)<=tolerance BEGIN
+				PATCH_IF ABS(value_old - value)<=tolerance BEGIN
 					SET $struct("save_vs_%type%")=value
 				END
 			END
@@ -802,4 +923,196 @@ BEGIN
 	BUT_ONLY
 
 
+END
+
+////////////////////////////////////////////////////////////////////
+/*
+document{cre_set_enforce_thac0_notstruct}
+
+NOT a struct function.
+
+Enforce a correct THAC0.
+
+Arguments can be:
+- at worst
+- at_best
+- only_if_new - a little delicate, responds only to zero
+- within_tolerance - adjust if within the 'thaco_tolerance' value of the correct #
+}
+
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION cre_enforce_thac0_notstruct
+       STR_VAR arguments=""
+BEGIN
+	PATCH_IF !VARIABLE_IS_SET sfo_thac0_read BEGIN
+		PATCH_FAIL "cre_enforce_thac0_notstruct: thac0 has not been read in by lib_data"
+	END
+	CLEAR_ARRAY class_array
+	CLEAR_ARRAY class_level
+	CLEAR_ARRAY newthac0
+	LOOKUP_IDS_SYMBOL_OF_INT classlist class BYTE_AT 0x273
+	SET levelnum=1
+	SET possible=99
+	WHILE ~%classlist%~ STRING_COMPARE ~~ BEGIN
+		LPF return_first_entry STR_VAR list= ~%classlist%~ separator ="_" RET classlist=list class=entry END
+		TO_LOWER class
+		level=BYTE_AT (0x233+levelnum)
+		level=level=0?1:level>21?21:level
+		PATCH_IF VARIABLE_IS_SET $sfo_thaco("%class%" "%level%") BEGIN
+			 thac0_here=$sfo_thaco("%class%" "%level%")
+			 possible = (thac0_here < possible) ? thac0_here : possible
+		END
+		++levelnum
+		
+	END
+	PATCH_IF possible=99 BEGIN // must be a monster
+		level1=BYTE_AT 0x234
+		possible = level1 > 20 ? 0 : (20 - level1)
+	END
+	current=BYTE_AT 0x52
+	PATCH_MATCH ~%arguments%~ WITH
+	at_worst
+	BEGIN
+		new=current<possible ? current : possible
+	END
+	at_best
+	BEGIN
+		new=current>possible ? current : possible
+	END
+	only_if_new
+	BEGIN
+		new=current=0 ? possible : current
+	END
+	within_tolerance
+	BEGIN
+		LPF check_ini STR_VAR ini=thac0_tolerance RET tolerance=value END
+		new=(ABS(possible - current))<tolerance ? possible : current
+	END
+	DEFAULT
+		 new=possible
+	END
+	WRITE_BYTE 0x52 new
+END
+
+////////////////////////////////////////////////////////////////////
+/*
+document{cre_enforce_saves_notstruct}
+{
+NOT a struct function.
+
+Enforce a correct set of saving throws.
+
+Arguments can be:
+- at worst
+- at_best
+- only_if_new - a little delicate, responds only to zero
+- within_tolerance - adjust if within the 'save_tolerance' value of the correct #
+}
+
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION cre_enforce_saves_notstruct
+       STR_VAR arguments=""
+BEGIN
+	PATCH_IF !VARIABLE_IS_SET sfo_saves_read BEGIN
+		PATCH_FAIL "cre_enforce_saves_notstruct: saves has not been read in by lib_data"
+	END
+       // initialise the enforced values
+       PATCH_FOR_EACH save IN death wands polymorph breath spells BEGIN
+          SET  ~enforced_%save%~ = 20
+       END
+	LOOKUP_IDS_SYMBOL_OF_INT classlist class BYTE_AT 0x273
+		TO_LOWER classlist
+        // go through each class, get its saves for the CRE's level, and update the record of the correct saves
+        levelnum=1
+        WHILE ~%classlist%~ STRING_COMPARE ~~ BEGIN
+          LPF return_first_entry STR_VAR list= ~%classlist%~ separator ="_" RET classlist=list class=entry END
+		  level=BYTE_AT (0x233 + levelnum)
+		  level=level<1?1:level>40?40:level
+          PATCH_FOR_EACH save IN death wands polymorph breath spells BEGIN
+			PATCH_IF VARIABLE_IS_SET $sfo_saves(~%class%~ ~%level%~ ~%save%~) BEGIN
+				possible = $sfo_saves(~%class%~ ~%level%~ ~%save%~)
+			END ELSE BEGIN
+				possible = $sfo_saves(fighter ~%level%~ ~%save%~)			
+			END
+            ~enforced_%save%~ =  ~enforced_%save%~ >possible ? possible :  ~enforced_%save%~
+          END
+          ++levelnum
+       END
+       // do the comparison
+	   count=0
+       PATCH_FOR_EACH save IN death wands polymorph breath spells BEGIN
+			offset=0x54+count
+			++count
+			currentsave=BYTE_AT offset
+			possiblesave=~enforced_%save%~
+			PATCH_MATCH ~%arguments%~ WITH
+			at_worst
+			BEGIN
+             newsave=currentsave<possiblesave ? currentsave : possiblesave
+			END
+			at_best
+			BEGIN
+				newsave=currentsave>possiblesave ? currentsave : possiblesave
+			END
+			within_tolerance
+			BEGIN
+				LPF check_ini STR_VAR ini=save_tolerance RET tolerance=value END
+				new=(ABS(possible - current))<tolerance ? possible : current
+			END
+			only_if_new
+			BEGIN
+				newsave=currentsave=100 ? possiblesave : currentsave
+			END
+			DEFAULT
+				SET newsave=possiblesave
+			END
+			WRITE_BYTE offset newsave
+       END
+
+END
+
+/////////////////////////////////////////////
+/*
+document{cre_read_original_class}
+{
+NOT a struct function.
+Returns (as lower-case ascii) a creature's original class, or 'none' if they
+don't have one.
+
+}
+
+*/
+///////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION cre_read_original_class 
+RET value
+BEGIN
+	READ_SHORT 0x10 bits
+	PATCH_IF (bits BAND BIT3)=BIT3 BEGIN
+		SPRINT value fighter
+	END ELSE
+	PATCH_IF (bits BAND BIT4)=BIT4 BEGIN
+		SPRINT value mage
+	END ELSE
+	PATCH_IF (bits BAND BIT5) =BIT5 BEGIN
+		SPRINT value cleric
+	END ELSE
+	PATCH_IF (bits BAND BIT6)=BIT6 BEGIN
+		SPRINT value thief
+	END ELSE
+	PATCH_IF (bits BAND BIT7)=BIT7 BEGIN
+		SPRINT value druid
+	END ELSE
+	PATCH_IF (bits BAND BIT8)=BIT8 BEGIN
+		SPRINT value ranger
+	END ELSE BEGIN
+		SPRINT value none
+	END
 END

@@ -1,133 +1,139 @@
 DEFINE_ACTION_FUNCTION iwdspells_icons BEGIN
 
-	ACTION_IF !enhanced_edition BEGIN
+  ACTION_IF !enhanced_edition BEGIN
 
-		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/move_spell_resources.tph"
-		OUTER_SPRINT resource_loc "%MOD_FOLDER%/%component_loc%/copyover"
-		LAM data_spell_resrefs
-		
-		// load icon data into a 2D array
-		
-		LAF 2da_read STR_VAR file=obg2_icons.2da location=data case=lower RET_ARRAY obg2_icons=array icon_names=rows END
-		
-		// if we haven't already, copy over the BAMs and sort out statdesc
-		
-		LAF check_label STR_VAR label=dw#iwdspells_obg2_icons_installed RET value END
-		ACTION_IF !value BEGIN
-			LAF make_label STR_VAR label=dw#iwdspells_obg2_icons_installed END
-		
-			// load strrefs	
-			LAF process_tra_refs RET_ARRAY strref_map END
+    INCLUDE "%MOD_FOLDER%/%component_loc%/lib/move_spell_resources.tph"
+    OUTER_SPRINT resource_loc "%MOD_FOLDER%/%component_loc%/copyover"
+    LAM data_spell_resrefs
+    
+    // load icon data into a 2D array
+    
+    LAF 2da_read STR_VAR file=obg2_icons.2da location=data case=lower RET_ARRAY obg2_icons=array icon_names=rows END
+    
+    // if we haven't already, copy over the BAMs and sort out statdesc
+    
+    LAF check_label STR_VAR label=dw#iwdspells_obg2_icons_installed RET value END
+    ACTION_IF !value BEGIN
+      LAF make_label STR_VAR label=dw#iwdspells_obg2_icons_installed END
+    
+      // load strrefs  
+      LAF process_tra_refs RET_ARRAY strref_map END
 
-			// sort out strings in statdesc
+      // sort out strings in statdesc
 
-			COPY "%MOD_FOLDER%/%component_loc%/resource/statdesc.2da" override
-				PHP_EACH icon_names AS icon_name=>discard BEGIN
-					strref_old=$obg2_icons("%icon_name%" "strref")
-					strref_new=$strref_map("%strref_old%")
-					REPLACE_TEXTUALLY "%icon_name%" "%strref_new%"
-				END
-			
-			// copy over bams
-			
-			ACTION_FOR_EACH dest IN states states2 BEGIN
-				COPY "%MOD_FOLDER%/%component_loc%/resource/states.bam" "override/%dest%.bam"
-			END
-		
-		END
-		
-		// load the list of processed icons we've done already (lowercased resource list)
-		
-		ACTION_IF FILE_EXISTS "%data_loc%/obg2_icons_processed.txt" BEGIN
-			LAF array_read STR_VAR file=obg2_icons_processed.txt path="%data_loc%" RET_ARRAY obg2_icons_processed=array END
-		END
+      COPY "%MOD_FOLDER%/%component_loc%/resource/statdesc.2da" override
+        PHP_EACH icon_names AS icon_name=>discard BEGIN
+          strref_old=$obg2_icons("%icon_name%" "strref")
+          strref_new=$strref_map("%strref_old%")
+          REPLACE_TEXTUALLY "%icon_name%" "%strref_new%"
+        END
+      
+      // copy over bams
+      
+      ACTION_FOR_EACH dest IN states states2 BEGIN
+        COPY "%MOD_FOLDER%/%component_loc%/resource/states.bam" "override/%dest%.bam"
+      END
+    
+    END
+    
+    // load the list of processed icons we've done already (lowercased resource list)
+    
+    ACTION_IF FILE_EXISTS "%data_loc%/obg2_icons_processed.txt" BEGIN
+      LAF array_read STR_VAR file=obg2_icons_processed.txt path="%data_loc%" RET_ARRAY obg2_icons_processed=array END
+    END
 
-		// go through the table, doing all icons we haven't done already
-		
-		ACTION_PHP_EACH icon_names AS icon_name=>discard BEGIN
-			OUTER_SET proceed=1
-			// find the resource
-			ACTION_IF $obg2_icons("%icon_name%" "spell") STR_CMP "0" BEGIN
-				// if there's an id, try to resolve it
-				OUTER_SPRINT spellname $obg2_icons("%icon_name%" "spell")
-				ACTION_IF VARIABLE_IS_SET "%spellname%" BEGIN
-					OUTER_SPRINT resref EVAL "%%spellname%%"
-					OUTER_SPRINT resource "%resref%.spl"
-				END ELSE BEGIN
-					OUTER_SET proceed=0
-				END		
-			END ELSE BEGIN
-				// if not, just use the resource
-				OUTER_SPRINT resource $obg2_icons("%icon_name%" "resource")
-				OUTER_SPRINT resref NOT_STANDARD_SPELL
-				ACTION_IF !FILE_EXISTS_IN_GAME "%resource%" BEGIN
-					OUTER_SET proceed=0
-				END
-			END
-			// check if it's been done already
-			ACTION_TO_LOWER resource
-			ACTION_IF VARIABLE_IS_SET $obg2_icons_processed("%resource%") BEGIN
-				OUTER_SET proceed=0
-			END
-			// do it
-			ACTION_IF proceed BEGIN
-				// get variables
-				ACTION_FOR_EACH var IN icon existing clone BEGIN
-					OUTER_SPRINT "%var%" $obg2_icons("%icon_name%" "%var%")
-				END
-				// Alter or clone effects (Cam's core section, basically)
-				ACTION_MATCH "%resref%" WITH
-				NOT_STANDARD_SPELL BEGIN
-					COPY_EXISTING ~%resource%~  ~override~
-						PATCH_IF existing BEGIN
-							LPF ALTER_EFFECT INT_VAR silent = 1 match_opcode = 142 match_parameter2 = existing parameter2 = icon END
-						END ELSE BEGIN
-							LPF CLONE_EFFECT INT_VAR silent = 1 multi_match = 1 match_opcode = clone opcode = 142 parameter1 = 0 parameter2 = icon END
-						END  
-					BUT_ONLY 
-				END
-				DEFAULT			
-					COPY_EXISTING   ~%resref%.spl~  ~override~
-									~%resref%a.spl~ ~override~
-									~%resref%b.spl~ ~override~
-									~%resref%c.spl~ ~override~
-						PATCH_IF existing BEGIN
-							LPF ALTER_EFFECT INT_VAR silent = 1 match_opcode = 142 match_parameter2 = existing parameter2 = icon END
-						END ELSE BEGIN
-							LPF CLONE_EFFECT INT_VAR silent = 1 multi_match = 1 match_opcode = clone opcode = 142 parameter1 = 0 parameter2 = icon END
-						END  
-					BUT_ONLY IF_EXISTS
-				END
-				// log that we've done it
-				LAF log_this STR_VAR file=obg2_icons_processed.txt input="%resource%" END
-			END	
-		END
-		
-		// do the special cases
-		// to add new special cases, add them to the table, then write a function to do the
-		// actual patch, following the template for the functions below
-		
-		ACTION_DEFINE_ASSOCIATIVE_ARRAY obg2_specials BEGIN
-			WIZARD_SHROUD_OF_FLAME=>shroud_of_flame
-			CLERIC_STATIC_CHARGE=>static_charge
-			CLERIC_GREATER_SHIELD_OF_LATHANDER=>shield_lathander
-		END
-		ACTION_PHP_EACH obg2_specials AS spell_name=>icon_name BEGIN
-			ACTION_IF VARIABLE_IS_SET "%spell_name%" BEGIN
-				OUTER_SPRINT resref EVAL "%%spell_name%%"
-				OUTER_SPRINT resource "%resref%.spl"
-				ACTION_TO_LOWER resource
-				ACTION_IF !VARIABLE_IS_SET $obg2_icons_processed("%resource%") BEGIN
-					OUTER_SET icon=$obg2_icons("%icon_name%" "icon")
-					LAF "icon_%spell_name%" INT_VAR icon STR_VAR resref END
-					LAF log_this STR_VAR file=obg2_icons_processed.txt input="%resource%" END
-				END
-			END
-		END
-	END ELSE BEGIN
-		PRINT "Game is enhanced-edition; oBG2 icons will not be installed."
-	END
-
+    // go through the table, doing all icons we haven't done already
+    OUTER_SET entry = 0
+    ACTION_PHP_EACH icon_names AS icon_name=>discard BEGIN
+      
+      OUTER_SET proceed=1
+      // find the resource
+      ACTION_IF $obg2_icons("%icon_name%" "spell") STR_CMP "0" BEGIN
+        // if there's an id, try to resolve it
+        OUTER_SPRINT spellname $obg2_icons("%icon_name%" "spell")
+        ACTION_IF VARIABLE_IS_SET "%spellname%" BEGIN
+          OUTER_SPRINT resref EVAL "%%spellname%%"
+          OUTER_SPRINT resource "%resref%.spl"
+        END ELSE BEGIN
+          OUTER_SET proceed=0
+        END    
+      END ELSE BEGIN
+        // if not, just use the resource
+        OUTER_SPRINT resource $obg2_icons("%icon_name%" "resource")
+        OUTER_SPRINT resref NOT_STANDARD_SPELL
+        ACTION_IF !FILE_EXISTS_IN_GAME "%resource%" BEGIN
+          OUTER_SET proceed=0
+        END
+      END
+      // check if it's been done already
+      ACTION_TO_LOWER resource
+      ACTION_IF VARIABLE_IS_SET $obg2_icons_processed("%resource%") BEGIN
+        OUTER_SET proceed=0
+      END
+      // do it
+      ACTION_IF proceed BEGIN
+        // get variables
+        ACTION_FOR_EACH var IN icon existing clone BEGIN
+          OUTER_SPRINT "%var%" $obg2_icons("%icon_name%" "%var%")
+        END
+        // Alter or clone effects (Cam's core section, basically)
+        ACTION_MATCH "%resref%" WITH
+        NOT_STANDARD_SPELL BEGIN
+          COPY_EXISTING ~%resource%~  ~override~
+            PATCH_IF existing BEGIN
+              //PATCH_PRINT ~altering icon on %SOURCE_FILE% with existing: %existing%, clone: %clone%, and icon: %icon%~
+              LPF ALTER_EFFECT INT_VAR silent = 1 match_opcode = 142 match_parameter2 = existing parameter2 = icon END
+            END ELSE BEGIN
+              //PATCH_PRINT ~cloning icon on %SOURCE_FILE% with existing: %existing%, clone: %clone%, and icon: %icon%~
+              LPF CLONE_EFFECT INT_VAR silent = 1 multi_match = 1 match_opcode = clone opcode = 142 parameter1 = 0 parameter2 = icon END
+            END  
+          BUT_ONLY 
+        END
+        DEFAULT    
+          COPY_EXISTING ~%resref%.spl~  ~override~
+                        ~%resref%a.spl~ ~override~
+                        ~%resref%b.spl~ ~override~
+                        ~%resref%c.spl~ ~override~
+            PATCH_IF existing BEGIN
+              //PATCH_PRINT ~altering icon on %SOURCE_FILE% with existing: %existing%, clone: %clone%, and icon: %icon%~
+              LPF ALTER_EFFECT INT_VAR silent = 1 match_opcode = 142 match_parameter2 = existing parameter2 = icon END
+            END ELSE BEGIN
+              //PATCH_PRINT ~cloning icon on %SOURCE_FILE% with existing: %existing%, clone: %clone%, and icon: %icon%~
+              LPF CLONE_EFFECT INT_VAR silent = 1 multi_match = 1 match_opcode = clone opcode = 142 parameter1 = 0 parameter2 = icon END
+            END  
+          BUT_ONLY IF_EXISTS
+        END
+        // log that we've done it
+        LAF log_this STR_VAR file=obg2_icons_processed.txt input="%resource%" END
+      END  
+    END
+    
+    // do the special cases
+    // to add new special cases, add them to the table, then write a function to do the
+    // actual patch, following the template for the functions below
+    
+    ACTION_DEFINE_ASSOCIATIVE_ARRAY obg2_specials BEGIN
+      WIZARD_SHROUD_OF_FLAME=>shroud_of_flame
+      CLERIC_STATIC_CHARGE=>static_charge
+      CLERIC_GREATER_SHIELD_OF_LATHANDER=>shield_lathander
+      CLERIC_IMPERVIOUS_SANCTITY_OF_MIND=>shield_lathander
+      CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL=>shield_lathander
+    END
+    ACTION_PHP_EACH obg2_specials AS spell_name=>icon_name BEGIN
+      ACTION_IF VARIABLE_IS_SET "%spell_name%" BEGIN
+        OUTER_SPRINT resref EVAL "%%spell_name%%"
+        OUTER_SPRINT resource "%resref%.spl"
+        ACTION_TO_LOWER resource
+        ACTION_IF !VARIABLE_IS_SET $obg2_icons_processed("%resource%") BEGIN
+          OUTER_SET icon=$obg2_icons("%icon_name%" "icon")
+          LAF "icon_%spell_name%" INT_VAR icon STR_VAR resref END
+          LAF log_this STR_VAR file=obg2_icons_processed.txt input="%resource%" END
+        END
+      END
+    END
+  END ELSE BEGIN
+    PRINT "Game is enhanced-edition; oBG2 icons will not be installed."
+  END
 
 END
 
@@ -139,33 +145,54 @@ END
 // shroud of flame has no easy op to clone, so deal with it manually
 
 DEFINE_ACTION_FUNCTION icon_WIZARD_SHROUD_OF_FLAME
-	INT_VAR icon=0 
-	STR_VAR resref=""
+  INT_VAR icon=0 
+  STR_VAR resref=""
 BEGIN
-	COPY_EXISTING 	~%resref%.spl~   ~override~
-					~%resref%c.spl~  ~override~
-		LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 5 parameter2 = icon duration = 6 savingthrow = BIT0 END
+  COPY_EXISTING   ~%resref%.spl~   ~override~
+          ~%resref%c.spl~  ~override~
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 5 parameter2 = icon duration = 6 savingthrow = BIT0 END
 END
 
 // static charge has no easy op to clone, so deal with it manually
 
 DEFINE_ACTION_FUNCTION icon_CLERIC_STATIC_CHARGE
-	INT_VAR icon=0 
-	STR_VAR resref=""
+  INT_VAR icon=0 
+  STR_VAR resref=""
 BEGIN
-	COPY_EXISTING 	~%resref%.spl~   ~override~
-					~%resref%b.spl~  ~override~
-		LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 4 parameter2 = icon duration = 60 END
+  COPY_EXISTING ~%resref%b.spl~  ~override~ // not needed for main spell
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 142 target = 2 power = 4 parameter2 = icon duration = 60 END
 END
 
 // greater shield should re-use shield of lathander icon
 
 DEFINE_ACTION_FUNCTION icon_CLERIC_GREATER_SHIELD_OF_LATHANDER
-	INT_VAR icon=0 
-	STR_VAR resref=""
+  INT_VAR icon=0 
+  STR_VAR resref=""
 BEGIN
-	COPY_EXISTING ~%resref%.spl~   ~override~
-		LPF CLONE_EFFECT INT_VAR match_opcode = 101 opcode = 142 parameter1 = 0 parameter2 = icon END	
+  COPY_EXISTING ~%resref%.spl~   ~override~
+    LPF CLONE_EFFECT INT_VAR match_opcode = 101 opcode = 142 parameter1 = 0 parameter2 = icon END  
+
+END
+
+// delete extraneous 'resist fear' icon from CLERIC_IMPERVIOUS_SANCTITY_OF_MIND
+
+DEFINE_ACTION_FUNCTION icon_CLERIC_IMPERVIOUS_SANCTITY_OF_MIND
+  INT_VAR icon=0 
+  STR_VAR resref=""
+BEGIN
+  COPY_EXISTING ~%resref%.spl~   ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 37 END  
+
+END
+
+// delete extraneous 'mind shiels' icon from ally version of CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL
+
+DEFINE_ACTION_FUNCTION icon_CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL
+  INT_VAR icon=0 
+  STR_VAR resref=""
+BEGIN
+  COPY_EXISTING ~%resref%a.spl~   ~override~
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 52 END  
 
 END
 

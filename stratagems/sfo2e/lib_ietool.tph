@@ -307,37 +307,78 @@ END
 document{install}
 {
 'arguments' (synonym: 'files'; synonym:'file') is a list of files (including extensions) located at the location given by path/location/locbase. Each is copied over to the override;
-if any are BAF/D, they are COMPILE EVALUATE_BUFFERred. If none of 'location', 'locbase', and 'path' are set, set location=resource. If overwrite=0, don't overwrite already-present files (does not affect scripts).
+if any are BAF/D, they are COMPILE EVALUATE_BUFFERred; if they are SSL, they are compiled to BCS; if they are v1 CREs, we run FJ_CRE_EFF_V2 to force V2 effects. 
+If none of 'location', 'locbase', and 'path' are set, set location=resource. 
+If overwrite=0, don't overwrite already-present files (does not affect scripts).
+
+If 'ext' (legacy synonym: 'postfix') is set, automatically add that file extension (so LAF install STR_VAR files="script1 script2" ext=baf ... END installs script1.baf and script2.baf).
+
+If the argument is 'all', apply to every file at the path. 
+If both 'ext' and 'all' are set, apply to every file at the path with that file extension.
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION install
 	INT_VAR overwrite=1//boolean
+			inline=0//boolean
 	STR_VAR arguments=""
 			files=""
 			file=""
 			location=""
 			locbase=""
 			path=""
+			postfix=""
+			ext=""
 BEGIN
+	OUTER_SPRINT ext "%ext%%postfix%"
 	ACTION_IF "%location%%locbase%%path%" STR_EQ "" BEGIN
 		OUTER_SPRINT location resource
 	END
 	ACTION_IF "%files%%file%" STR_CMP "" BEGIN
 		OUTER_SPRINT arguments "%files%%file%"
 	END
-	LAF sfo_path STR_VAR path location locbase RET path END
-	OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
-		LAF return_first_entry STR_VAR list="%arguments%" RET file=entry arguments=list END
-		LAF sfo_path STR_VAR file path location locbase RET file_path END
-		ACTION_MATCH "%file%" WITH
-		".*\.\(baf\|d\)" BEGIN
-			COMPILE "%file_path%" EVALUATE_BUFFER
+	ACTION_IF inline BEGIN
+		OUTER_SPRINT path ".../stratagems-inline"
+	END ELSE BEGIN
+		LAF sfo_path STR_VAR path location locbase RET path END
+	END
+	ACTION_IF "%arguments%" STR_EQ "all" BEGIN
+		ACTION_IF "%ext%" STR_EQ "" BEGIN
+			ACTION_BASH_FOR "%path%" ".*" BEGIN
+				LAF install INT_VAR overwrite STR_VAR arguments="%BASH_FOR_FILE%" path END
+			END		
+		END ELSE BEGIN
+			ACTION_BASH_FOR "%path%" ".*\.%ext%" BEGIN
+				LAF install INT_VAR overwrite STR_VAR arguments="%BASH_FOR_FILE%" path END
+			END			
 		END
-		DEFAULT
-			ACTION_IF overwrite || !FILE_EXISTS_IN_GAME "%file%" BEGIN
-				COPY "%file_path%" override
+	END ELSE BEGIN		
+		OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET file=entry arguments=list END
+			LAF sfo_path STR_VAR file path location locbase RET file_path END
+			ACTION_IF "%ext%" STR_CMP "" BEGIN
+				OUTER_SPRINT file "%file%.%ext%"
+				OUTER_SPRINT file_path "%file_path%.%ext%"
+			END
+			ACTION_MATCH "%file%" WITH
+			".*\.\(baf\|d\)" BEGIN
+				COMPILE "%file_path%" EVALUATE_BUFFER
+			END
+			".*\.ssl" BEGIN
+				OUTER_PATCH_SAVE script "%file%" BEGIN
+					REPLACE_TEXTUALLY "\.ssl" ""
+				END
+				LAF ssl_to_bcs INT_VAR inline STR_VAR script location locbase path END
+			END
+			
+			DEFAULT
+				ACTION_IF overwrite || !FILE_EXISTS_IN_GAME "%file%" BEGIN
+					COPY "%file_path%" override
+						PATCH_IF "%SOURCE_EXT%" STR_EQ "cre" && BYTE_AT 0x33=0 BEGIN
+							LPF FJ_CRE_EFF_V2 END
+						END
+				END
 			END
 		END
 	END
@@ -361,6 +402,8 @@ it if necessary. (see IESDP opcode documentation for opcode 324).</p>
 <li>'greater_equal'/'greater_equals' (resolves to 4)
 <li>'not_equal' (resolves to 5)
 </ul>
+
+<p>'description', if set, is added to the bare number of a new entry, following the 2.6 EE style. (Existing entries do not gain descriptions.)
 }
 */
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -371,6 +414,7 @@ DEFINE_DIMORPHIC_FUNCTION resolve_splprot_entry
 				value=0
 				relation_number=0
       STR_VAR 	relation=""
+				description=""
       RET value
 BEGIN
       ACTION_IF !(value=0) BEGIN
@@ -415,15 +459,36 @@ BEGIN
                    END
             END
             PATCH_IF value<0 BEGIN
-               INSERT_2DA_ROW splprot_array 4 "%splprot_array%%TAB%%stat%%TAB%%val%%TAB%%relation_number%"
+				PATCH_IF "%description%" STR_CMP "" BEGIN
+					SPRINT row_label "%splprot_array%_%description%"
+				END ELSE BEGIN
+					SPRINT row_label "%splprot_array%"
+				END
+               INSERT_2DA_ROW splprot_array 4 "%row_label%%TAB%%stat%%TAB%%val%%TAB%%relation_number%"
                SET value=splprot_array
+			   PRETTY_PRINT_2DA
             END
       BUT_ONLY
 END
 
 //////////////////////////////////////////////////////////////
 /*
+document{resolve_statdesc}
+{
+Adds a new line to statdesc.2da. You need to specify:
+- the strref of a string, 'strref' (or you can specify the string
+directly, 'string', and it will be added to dialog.tlk)
+- the name ('bam') of the bam file to be used for the line. (It can be an in-game file, or
+one to be copied over from your mod directory - SFO will see if it exists, and try to copy
+it if it doesn't.)
+- the location of the bam file, if it is in your mod directory, specified SFO-style via 'location','locbase','path'.
+- the actual name to be used for the bam file, 'bam_name'. If you leave it blank, 'bam' will be used instead (always
+do this if you are using an in-game file). If you set it to 'auto', a unique name will be auto-generated.
 
+If you set the INT_VAR 'check_first', SFO will first check that line number to see if it exists. If it does, its line will
+be returned and no new line will be added; however, the description will be set if it is currently blank.
+
+}
 */
 //////////////////////////////////////////////////////////////
 
@@ -478,7 +543,7 @@ BEGIN
 			END
 			DEFAULT
 			END
-			PATCH_IF "%bam%" STR_CMP "****" BEGIN
+			PATCH_IF "%bam%" STR_CMP "****" && !FILE_EXISTS_IN_GAME "%bam%.bam" BEGIN
 				LPF sfo_path STR_VAR file="%bam%" location locbase path RET file_path END
 				PATCH_IF FILE_EXISTS "%file_path%.bam" BEGIN
 				INNER_ACTION BEGIN
@@ -494,48 +559,444 @@ BEGIN
 	BUT_ONLY
 END
 			
+////////////////////////////////////////////////////////////////////////////////////////////
+/* 
+document{add_basic_spell_ability}
+{
+Add a standard (innate) ability to the currently-being-patched spell, assumed to be a blank
+freshly-created v1 spell from WEIDU's CREATE command. (For lightweight spell-creation.)
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////  Statdesc patcher  - we ignore missing rows
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-DEFINE_ACTION_FUNCTION add_to_statdesc
-    INT_VAR start_row=190
-			string= "-1"
-    STR_VAR bam = "****"
-    RET stat_num
+DEFINE_PATCH_FUNCTION add_basic_spell_ability
 BEGIN
-    COPY_EXISTING statdesc.2da override
-       COUNT_2DA_ROWS 3 rowcount
-       LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
-       SET_2DA_ENTRY row 1 3 "%string%"
-       SET_2DA_ENTRY row 2 3 "%bam%"
-    BUT_ONLY
+	PATCH_IF !(BUFFER_LENGTH=0x72) BEGIN
+		PATCH_FAIL "add_basic_spell_ability only works on a blank, freshly-created v1 spell"
+	END
+	INNER_PATCH_SAVE ab_data "" BEGIN
+		INSERT_BYTES 0x0 0x28
+		WRITE_SHORT 0x0 1
+		WRITE_SHORT 0x2 4
+		WRITE_BYTE 0xc 1
+		WRITE_SHORT 0x22 1
+		WRITE_SHORT 0x24 1
+		WRITE_SHORT 0x26 1
+	END
+	WRITE_SHORT 0x68 1
+	WRITE_SHORT 0x6a 0x9a
+	INSERT_BYTES 0x72 0x28
+	WRITE_ASCII 0x72 "%ab_data%"
 END
 
-DEFINE_PATCH_FUNCTION add_to_statdesc_helper
-      INT_VAR start_row=0
-              rowcount=0
-      RET stat_num
-          row
+////////////////////////////////////////////////////////////////////////////////////////////
+/* 
+document{extend}
+{
+Extend the script(s) 'script' (legacy synonyms: file, files) with 'top' at the top and/or 'bottom' at the bottom. top and bottom location
+is specified in the usual SFO way. If inline=1, 'top' and 'bottom' are assumed inlined at .../stratagems-inline
+
+If ssl=1, assume 'top' and 'bottom' are ssl scripts, and pass 'variables' to the SSL parser.
+If tv=1, prepend %tutu_var% to each script.
+If allow_missing=1, skip silently any missing script (default is to WARN).
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////
+
+// note: be careful with variable names here, as they may be exposed in an inline script compilation
+
+DEFINE_ACTION_FUNCTION extend
+	INT_VAR inline=0
+			ssl=0
+			tv=0
+			allow_missing=0
+	STR_VAR script=""
+			files=""
+			file=""
+			location=""
+			locbase=""
+			path=""
+			top=""
+			bottom=""
+			variables=""
 BEGIN
-   PATCH_IF start_row>= rowcount BEGIN
-       READ_2DA_ENTRY (rowcount - 1) 0 3 last_entry
-       SET stat_num=last_entry + 1
-       SET row=rowcount
-       INSERT_2DA_ROW rowcount 3 "%stat_num% -1 ****"
-   END ELSE BEGIN
-     READ_2DA_ENTRY start_row 1 3 entry
-     PATCH_IF entry<=0 BEGIN
-        READ_2DA_ENTRY start_row 0 3 stat_num
-        SET row=start_row
-     END ELSE BEGIN
-        SET start_row +=1
-        LPF add_to_statdesc_helper INT_VAR start_row rowcount RET stat_num row END
-     END
-   END
+	OUTER_SPRINT script "%script%%file%%files%"
+	ACTION_IF "%script%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%script%" RET SFO_script_here=entry script=list END
+		ACTION_IF tv BEGIN
+			OUTER_SPRINT SFO_script_here "%tutu_var%%SFO_script_here%"
+		END
+		ACTION_IF FILE_EXISTS_IN_GAME "%SFO_script_here%.bcs" BEGIN
+			ACTION_IF "%top%%bottom%" STR_EQ "" BEGIN
+				WARN "You called extend with no top or bottom"
+			END
+			ACTION_IF ssl BEGIN
+				ACTION_IF "%top%" STR_CMP "" BEGIN
+					LAF ssl_to_baf INT_VAR inline STR_VAR script="%top%" location locbase path variables END
+				END
+				ACTION_IF "%bottom%" STR_CMP "" BEGIN
+					LAF ssl_to_baf INT_VAR inline STR_VAR script="%bottom%" location locbase path variables END
+				END
+				LAF extend STR_VAR script="%SFO_script_here%" path="%workspace%/ssl_out" top bottom END	
+			END ELSE BEGIN		
+				ACTION_IF inline BEGIN
+					OUTER_SPRINT path ".../stratagems-inline"
+				END ELSE BEGIN
+					LAF sfo_path STR_VAR path location locbase RET path END
+				END
+				ACTION_IF "%top%" STR_CMP "" BEGIN
+					EXTEND_TOP "%SFO_script_here%.bcs" "%path%/%top%.baf" EVALUATE_BUFFER
+				END
+				ACTION_IF "%bottom%" STR_CMP "" BEGIN
+					EXTEND_BOTTOM "%SFO_script_here%.bcs" "%path%/%bottom%.baf" EVALUATE_BUFFER
+				END		
+			END
+		END ELSE 
+		ACTION_IF !allow_missing BEGIN
+			WARN "WARNING (extend): tried to extend script %SFO_script_here%, but it does not exist" 
+		END
+		// recurse
+		LAF extend INT_VAR inline ssl tv allow_missing STR_VAR script location locbase path top bottom END
+	END
+	
+END
+	
+////////////////////////////////////////////////////////////////////////////////////////////
+/* 
+document{extend_area_script}
+{
+Extend the area script of area 'area' with 'top' at the top and/or 'bottom' at the bottom. If the script doesn't exist, we create one, using standard conventions.
+'area' can be a list of areas, in which case each one is extended.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION extend_area_script
+	INT_VAR inline=0
+			ssl=0
+	STR_VAR area=""
+			location=""
+			locbase=""
+			path=""
+			top=""
+			bottom=""
+			variables=""
+BEGIN
+	ACTION_IF "%area%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%area%" RET area_here=entry area=list END
+		ACTION_IF "%top%%bottom%" STR_EQ "" BEGIN
+			WARN "You called extend_area_script with no top or bottom"
+		END
+		COPY_EXISTING "%area_here%.are" override
+			READ_ASCII 0x94 script
+			PATCH_IF "%script%" STR_EQ "" BEGIN
+				PATCH_MATCH "%area_here%" WITH 
+				"_AR+" BEGIN
+					INNER_PATCH_SAVE script "%area_here%" BEGIN
+						REPLACE_TEXTUALLY CASE_INSENSITIVE "_AR" "FW"
+					END
+				END
+				DEFAULT
+					SPRINT script "%area_here%"
+				END
+				WRITE_ASCII 0x94 "%script%"
+			END
+		ACTION_IF !FILE_EXISTS_IN_GAME "%script%.bcs" BEGIN
+			COPY ".../stratagems-inline/blank" "override/%script%.bcs" COMPILE_BAF_TO_BCS
+		END
+		LAF extend INT_VAR inline ssl STR_VAR script location locbase path top bottom variables END
+		LAF extend_area_script INT_VAR inline STR_VAR area location locbase path top bottom variables END
+	END
+END
+
+/*
+
+
+document{copy_item_to_spell}
+{
+Take ability 'abil_ind' (default=0) from item 'item'. Build a new spell, 'spell', that casts that ability as its only ability.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION copy_item_to_spell
+         INT_VAR abil_ind=0
+         STR_VAR item=""
+                 spell=""
+BEGIN
+         // make a new spell
+		 CREATE spl "%spell%"
+         // add the labelled ability of the item, and the effects, to the spell
+         COPY_EXISTING ~%item%.itm~ ~override~
+           READ_ASCII ((LONG_AT 0x64) + 0x38 * abil_ind) ability (0x38)
+           SET offset=LONG_AT 0x64
+           READ_SHORT 0x72 type
+           INNER_PATCH_SAVE ability ~%ability%~ BEGIN
+             WRITE_BYTE 0x2 4 // innate slots
+             WRITE_BYTE 0x1 0
+             WRITE_SHORT 0x10 1 // min level
+             DELETE_BYTES 0x26 0x4
+             DELETE_BYTES 0x28 0xc
+             READ_SHORT 0x1e eff_num
+             READ_SHORT 0x20 eff_ind
+             WRITE_SHORT 0x20 0
+             READ_SHORT 0x26 proj
+             PATCH_IF proj>1 BEGIN
+                WRITE_BYTE 0x0 2
+             END ELSE BEGIN
+                WRITE_BYTE 0x0 1
+             END
+           END
+           SET eff_length=0x30*eff_num
+           READ_ASCII ((LONG_AT 0x6a) + 0x30*eff_ind) effects (eff_length)
+           INNER_ACTION BEGIN
+                COPY_EXISTING ~%spell%.spl~ ~override~
+                     INSERT_BYTES (LONG_AT 0x64) 0x28
+                     WRITE_ASCIIE (LONG_AT 0x64) ~%ability%~
+                     WRITE_SHORT 0x68 1
+                     WRITE_LONG 0x6a ((LONG_AT 0x6a) + 0x28)
+                     INSERT_BYTES (LONG_AT 0x6a) ~eff_length~
+                     WRITE_ASCIIE (LONG_AT 0x6a) ~%effects%~
+                BUT_ONLY
+           END
+         BUT_ONLY
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{add_silent_sectype}
+{
+Add a sectype with no associated string. The sectype to be added is specified by the STR_VAR 'sectype'
+(synonym: 'arguments') and its numerical value is returned as 'sectype_value' (synonym: 'value').
+
+OBSOLETE: use resolve_sectype instead
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION add_silent_sectype
+   STR_VAR sectype=""
+			arguments=""
+   RET sectype_value
+		value
+BEGIN
+	OUTER_SPRINT sectype "%sectype%%arguments%"
+   ADD_SECTYPE "%sectype%" ""
+   OUTER_SET sectype_value="%sectype%"
+   OUTER_SET value=sectype_value
+   COPY_EXISTING "msectype.2da" override
+       REPLACE_TEXTUALLY "%sectype%\( \|%TAB%\)+[0-9]+\(%WNL%\|%LNL%\|%MNL%\)" "%sectype% -1"
+   BUT_ONLY
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{resolve_sectype}
+{
+Given a sectype 'sectype' (synonym: 'arguments') and associated string (STR_VAR 'string') or tlk entry (INT_VAR 'strref'), 
+check if the sectype is already present. If it is, set its string to the specified string. If it isn't, add it, 
+with that string. Either way, return its value as 'sectype_value' (synonym: 'value').
+
+If both the strref and string are specified, default to the string (and log a warning). If string is "" (the default), use strref=-1 rather 
+than an actual blank string.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION resolve_sectype
+	INT_VAR strref="-1"
+	STR_VAR sectype=""
+			arguments=""
+			string=""
+	RET sectype_value
+		value
+BEGIN
+	COPY_EXISTING msectype.2da override
+		SPRINT sectype "%sectype%%arguments%"
+		PATCH_IF "%string%" STR_CMP "" BEGIN
+			PATCH_IF strref>=0 BEGIN
+				LPF warn STR_VAR warning="resolve_sectype warning: both string and strref were specified" END
+			END
+			strref=RESOLVE_STR_REF ("%string%")
+		END 
+		READ_2DA_ENTRIES_NOW msectype_data 2
+		sectype_value="-1"
+		FOR (row=0;row<msectype_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER msectype_data row 0 sectype_here
+			PATCH_IF "%sectype_here%" STR_EQ "%sectype%" BEGIN
+				READ_2DA_ENTRY_FORMER msectype_data row 1 strref_here
+				PATCH_IF !(strref=strref_here) BEGIN
+					SET_2DA_ENTRY row 1 2 "%strref%"
+				END
+				sectype_value=row - 1
+				row=msectype_data
+			END
+		END
+	BUT_ONLY
+	ACTION_IF sectype_value<0 BEGIN
+		APPEND "msectype.2da" "%sectype% %strref%"
+		OUTER_SET sectype_value=msectype_data - 1
+	END
+	OUTER_SET value=sectype_value
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{resolve_dv}
+{
+Given a creature's file resref, returns the scriptname (death variable) of the creature. If it has none, assign it one.
+By default, the assigned scriptname is its resref; you can override this by setting 'default'.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION resolve_dv
+	STR_VAR creature=""
+			default=""
+	RET dv
+BEGIN
+	ACTION_IF "%default%" STR_EQ "" BEGIN
+		OUTER_SPRINT default "%creature%"
+		ACTION_TO_LOWER default
+	END
+	ACTION_IF FILE_EXISTS_IN_GAME "%creature%.cre" BEGIN
+		COPY_EXISTING 
+			"%creature%.cre" override
+				READ_ASCII DEATHVAR dv (0x20) NULL
+				TO_LOWER dv
+				PATCH_MATCH "%dv%" WITH
+				"none" "null" "" BEGIN
+					SPRINT dv "%default%"
+					WRITE_ASCII DEATHVAR "%dv%"
+				END
+
+				DEFAULT
+				END
+	END ELSE BEGIN
+		WARN "resolve_scriptname: no creature %creature%"
+		OUTER_SPRINT dv ""
+	END	
+END
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{add_to_lua_lang}
+{
+Given a k=>v array 'array' with entries like MY_TEXT_STRING=>1234, go through each 
+entry, and for each, get the string with tra ref 1234 in the current tra file and
+set TEXT_STRING equal to it in the current EE language file (e.g., en_us.lua).</p>
+
+<p>Exits with a warning if not on EE.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION add_to_lua_lang
+	STR_VAR array=""//array
+BEGIN
+
+	ACTION_IF enhanced_edition BEGIN
+		OUTER_SPRINT to_add ""
+		COPY_EXISTING "L_%EE_LANGUAGE%.lua" override
+		   PHP_EACH "%array%" AS key=>value BEGIN
+			  SPRINT string (AT value)
+			  PATCH_IF INDEX_BUFFER ("%key%")>=0 BEGIN
+				REPLACE_TEXTUALLY ~%key% *=.*~ ~%key% = "%string%",~
+			  END ELSE BEGIN
+				SPRINT to_add ~%to_add%%TAB%%key% = "%string%",%WNL%~
+			  END
+		   END
+		   PATCH_IF  "%to_add%" STR_CMP "" BEGIN
+			REPLACE_TEXTUALLY "}"  "%to_add%%WNL%}"
+		END
+    BUT_ONLY
+	END ELSE BEGIN
+		WARN "add_to_lua_lang function only works on EE installs"
+	END
+	
+	
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{all_to_utf8}
+{
+Given the (full) path to your tra files (default: %MOD_FOLDER%/lang), convert
+all the files in all languages to (lowercased) UTF-8, leaving no detritus (no
+fl#utf files). If permanent=1, will persist through uninstall.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION all_to_utf8
+	INT_VAR permanent=0//boolean
+	STR_VAR tra_path="%MOD_FOLDER%/lang"
+BEGIN
+	// get all languages
+	GET_DIRECTORY_ARRAY lang_dir_array "%tra_path%" "[a-z0-9_]+"
+	ACTION_PHP_EACH lang_dir_array AS int=>dir BEGIN
+		OUTER_PATCH "%dir%" BEGIN
+			REPLACE_EVALUATE "\([0-9a-z-_]+\)$" BEGIN
+				PATCH_IF !("%MATCH1%" STR_EQ "iconv") BEGIN
+					SPRINT $lang_array("%MATCH1%") ""
+				END
+			END
+			""
+		END
+	END
+	// process them
+	ACTION_PHP_EACH lang_array AS language=>discard BEGIN
+		//do the conversion
+		LAF HANDLE_CHARSETS 
+			INT_VAR from_utf8=0 infer_charsets=1 
+			STR_VAR default_language="" language tra_path out_path="weidu_external/workspace"
+		END
+		// copy the files back (enforcing lowercase)
+		ACTION_BASH_FOR "%tra_path%/%language%" ".*\.tra$" BEGIN
+			OUTER_SPRINT name "%BASH_FOR_FILE%"
+			ACTION_TO_LOWER name
+			ACTION_IF permanent BEGIN
+				COPY + "weidu_external/workspace/%language%/%BASH_FOR_FILE%" "%tra_path%/%language%/%name%"			
+			END ELSE BEGIN
+				COPY "weidu_external/workspace/%language%/%BASH_FOR_FILE%" "%tra_path%/%language%/%name%"
+			END
+		END		
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////
+/*
+
+document{handle_unusable}
+{
+Take as input a string, assumed to be an item description. If on EE, remove the 'not usable by:' bit.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION handle_unusable
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	ACTION_IF enhanced_edition BEGIN
+		OUTER_SET strref=is_iwd?34753:is_bg2?74251:31522
+		ACTION_GET_STRREF strref unusable_string
+		OUTER_PATCH_SAVE value "%arguments%" BEGIN
+			index=INDEX_BUFFER ("%unusable_string%")
+			DELETE_BYTES index (BUFFER_LENGTH - index)
+		END
+	END ELSE BEGIN
+		OUTER_SPRINT value "%arguments%"
+	END
 END

@@ -20,14 +20,19 @@ BEGIN
 
 
    OUTER_SPRINT type mage
-
+	OUTER_SET mage_tra_loaded=1
    // data read-in
-   LAUNCH_ACTION_MACRO read_in_spells_per_level
-   LAUNCH_ACTION_MACRO read_in_individual_overrides
    LAUNCH_ACTION_MACRO read_in_mage_scripts
+      LAUNCH_ACTION_MACRO data_spells_by_level
+      LAUNCH_ACTION_MACRO read_in_spell_choices
+      LAUNCH_ACTION_MACRO read_in_individual_overrides
+	  LAM data_saving_throws
+	  LAM data_thac0
+
    ACTION_IF !disable_hlas BEGIN
       LAM read_in_hla_choices
    END
+   LAF check_if_hlas_are_innate RET hla_innate END
 
    LAF define_difficulty STR_VAR type=mage RET difficulty_variable END
    LAF define_difficulty STR_VAR type=mage_prep RET prep_difficulty_variable=difficulty_variable END
@@ -66,6 +71,8 @@ BEGIN
    END
 
       // core
+
+	  LAM read_in_spell_trigger_data
 
  ACTION_IF is_iwd BEGIN
    ACTION_IF !(version=1) BEGIN
@@ -211,7 +218,7 @@ BEGIN
       END
       PATCH_IF value>0 BEGIN
          PATCH_PRINT ~Determining spells and script for %filename%~
-         PATCH_SILENT
+        // PATCH_SILENT
          LPF enforce_mage STR_VAR arguments END
       END
 END
@@ -336,7 +343,8 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
 
      // irenicus should be designated as DEMONIC, should be immune to normal and +1 weapons (the player is), can detect invisible by script, and gets a Spellstrike scroll
      // for use against Pro/Magic
-     MAKE_PATCH
+		LAM data_scroll_resrefs
+	MAKE_PATCH
       race=>DEMONIC 
       class=>FIGHTER_MAGE 
       add_items=>immune2
@@ -382,7 +390,7 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
 	END
 	>>>>>>>>
 
-     LAF extend STR_VAR file=61drow bottom=dw#drow61 inline=yes END
+     LAF extend INT_VAR inline=1 STR_VAR file=61drow bottom=dw#drow61 END
 
      // liches who lack detect-invisible-by-script
      LAF edit_creature STR_VAR creature=~grvlch01 hlshang~ editstring=~add_effect_inline=>"opcode=>193 parameter2=>1"~ END
@@ -425,7 +433,7 @@ DEFINE_ACTION_FUNCTION mage_edits_before BEGIN
 
 	>>>>>>>>
 
-        LAF install STR_VAR file=dw#send7.baf inline=yes END
+		COMPILE ".../stratagems-inline/dw#send7.baf"
         LAF edit_creature STR_VAR creature=sendai7 editstring=~insert_script_high=>dw#send7~ END
 
 
@@ -582,7 +590,7 @@ THEN
 END
 >>>>>>>>
 
-    LAF extend_area_script STR_VAR area=~%IceIslandMaze_L1%~ top=killandris inline=yes END
+    LAF extend_area_script INT_VAR inline=1 STR_VAR area=~%IceIslandMaze_L1%~ top=killandris END
 
    END
 
@@ -706,9 +714,9 @@ DEFINE_ACTION_FUNCTION build_clone_scripts BEGIN
                 LAF warning STR_VAR warning=~Major Error in Clone-making script!~ END
             END
      OUTER_SPRINT variables ~%variables%&%simulacrum%~
-     LAF ssl_to_baf STR_VAR script=dw#mage variables location=~mage/ssl/bg2/main~ END
+     LAF ssl_to_baf STR_VAR script=dw#mage variables location=~ssl/bg2/main~ END
      OUTER_SPRINT variables ~%variables%&IsLich=True&ImmuneToL5=True&ImmuneToNormal=True~
-     LAF ssl_to_baf STR_VAR script=dw#lich variables location=~mage/ssl/bg2/main~ END
+     LAF ssl_to_baf STR_VAR script=dw#lich variables location=~ssl/bg2/main~ END
      COPY ~%workspace%/ssl_out/dw#mage.baf~ ~%workspace%/dw#2%kit%i.baf~
      COPY ~%workspace%/ssl_out/dw#lich.baf~ ~%workspace%/dw#2%kit%j.baf~
      COMPILE EVALUATE_BUFFER ~%workspace%/dw#2%kit%i.baf~
@@ -716,10 +724,10 @@ DEFINE_ACTION_FUNCTION build_clone_scripts BEGIN
    END
 
    OUTER_SPRINT variables ~%simulacrum%&IsHighLevel=True&IsKensai=True&IsBerserker=True&IsBarbarian=True~
-   LAF ssl_to_bcs STR_VAR script=dw#fgmag variables location= ~mage/ssl/bg2/main~ rename_to=dw#imgfm END
+   LAF ssl_to_bcs STR_VAR script="dw#fgmag=>dw#imgfm" variables location= ~ssl/bg2/main~ END
    OUTER_SPRINT variables ~%variables%&ImmuneToNormal=True~
-   LAF ssl_to_bcs STR_VAR script=dw#fminv variables location=~mage/ssl/bg2/main~ rename_to=dw#fmiim END
-   LAF ssl_to_bcs STR_VAR script=dw#mvamp variables location=~mage/ssl/bg2/main~ rename_to=dw#mvaim END
+   LAF ssl_to_bcs STR_VAR script="dw#fminv=>dw#fmiim" variables location=~ssl/bg2/main~ END
+   LAF ssl_to_bcs STR_VAR script="dw#mvamp=>dw#mvaim" variables location=~/ssl/bg2/main~ END
 
 
 
@@ -743,7 +751,7 @@ BEGIN
          END
          LAF get_mage_prebuff_variables STR_VAR game prebuff RET variables=variables END
          ACTION_BASH_FOR ~%MOD_FOLDER%/mage/ssl/%game%/special~ ~.*\.ssl~ BEGIN
-            LAF ssl_to_bcs STR_VAR variables= ~MageTypeContingencyFile=chaincont_core&%variables%~ script= ~%BASH_FOR_RES%~ location= ~mage/ssl/%game%/special~ rename_to= ~%tv%%BASH_FOR_RES%~  END
+            LAF ssl_to_bcs STR_VAR variables= ~MageTypeContingencyFile=chaincont_core&%variables%~ script= ~%BASH_FOR_RES%=>%tv%%BASH_FOR_RES%~ location= ~ssl/%game%/special~  END
          END
       END
    END
@@ -818,30 +826,12 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
 
    // melf, and EB
 
-   LAF install STR_VAR files=dw#melf.spl location=resource END
-   LAF clone_item INT_VAR allow_missing=1 STR_VAR item=~melfmet=>dw#melf eneblade=>dw#eneb~ END // may not be present on BG1 install
-   COPY_EXISTING dw#melf.spl override WRITE_ASCII 0xae dw#melf (8)              // legacy coding - but I control the file
-   COPY_EXISTING dw#melf.spl ~override/dw#eneb.spl~ WRITE_ASCII 0xae dw#eneb (8)
-   LAF clone_item STR_VAR item="dw#marker_file=>dw#missl" editstring="droppable=>0" END
-   
-   ACTION_FOR_EACH spell IN "%WIZARD_DISPEL_MAGIC%" "%WIZARD_TRUE_DISPEL_MAGIC%" "%CLERIC_DISPEL_MAGIC%" "%INQUIS_DISPEL_MAGIC%" BEGIN
-      COPY_EXISTING "%spell%.spl" override
-          PATCH_FOR_EACH resource IN "dw#melf" "dw#eneb" "dw#missl" BEGIN
-             LPF ADD_SPELL_EFFECT INT_VAR opcode=123 target=2 STR_VAR resource END
-          END
-      BUT_ONLY
-   END
-
+   LAF run STR_VAR file=handle_missiles locbase=caster_shared END
     //bg2-only section
 
   ACTION_IF is_bg2 BEGIN
 
          LAF run STR_VAR file=friendly_fiends locbase=fiend tra=fiend END
-       // copies required for CC
-
-       ACTION_FOR_EACH copy_name IN dw#sfc1 dw#sfc2 BEGIN
-         COPY_EXISTING "%WIZARD_SUMMON_FIEND_SCS%.spl" "override/%copy_name%.spl" REPLACE_TEXTUALLY "%WIZARD_SUMMON_FIEND%" "%copy_name%"
-       END
 
 
    // if SR is not installed, mark Mord. swords as vulnerable to ADHW
@@ -915,14 +905,21 @@ DEFINE_ACTION_FUNCTION make_mage_resources BEGIN
     // fiends and celestials
     
 
+	LAF check_label STR_VAR label=dw#fiend RET value END
+	ACTION_IF value BEGIN 
+		OUTER_SPRINT fiend_val True
+	END ELSE BEGIN
+		OUTER_SPRINT fiend_val False
+	END
     ACTION_IF demivrgvs BEGIN
-        LAF ssl_to_bcs STR_VAR script="dv_deva" locbase=fiend location="ssl/summon" variables="ImprovedFiends=True" rename_to=devagood END
-        LAF ssl_to_bcs STR_VAR script="dv_plan" locbase=fiend location="ssl/summon" variables="ImprovedFiends=True" rename_to=planet END
-    END ELSE BEGIN
-        LAF ssl_to_bcs STR_VAR script="devagood planet" locbase=fiend location="ssl/summon" variables="ImprovedFiends=True" END
-    END
-    LAF clone_script STR_VAR script="devagood=>devaevil planet=>plangood planet=>planevil" END
-    LAF clone_script STR_VAR script="devagood=>devaevil planet=>plangood planet=>planevil" END
+        LAF ssl_to_bcs STR_VAR script="dv_deva=>devagood" locbase=fiend location="ssl/summon" variables="ImprovedFiends=%fiend_val%"  END
+        LAF ssl_to_bcs STR_VAR script="dv_plan=>planet" locbase=fiend location="ssl/summon" variables="ImprovedFiends=%fiend_val%" END
+		LAF clone_script STR_VAR script="devagood=>devaevil planet=>plangood planet=>planevil" END    
+ END ELSE BEGIN
+        LAF ssl_to_bcs STR_VAR script="devagood plangood" locbase=fiend location="ssl/summon" variables="ImprovedFiends=%fiend_val%" END
+		LAF clone_script STR_VAR script="devagood=>devaevil plangood=>planet planet=>planevil" END
+   END
+    
 
 
 
@@ -1085,7 +1082,7 @@ DEFINE_ACTION_FUNCTION mislead BEGIN
    
    // install the script
 
-   LAF ssl_to_bcs STR_VAR script=dw#mislm location=~mage/ssl/main~ END
+   LAF ssl_to_bcs STR_VAR script=dw#mislm location=~ssl/main~ END
 
    // attach the script
    

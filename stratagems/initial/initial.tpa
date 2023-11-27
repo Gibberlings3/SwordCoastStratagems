@@ -1,18 +1,14 @@
-
-
 DEFINE_ACTION_FUNCTION initial BEGIN
-
 
 ////////////////////////
 ///// BG1/BG2
 ////////////////////////
 
-   LAF speed_debug STR_VAR string="Beginning Initial install" END
-
    // configure tobex first, DS assumes it
    ACTION_IF !enhanced_edition BEGIN
        LAF configure_tobex END
    END
+   
 
    // a (very) few bugfixes
 
@@ -35,17 +31,18 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 		END
 		APPEND "race.ids" "%ids%%TAB%MYCONID"
 		ACTION_FOR_EACH myconid IN icmyc01 icmyc02 BEGIN
-			ACTION_IF FILE_EXISTS_IN_GAME "%myconid%.cre" BEGIN
-				COPY_EXISTING "%myconid%.cre" override
-					WRITE_BYTE 0x272 ids
-				BUT_ONLY
-			END
+			COPY_EXISTING "%myconid%.cre" override
+				WRITE_BYTE 0x272 ids
+			BUT_ONLY
+			IF_EXISTS
 		END
 	END
 
    // bizarrely, Shocking Grasp is listed as a Combat Protection 
 
-   LAF edit_spell STR_VAR spell=WIZARD_SHOCKING_GRASP editstring="secondary=>10" END
+	COPY_EXISTING "%WIZARD_SHOCKING_GRASP%.spl" override
+		WRITE_BYTE 0x27 10
+	BUT_ONLY
 
    // the '15 hp damage' string for Enrage ought only to play for PCs
    
@@ -57,22 +54,23 @@ DEFINE_ACTION_FUNCTION initial BEGIN
           WRITE_LONG 0x2c 100
           
     COPY_EXISTING spcl321.spl override
-          LPF ALTER_EFFECT INT_VAR match_opcode=139 opcode=177 parameter1=30 parameter2=2 STR_VAR resource=dw#rgstr END
+          LPF ALTER_EFFECT INT_VAR silent=1 match_opcode=139 opcode=177 parameter1=30 parameter2=2 STR_VAR resource=dw#rgstr END // silent because ToF removes this 139 altogether
 
    // Fire Shield backlash should bypass MI
 
-   ACTION_FOR_EACH spell IN spcryod spimixd sppr951d sppr952d BEGIN
-     ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-       COPY_EXISTING "%spell%.spl" override
-         LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
-     END
+    ACTION_FOR_EACH spell IN spcryod spimixd sppr951d sppr952d BEGIN
+     
+        COPY_EXISTING "%spell%.spl" override
+			LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
+		IF_EXISTS
+		
    END
    ACTION_IF !demivrgvs BEGIN
     ACTION_FOR_EACH spell IN spwi403d spwi418d BEGIN
-     ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-       COPY_EXISTING "%spell%.spl" override
-         LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
-     END
+     
+		COPY_EXISTING "%spell%.spl" override
+			LPF ALTER_EFFECT INT_VAR match_opcode=12 bypass_mirror_image=1 END
+		IF_EXISTS
     END
    
    END
@@ -86,20 +84,28 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    
    // these innate spells are marked as 'wizard' or 'priest
 
-   LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell="BLACK_DRAGON_INSECT SHADOW_DRAGON_SHADOWS NYMPH_CONFUSION ABAZIGAL_SHOCKWAVE BURNING_MAN_CINDER_SHOWER BLUE_DRAGON_BREATH LAVA_BURST BEGUILE DEMOCHM SPYANC01" editstring="spell_type=>innate" END
+	ACTION_FOR_EACH spell IN BLACK_DRAGON_INSECT SHADOW_DRAGON_SHADOWS NYMPH_CONFUSION ABAZIGAL_SHOCKWAVE BURNING_MAN_CINDER_SHOWER BLUE_DRAGON_BREATH LAVA_BURST BEGUILE DEMOCHM SPYANC01
+	BEGIN
+			OUTER_SPRINT resref EVAL "%%spell%%"
+			COPY_EXISTING "%resref%.spl" override 	
+				WRITE_SHORT 0x1c 4
+			IF_EXISTS
+	END
 
 	// Dragon and Demon fear should have power=9 (not 0), so that Antimagic Shell and Pro/Magic Scrolls protect from it
 	
 	ACTION_FOR_EACH spell IN "%DRAGON_FEAR%" "%DEMON_FEAR%" BEGIN
-		ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-			COPY_EXISTING "%spell%.spl" override
-				LPF ALTER_EFFECT INT_VAR power=9 END
-			BUT_ONLY
-		END
+		COPY_EXISTING "%spell%.spl" override
+			LPF ALTER_EFFECT INT_VAR power=9 END
+		BUT_ONLY
+		IF_EXISTS
 	END
 
    // Protection from Magic scrolls don't remove undispellable buffs
    
+   ACTION_IF FILE_EXISTS_IN_GAME "dw#pmscr.spl" BEGIN
+	OUTER_SPRINT object "dw#pmscr.spl"s
+   END ELSE
    ACTION_IF item_revisions BEGIN 
 	OUTER_SPRINT object "scrl07.spl"
    END ELSE BEGIN
@@ -110,103 +116,50 @@ DEFINE_ACTION_FUNCTION initial BEGIN
        LPF CLONE_EFFECT INT_VAR match_opcode=142 opcode=221 timing=1 parameter1=10 parameter2 END
        END
        
-
-   ACTION_IF (is_bg2 && enhanced_edition) BEGIN
-
-     // on EE, certain weapons have been too-crudely given immunity to poison (they have multiple effects and the poison immunity
-     // blocks all of them)
-	  ACTION_IF !item_revisions BEGIN
-		ACTION_FOR_EACH item IN blun30 blun30c halb05 halb11 BEGIN
-           COPY_EXISTING "%item%.itm" override
-                LPF DELETE_EFFECT INT_VAR match_opcode=324 END
-                LPF CLONE_EFFECT INT_VAR match_opcode=12 match_parameter2b=32 opcode=324 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
-                LPF CLONE_EFFECT INT_VAR match_opcode=324 parameter2=77 END
-           BUT_ONLY
-		END
-		COPY_EXISTING sw2h18.itm override
-               LPF DELETE_EFFECT INT_VAR match_opcode=324 END
-               LPF DELETE_EFFECT INT_VAR match_opcode=12 END
-               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=324 target=2 parameter2=55 STR_VAR resource="%SOURCE_RES%" END
-               LPF CLONE_EFFECT INT_VAR match_opcode=324 END
-               LPF ADD_ITEM_EFFECT INT_VAR type=99 opcode=12 target=2 parameter2b=32 timing=9 probability1=10 dicenumber=2 dicesize=12 END
-		BUT_ONLY
-	  END
-      COPY_EXISTING marili.itm override
-                LPF DELETE_EFFECT INT_VAR match_opcode=318 END
-                LPF CLONE_EFFECT INT_VAR match_opcode=25 opcode=318 parameter1=0 parameter2=55 timing=0 duration=0 savingthrow=0 STR_VAR resource="%SOURCE_RES%" END
-                LPF CLONE_EFFECT INT_VAR match_opcode=318 parameter2=77 END
-      BUT_ONLY
-
-
-   END
-   
-   ACTION_IF enhanced_edition BEGIN
-
-      // also on EE, the default summoned-AI script gets confused if its target goes invisible
-      
-      LAF ALTER_SCRIPT_BLOCK 
-              STR_VAR script=bdsum00 
-                      match=AttackOneRound 
-                      swap_out1="!InParty(LastSeenBy(Myself))" 
-                      swap_in1="!InParty(LastSeenBy(Myself))See(LastSeenBy(Myself))" 
-                      swap_out2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)" 
-                      swap_in2="!Allegiance(LastSeenBy(Myself),EVILCUTOFF)See(LastSeenBy(Myself))" 
-      END
-
-
-   END
    
    // on non-EE, Iron Skins is marked as SPELLPROTECTIONS, not COMBATPROTECTIONS
    // (given it's tweaked in EE, I feel content to call this a bug)
    
 	ACTION_IF !enhanced_edition BEGIN
-        LAF edit_spell STR_VAR spell= ~%CLERIC_IRONSKIN%~ editstring=~secondary=>7~ END
+		COPY_EXISTING "%CLERIC_IRONSKIN%.spl" override
+			WRITE_BYTE 0x27 7
+		BUT_ONLY
+		IF_EXISTS
 	END
 
-   // on BG1, Clair De'lain should have a bow and doesn't. BGEE tries to fix this, but messes it up.
+   // on BG1, Clair De'lain should have a bow and doesn't. BGEE tries to fix this, but messes it up. (As of 2.6, it works ok)
    
-   ACTION_IF is_bg1 BEGIN
+   ACTION_IF is_bg1 && !enhanced_edition BEGIN
      COPY_EXISTING "%tutu_var%claird.cre" override
       REMOVE_CRE_ITEM "arow02 " "%tutu_var%arow02" "%tutu_var%bow04"
       ADD_CRE_ITEM "%tutu_var%bow04" #0 #0 #0 NONE WEAPON EQUIP TWOHANDED
       ADD_CRE_ITEM "%tutu_var%arow02" #10 #0 #0 NONE QUIVER
      BUT_ONLY
    END
-
-	//bgee gives katanas to a few ogre mages, but messes it up
+   
+   // beholder antimagic ought to be level >=1 so as to break through Spell Shield
+   
+   spl.edit[%BEHOLDER_ANTIMAGIC_RAY% %HIVE_MOTHER_ANTIMAGIC_RAY% %INNATE_BEHOLDER_ANTIMAGIC_RAY%|allow_missing:i=1]
+   [
+		m.ab_fx.alter{s_power=(s_power=0?1:s_power)}  
+   ]
+   
+   // in EE, temple dispel ought to be high enough level to remove (most) effects
+   
+	ACTION_IF enhanced_edition BEGIN // because parameter2=2 for opcode 146 is EE-only	
 	
-	ACTION_IF is_bg1 && enhanced_edition BEGIN
-		COPY_EXISTING 
-			"sw1h43.itm" "override/dw#ogkat.itm"
-			"sw1h44.itm" "override/dw#ogka2.itm"
-		WRITE_ASCII 0x22 S1
-		WRITE_LONG 0x18 THIS BAND (BNOT BIT2)
-		ACTION_FOR_EACH ogremage IN kahrk droth ogrema_d BEGIN
-			COPY_EXISTING "%ogremage%.cre" override
-				REMOVE_CRE_ITEM sw1h43
-				ADD_CRE_ITEM sw1h43 #0 #0 #0 none inv
-				ADD_CRE_ITEM dw#ogkat #0 #0 #0 undroppable weapon EQUIP
-		END
-		COPY_EXISTING "ogrema03.cre" override
-			REMOVE_CRE_ITEM sw1h44
-			ADD_CRE_ITEM sw1h44 #0 #0 #0 none inv
-			ADD_CRE_ITEM dw#ogka2 #0 #0 #0 undroppable weapon EQUIP
-	END
+		spl.edit[%CLERIC_DISPEL_MAGIC%]
+		[
+			m.ab.clone{s_level=2}
+			m.ab_fx.delete{p_level=1}
+			m.ab_fx.add{s_target=2 s_timing=1 s_opcode=146 s_parameter1=20 s_parameter2=2 s_resource:=%CLERIC_DISPEL_MAGIC%|match_parent="p_level=1"}
+		]
+	
+	END   
 	
    // a couple of problems in SR v4
    
    ACTION_IF demivrgvs BEGIN
-   
-      // Holy Smite blindness has the wrong duration
-
-      ACTION_IF FILE_EXISTS_IN_GAME "sppr313e.spl" BEGIN
-         OUTER_SPRINT file sppr313e
-      END ELSE BEGIN
-         OUTER_SPRINT file sppr313
-      END
-      COPY_EXISTING "%file%.spl" override
-         LPF ALTER_EFFECT INT_VAR match_opcode=74 duration=6 END
-      BUT_ONLY
       
       // summoned Death Knights ought to have their allegiance set to Match Target, else hostile ones get attacked
       
@@ -221,46 +174,25 @@ DEFINE_ACTION_FUNCTION initial BEGIN
    
    // detectable spells/items
 
-   LAF speed_debug STR_VAR string="Running DS" END
-
    LAF check_label STR_VAR label=dw#detectablespells RET value END // don't install it twice! (It's idempotent, but wastes time)
    ACTION_IF !value BEGIN
         LAF make_label STR_VAR label=dw#detectablespells END
-        LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
+        LAF detectable_spells INT_VAR skip_legacy=1 END  // core DS - copy of the SoD version, adapted for SCS
    END
    CLEAR_IDS_MAP // make sure any DS changes to splstate/stats are logged
    
-   LAF speed_debug STR_VAR string="Running Detectable Items" END
-
    LAF detectable_items END
-
-   LAF speed_debug STR_VAR string="Running Detectable Clouds" END
-
    LAF run STR_VAR file=detectcloud END
-
-   LAF speed_debug STR_VAR string="Running general creature patch" END
-
    LAF general_creature_patch END
-
-   LAF speed_debug STR_VAR string="Running misc stuff" END
-
    LAF run STR_VAR file=sim_compat END
    LAF level_one_innates END
-
    LAF misc_ids END
    
-   // spellbook, for debugging
-	LAF run STR_VAR file=universal_spellbook locbase=spell tra=spell END
-
-
 ////////////////////////
 ///// BG2
 ////////////////////////
    ACTION_IF is_bg2 BEGIN
    
-     LAF speed_debug STR_VAR string="Running BG2 block" END
-
-
      // fix the Spell Shield spell on non-EE installs
      ACTION_IF !enhanced_edition BEGIN
         LAF spell_shield END
@@ -291,39 +223,51 @@ DEFINE_ACTION_FUNCTION initial BEGIN
       END
       LAF run STR_VAR file=~bg1fix~ END
    END
+  
+////////////////////////////////////////
+///// Core SCS spell-system changes
+//////////////////////////////////////////
+   
+	OUTER_SPRINT component_loc spell
+	LAF run STR_VAR file=install_spell_resources version=core-scs tra=spell END
+   
 
-////////////////////////
-///// The old AI-initialise bit (must *precede* spell_core because if SR is installed we need to load friendly_fiends, which has high-level scripting that needs DS and the difficulty system) 
-////////////////////////
+
+////////////////////////////////////////////////////////
+///// The old AI-initialise bit ////////////////////////
+////////////////////////////////////////////////////////
 
    OUTER_SPRINT component_loc caster_shared
    LAF run STR_VAR file=ai_initialise END
    OUTER_SPRINT component_loc initial
    CLEAR_IDS_MAP // make sure any changes to splstate/stats are logged
 
+// if they don't exist already (which is the case only if we've ini-skipped fiend_summoning for some reason), build
+// NPC copies of the fiend-summoning spells. This is to isolate SR and aTweaks changes from SCS changes.
 
+   ACTION_FOR_EACH spell IN WIZARD_SUMMON_FIEND WIZARD_CACOFIEND WIZARD_GATE CLERIC_GATE BEGIN
+      OUTER_SPRINT resref EVAL "%%spell%%"
+      OUTER_SPRINT spell_new "%spell%_SCS"
+      OUTER_SPRINT resref_new EVAL "%%spell_new%%"
+      ACTION_IF !FILE_EXISTS_IN_GAME "%resref_new%.spl" && FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+            COPY_EXISTING "%resref%.spl" "override/%resref_new%.spl"
+      END
+
+   END
 
 ////////////////////////
-///// Spell core
+///// On non-EE installs, (hackily) grant total immunity to elemental AoE to anything 100% immune to that damage type
 ////////////////////////
 
+	ACTION_IF !enhanced_edition BEGIN
+		LAF run STR_VAR file=elemental_area_immunity END
+	END
 
-	LAF install_spell_core END
-
-////////////////////////
-///// Prebuffs (must *follow* spell_core so we replicate the modified spells)
-////////////////////////
-	
-	OUTER_SPRINT component_loc caster_shared
-	LAF build_prebuff_spells END
-	OUTER_SPRINT component_loc initial // yes, the architecture here has got hideously tangled, why do you ask?
-	
-	
 ////////////////////////
 ///// Update antimagic descriptions to reflect any changes
 ////////////////////////
 
-  LAF run STR_VAR file=correct_antimagic_descriptors locbase=spell tra=spell END
+  LAF run STR_VAR file=correct_antimagic_descriptors tra=spell END
 
 
 
@@ -331,26 +275,25 @@ DEFINE_ACTION_FUNCTION initial BEGIN
 ///// Easter egg
 ////////////////////////
 
-  ACTION_IF is_bg2 BEGIN
-  LAF check_ini STR_VAR ini=disable_easter_eggs RET value END
-  ACTION_IF !value BEGIN
+	ACTION_IF is_bg2 BEGIN
+		LAF check_ini STR_VAR ini=disable_easter_eggs RET value END
+		ACTION_IF !value BEGIN
 
-   MAKE_PATCH
-      say_name=>50074
-      say_description=>50075
-   END
-   LAF clone_item STR_VAR item="book60=>dw#eegg1" edits=patch_data END
+			itm.copy[book60=>dw#eegg1]
+			[
+				m_unidentified_name:=@50074
+				m_unidentified_description:=@50075
+			]
 
-   MAKE_PATCH
-      match=>"container_xloc=661"
-      item_resource=>dw#eegg1
-   END
-   LAF edit_area STR_VAR area=AR1515 editstring="add_item=>patch_data" END
+			are.edit[ar1515]
+			[
+				m.container_item.add{s_resref:=dw#eegg1|match_parent="p_x=661"}
+			]
 
-  END
+		END
 
 
-  END
+	END
 
 END
 
@@ -369,8 +312,12 @@ END
 
 DEFINE_ACTION_FUNCTION level_one_innates BEGIN
 
-   LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell="PALADIN_SUMMON_DEVA BLACKGUARD_SUMMON_FALLEN_DEVA" editstring="level=>1" END
-
+	ACTION_FOR_EACH spell IN "%PALADIN_SUMMON_DEVA%" "%BLACKGUARD_SUMMON_FALLEN_DEVA%" BEGIN
+		COPY_EXISTING "%spell%.spl" override
+			WRITE_LONG 0x34 1
+		IF_EXISTS
+		BUT_ONLY
+	END
 
 END
 
@@ -380,95 +327,91 @@ END
 
 DEFINE_ACTION_FUNCTION random_useful_items BEGIN
 
+	ACTION_FOR_EACH item IN dw#noptn dw#magat dw#attac dw#move0 dw#nodor dw#noinv dw#deseq dw#area dw#nopre dw#dispe BEGIN
+		COPY_EXISTING "dw#marker_file.itm" "override/%item%.itm"
+			WRITE_LONG 0x18 (THIS BAND (BNOT BIT2))
+	END
 
-  LAF clone_item STR_VAR item=~dw#marker_file=>dw#noptn dw#marker_file=>dw#magat dw#marker_file=>dw#attac dw#marker_file=>dw#move0 dw#marker_file=>dw#nodor dw#marker_file=>dw#noinv dw#marker_file=>dw#deseq dw#marker_file=>dw#area dw#marker_file=>dw#nopre dw#marker_file=>dw#dispe~ editstring=~droppable=>0~ END
-  LAF install INT_VAR overwrite=0 STR_VAR file="dw#mgsee.spl dw#silin.spl dw#brkin.spl" location=~spl~ END
+    LAF install INT_VAR overwrite=0 STR_VAR file="dw#mgsee.spl dw#silin.spl dw#brkin.spl" location=~spl~ END
 
 END
 ///////////////////////////////////////////////////////////////////////////
 // general patch on all creatures
 ///////////////////////////////////////////////////////////////////////////
 DEFINE_ACTION_FUNCTION general_creature_patch BEGIN
+	
+	LAM data_thac0
+	LAM data_saving_throws
+	// much of this is hardcoded for speed
 
-LAM read_in_saving_throws
-LAM read_in_thac0
-// much of this is hardcoded for speed
+	LAF check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
+	LAF check_ini STR_VAR ini=do_not_fix_thac0_errors RET ignore_thac0=value END
 
-LAF check_ini STR_VAR ini=do_not_fix_save_errors RET ignore_saves=value END
-LAF check_ini STR_VAR ini=do_not_fix_thac0_errors RET ignore_thac0=value END
-
-OUTER_SPRINT skeleton ~~
-OUTER_SET counter=0
-OUTER_SET counter2=0
-COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
- PATCH_TRY
-   PATCH_SILENT
-   SPRINT filename ~%SOURCE_RES%~
-   LPF CRE_read_effect_type RET value END
-   PATCH_IF value=0 BEGIN
-      LPF FJ_CRE_EFF_V2 END
-   END
-   // these edits are BG1/2 only
-   PATCH_IF !is_iwd BEGIN
-    LPF CRE_read_race RET race=value END
-    PATCH_MATCH ~%race%~ WITH
-    LYCANTHROPE DOPPLEGANGER BEGIN
-       LPF CRE_general STR_VAR arguments=MONSTER END
-    END
-    DEFAULT END
-    LPF CRE_read_class RET class=value END
-    PATCH_MATCH ~%class%~ WITH
-    SKELETON SKELETON_WARRIOR BEGIN
-      SPRINT skeleton ~%skeleton% %filename%~
-    END
-    DEFAULT END
-    // level adjustment - deals with the various BG1 creatures with Lev2=30
-    // hardcoded for speed
-    PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
-      WRITE_BYTE 0x235 1
-    END
-   END
-   // save and THAC0 fixes are in IWD too
-   PATCH_IF !ignore_thac0 BEGIN
-      LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
-   END
-   PATCH_IF !ignore_saves BEGIN
-      LPF CRE_enforce_saves STR_VAR arguments=at_worst END
-   END
-   SET counter+=1
-   SET counter2+=1
-   PATCH_IF counter2=100 BEGIN
-      SET counter2=0
-      PATCH_PRINT ~patched %counter% files~
-   END
- WITH DEFAULT
+	ACTION_CLEAR_ARRAY skeleton_array
+	OUTER_SPRINT skeleton ~~
+	OUTER_SET counter=0
+	OUTER_SET counter2=0
+	OUTER_SET lycanthrope = IDS_OF_SYMBOL (race LYCANTHROPE)
+	OUTER_SET doppleganger = IDS_OF_SYMBOL (race DOPPLEGANGER)
+	OUTER_SET skeleton = IDS_OF_SYMBOL (class SKELETON)
+	OUTER_SET skeleton_warrior = IDS_OF_SYMBOL (class SKELETON_WARRIOR)
+	COPY_EXISTING_REGEXP GLOB ".*\.cre" override
+		PATCH_TRY
+			PATCH_SILENT
+			SPRINT filename ~%SOURCE_RES%~
+			PATCH_IF (BYTE_AT 0x33)=0 BEGIN
+				LPF FJ_CRE_EFF_V2 END
+			END
+			// these edits are BG1/2 only
+			PATCH_IF !is_iwd BEGIN
+			PATCH_IF (BYTE_AT 0x272)=lycanthrope || (BYTE_AT 0x272)=doppleganger BEGIN
+				WRITE_BYTE 0x271 255
+			END ELSE
+			PATCH_IF (BYTE_AT 0x273)=skeleton || (BYTE_AT 0x273)=skeleton_warrior BEGIN
+				SPRINT $skeleton_array("%SOURCE_RES%") ""
+			END
+			// level adjustment - deals with the various BG1 creatures with Lev2=30
+			// hardcoded for speed
+			PATCH_IF (BYTE_AT 0x235=30) & (BYTE_AT 0x234)<=15 BEGIN
+				WRITE_BYTE 0x235 1
+			END
+			END
+			// save and THAC0 fixes are in IWD too
+			PATCH_IF !ignore_thac0 BEGIN
+				LPF cre_enforce_thac0_notstruct STR_VAR arguments=at_worst END
+			END
+			PATCH_IF !ignore_saves BEGIN
+				LPF cre_enforce_saves_notstruct STR_VAR arguments=at_worst END
+			END
+			SET counter+=1
+			SET counter2+=1
+			PATCH_IF counter2=100 BEGIN
+				SET counter2=0
+				PATCH_PRINT ~patched %counter% files~
+			END
+		WITH DEFAULT
 			LPF regexp_warning STR_VAR parent=general_creature_patch END
- END
-BUT_ONLY
-VERBOSE
+		END
+	BUT_ONLY
+	VERBOSE
 
-// handle skeletons with weak resistances
-ACTION_IF "%skeleton%" STRING_COMPARE_CASE "" BEGIN
-ACTION_CLEAR_ARRAY patch_data
-ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
-   match=>"class=SKELETON or class=SKELETON_WARRIOR"
-   resist_coldGT=>100
-   resist_electricityGT=>100
-   resist_slashingGT=>50
-   resist_piercingGT=>50
-   resist_missileGT=>50
-END
-ACTION_CLEAR_ARRAY patch_data_sw
-ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data_sw BEGIN
-   match=>"class=SKELETON_WARRIOR"
-   general=>UNDEAD
-   race=>SKELETON
-   delete_effect=>"opcode=297"
-   add_effect_inline=>"opcode=>297 parameter2=>1"
-END
-LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data END
-LAF edit_creature STR_VAR creature=~%skeleton%~ edits=patch_data_sw END
-END
+	// handle skeletons with weak resistances
+
+	ACTION_PHP_EACH skeleton_array AS skeleton=>discard BEGIN
+		COPY_EXISTING "%skeleton%.cre" override
+			WRITE_BYTE 0x5a (THIS>100)?THIS:100
+			WRITE_BYTE 0x5b (THIS>100)?THIS:100
+			WRITE_BYTE 0x5f (THIS>100)?THIS:100
+			WRITE_BYTE 0x60 (THIS>50)?THIS:50
+			WRITE_BYTE 0x62 (THIS>50)?THIS:50
+			WRITE_BYTE 0x63 (THIS>50)?THIS:50
+			PATCH_IF (BYTE_AT 0x273)=skeleton_warrior BEGIN
+				WRITE_BYTE 0x271 4 //general=undead
+				WRITE_BYTE 0x272 115 // race=skeleton
+				LPF ADD_CRE_EFFECT INT_VAR opcode=297 timing=9 target=1 parameter2=1 END
+			END
+
+	END
 
 END
 
@@ -499,121 +442,36 @@ END
 
 DEFINE_ACTION_FUNCTION misc_ids BEGIN
 
-   // gtimes.ids - need to prevent repeated entries, which are messing with
-   // automatic replacement.
-   // in BG, a day is 7200 seconds, i.e. 24x300 seconds. BGT defines an hour
-   // as 300 seconds and no-one seems to disagree. A round is 6 seconds and 
-   // a turn is 10 rounds.
-   // to avoid redundancy, we do rounds only from 1-10, turns 2-15, hours, 4-12
+	// gtimes.ids - need to prevent repeated entries, which are messing with
+	// automatic replacement. We basically follow the model of bg2ee
 
+	// read in a copy of unmodded bg2ee
 
-   // read gtimes.ids into an array
+	LAF 2da_read STR_VAR file=gtimes.ids path="%MOD_FOLDER%/initial/resource" RET_ARRAY gtimes_ee=array gtimes_ee_rows=rows END
 
-   COPY_EXISTING gtimes.ids override
-       COUNT_2DA_ROWS 2 rowcount
-       FOR (i=0;i<rowcount;i+=1) BEGIN
-           READ_2DA_ENTRY i 1 2 idsname
-           READ_2DA_ENTRY i 0 2 idsnum
-           SPRINT $gtimes_entries("%idsname%") "%idsnum%"
-       END
-   BUT_ONLY
+	// read in actual gtimes
 
-   // overlay the day/turn/round data we want
-   
-   // numbers to ASCII
+	LAF 2da_read STR_VAR file=gtimes.ids RET_ARRAY gtimes_old=array gtimes_old_rows=rows END
 
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY ascii_num BEGIN
-        1=>ONE
-        2=>TWO
-        3=>THREE
-        4=>FOUR
-        5=>FIVE
-        6=>SIX
-        7=>SEVEN
-        8=>EIGHT
-        9=>NINE
-        10=>TEN
-        11=>ELEVEN
-        12=>TWELVE
-        13=>THIRTEEN
-        14=>FOURTEEN
-        15=>FIFTEEN
-        16=>SIXTEEN
-        17=>SEVENTEEN
-        18=>EIGHTEEN
-        19=>NINETEEN
-        20=>TWENTY
-   END
+	// merge arrays
 
-   // days
-   
-   OUTER_SPRINT $gtimes_entries(ONE_DAY) 7200
-   OUTER_FOR (i=2;i<21;i+=1) BEGIN
-      OUTER_SPRINT name $ascii_num(~%i%~)
-      OUTER_SET length=7200*i
-      OUTER_SPRINT $gtimes_entries(~%name%_DAYS~) ~%length%~
-   END
+	LAF array_join STR_VAR array1=gtimes_ee array2=gtimes_old RET_ARRAY gtimes=array END
+	LAF array_join STR_VAR array1=gtimes_ee_rows array2=gtimes_old_rows RET_ARRAY gtimes_rows=array END
 
-   // special cases
-   OUTER_SPRINT $gtimes_entries(THIRTY_DAYS) 216000
-   OUTER_SPRINT $gtimes_entries(FIFTY_DAYS) 360000
-   OUTER_SPRINT $gtimes_entries(TWENTYFIVE_DAYS) 180000
-   OUTER_SPRINT $gtimes_entries(FORTY_DAYS) 288000
+	// remove any duplicates
 
-   // rounds
-   
-   OUTER_SPRINT $gtimes_entries(ONE_ROUND) 6
-   OUTER_FOR (i=2;i<11;i+=1) BEGIN
-      OUTER_SPRINT name $ascii_num(~%i%~)
-      OUTER_SET length=6*i
-      OUTER_SPRINT $gtimes_entries(~%name%_ROUNDS~) ~%length%~
-   END
+	ACTION_PHP_EACH gtimes_rows AS row=>discard BEGIN
+		OUTER_SET int=$gtimes("%row%" int)
+		OUTER_WHILE VARIABLE_IS_SET $gtimes_duplicate_check("%int%") BEGIN
+			OUTER_SET ++int
+		END
+		OUTER_SET $gtimes("%row%" int)=int
+		OUTER_SET $gtimes_duplicate_check("%int%")=1
+	END
 
-   // turns
-
-   OUTER_FOR (i=2;i<16;i+=1) BEGIN
-      OUTER_SPRINT name $ascii_num(~%i%~)
-      OUTER_SET length=60*i
-      OUTER_SPRINT $gtimes_entries(~%name%_TURNS~) ~%length%~
-   END
-
-   //hours
-
-   OUTER_FOR (i=4;i<13;i+=1) BEGIN
-      OUTER_SPRINT name $ascii_num(~%i%~)
-      OUTER_SET length=300*i
-      OUTER_SPRINT $gtimes_entries(~%name%_HOURS~) ~%length%~
-   END
-   
-   //minutes
-   
-   OUTER_SPRINT $gtimes_entries(ONE_MINUTE) 5
-   OUTER_FOR (i=2;i<=20;i+=1) BEGIN
-      OUTER_SPRINT name $ascii_num(~%i%~)
-      OUTER_SET length=5*i
-      OUTER_SPRINT $gtimes_entries(~%name%_MINUTES~) ~%length%~
-   END
-   
-   // special cases
-   
-   OUTER_SPRINT $gtimes_entries(THIRTY_MINUTES) 150
-   OUTER_SPRINT $gtimes_entries(FORTY_MINUTES) 200
-   OUTER_SPRINT $gtimes_entries(FIFTY_MINUTES) 250
-
-   // new blank gtimes.ids
-   
-   COPY ".../stratagems-inline/blank" "override/gtimes.ids"
-
-   // go through the array and output it, tweaking duplicate numbers to be non-duplicates
-
-   ACTION_PHP_EACH gtimes_entries AS name=>num BEGIN
-      OUTER_SET num_here=num
-      OUTER_WHILE VARIABLE_IS_SET $gtimes_number_used("%num_here%") BEGIN
-         OUTER_SET num_here +=1
-      END
-      APPEND gtimes.ids "%num_here% %name%"
-      OUTER_SET $gtimes_number_used("%num_here%")=1
-   END
+	// write back
+	
+	LAF 2da_write STR_VAR file=gtimes.ids array=gtimes END
 END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -638,205 +496,39 @@ END
 DEFINE_ACTION_FUNCTION initial_bg2_misc BEGIN
 
 /////// give Celestials their own Specifics entry
+// skip for now, probably better way through
 
-LAF edit_creature
-		 INT_VAR allow_missing=1
-         STR_VAR creature=~devagood devaevil plangood planevil ca#dastr ca#dmond ca#dmova ca#plan~
-                 editstring=~specifics=>182~
-         END
+/*
+	LAF resolve_ids STR_VAR ids=CELESTIAL idsfile=specifics RET value END
+	COPY_EXISTING "%creature%.cre" override
+		WRITE_BYTE 0x274 value
+	IF_EXISTS
+*/
 
 /////// replace a couple of scripts, apparently randomly confused by SCS, with more robust ones
 
-LAF install STR_VAR file=~werewyv.baf ds52329.baf~ location=baf END
-
-// fix the Ascension/Fixpack incompatibility (because I'm a nice guy) - shouldn't be needed on EE install
-
-ACTION_IF ( (MOD_IS_INSTALLED ~Setup-Ascension.tp2~ 0) && !enhanced_edition) BEGIN
-   ACTION_IF !FILE_EXISTS ~override/player1.dlg~ BEGIN
-      WITH_TRA ~%MOD_FOLDER%/tra/%LANGUAGE%/player1.tra~ BEGIN COPY_EXISTING ~player1.dlg~ ~override~ END
-    OUTER_INNER_PATCH ~~ BEGIN
-      PATCH_IF !(FILE_CONTAINS ~override/player1.dlg~ ~slayer3~) BEGIN
-          INNER_ACTION BEGIN
-                COMPILE ~%MOD_FOLDER%/%component_loc%/dlg/player1.d~
-                   USING  ~%MOD_FOLDER%/tra/english/player1.tra~
-                          ~%MOD_FOLDER%/tra/ee/%LANGUAGE%/player1.tra~
-          END
-      END
-    END
-    ADD_JOURNAL EXISTING @314 @315 @316 USING  ~%MOD_FOLDER%/tra/english/player1.tra~
-                          ~%MOD_FOLDER%/tra/ee/%LANGUAGE%/player1.tra~ END
-END
+	LAF install STR_VAR file=~werewyv.baf ds52329.baf~ location=baf END
 
 // rudimentary scripting shift to make enemy-summoned Planetars and Devas avoid healing the party and use their powers on allies instead
 
-ACTION_FOR_EACH script IN plangood devagood BEGIN
-   ACTION_IF !enhanced_edition BEGIN
-      COPY_EXISTING "%script%.bcs" override
-        DECOMPILE_AND_PATCH BEGIN
-           REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,GOODCUTOFF)See([PC])"
-        END
-      BUT_ONLY
-   END
-   LAF CLONE_SCRIPT_BLOCK 
-          STR_VAR script
-                  match=~See(\[PC\])~
-                  swap_out1=~See(\[PC\])~
-                  swap_in1=~See([EVILCUTOFF.HUMANOID])~
-                  swap_out2=~Allegiance(Myself,GOODCUTOFF)~
-                  swap_in2=~Allegiance(Myself,EVILCUTOFF)~
-   END
-END
+	ACTION_IF !enhanced_edition BEGIN
+		ACTION_FOR_EACH script IN plangood devagood BEGIN
+			COPY_EXISTING "%script%.bcs" override
+				DECOMPILE_AND_PATCH BEGIN
+				   REPLACE_TEXTUALLY "See(\[PC\])" "Allegiance(Myself,GOODCUTOFF)See([PC])"
+				END
+			BUT_ONLY
+			LAF CLONE_SCRIPT_BLOCK 
+				  STR_VAR script
+						  match=~See(\[PC\])~
+						  swap_out1=~See(\[PC\])~
+						  swap_in1=~See([EVILCUTOFF.HUMANOID])~
+						  swap_out2=~Allegiance(Myself,GOODCUTOFF)~
+						  swap_in2=~Allegiance(Myself,EVILCUTOFF)~
+			END
+		END
+	END
 
-
-END
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///// spell core
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-DEFINE_ACTION_FUNCTION install_spell_core BEGIN
-
-   // preamble piece: install BG2 version of Mordenkainen's Sword on IWD
-
-   ACTION_IF is_iwd BEGIN
-       OUTER_SPRINT component_loc iwdspells
-       LAF run STR_VAR files=bg2spells_morsword locbase=iwdspells END
-   END
-
-   OUTER_SPRINT component_loc spell
-   // definition blocks
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install BEGIN
-           modify_breach => dw#breach
-           web_and_the_large => dw#web_large
-           elemental_area_immunity=>dw#elem_area_immune
-           fiend_summoning=>dw#fiend_summoning
-           npc_fiend_summoning_backup=>dw#fiend_summoning_backup
-           bonus_spell_scrolls=>dw#extra_scrolls
-           freedom_scrolls=>dw#freedomscroll
-           elemental_arrows=>dw#elemental_arrows
-           extra_healing=>dw#extra_healing
-		   nature_beauty_blindness=>dw#nature_beauty
-   END
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_no_SR BEGIN
-           nerf_greater_restoration => dw#restoration
-           pro_normal_missiles => dw#pro_NM
-           spellstrike_vs_pm_scroll => dw#spellstrikevsPM
-           antimagic_penetrates_ii => dw#antimagicII
-           blade_barrier => dw#blades
-           power_word_blind => dw#PWblind
-           meteors => dw#meteor
-           insect_plague => dw#insectplague
-           universal_trigger => dw#sequencer_universal
-           truesight_blindness => dw#truesightblindness
-           mantle => dw#mantle
-           elemental_summoning=>dw#elemental_summoning
-           harm=>dw#harm
-           spell_immunity=>dw#spellimm
-           skull_trap=>dw#skulltrap
-           clone_slots=>dw#clone_slots
-           npc_symbols=>dw#npcsymbols
-   END
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_divine BEGIN
-           sanctity_of_mind=>dw#sanctity
-           circle_of_bones_duration=>dw#circleofbones
-           rebalance_lathander=>dw#rebalancelathander
-           enhance_thorn_spray=>dw#thornspray
-           entropy_shield_abjuration=>dw#entropyshield
-           nerf_beetles=>dw#nerfbeetles
-   END
-   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_install_iwd_arcane BEGIN
-           acid_storm_tonedown=>dw#acidstorm
-           rebalance_force_missiles=>dw#forcemissiles
-           create_boneguard=>dw#createboneguard
-   END
-   // skip some, depending on install
-   ACTION_IF !is_bg2 BEGIN
-      ACTION_FOR_EACH file IN bonus_spell_scrolls freedom_scrolls fiend_summoning BEGIN
-         OUTER_SPRINT $skip_component("%file%") ""
-      END
-   END
-   ACTION_IF is_iwd BEGIN
-      LAF check_label STR_VAR label=dw#bg2spells_insect RET value END
-      ACTION_IF !value BEGIN
-         OUTER_SPRINT $skip_component("insect_plague") ""
-      END
-   END
-   ACTION_IF !(is_bg2 || is_iwd) BEGIN
-      ACTION_FOR_EACH file IN spellstrike_vs_pm_scroll power_word_blind clone_slots npc_symbols acid_storm_tonedown sanctity_of_mind BEGIN
-         OUTER_SPRINT $skip_component("%file%") ""
-      END
-   END
-   ACTION_IF !is_bg1 BEGIN
-      ACTION_FOR_EACH file IN elemental_arrows extra_healing BEGIN
-         OUTER_SPRINT $skip_component("%file%") ""
-      END
-   END
-   ACTION_IF is_iwd BEGIN
-      ACTION_FOR_EACH file IN elemental_summoning BEGIN
-         OUTER_SPRINT $skip_component("%file%") ""
-      END
-   END
-   ACTION_IF enhanced_edition BEGIN
-      OUTER_SPRINT $skip_component("nerf_greater_restoration") ""
-   END ELSE BEGIN
-      OUTER_SPRINT $skip_component("rebalance_force_missiles") ""
-   END
-   
-   ACTION_IF demivrgvs BEGIN
-      OUTER_SPRINT $skip_component("create_boneguard") ""
-   END
-
-   // installation
-
-   ACTION_PHP_EACH spell_install AS files=>label BEGIN
-     LAF install_spell_helper STR_VAR files label END
-   END
-   ACTION_IF !demivrgvs BEGIN
-      ACTION_PHP_EACH spell_install_no_SR AS files=>label BEGIN
-           LAF install_spell_helper STR_VAR files label END
-      END
-   END
-   ACTION_IF iwd_arcane BEGIN
-      ACTION_PHP_EACH spell_install_iwd_arcane AS files=>label BEGIN
-           LAF install_spell_helper STR_VAR files label END
-      END
-   END
-   ACTION_IF iwd_divine BEGIN
-      ACTION_PHP_EACH spell_install_iwd_divine AS files=>label BEGIN
-           LAF install_spell_helper STR_VAR files label END
-      END
-   END
-END
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///// helper function
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION install_spell_helper
-    STR_VAR files=""
-            label=""
-BEGIN
-     ACTION_IF VARIABLE_IS_SET $skip_component("%files%") BEGIN
-        OUTER_SET skip=1
-     END ELSE BEGIN
-        LAF check_ini STR_VAR ini="no_initial_change_%files%" RET skip=value END
-        ACTION_IF skip BEGIN 
-              PRINT "Skipping spell component %files% as it is disabled in the ini"
-        END ELSE BEGIN
-              LAF check_label STR_VAR label RET skip=value END
-              ACTION_IF skip BEGIN
-                 PRINT "Skipping spell component %files% as it is already installed"
-              END
-        END
-     END
-     ACTION_IF !skip BEGIN
-        LAF run STR_VAR files tra=spell END
-        LAF make_label STR_VAR label END
-     END
 END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

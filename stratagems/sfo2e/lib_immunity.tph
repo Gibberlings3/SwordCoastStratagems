@@ -50,6 +50,7 @@ BEGIN
 	
 END	
 
+
 /*
 document{immunity_effects_load}
 {
@@ -66,6 +67,7 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>"52"
 		immune_opcode=>5
 		extra_immune_opcode=>""
+		splstate=>CHARM_IMMUNITY
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_sleep BEGIN
@@ -75,6 +77,17 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>""
 		immune_opcode=>39
 		extra_immune_opcode=>""
+		splstate=>SLEEP_IMMUNITY
+	END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_death BEGIN
+		strings=>""
+		icons=>"51"
+		animations=>""
+		display_icon=>"99"
+		immune_opcode=>55
+		extra_immune_opcode=>"13 209"
+		splstate=>DEATH_IMMUNITY
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_fear BEGIN
@@ -84,6 +97,7 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>"37"
 		immune_opcode=>24
 		extra_immune_opcode=>"23 106"
+		splstate=>PANIC_IMMUNITY
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_hold BEGIN
@@ -93,7 +107,10 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>""
 		immune_opcode=>175
 		extra_immune_opcode=>109
+		splstate=>HOLD_IMMUNITY
 	END
+	
+	// when EEFP separates 'held' and 'paralyzed', we'll need to revise this
 
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_stun BEGIN
 		strings=>"stunned"
@@ -102,6 +119,27 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>""
 		immune_opcode=>45
 		extra_immune_opcode=>210
+		splstate=>STUN_IMMUNITY
+	END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_feeblemind BEGIN
+		strings=>""
+		icons=>"48"
+		animations=>""
+		display_icon=>""
+		immune_opcode=>45
+		extra_immune_opcode=>""
+		splstate=>FEEBLEMIND_IMMUNITY
+	END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_confusion BEGIN
+		strings=>"confused"
+		icons=>"3"
+		animations=>"SPCONFUS"
+		display_icon=>""
+		immune_opcode=>128
+		extra_immune_opcode=>""
+		splstate=>CONFUSION_IMMUNITY
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_poison BEGIN
@@ -111,6 +149,8 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>"30"
 		immune_opcode=>25
 		extra_immune_opcode=>""
+		spells=>"CLERIC_POISON WIZARD_CLOUDKILL GREEN_DRAGON_BREATH"
+		splstate=>""
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_diseased BEGIN
@@ -120,6 +160,7 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>""
 		immune_opcode=>78
 		extra_immune_opcode=>""
+		splstate=>""
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_energy_drain BEGIN
@@ -129,6 +170,7 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>"90"
 		immune_opcode=>216
 		extra_immune_opcode=>""
+		splstate=>""
 	END
 	
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_blinded BEGIN
@@ -138,8 +180,36 @@ DEFINE_ACTION_MACRO immunity_effects_load BEGIN
 		display_icon=>""
 		immune_opcode=>74
 		extra_immune_opcode=>""
+		splstate=>""
 	END
-	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_insects BEGIN
+		strings=>""
+		icons=>"" 
+		animations=>""
+		display_icon=>""
+		immune_opcode=>"-1"
+		extra_immune_opcode=>""
+		spells=>"CLERIC_SUMMON_INSECTS CLERIC_INSECT_PLAGUE CLERIC_CREEPING_DOOM BLACK_DRAGON_INSECT"
+		splstate=>""
+	END
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_mazed BEGIN
+		strings=>""
+		icons=>"" 
+		animations=>"spspmaze"
+		display_icon=>""
+		immune_opcode=>"213"
+		extra_immune_opcode=>""
+		splstate=>""
+	END	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY immunity_array_imprisoned BEGIN
+		strings=>""
+		icons=>"" 
+		animations=>"spmaze1 spmaze2"
+		display_icon=>""
+		immune_opcode=>"211"
+		extra_immune_opcode=>""
+		splstate=>""
+	END	
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -192,6 +262,7 @@ DEFINE_ACTION_FUNCTION immunity_find_strings RET_ARRAY immunity_string_array BEG
 		"Sleep"=>sleep
 		"Blinded"=>blinded
 		"Stunned"=>stunned
+		"Confused"=>confused
 		
 	END
 	OUTER_FOR (ind=1;ind<100000;++ind) BEGIN
@@ -223,13 +294,16 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
+document{immunity_effect}
+{
 (This is a struct function).</p>
 
 <p>Patches the spell/item/creature to offer immunity to a list of effects. If run in permanent mode (the default) it adds the effect outright
 with timing=9 (2 for items). On a spell, this is added to all abilities; on an item or cre, to the base item/cre.
-If run in non-permanent mode, everything is applied as a clone of the controlling opcode.</p>
+If run in non-permanent mode, everything is applied as a clone of the controlling immune-to-this opcode (if any).</p>
 
-<p>The list of effects is: charm, stun, fear, hold, sleep, poison, diseased, energy_drain, blinded
+<p>The list of effects is: charm, stun, fear, hold, sleep, poison, diseased, energy_drain, blinded, insects
+}
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -244,13 +318,13 @@ BEGIN
 	LAM immunity_effects_load
 	LAF immunity_find_strings RET_ARRAY immunity_string_array END
 	LAF array_keys_from_string STR_VAR string="%arguments%" RET_ARRAY immune_array=array END
-	OUTER_SPRINT strtype "%%struct%_strtype%"
+	OUTER_SPRINT strtype EVAL "%%struct%_strtype%"
 	ACTION_MATCH "%strtype%" WITH
-	spl BEGIN
+	"spl.*" BEGIN
 		OUTER_SPRINT type ab_fx
 		OUTER_SET timing=9
 	END
-	itm BEGIN
+	"itm.*" BEGIN
 		OUTER_SPRINT type fx
 		OUTER_SET timing=2
 	END
@@ -260,8 +334,13 @@ BEGIN
 	END
 	ACTION_PHP_EACH immune_array AS immunity=>discard BEGIN
 		OUTER_SPRINT array "immunity_array_%immunity%"
+		// sanity check
+		ACTION_IF !permanent && "%array%_immune_opcode"<=0 BEGIN
+			WARN "immunity_effect: you have tried to add %immunity% as a non-permanent effect, but %immunity% has no controlling opcode to clone"
+		END
+		
 		// in permanent mode, add the base effect
-		ACTION_IF permanent BEGIN
+		ACTION_IF permanent && "%array%_immune_opcode">=0 BEGIN
 			LAF struct_add STR_VAR type struct patch="s_opcode:=101 s_target=2 s_parameter2=%array%_immune_opcode s_timing=%timing%" RET_ARRAY "%struct%"=struct END
 			LAF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
 		END
@@ -269,6 +348,19 @@ BEGIN
 		ACTION_CLEAR_ARRAY sfo_opcode_array 
 		ACTION_CLEAR_ARRAY sfo_parameter1_array
 		ACTION_CLEAR_ARRAY sfo_parameter2_array
+		// place a spellstate
+		ACTION_IF enhanced_edition BEGIN
+			OUTER_SPRINT list $"%array%"("splstate")
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list RET entry list END
+				LAF ds_resolve_stat STR_VAR id="%entry%" RET stat_ind END
+				OUTER_SET $sfo_opcode_array("%count%")=328
+				OUTER_SET $sfo_parameter2_array("%count%")=stat_ind
+				OUTER_SET $sfo_parameter1_array("%count%")=0
+				OUTER_SPRINT $sfo_resource_array("%count%") ""	
+				OUTER_SET ++count
+			END
+		END
 		// give immunity to strings
 		OUTER_SPRINT list $"%array%"("strings")
 		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
@@ -325,8 +417,31 @@ BEGIN
 			OUTER_SPRINT $sfo_resource_array("%count%") ""
 			OUTER_SET ++count
 		END
+		// give immunity to any associated spells
+		OUTER_SPRINT list $"%array%"("spells")
+		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET spell=entry list END
+			ACTION_IF VARIABLE_IS_SET "%spell%" BEGIN
+				OUTER_SPRINT spell EVAL "%%spell%%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SET $sfo_opcode_array("%count%")=206
+				OUTER_SET $sfo_parameter1_array("%count%")="-1"
+				OUTER_SET $sfo_parameter2_array("%count%")=0
+				OUTER_SPRINT $sfo_resource_array("%count%") "%spell%"
+				OUTER_SET ++count
+			END
+		END
+		// poison is a special case
+		ACTION_IF "%immunity%" STR_EQ "poison" BEGIN
+			OUTER_SET $sfo_opcode_array("%count%")=173
+			OUTER_SET $sfo_parameter1_array("%count%")=100
+			OUTER_SET $sfo_parameter2_array("%count%")=0
+			OUTER_SPRINT $sfo_resource_array("%count%") ""
+			OUTER_SET ++count
+		END
 		// apply effects
-		LAF struct_clone INT_VAR number=count STR_VAR type struct match="s_opcode=101 && s_parameter2=%array%_immune_opcode" patch="s_opcode=$sfo_opcode_array(~%entry_index%~);; s_parameter1=$sfo_parameter1_array(~%entry_index%~);;s_parameter2=$sfo_parameter2_array(~%entry_index%~);;s_resource:=$sfo_resource_array(~%entry_index%~)" RET_ARRAY "%struct%"=struct END
+		LAF struct_clone INT_VAR number=count STR_VAR type struct match="s_opcode=101 && s_parameter2=%array%_immune_opcode" patch="local_index=entry_index;;s_opcode=$sfo_opcode_array(~%local_index%~);; s_parameter1=$sfo_parameter1_array(~%local_index%~);;s_parameter2=$sfo_parameter2_array(~%local_index%~);;s_resource:=$sfo_resource_array(~%local_index%~);; s_special=s_opcode=328?1:0" RET_ARRAY "%struct%"=struct END
 		LAF array_join STR_VAR array1=struct array2="%struct%" RET_ARRAY struct=array END
 
 	END

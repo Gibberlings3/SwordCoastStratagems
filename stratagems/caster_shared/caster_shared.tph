@@ -19,7 +19,6 @@ DEFINE_ACTION_MACRO read_in_instant_prebuff_spells BEGIN
 END
 
 DEFINE_ACTION_FUNCTION build_prebuff_spells BEGIN
-   LAUNCH_ACTION_MACRO read_in_spellcodes      
    LAF read_in_list STR_VAR file=~prebuff.2da~ RET list END
    OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
         LAF return_first_entry STR_VAR list RET list spell_ID=entry END
@@ -27,6 +26,16 @@ DEFINE_ACTION_FUNCTION build_prebuff_spells BEGIN
         ACTION_IF !FILE_CONTAINS_EVALUATED  (~%data_loc%/instant_prebuff_spells.2da~ ~%newcode%~) BEGIN
             LAF log_this STR_VAR file=instant_prebuff_spells.2da input=~%fullname%_PREBUFF %newcode%~ END
         END
+		// now do a cleric version in case we're using ToF
+		ACTION_MATCH "%fullname%" WITH
+		"WIZARD_.*" BEGIN
+			OUTER_PATCH_SAVE fullname "%fullname%" BEGIN
+				REPLACE_TEXTUALLY "WIZARD_" "CLERIC_"
+			END
+            LAF log_this STR_VAR file=instant_prebuff_spells.2da input=~%fullname%_PREBUFF %newcode%~ END			
+		END
+		DEFAULT
+		END
    END
    LAF read_in_list STR_VAR file=anon.2da RET list END
    OUTER_WHILE ~%list%~ STRING_COMPARE_CASE ~~ BEGIN
@@ -117,29 +126,33 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
     OUTER_SPRINT base_folder_spells "%base_folder_spells_mage%"
    END
 
+
    OUTER_SET  ~macro_read_in_%type%_spell_choices~=1
-   ACTION_BASH_FOR ~%MOD_FOLDER%/%type%/spellchoices/vanilla~ ~.*\.2da~ BEGIN
-      ACTION_IF FILE_EXISTS ~%MOD_FOLDER%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~ BEGIN
-         OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/%base_folder_spells%/%BASH_FOR_FILE%~
-      END ELSE BEGIN
-         ACTION_MATCH "%base_folder_spells%" WITH
-         iwdtrue BEGIN
-            ACTION_IF FILE_EXISTS ~%MOD_FOLDER%/%type%/spellchoices/iwd/%BASH_FOR_FILE%~ BEGIN
-                 OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/iwd/%BASH_FOR_FILE%~
-            END ELSE BEGIN
-                 OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
-            END
-         END
-         DEFAULT
-            OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/vanilla/%BASH_FOR_FILE%~
-         END
-      END
-      ACTION_IF debug_variable=2 BEGIN
-                    PRINT ~spells being read in from %file_here% (base_folder_spells=%base_folder_spells%)~
-      END
-      COPY ~%file_here%~ ~%workspace%~
-          SPRINT ~kit~ ~%BASH_FOR_RES%~
+
+	// we want to read in any entry present either in vanilla or in %base_folder_spells	
+
+	ACTION_CLEAR_ARRAY spell_choices_array
+	ACTION_BASH_FOR ~%MOD_FOLDER%/%type%/spellchoices/vanilla~ ~.*\.2da~ BEGIN
+		ACTION_TO_LOWER BASH_FOR_RES
+		OUTER_SPRINT $spell_choices_array("%BASH_FOR_RES%") "vanilla"
+	END
+	ACTION_BASH_FOR ~%MOD_FOLDER%/%type%/spellchoices/%base_folder_spells%~ ~.*\.2da~ BEGIN
+		ACTION_TO_LOWER BASH_FOR_RES
+		OUTER_SPRINT $spell_choices_array("%BASH_FOR_RES%") "%base_folder_spells%"
+	END
+	ACTION_PHP_EACH spell_choices_array AS resref=>loc BEGIN
+		ACTION_IF "%loc%" STR_EQ "%base_folder_spells%" BEGIN
+			OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/%base_folder_spells%/%resref%.2da~
+		END ELSE BEGIN
+            OUTER_SPRINT file_here ~%MOD_FOLDER%/%type%/spellchoices/vanilla/%resref%.2da~
+        END	
+		ACTION_IF debug_variable=2 BEGIN
+			PRINT ~spells being read in from %file_here% (base_folder_spells=%base_folder_spells%)~
+		END
+        COPY - ~%file_here%~ nowhere
+          SPRINT ~kit~ ~%resref%~
           TO_LOWER kit
+		  
           LPF read_variable_array RET_ARRAY array_data END
           PHP_EACH array_data AS level => data BEGIN
              PATCH_IF IS_AN_INT level BEGIN
@@ -151,7 +164,7 @@ DEFINE_ACTION_MACRO read_in_spell_choices BEGIN
              END
           END
         BUT_ONLY
-   END
+    END
  END
 END
 
@@ -159,6 +172,7 @@ END
 ////  read in spells per level
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/*
 DEFINE_ACTION_FUNCTION max_spell_level
      STR_VAR file=""
      RET level
@@ -219,6 +233,7 @@ DEFINE_ACTION_MACRO read_in_spells_per_level BEGIN
      END
   END
 END
+*/
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////  read in individual spell choices and kit/level overrides
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -231,7 +246,9 @@ DEFINE_ACTION_MACRO read_in_individual_overrides BEGIN
          ACTION_IF ~%game%~ STRING_EQUAL_CASE ~bg1~ BEGIN OUTER_SPRINT macro_tutuvar ~%tutu_var%~ END ELSE BEGIN OUTER_SPRINT macro_tutuvar ~~ END
          ACTION_FOR_EACH macro_type IN spellchoice kit level alignment boolean variable BEGIN
           COPY ~%MOD_FOLDER%/%type%/override/%game%/%macro_type%.2da~ ~%workspace%~
-            COUNT_2DA_COLS colcount
+            SPRINT slash "/" // hack to get around lib_sugar issue
+			REPLACE_TEXTUALLY "%slash%%slash%.*" ""
+			COUNT_2DA_COLS colcount
             FOR (i=2;i<=colcount;i+=1) BEGIN
                COUNT_2DA_ROWS i rowcount
                FOR (j=0;j<rowcount;j+=1) BEGIN
@@ -276,55 +293,55 @@ BEGIN
       END
    END ELSE BEGIN
       INNER_ACTION BEGIN
-         LAUNCH_ACTION_MACRO read_in_spells_per_level
+         LAM data_spells_by_level
       END
       TO_LOWER class
       PATCH_MATCH ~%class%~ WITH
       cleric fighter_cleric cleric_thief BEGIN
-         SPRINT file MXSPLPRS
+         SPRINT base_class cleric
          SET wisdom_bonus=1
          SET spec_bonus=0
       END
       druid fighter_druid BEGIN
-         SPRINT file MXSPLDRU
+         SPRINT base_class druid
          SET wisdom_bonus=1
          SET spec_bonus=0
       END
       bard BEGIN
-         SPRINT file MXSPLBRD
+         SPRINT base_class bard
          SET wisdom_bonus=0
          SET spec_bonus=0
       END
       mind_flayer fighter_mage fighter_mage_thief mage_thief vampire ogre_mage rakshasa mist no_class BEGIN // mist is HELLSLAY
-         SPRINT file MXSPLWIZ
+         SPRINT base_class mage
          SET wisdom_bonus=0
          SET spec_bonus=0
       END
       mage BEGIN
-         SPRINT file MXSPLWIZ
+         SPRINT base_class mage
          SET wisdom_bonus=0
          SET spec_bonus=1
       END
       DEFAULT
          LPF warning STR_VAR warning= ~I don't recognise class %class%~ END
       END
-      FOR (i=0;i<9;i+=1) BEGIN
-         PATCH_IF VARIABLE_IS_SET $spell_mem_data( ~%file%~ ~%level%~ ~%i%~) BEGIN
-            SPRINT temp $spell_mem_data( ~%file%~ ~%level%~ ~%i%~)
+      FOR (i=0;i<=8;i+=1) BEGIN
+		spell_level=i+1
+        PATCH_IF VARIABLE_IS_SET $sfo_spell_level( ~%base_class%~ ~%level%~ ~%spell_level%~) BEGIN
+            temp=$sfo_spell_level( ~%base_class%~ ~%level%~ ~%spell_level%~)
             PATCH_IF temp>0 BEGIN
-             PATCH_IF wisdom_bonus=1 BEGIN
-               PATCH_IF VARIABLE_IS_SET $spell_mem_data(MXSPLWIS ~%wisdom%~ ~%i%~) BEGIN
-                 SET temp=temp+ $spell_mem_data(MXSPLWIS ~%wisdom%~ ~%i%~)
-               END
-             END
-             SET $av(~%i%~)=temp+spec_bonus
+				PATCH_IF wisdom_bonus && VARIABLE_IS_SET $sfo_spell_wisdom(~%wisdom%~ ~%spell_leve%~) BEGIN
+					temp+= $sfo_spell_wisdom(~%wisdom%~ ~%spell_level%~)
+
+				END
+				SET $av(~%i%~)=temp+spec_bonus
             END ELSE BEGIN
                SET $av(~%i%~)=0
             END
-         END ELSE BEGIN
+        END ELSE BEGIN
             SET $av(~%i%~)=0
-         END
-         SET temp=$av(~%i%~)
+        END
+        SET temp=$av(~%i%~)
       END
    END
 
@@ -367,9 +384,6 @@ DEFINE_PATCH_FUNCTION count_spell_levels
           ct_7
           ct_8
 BEGIN
-       INNER_ACTION BEGIN
-          LAUNCH_ACTION_MACRO read_in_spellcodes
-       END
        FOR (i=0;i<9;i+=1) BEGIN
           SET $ct(~%i%~)=0
        END
@@ -380,15 +394,16 @@ BEGIN
           DEFAULT
               PATCH_MATCH "%entry%" WITH
                  "CLERIC_.*" "WIZARD_.*" BEGIN
-                     SPRINT input "%entry%"
+                    SPRINT input "%entry%"
                  END
                  DEFAULT
-                           SPRINT input "%prefix%%entry%"
+                    SPRINT input "%prefix%%entry%"
               END
               LPF deabbreviate_spellname STR_VAR input RET entry=spellname END
               PATCH_IF VARIABLE_IS_SET ~%%entry%_LEVEL%~ BEGIN
                   SET level= ~%%entry%_LEVEL%~
-                  SET $ct("%level%") +=1
+				  i=level - 1
+                  SET $ct("%i%") +=1
               END ELSE BEGIN
                   LPF warning STR_VAR warning= ~No recorded level for spell %entry%~ END
               END
@@ -424,18 +439,17 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////   check if HLAs function as innate (1=yes, 0=no)
+////	we check for ToF HLAs, SCS hla_innate, and the SR component
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION check_if_hlas_are_innate  // [legacy code, mostly]
+DEFINE_DIMORPHIC_FUNCTION check_if_hlas_are_innate  
    RET hla_innate
 BEGIN
-        OUTER_SET ~hla_innate~=0
-        COPY_EXISTING ~spwi920.spl~ ~override~ // energy blades
-           READ_SHORT 0x1c ~innatecheck~
-           PATCH_IF ~innatecheck~=4 BEGIN
-              SET ~hla_innate~=1
-           END
-        BUT_ONLY
+        OUTER_SET hla_innate=0
+		LAF check_label STR_VAR label="dw#hla_innate" RET value1=value END
+		LAF check_label STR_VAR label=dw-hlas RET value2=value END
+		OUTER_SET hla_innate = value1 || value2 || MOD_IS_INSTALLED ~spell_rev/setup-spell_rev.tp2~ 230
+
 END
 
 
@@ -454,33 +468,33 @@ BEGIN
        PATCH_PRINT "trying to get caster level"
     END
     PATCH_IF modify_level=1 BEGIN
-     TO_UPPER filename
-     PATCH_IF VARIABLE_IS_SET $override_level( ~%type%~ ~%filename%~) BEGIN
-          SET level=$override_level(~%type%~ ~%filename%~)
-          LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
-          LPF CRE_enforce_saves STR_VAR arguments=at_worst END
-          LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
-          LPF CRE_enforce_hp STR_VAR arguments=at_worst END
-     END ELSE BEGIN
-       LPF CRE_read_level RET level=value END
-       SET level= level=0?1:level
-       PATCH_IF debug_variable=2 BEGIN
-          PATCH_PRINT "level=%level%"
-       END
-       SET should_cast=$caster_level_to_spell_level(~%castertype%~ ~%level%~)
-       LPF CRE_find_highest_spell_level STR_VAR arguments=~%type%~ RET can_cast=value END
-       PATCH_IF can_cast>should_cast BEGIN
-          PATCH_IF VARIABLE_IS_SET $spell_level_to_caster_level(~%castertype%~ ~%can_cast%~) BEGIN // guard against misconfigured files with illegal spells, e.g. ppnalj2
-            SET level=$spell_level_to_caster_level(~%castertype%~ ~%should_cast%~)
-            LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
-            LPF CRE_enforce_saves STR_VAR arguments=at_worst END
-            LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
-            LPF CRE_enforce_hp STR_VAR arguments=at_worst END
-          END
-       END ELSE BEGIN
-            LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END // covers multiclass casters
-       END
-     END
+		TO_UPPER filename
+		PATCH_IF VARIABLE_IS_SET $override_level( ~%type%~ ~%filename%~) BEGIN
+			SET level=$override_level(~%type%~ ~%filename%~)
+			LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
+			LPF CRE_enforce_saves STR_VAR arguments=at_worst END
+			LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
+			LPF CRE_enforce_hp STR_VAR arguments=at_worst END
+		END ELSE BEGIN
+			LPF CRE_read_level RET level=value END
+			SET level= level=0?1:level
+			PATCH_IF debug_variable=2 BEGIN
+				PATCH_PRINT "level=%level%"
+			END
+			should_cast=$sfo_spell_level_cl_to_sl(~%castertype%~ ~%level%~)
+			LPF CRE_find_highest_spell_level STR_VAR arguments=~%type%~ RET can_cast=value END
+			PATCH_IF can_cast>should_cast BEGIN
+				PATCH_IF VARIABLE_IS_SET $sfo_spell_level_sl_to_cl(~%castertype%~ ~%can_cast%~) BEGIN // guard against misconfigured files with illegal spells, e.g. ppnalj2
+					SET level=$sfo_spell_level_sl_to_cl(~%castertype%~ ~%should_cast%~)
+					LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END
+					LPF CRE_enforce_saves STR_VAR arguments=at_worst END
+					LPF CRE_enforce_thac0 STR_VAR arguments=at_worst END
+					LPF CRE_enforce_hp STR_VAR arguments=at_worst END
+				END
+			END ELSE BEGIN
+				LPF CRE_level_by_class STR_VAR arguments="%castertype%=>%level%" END // covers multiclass casters
+			END
+		END
     END ELSE BEGIN
        LPF CRE_read_level RET level=value END
     END
@@ -512,6 +526,8 @@ DEFINE_PATCH_FUNCTION initialise_enforce_caster
           kitdata
           script
           detect_invisible
+		  god
+		  skip_defensive_spells
 
 BEGIN
    // parse argument
@@ -522,7 +538,9 @@ BEGIN
    SET script=1
    SET druidmage=0
    SET detect_invisible=0
-   // parse arguments. Possible values are accept_level, assign_hla, game_is_bg1, spells_are_bg1, spells_are_not_bg1, prebuff=N, no_script, druid_mage, detect_invisible
+   SET skip_defensive_spells=0
+   SPRINT god ""
+   // parse arguments. Possible values are accept_level, assign_hla, game_is_bg1, spells_are_bg1, spells_are_not_bg1, prebuff=N, no_script, druid_mage, detect_invisible, skip_defensive_spells
    WHILE (~%arguments%~ STRING_COMPARE ~~ && ~%arguments%~ STRING_COMPARE_CASE null) BEGIN
       LPF return_first_entry STR_VAR list= ~%arguments%~ RET arguments=list entry=entry END
       PATCH_MATCH ~%entry%~ WITH
@@ -547,6 +565,9 @@ BEGIN
         detect_invisible BEGIN
            SET detect_invisible=1
         END
+		skip_defensive_spells BEGIN
+			SET skip_defensive_spells=1
+		END
         DEFAULT PATCH_PRINT ~warning:illegal argument for CRE_enforce~ END
    END
    // get data
@@ -585,9 +606,90 @@ BEGIN
    END
    PATCH_IF VARIABLE_IS_SET $override_kit( ~%type%~ ~%filename%~) BEGIN
        SPRINT kitdata $override_kit(~%type%~ ~%filename%~)
-       LPF CRE_kit STR_VAR arguments= ~%kitdata%~ END
-   END ELSE BEGIN
+	   TO_UPPER kitdata
+	   // handle ToF gods and elementalists
+	   PATCH_MATCH "%kitdata%" WITH
+	   BHAAL CYRIC BEGIN
+			PATCH_IF VARIABLE_IS_SET $gods_installed("BHAAL_CYRIC") BEGIN
+				SPRINT god "%kitdata%"
+				TO_UPPER class
+				PATCH_IF $cleric_kit_array(BHAAL_CYRIC "%class%") STR_CMP "*" BEGIN
+					SPRINT kitdata $cleric_kit_array(BHAAL_CYRIC "%class%")
+				END ELSE BEGIN
+					SPRINT kitdata NO_KIT					
+				END
+			END
+	   END
+	   BANE XVIM BEGIN
+			PATCH_IF VARIABLE_IS_SET $gods_installed("BANE_XVIM") BEGIN
+				SPRINT god "%kitdata%"
+				TO_UPPER class
+				PATCH_IF $cleric_kit_array(BANE_XVIM "%class%") STR_CMP "*" BEGIN
+					SPRINT kitdata $cleric_kit_array(BANE_XVIM "%class%")
+				END ELSE BEGIN
+					SPRINT kitdata NO_KIT					
+				END
+			END   
+	   END
+	   MYRKUL VELSHAROON BEGIN
+			PATCH_IF VARIABLE_IS_SET $gods_installed("MYRKUL_VELSHAROON") BEGIN
+				SPRINT god "%kitdata%"
+				TO_UPPER class
+				PATCH_IF $cleric_kit_array(MYRKUL_VELSHAROON "%class%") STR_CMP "*" BEGIN
+					SPRINT kitdata $cleric_kit_array(MYRKUL_VELSHAROON "%class%")
+				END ELSE BEGIN
+					SPRINT kitdata NO_KIT					
+				END
+			END   
+	   END
+	   EARTH AIR FIRE WATER BEGIN
+			PATCH_IF tof_arcane_spells BEGIN
+				SPRINT kitdata "DW_ELEMENTALIST_%kitdata%"
+			END ELSE BEGIN
+				SPRINT kitdata INVOKER
+			END
+		END
+	   DEFAULT
+		   PATCH_IF VARIABLE_IS_SET $gods_installed("%kitdata%") BEGIN
+			   SPRINT god "%kitdata%"
+			   TO_UPPER class
+				PATCH_IF $cleric_kit_array("%god%" "%class%") STR_CMP "*" BEGIN
+					SPRINT kitdata $cleric_kit_array("%god%" "%class%")
+				END ELSE BEGIN
+					SPRINT kitdata NO_KIT
+				END
+		   END
+	   END
+		// sanity check
+		PATCH_IF "%god%" STR_CMP "" && !FILE_EXISTS "%MOD_FOLDER%/priest/spellchoices/%base_folder_spells_priest%/%god%.2da" BEGIN
+			LPF warning STR_VAR warning="Creature %filename% has been assigned god %god%, but SCS does not support that god; reverting to generic priest" END
+			SPRINT god ""		
+		END
+
+		// now apply
+       PATCH_IF IDS_OF_SYMBOL(kit "%kitdata%")>=0 || IDS_OF_SYMBOL(kit "MAGESCHOOL_%kitdata%")>=0 || IDS_OF_SYMBOL(kit "GOD%kitdata%")>=0 || "%kitdata%" STR_EQ "NO_KIT" BEGIN
+			LPF CRE_kit STR_VAR arguments= ~%kitdata%~ END
+	   END ELSE BEGIN
+			LPF CRE_read_kit RET kitdata=value END	   
+	   END
+	   
+   END ELSE BEGIN // end of override block
        LPF CRE_read_kit RET kitdata=value END
+	   // handle ToF gods
+	   TO_UPPER kitdata
+	   PATCH_IF VARIABLE_IS_SET $kit_god_map("%kitdata%") BEGIN
+			SPRINT god $kit_god_map("%kitdata%")
+			PATCH_MATCH "%god%" WITH
+			BHAAL_CYRIC BEGIN // this handles the (kind of edge) case where someone has been given a BHAAL_CYRIC kit directly so that we don't know which god they worship. 
+				PATCH_IF is_iwd BEGIN
+					SPRINT god BHAAL
+				END ELSE BEGIN
+					SPRINT god CYRIC
+				END
+			END
+			DEFAULT
+			END
+	   END
    END
 END
 
@@ -662,7 +764,11 @@ DEFINE_ACTION_FUNCTION smart_clones BEGIN
            LAF edit_spell STR_VAR spell= ~simulacr~ editstring=~add_effect_inline=>"opcode=>82 target=>1 power=>0 parameter2=>6 timing=>9 resource=>dw#image"~ END
       END
 
-      LAF install STR_VAR files=dw#image.baf location=resource locbase=caster_shared END
+	  ACTION_IF FILE_EXISTS_IN_GAME "dw#image.bcs" BEGIN
+	    LAF extend STR_VAR script="dw#image" bottom="dw#image" location=resource locbase=caster_shared END
+	  END ELSE BEGIN
+		LAF install STR_VAR files=dw#image.baf location=resource locbase=caster_shared END
+	  END
   END
 END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -711,13 +817,12 @@ DEFINE_ACTION_FUNCTION player_clones BEGIN  // idea from Ardanis
         LAF make_effect STR_VAR effect=ag#immun edits=patch_data END
 
         // make the scripts for replacement
-        PRINT "scs_tra_loc is %scs_tra_loc%"
-        WITH_TRA "%scs_tra_loc%/english/mage.tra" "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/mage.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra" BEGIN
+        WITH_TRA "%scs_tra_loc%/%LANGUAGE%/mage.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra" BEGIN
           LAF define_difficulty STR_VAR type=mage RET difficulty_variable END
           LAF ssl_to_bcs STR_VAR script=dw#copmg location="ssl/main" locbase=mage variables="IsCopy=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
           LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
           LAF ssl_to_bcs STR_VAR script=dw#coppr location="ssl/main" locbase=priest variables="IsCopy=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
-          LAF ssl_to_bcs STR_VAR script=dw#coppr rename_to=dw#copdr location="ssl/main" locbase=priest variables="IsCopy=True&IsDruid=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
+          LAF ssl_to_bcs STR_VAR script="dw#coppr=>dw#copdr" location="ssl/main" locbase=priest variables="IsCopy=True&IsDruid=True&scsvar_help_if_iwd=null" booleans="NoSequencers DoNotPrebuff NoContingency"  END
         END
         // install the dw#oppos script itself, along with the actual clone spell
         
@@ -1003,7 +1108,7 @@ BEGIN
                       END
                       LPF build_sequencer_helper STR_VAR name spell1 spell2 spell3 contingency require_mod exclude_mod seq_type category RET name value END
                       PATCH_IF value BEGIN
-                        PATCH_FOR_EACH kit_here IN conjurer enchanter invoker necromancer fighter_mage mage_thief bard cleric_mage druid_mage elder_orb BEGIN
+                        PATCH_FOR_EACH kit_here IN conjurer enchanter invoker necromancer fighter_mage mage_thief bard cleric_mage druid_mage elder_orb earth air fire water BEGIN
                            PATCH_IF (INDEX ("%kit_here%" "%kit%") >=0 || INDEX ("all" "%kit%") >=0 ) BEGIN
                               PATCH_FOR_EACH race IN baseline vampire rakshasa lich BEGIN
                                  LPF seq_helper_race STR_VAR race require_type exclude_type RET value END
@@ -1025,7 +1130,7 @@ BEGIN
        END
      END
      ACTION_FOR_EACH seq_type IN minor_sequencer sequencer trigger chain_contingency BEGIN
-         ACTION_FOR_EACH kit IN conjurer invoker necromancer enchanter fighter_mage mage_thief bard cleric_mage druid_mage elder_orb BEGIN
+         ACTION_FOR_EACH kit IN conjurer invoker necromancer enchanter fighter_mage mage_thief bard cleric_mage druid_mage elder_orb earth air fire water BEGIN
               ACTION_FOR_EACH race IN baseline lich rakshasa vampire BEGIN
                ACTION_FOR_EACH category IN o d m d1 d2 dsp BEGIN
                  ACTION_IF VARIABLE_IS_SET $seq_data("%seq_type%" "%kit%" "%race%" "%category%") BEGIN
@@ -1126,25 +1231,23 @@ BEGIN
       LPF return_first_entry STR_VAR list RET entry list END
       PATCH_MATCH "%entry%" WITH
          iwdtrue BEGIN
-            PATCH_IF is_iwd BEGIN
-               SET value=1
-            END
+            value=is_iwd?1:value
          END
          iwd BEGIN
-            PATCH_IF (iwd_arcane && !demivrgvs && !is_iwd) BEGIN
-               SET value=1
-            END
+			value=(iwd_arcane && !is_iwd)?1:value
          END
          iwdee BEGIN
-            PATCH_IF (iwd_arcane && !demivrgvs && enhanced_edition &&!is_iwd) BEGIN
-               SET value=1
-            END
+			value=(iwd_arcane && enhanced_edition &&!is_iwd)?1:value 
          END
          demivrgvs BEGIN
-            PATCH_IF demivrgvs BEGIN
-               SET value=1
-            END
+			value=demivrgvs?1:value
          END
+		 tof_arcane BEGIN
+			value=tof_arcane_spells?1:value
+		 END
+		 tof_divine BEGIN
+			value=tof_divine_spells?1:value
+		 END
          "*" BEGIN
          END
          DEFAULT
@@ -1405,7 +1508,8 @@ BEGIN
        END
     END
     INNER_PATCH_SAVE data "%data%" BEGIN
-           // healing/cause wounds spells that are too weak to waste time with
+           REPLACE_TEXTUALLY "MASS_CAUSE" "SFO_TEMP"
+		   // healing/cause wounds spells that are too weak to waste time with
            PATCH_IF (!demivrgvs && !enhanced_healing) BEGIN
                 REPLACE_TEXTUALLY "\(CURE\|CAUSE\)_\(LIGHT\|MEDIUM\|MODERATE\|SERIOUS\)_WOUNDS" ""
                 REPLACE_TEXTUALLY "CAUSE_CRITICAL_WOUNDS" ""
@@ -1429,6 +1533,7 @@ BEGIN
                  REPLACE_TEXTUALLY "%spell%" ""
               END
            END
+		   REPLACE_TEXTUALLY SFO_TEMP "MASS_CAUSE"
     END
 END
 

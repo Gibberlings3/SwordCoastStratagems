@@ -1,0 +1,416 @@
+DEFINE_ACTION_FUNCTION camping
+BEGIN
+
+	// set the difficulty entry
+	
+	LAF define_difficulty STR_VAR type=camping RET difficulty_variable END
+
+	// get the data about allowed supplies
+	
+	LAF 2da_read STR_VAR file=provisions_difficulty.2da location=data RET_ARRAY prov_diff_array=array END
+
+	// set the difficulty strings
+	
+	WITH_TRA "%sfo_tra_loc%/english/difficulty.tra"  "%sfo_tra_loc%/%LANGUAGE%/difficulty.tra" BEGIN 
+		OUTER_FOR (diff=1;diff<=7;++diff) BEGIN
+			OUTER_SET val=$prov_diff_array("%diff%" PROVISIONS_MAX)
+			OUTER_SET line_num=330+diff
+			OUTER_SPRINT line (AT line_num)
+			OUTER_SET strref=RESOLVE_STR_REF ("%line%")
+			OUTER_PATCH_SAVE line "%line%" BEGIN
+				REPLACE_TEXTUALLY "DW_PLACEHOLDER_%diff%" "%val%"
+			END
+			STRING_SET_EVALUATE strref "%line%"
+		END
+	END
+	
+	// setup the general code to label inn rooms, if it's not set up already
+	
+	LAF ui_inn_label END
+
+	// setup the tokens
+	
+	OUTER_SET count_strref=RESOLVE_STR_REF("<DW_SIGNAL_PROVISIONS_COUNT>")
+	OUTER_SET max_strref=RESOLVE_STR_REF("<DW_SIGNAL_PROVISIONS_MAX>")
+	OUTER_SET status_strref=RESOLVE_STR_REF("<DW_SIGNAL_PROVISIONS_ACTIVE>")
+	
+	//setup active/inactive
+	
+	OUTER_SET active_strref=RESOLVE_STR_REF("ACTIVE")
+	OUTER_SET inactive_strref=RESOLVE_STR_REF("INACTIVE")
+	
+	// info strings
+	
+	OUTER_SET no_rest_strref=RESOLVE_STR_REF(@24000)
+	OUTER_SET rest_tooltip_strref=RESOLVE_STR_REF(@24001)
+
+	// put the supply-setting function into the game
+	
+	LAF ini_global_add_function STR_VAR function="dwSetMaxSupplies" END
+
+	// install the data
+	
+	OUTER_SPRINT data ""
+	ACTION_PHP_EACH prov_diff_array AS diff=>number BEGIN
+		OUTER_SPRINT data "%data%%TAB%[%diff%]=%number%,%WNL%"
+	END
+	COPY ".../stratagems-inline/m_dw_cmd.lua" override EVALUATE_BUFFER
+		
+	// install the functions
+	
+	COPY ".../stratagems-inline/m_dw_cmf.lua" override EVALUATE_BUFFER
+
+	COPY_EXISTING "ui.menu" override
+		REPLACE_TEXTUALLY "e:GetActiveEngine():OnRestButtonClick()" "dwRestButtonClicked()"
+		REPLACE_TEXTUALLY "getTooltipWithHotkey(\([0-9]+\),11942)" "getTooltipWithHotkey(\1,dwFindRestTooltipStrref())"
+
+	// put the activate/reset script in starting (or restarting) areas, and the deactivate script in final areas,
+	// and append global scripts
+	
+	ACTION_CLEAR_ARRAY activate_areas 
+	ACTION_CLEAR_ARRAY deactivate_areas 
+	ACTION_CLEAR_ARRAY global_scripts
+	ACTION_CLEAR_ARRAY block_foraging
+	OUTER_SPRINT $global_scripts("baldur") ""
+	
+	ACTION_IF is_bg BEGIN
+		OUTER_SPRINT $activate_areas("%Candlekeep%") ""
+		OUTER_SPRINT $deactivate_areas("%Undercity_TempleofBhaal%") ""
+	END
+	ACTION_IF is_bg2 BEGIN
+		OUTER_SPRINT $activate_areas("ar0602") "" // Irenicus' dungeon
+		OUTER_SPRINT $activate_areas("ar4000") "" // stone heads
+		OUTER_SPRINT $activate_areas("ar3000") "" // Watcher's Keep
+		OUTER_SPRINT $deactivate_areas("ar2900") "" // the Abyss (SoA endgame)
+		OUTER_SPRINT $deactivate_areas("ar6200") "" // Throne of Bhaal
+		OUTER_SPRINT $global_scripts("baldur25") ""	
+		OUTER_SPRINT $block_foraging("ar1400") "" // shadow temple
+		
+	END
+	
+	OUTER_SPRINT block_foraging_string ""
+	ACTION_PHP_EACH block_foraging AS area=>discard BEGIN
+		OUTER_SPRINT block_foraging_string ~%block_foraging_string%!AreaCheck("%area%")%WNL%~
+	END
+	
+	ACTION_PHP_EACH activate_areas AS area=>discard BEGIN
+		LAF extend_area_script INT_VAR inline=1 STR_VAR area top=setup_supplies END
+	END
+
+	ACTION_PHP_EACH deactivate_areas AS area=>discard BEGIN
+		LAF extend_area_script INT_VAR inline=1 STR_VAR area top=deactivate_supplies END
+	END
+
+	ACTION_PHP_EACH global_scripts AS script=>discard BEGIN
+		LAF extend INT_VAR inline=1 ssl=1 STR_VAR script top=global_add END
+	END
+
+	// bespoke
+	
+	ACTION_IF is_bg BEGIN
+		// Kaishas can restock you
+		LAF install STR_VAR file=camping_bg.d location=resource END
+		
+		// You can eat the bear on Ice Island
+		LAF resolve_dv STR_VAR creature=bearpo3 RET bear_dv=dv END
+		LAF extend_area_script INT_VAR inline=1 STR_VAR area="%IceIsland%" top=ice_island_add END
+	END
+	
+
+	
+END
+
+
+
+
+
+
+
+
+
+<<<<<<<<.../stratagems-inline/m_dw_cmd.lua
+dw_difficulty_supply_map={
+	%data%
+}
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/m_dw_cmf.lua
+function dwRestButtonClicked()
+	if tonumber(Infinity_FetchString(%status_strref%))==1 then
+		if tonumber(Infinity_FetchString(%count_strref%))>0 then
+			C:Eval('IncrementGlobal("dw_supplies_count","GLOBAL",-1)')
+			C:Eval('SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")')
+			e:GetActiveEngine():OnRestButtonClick()
+		else
+			popupInfo(%no_rest_strref%)
+		end
+	else
+		e:GetActiveEngine():OnRestButtonClick()
+	end
+end
+
+function dwFindRestTooltipStrref()
+	if Infinity_FetchString(%status_strref%)=='1' then
+		return %rest_tooltip_strref%
+	end
+	return 11942
+
+end
+
+function dwSetMaxSupplies()
+	
+	val=Infinity_GetINIValue('SCS Settings','Force Max Provisions',0)
+	if (val==0) then
+		diff=Infinity_GetINIValue('Script','%difficulty_variable%',0)
+		if (diff==0) then
+			diff=Infinity_GetOption(12,8)+1
+		end
+		val=dw_difficulty_supply_map[diff]
+		if not val then
+			val=dw_difficulty_supply_map[5]
+		end
+	end
+	str='SetGlobal("dw_supplies_max","GLOBAL",'..val..')'
+	C:Eval(str)
+	val=val - 1
+	str='SetGlobal("dw_supplies_max_minus_one","GLOBAL",'..val..')'
+	C:Eval(str)
+	
+
+end
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/setup_supplies.baf
+IF
+	Global("dw_supplies_reset","MYAREA",0)
+	GlobalGT("dw_supplies_max","GLOBAL",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_supplies_reset","MYAREA",1)
+		SetGlobal("dw_supplies_active","GLOBAL",1)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		SetTokenGlobal("DW_SIGNAL_PROVISIONS_ACTIVE","GLOBAL","dw_supplies_active")
+		Continue()
+END
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/deactivate_supplies.baf
+IF
+	Global("dw_supplies_deactivate","MYAREA",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_supplies_deactivate","MYAREA",1)
+		SetGlobal("dw_supplies_active","GLOBAL",0)
+		SetTokenGlobal("DW_SIGNAL_PROVISIONS_ACTIVE","GLOBAL","dw_supplies_active")
+		Continue()
+END
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/global_add.ssl
+
+
+// from here on, script only works if provisions are active
+
+DEFAULT TRIGGER(Global("dw_supplies_active","GLOBAL",1))
+
+// reset the token from the global on reload
+IF
+	OnCreation()
+THEN
+	RESPONSE #100
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		SetTokenGlobal("dw_supplies_active","GLOBAL","DW_SIGNAL_PROVISIONS_ACTIVE")
+		Continue()
+END
+
+IF
+	PartyRested()
+	!Global("dw_inn_roomtype","GLOBAL",0)
+	!GlobalsEqual("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayString(Player1,@24002)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END	
+
+IF
+	PartyRested()
+	Global("dw_inn_roomtype","GLOBAL",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_checking_foraging","GLOBAL",1)
+		Continue()
+END
+
+BEGIN LOOP(scsloopvar||1;2;3;4;5;6)
+	IF
+		PartyRested()
+		Global("dw_inn_roomtype","GLOBAL",0)	
+		InParty(Playerscsloopvar)
+		Class(Playerscsloopvar,RANGER_ALL)
+		!StateCheck(Playerscsloopvar,STATE_REALLY_DEAD)
+		AreaType(FOREST)
+		!AreaType(CITY)
+		%block_foraging_string%
+	THEN
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",2)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",4)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",6)	
+			Continue()	
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",8)	
+			Continue()	
+	END
+
+	IF
+		PartyRested()
+		Global("dw_inn_roomtype","GLOBAL",0)	
+		InParty(Playerscsloopvar)
+		Class(Playerscsloopvar,RANGER_ALL)
+		!StateCheck(Playerscsloopvar,STATE_REALLY_DEAD)
+		!AreaType(FOREST)
+		!AreaType(CITY)
+		AreaType(OUTDOOR)
+		%block_foraging_string%
+	THEN
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",2)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",3)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",4)	
+			Continue()	
+	END
+	
+	IF
+		PartyRested()
+		Global("dw_inn_roomtype","GLOBAL",0)	
+		InParty(Playerscsloopvar)
+		Class(Playerscsloopvar,DRUID_ALL)
+		!StateCheck(Playerscsloopvar,STATE_REALLY_DEAD)
+		AreaType(FOREST)
+		!AreaType(CITY)
+		%block_foraging_string%
+	THEN
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",2)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",3)	
+			Continue()	
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",4)
+			Continue()		
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",5)
+			Continue()		
+	END
+	
+	IF
+		PartyRested()
+		Global("dw_inn_roomtype","GLOBAL",0)	
+		InParty(Playerscsloopvar)
+		Class(Playerscsloopvar,DRUID_ALL)
+		!StateCheck(Playerscsloopvar,STATE_REALLY_DEAD)
+		!AreaType(FOREST)
+		!AreaType(CITY)
+		AreaType(OUTDOOR)
+		%block_foraging_string%
+	THEN
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",1)
+			Continue()
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",2)	
+			Continue()	
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",3)	
+			Continue()	
+	END
+	
+	IF
+		PartyRested()
+		!GlobalTimerNotExpired("dw_rested_at_inn","GLOBAL")		
+		InParty(Playerscsloopvar)
+	THEN
+		RESPONSE #100
+			IncrementGlobal("dw_foraging","GLOBAL",-1)
+			Continue()
+	END
+		
+END LOOP
+
+IF
+	!Global("dw_checking_foraging","GLOBAL",0)
+	GlobalGT("dw_foraging","GLOBAL",0)
+	GlobalsLT("dw_supplies_count","dw_supplies_max_minus_one")
+THEN
+	RESPONSE #100
+		DisplayStringHead(Player1,@24004)
+		IncrementGlobal("dw_supplies_count","GLOBAL",2)
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+IF
+	!Global("dw_checking_foraging","GLOBAL",0)
+	!GlobalLT("dw_foraging","GLOBAL",0)
+	OR(2)
+		Global("dw_foraging","GLOBAL",0)
+		GlobalsEqual("dw_supplies_count","dw_supplies_max_minus_one")
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayStringHead(Player1,@24005)
+		IncrementGlobal("dw_supplies_count","GLOBAL",1)
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+IF
+	!Global("dw_checking_foraging","GLOBAL",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_checking_foraging","GLOBAL",0)
+		SetGlobal("dw_foraging","GLOBAL",0)
+		Continue()
+END
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/ice_island_add.baf
+IF
+	Dead("%bear_dv%")
+	Global("dw_checked_bear","MYAREA",0)
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayString(Player1,@24008)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+IF
+	Dead("%bear_dv%")
+	Global("dw_checked_bear","MYAREA",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_checked_bear","MYAREA",1)
+		Continue()
+END
+
+>>>>>>>>
+

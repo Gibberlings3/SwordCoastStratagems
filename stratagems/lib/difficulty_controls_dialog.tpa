@@ -1,0 +1,264 @@
+DEFINE_ACTION_FUNCTION difficulty_controls_dialog BEGIN
+
+	// define commonly-held strings
+
+	   ACTION_DEFINE_ASSOCIATIVE_ARRAY "diff_report_strings" BEGIN
+		  0 => 1010
+		  1 => 1011
+		  2 => 1012
+		  3 => 1013
+		  4 => 1014
+		  5 => 1015
+		  6 => 1016
+		  7 => 1017
+	   END
+
+	   ACTION_DEFINE_ASSOCIATIVE_ARRAY "diff_choice_strings" BEGIN
+		  0 => 1020
+		  1 => 1021
+		  2 => 1022
+		  3 => 1023
+		  4 => 1024
+		  5 => 1025
+		  6 => 1026
+		  7 => 1027
+	   END
+
+	   ACTION_DEFINE_ASSOCIATIVE_ARRAY "diff_response_strings" BEGIN
+		  0 => 1050
+		  1 => 1051
+		  2 => 1052
+		  3 => 1053
+		  4 => 1054
+		  5 => 1055
+		  6 => 1056
+		  7 => 1057
+	   END
+	   ACTION_IF GAME_IS iwdee BEGIN
+		  OUTER_SET $diff_report_string(7) = 1028
+		  OUTER_SET $diff_choice_strings(7) = 1029
+		  OUTER_SET $diff_response_strings(8) = 1058
+	   END
+
+	// build beginning section
+
+	   <<<<<<<<  .../stratagems-inline/difficulty_dialog.d
+	BEGIN ~dw#diffi~
+
+	IF ~True()~ THEN BEGIN initial
+		 SAY @1030
+	   >>>>>>>>
+
+	COPY ".../stratagems-inline/difficulty_dialog.d" "%workspace%"
+
+	// add the blocks corresponding to initial choices
+
+	   LAF 2da_process_table INT_VAR 2da=1 STR_VAR table=difficulty_controls.2da location=data function=difficulty_helper_initial END
+
+	// finish the block, add exit block and acknowledgement blocks
+
+
+	<<<<<<<< .../stratagems-inline/difficulty_dialog_integration.txt
+	IF ~~ THEN REPLY @1031 GOTO exit
+	END
+
+	IF ~~ THEN BEGIN exit
+	SAY @1032
+	IF ~~ THEN DO ~DestroySelf()~ EXIT
+	END
+	>>>>>>>>
+
+	<<<<<<<< .../stratagems-inline/difficulty_dialog_no_integration.txt
+	IF ~Global("DW_difficulty_control_inactive","GLOBAL",0)~ THEN REPLY @1033 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",1)~ GOTO control_off
+	IF ~Global("DW_difficulty_control_inactive","GLOBAL",1)~ THEN REPLY @1034 DO ~SetGlobal("DW_difficulty_control_inactive","GLOBAL",0)~ GOTO control_on
+	IF ~~ THEN REPLY @1031 GOTO exit
+	END
+
+	IF ~~ THEN BEGIN control_off
+	SAY @1035
+	IF ~~ THEN GOTO initial
+	END
+
+	IF ~~ THEN BEGIN control_on
+	SAY @1036
+	IF ~~ THEN GOTO initial
+	END 
+
+	IF ~~ THEN BEGIN exit
+	SAY @1032
+	IF ~Global("DW_difficulty_control_inactive","GLOBAL",0)~ THEN DO ~ApplySpellRES("dw#diff2",Player1)DestroySelf()~ EXIT
+	IF ~Global("DW_difficulty_control_inactive","GLOBAL",1)~ THEN DO ~DestroySelf()~ EXIT
+	END
+	>>>>>>>>
+
+	<<<<<<<< .../stratagems-inline/difficulty_acknowledge.txt
+	IF ~~ THEN BEGIN acknowledge_%var% SAY (AT %string%)
+	IF ~~ THEN GOTO initial
+	END
+	>>>>>>>>
+
+	COPY "%workspace%/difficulty_dialog.d" "%workspace%"
+		PATCH_IF ui_integration BEGIN
+		   APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_integration.txt"
+		END ELSE BEGIN
+		   APPEND_FILE TEXT ".../stratagems-inline/difficulty_dialog_no_integration.txt"
+		END
+		FOR (var=0;var<=7;var+=1) BEGIN
+			SET string=$diff_response_strings("%var%")
+			APPEND_FILE_EVALUATE TEXT ".../stratagems-inline/difficulty_acknowledge.txt"
+		END
+
+	// add the main blocks
+
+	LAF 2da_process_table INT_VAR 2da=1 STR_VAR table=difficulty_controls.2da location=data function=difficulty_helper_main END
+
+	/// compile the dialog file
+
+
+	COMPILE "%workspace%/difficulty_dialog.d" EVALUATE_BUFFER
+
+	// make the accompanying bits
+
+	LAF install STR_VAR file="dw#diffi.cre" location=resource END // basically a tweaked copy of cutspy
+
+	LAF check_ini STR_VAR ini=difficulty_icon RET value END
+	ACTION_IF FILE_EXISTS "%MOD_FOLDER%/lib/diff_icons/%value%.bam" BEGIN
+	   COPY "%MOD_FOLDER%/lib/diff_icons/%value%.bam" "override/dw#diffi.bam"
+	END ELSE BEGIN
+	   COPY "%MOD_FOLDER%/lib/diff_icons/v6.bam" "override/dw#diffi.bam"  // default
+	END
+
+	<<<<<<<< .../stratagems-inline/dw#diffi.baf
+	IF
+		NumberOfTimesTalkedTo(0)
+		Detect([PC])
+	THEN
+		RESPONSE #100
+			StartDialogueNoSet(LastSeenBy(Myself))
+	END
+	>>>>>>>>
+	COMPILE ".../stratagems-inline/dw#diffi.baf"
+
+
+
+	MAKE_PATCH
+	   say_name=>1018
+	   add_basic_ability=>null
+	   patch_ability_inline=>~ability_icon=>dw#diffi ability_target=>5 ability_icon_loc=>4~
+	   spell_type=>innate
+	   add_effect_inline=>"opcode=>67 target=>1 duration=>60 resource=>dw#diffi"
+	   add_effect_inline'=>"opcode=>172 target=>1 timing=>1 resource=>dw#diff1"
+	END
+	LAF make_spell STR_VAR spell=dw#diff1 edits=patch_data END
+
+	MAKE_PATCH
+	   add_basic_ability=>null
+	   add_effect_inline=>"opcode=>171 target=>2 timing=>1 resource=>dw#diff1"
+	END
+	LAF make_spell STR_VAR spell=dw#diff2 edits=patch_data END
+
+	// install it in starting areas if we don't have integration
+
+	ACTION_IF !ui_integration BEGIN
+
+		<<<<<<<< .../stratagems-inline/diff_install.baf
+		IF
+		  !Global("DW_initialise_difficulty_widget","GLOBAL",1)
+		THEN
+			RESPONSE #100
+					 SetGlobal("DW_initialise_difficulty_widget","GLOBAL",1)
+					 ApplySpellRES("dw#diff2",Player1)
+					 Continue()
+		END
+		>>>>>>>>
+
+		ACTION_IF is_bg2 BEGIN
+			LAF extend_area_script INT_VAR inline=1 STR_VAR area="ar3000 ar4000 ar0602" top=diff_install END
+		END
+		ACTION_IF is_bg1 BEGIN
+			LAF extend_area_script INT_VAR inline=1 STR_VAR area="%Candlekeep%" top=diff_install END
+		END
+		ACTION_IF is_iwd BEGIN
+			LAF extend_area_script INT_VAR inline=1 STR_VAR area="ar1006 ar9100" top=diff_install END
+		END
+
+	END
+
+
+
+
+END
+
+///////////////////////////////////////////////////////////////////
+//// Helper functions
+///////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION difficulty_helper_initial
+    INT_VAR int_only=0
+	STR_VAR rowname=""
+            string=""
+            variable=""
+            require=""
+            diff_1=""
+            diff_2=""
+            diff_3=""
+            diff_4=""
+            diff_5=""
+            diff_6=""
+            diff_7=""
+BEGIN
+	ACTION_IF !int_only BEGIN
+		OUTER_SPRINT codename "%rowname%"
+		OUTER_FOR (entry=0;entry<=7;entry+=1) BEGIN
+		   ACTION_IF $diff("%entry%") STRING_COMPARE_CASE "" BEGIN
+			  OUTER_SPRINT globalstring ~Global("%variable%","GLOBAL",%entry%)Global("DW_%codename%_disable","GLOBAL",99)~
+			  OUTER_SPRINT append_me "IF ~%globalstring%~ THEN REPLY (AT %string%) GOTO %codename%_%entry%"
+			  APPEND_OUTER "%workspace%/difficulty_dialog.d" "%append_me%"
+		   END
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION difficulty_helper_main
+    INT_VAR int_only=0
+	STR_VAR rowname=""
+            string=""
+            variable=""
+            require=""
+            diff_1=""
+            diff_2=""
+            diff_3=""
+            diff_4=""
+            diff_5=""
+            diff_6=""
+            diff_7=""
+BEGIN
+	ACTION_IF !int_only BEGIN
+		OUTER_SPRINT codename "%rowname%"
+		OUTER_FOR (entry=0;entry<=7;entry+=1) BEGIN
+		 ACTION_IF $diff("%entry%") STRING_COMPARE_CASE "" BEGIN
+		   OUTER_SET saystring = $diff_report_strings("%entry%")
+		   APPEND_OUTER "%workspace%/difficulty_dialog.d" "IF ~~ THEN BEGIN %codename%_%entry% SAY (AT %saystring%)"
+		   APPEND_OUTER "%workspace%/difficulty_dialog.d" "IF ~~ THEN REPLY @1019 GOTO initial"
+		   OUTER_FOR (option=0;option<=7;option+=1) BEGIN
+			 ACTION_IF (option=0 || $diff("%option%")>=0) BEGIN
+				 OUTER_SET replystrref = $diff_choice_strings("%option%")
+				 OUTER_SPRINT replystring (AT "%replystrref%")
+				 OUTER_SPRINT globalstring ~SetGlobal("%variable%","GLOBAL",%option%)~
+				 ACTION_IF option>=1 BEGIN
+					OUTER_SET temp_strref="%diff_%option%%"
+					OUTER_SPRINT temp (AT %temp_strref%)
+					OUTER_SPRINT replystring "%replystring%%temp%"
+				 END
+				 APPEND_OUTER "%workspace%/difficulty_dialog.d" "IF ~~ THEN REPLY ~%replystring%~ DO ~%globalstring%~ GOTO acknowledge_%option%"
+			 END
+		   END
+		   APPEND_OUTER "%workspace%/difficulty_dialog.d" "END"
+		 END
+		END
+	END
+
+
+END
+
+

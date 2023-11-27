@@ -1,0 +1,83 @@
+DEFINE_ACTION_FUNCTION hide_displayed_ability_setup BEGIN
+
+
+// suppress certain rows on the Abilities list in the character screen
+// (currently used only by no_int_max_spells, but we may as well aim for generality)
+
+	// setup the lua pages
+	
+	COPY ".../stratagems-inline/hide_ability_functions.lua" "override/m_dw_haf.lua"
+	COPY ".../stratagems-inline/hide_ability_data.lua" "override/m_dw_had.lua"
+
+	// make menu edit
+	
+	ACTION_IF is_iwd BEGIN
+		OUTER_SPRINT function buildCharacterDetails
+	END ELSE BEGIN
+		OUTER_SPRINT function updateAttrTable
+	END
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_function STR_VAR function patch=add_dwHideAbility END
+	BUT_ONLY
+
+END
+
+DEFINE_PATCH_FUNCTION add_dwHideAbility BEGIN
+
+	start = INDEX_BUFFER (EXACT_MATCH "for k, v in ipairs(characters[currentID].proficiencies.ability)")
+	end = INDEX_BUFFER ("end" start) + 3
+	READ_ASCII start data_old (end - start)
+	INNER_PATCH_SAVE data_new "%data_old%" BEGIN
+		PATCH_IF is_iwd BEGIN
+			REPLACE_TEXTUALLY EXACT_MATCH "addCharacterDetail(nil,nil,v.current)" "if not dwHideAbility(v.current) then %WNL% addCharacterDetail(nil,nil,v.current) %WNL%end"
+		END ELSE BEGIN
+			REPLACE_TEXTUALLY "--.*" ""
+			REPLACE_TEXTUALLY "\(table\.insert.*\)" "if not dwHideAbility(v.current) then %WNL% \1 %WNL%end"
+		END
+	END
+	DELETE_BYTES start (STRING_LENGTH "%data_old%")
+	INSERT_BYTES start (STRING_LENGTH "%data_new%")
+	WRITE_ASCIIE start "%data_new%"
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION hide_this_displayed_ability STR_VAR string="" BEGIN
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_haf.lua" BEGIN
+		LAF hide_displayed_ability_setup END
+	END
+	OUTER_WHILE "%string%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%string%" RET entry string=list END
+		COPY_EXISTING "enginest.2da" "%workspace%"
+			REPLACE_EVALUATE "%entry%[ %TAB%]+\([0-9]+\)" BEGIN
+				strref="%MATCH1%"
+			END
+			""
+		BUT_ONLY
+		APPEND "m_dw_had.lua" "dwHiddenAbilityText[%strref%]=true"
+	END
+	
+
+
+END
+
+
+<<<<<<<< .../stratagems-inline/hide_ability_functions.lua
+function dwHideAbility(text)
+
+	value=nil
+	for k,_ in pairs(dwHiddenAbilityText) do
+		if string.find(text,Infinity_FetchString(k)) then
+			value=true
+		end
+	end
+	
+	return value
+
+end
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/hide_ability_data.lua
+dwHiddenAbilityText={}
+>>>>>>>>

@@ -1,3 +1,5 @@
+// Avoid SCS syntactic sugar here, it messes with LUA code.
+
 DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
 
 
@@ -17,6 +19,11 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
   ACTION_IF enhanced_edition BEGIN
 
 
+	ACTION_IF is_iwd BEGIN
+		OUTER_SPRINT script iwdpgen
+	END ELSE BEGIN
+		OUTER_SPRINT script bddefai
+	END
     ACTION_DEFINE_ASSOCIATIVE_ARRAY bdai_vars BEGIN
        attack_mode=>BDAI_Attack_Mode
        healing_var=>BDAI_Skill_Mode
@@ -29,9 +36,19 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
     ACTION_PHP_EACH bdai_vars AS var=>val BEGIN
        OUTER_SPRINT "%var%" "%val%"
     END
-    LAF ssl_to_bcs STR_VAR script=bddefai locbase=gameplay location=resource END
+    LAF ssl_to_bcs STR_VAR script="bddefai=>%script%" locbase=gameplay location=resource END
+	OUTER_FOR (code=97;code<=122;++code) BEGIN // letters
+		LAF script_clone_block STR_VAR script match="hotkeyplaceholder" function="hotkey_substitution(%code%)" END
+	END
+	OUTER_FOR (code=44;code<=57;++code) BEGIN // numbers, most characters
+		LAF script_clone_block STR_VAR script match="hotkeyplaceholder" function="hotkey_substitution(%code%)" END
+	END
+	LAF script_clone_block STR_VAR script match="hotkeyplaceholder" function="hotkey_substitution(61)" END // = sign
+	LAF script_delete_block STR_VAR script match="hotkeyplaceholder" END
 
-    MAKE_PATCH
+
+    ACTION_CLEAR_ARRAY patch_data // no sugar, remember
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
       SCRIPT_USE_ITEMS_LABEL => 707
       SCRIPT_USE_SPECIAL_ABILITIES_LABEL => 706
       SCRIPT_USE_OFFENSIVE_SPELLS_LABEL => 704
@@ -53,6 +70,15 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
       SCRIPT_USE_MELEE_WEAPONS_DESCRIPTION => 609
       SCRIPT_USE_RANGED_WEAPONS_DESCRIPTION => 610
       SCRIPT_ATTACK_ENEMIES_DESCRIPTION => 611
+	  DW_EASE_OF_USE_HOTKEY_TOGGLE_MELEE_AUTOATTACK => 612
+	  DW_EASE_OF_USE_MELEE=>613
+	  DW_EASE_OF_USE_RANGED=>614
+	  DW_EASE_OF_USE_TOGGLE_LONG_DURATION=>615
+	  DW_EASE_OF_USE_CHAOTIC_COMMANDS=>616
+	  DW_EASE_OF_USE_DEATH_WARD=>617
+	  DW_EASE_OF_USE_PRO_ELEMENTS=>618
+	  DW_EASE_OF_USE_PRO_EVIL=>619
+	  DW_EASE_OF_USE=>620
     END
     
     ACTION_IF iwd_arcane BEGIN
@@ -63,12 +89,21 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
        END
     END
 
+	OUTER_SPRINT to_add ""
     COPY_EXISTING "L_%EE_LANGUAGE%.lua" override
        PHP_EACH patch_data AS key=>value BEGIN
           SPRINT string (AT value)
-          REPLACE_TEXTUALLY ~%key% *=.*~ ~%key% = "%string%",~
+		  PATCH_IF INDEX_BUFFER ("%key%")>=0 BEGIN
+			REPLACE_TEXTUALLY ~%key% *=.*~ ~%key% = "%string%",~
+		  END ELSE BEGIN
+			SPRINT to_add ~%to_add%%key% = "%string%",%WNL%~
+		  END
        END
+	   PATCH_IF  "%to_add%" STR_CMP "" BEGIN
+		REPLACE_TEXTUALLY "}"  "%to_add%%WNL%}"
+	END
     BUT_ONLY
+
     
     COPY_EXISTING "PARTYAI.2da" override
        COUNT_2DA_ROWS 2 rowcount
@@ -76,6 +111,41 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
           SET_2DA_ENTRY i 1 2 "BDDEFAI"
        END
     BUT_ONLY
+	
+	ACTION_IF is_iwd BEGIN
+		COPY_EXISTING scrpdesc.2da override
+			LPF 2da_read  RET_ARRAY scrpdesc_array=array END
+			SET $scrpdesc_array(IWDPGEN "TITLE") = RESOLVE_STR_REF (@750)
+			SET $scrpdesc_array(IWDPGEN DESCRIPTION) = RESOLVE_STR_REF (@751)
+			LPF 2da_write  STR_VAR array=scrpdesc_array default="-1" END
+	END 
+	
+	COPY_EXISTING "BGEE.lua" override
+		REPLACE_TEXTUALLY 
+			~"ASSIGN_KEYS_PAGE_CHARACTERARBITRATION",[ %TAB%]*'',[ %TAB%]*0,[ %TAB%]*99~
+			~"ASSIGN_KEYS_PAGE_CHARACTERARBITRATION", '', 0, 0~
+	COPY - ".../stratagems-inline/keybindings_add.txt" nowhere
+		READ_ASCII 0x0 keybinding_data (BUFFER_LENGTH)
+	APPEND "BGEE.lua" "%keybinding_data%"
+
+	COPY - ".../stratagems-inline/stop_keybind.txt" nowhere
+		READ_ASCII 0x0 fn_data (BUFFER_LENGTH)
+	APPEND "util.lua" "%fn_data%"
+
+
+	COPY_EXISTING "util.lua" override
+		LPF UI_alter_function STR_VAR function=revertKeymap patch=edit_revertKeymap END
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_function STR_VAR function=getHotkeyName patch="REPLACE_TEXTUALLY ~category *< *5~ ~category<5 or category>6~" END
+		REPLACE_TEXTUALLY ~Infinity_StopKeybind()~ ~dw_stop_keybind()~
+
+	ACTION_IF FILE_EXISTS "%USER_DIRECTORY%/baldur.lua" BEGIN
+        COPY - ".../stratagems-inline/ini_add.txt" nowhere
+			READ_ASCII 0x0 ini_data (BUFFER_LENGTH)
+		APPEND_OUTER "%USER_DIRECTORY%/baldur.lua" "%ini_data%"
+    END
+
 
   END ELSE BEGIN
 
@@ -91,3 +161,71 @@ DEFINE_ACTION_FUNCTION ~ease_of_use_ai~ BEGIN
  END
 
 END
+
+
+DEFINE_PATCH_FUNCTION hotkey_substitution
+	STR_VAR arguments=""
+BEGIN
+	arguments_uc=(arguments>=97 && arguments<=122)?(arguments - 32):arguments
+	REPLACE_EVALUATE
+	~Global("HotKeyPlaceholder:\([^"]*\)","GLOBAL",1)~
+	BEGIN
+		SPRINT hotkey_id "%MATCH1%"
+	END
+	~INI("%hotkey_id%",%arguments%)HotKey(%arguments_uc%)~
+END
+
+DEFINE_PATCH_FUNCTION edit_revertKeymap
+BEGIN
+	REPLACE_TEXTUALLY
+	~Infinity_RemoveINIEntry(\([^)]*\))~
+	~Infinity_RemoveINIEntry(\1)
+			if catIndex==7 then
+				Infinity_SetINIValue(keycategories[key[2]][3],key[3],key[7])
+			end
+	~
+
+
+END
+
+
+
+
+<<<<<<<< .../stratagems-inline/keybindings_add.txt
+keybindings[7]=
+	{
+		{ 1001,	7,	'scs_toggle_melee',			"DW_EASE_OF_USE_HOTKEY_TOGGLE_MELEE_AUTOATTACK",				'',		0,	107 },
+		{ 1002,	7,	'scs_melee',				"DW_EASE_OF_USE_MELEE",	'',		0,	100 },
+		{ 1003,	7,	'scs_ranged',				"DW_EASE_OF_USE_RANGED",			'',		0,	102 },
+		{ 1004,	7,	'scs_chaotic_commands',		"DW_EASE_OF_USE_CHAOTIC_COMMANDS",					'',		0,	99 },
+		{ 1005,	7,	'scs_death_ward',			"DW_EASE_OF_USE_DEATH_WARD",				'',		0,	118 },
+		{ 1006,	7,	'scs_pro_elements',			"DW_EASE_OF_USE_PRO_ELEMENTS",			'',		0,	98 },
+		{ 1007,	7,	'scs_pro_evil',				"DW_EASE_OF_USE_PRO_EVIL",					'',		0,	122 },
+	}
+
+keycategories[7]=
+	{ 7, "DW_EASE_OF_USE", 			'Script' }
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/ini_add.txt
+SetPrivateProfileString('Script','scs_melee','100')
+SetPrivateProfileString('Script','scs_ranged','102')
+SetPrivateProfileString('Script','scs_pro_evil','122')
+SetPrivateProfileString('Script','scs_chaotic_commands','99')
+SetPrivateProfileString('Script','scs_death_ward','118')
+SetPrivateProfileString('Script','scs_pro_elements','98')
+SetPrivateProfileString('Script','scs_toggle_melee','107')
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/stop_keybind.txt
+function dw_stop_keybind()
+	Infinity_StopKeybind()
+	for keyIndex, key in pairs (keybindings[7]) do
+		if key[6]==key[7] then
+			Infinity_RemoveINIEntry(keycategories[key[2]][3],key[3])
+			Infinity_SetINIValue(keycategories[key[2]][3],key[3],key[7])
+		end
+	end
+
+end
+>>>>>>>>

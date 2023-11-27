@@ -1,0 +1,300 @@
+DEFINE_ACTION_FUNCTION revise_shapechange BEGIN
+
+	LAF include STR_VAR file=lib_shapeshift.tph locbase=lib END
+	LAF initialise_shapeshift END
+
+
+	// invisible stalker needs DS installed
+   LAF check_label STR_VAR label=dw#detectablespells RET value END // don't install it twice! (It's idempotent, but wastes time)
+   ACTION_IF !value BEGIN
+        LAF make_label STR_VAR label=dw#detectablespells END
+        LAF detectable_spells END  // core DS - copy of the SoD version, adapted for SCS
+   END
+	LAF shapechange_build_forms END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY shapechange_arr BEGIN
+		1=>"%SHAPECHANGE_MIND_FLAYER% %SHAPECHANGE_IRON_GOLEM% %SHAPECHANGE_GIANT_TROLL% %spl_shapechange_marilith% %spl_shapechange_basilisk% %spl_shapechange_invisible_stalker%"
+	END
+	LAF make_shapeshift_wrap_spell INT_VAR description=50060 duration=3600 grant_persistent_powers=1 STR_VAR spell="%WIZARD_SHAPECHANGE%" copy_spell="%WIZARD_SHAPECHANGE%" shapeshift_list=shapechange_arr END
+	LAF build_shapeshift_ability_remover END
+
+END
+
+
+DEFINE_ACTION_FUNCTION shapechange_build_forms BEGIN
+
+	//////////////////
+	// mind flayer
+	//////////////////
+	
+	LAF make_shapeshift_spell
+		INT_VAR str=10
+				dex=10
+				ac=3
+				thac0=11
+				apr=4
+				enchantment=2
+				dicenumber=1
+				dicesize=2
+				name=50043
+				description=50044
+				resistmagic=90
+				resistslashing=50
+				resistcrushing=50
+				resistpiercing=50
+				resistmissile=50
+				block_spellcasting=0
+				timing=1
+				casting_time=0
+				auto_renew=1
+		STR_VAR weapon=cdmindfl
+				spell="%SHAPECHANGE_MIND_FLAYER%"
+				grant_spells="%spl_shapeshift_mind_flayer_psionic_blast%"
+	END
+	
+	LAF spl_make_innate_repeating_spell INT_VAR override_description=50055 new_is_ids=0 STR_VAR arguments="%MIND_FLAYER_PSIONIC_BLAST%=>%spl_shapeshift_mind_flayer_psionic_blast%" END
+
+	////////
+	// iron golem
+	////////
+	
+	LAF make_shapeshift_spell
+		INT_VAR name=50045
+				description=50046
+				thac0=3
+				use_template=1
+				timing=1
+				casting_time=0
+				auto_renew=1
+		STR_VAR grant_spells="%spl_shapeshift_iron_golem_gas_cloud%"
+				spell="%SHAPECHANGE_IRON_GOLEM%"
+				weapon=cdgoliro
+	END
+	
+	// immunity to +2 weapons and below, and to the gas cloud
+
+	COPY_EXISTING "cdgoliro.itm" override
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=120 target=1 timing=2 parameter1=2 END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=120 target=1 timing=2 parameter1=0 parameter2=1 END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=120 target=1 timing=2 parameter1=0 parameter2=2 END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=318 target=1 timing=2 STR_VAR resource="%GOLEM_GASCLOUD%" END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=318 target=1 timing=2 STR_VAR resource="%spl_shapeshift_iron_golem_gas_cloud%b" END
+	BUT_ONLY
+
+	// gas cloud
+
+	LAF spl_make_innate_repeating_spell INT_VAR override_description=50057 delete_casting=1 new_is_ids=0 cooldown=18 STR_VAR arguments="%GOLEM_GASCLOUD%=>%spl_shapeshift_iron_golem_gas_cloud%" END
+	
+	// we need a secondary spell, because self-immunity messes with spell renewal; (b) it's more compatibility-friendly
+	
+	spl.edit[%spl_shapeshift_iron_golem_gas_cloud%]
+	[
+		m.ab_fx.delete{!(s_opcode=171 OR s_opcode=172)}
+		m.ab_fx.add{s_opcode=146 s_target=1 s_timing=1 s_parameter2=1 s_resource:="%spl_shapeshift_iron_golem_gas_cloud%b"}
+	]
+	
+	// tweak original
+	
+	spl.edit[%GOLEM_GASCLOUD%]
+	[
+		m.ab_fx.add{s_opcode=318 s_target=2 s_duration=6 s_resource:="%sfo_filename%"}
+		m.ab_fx.alter{s_parameter1=3|match="s_opcode=25"}
+	]
+	pro.edit[golcloud][m_affect_only_enemies=0]
+	spl.copy[%GOLEM_GASCLOUD%=>%spl_shapeshift_iron_golem_gas_cloud%b]
+	[
+		m_name="-1"
+		m.ab_fx.alter{s_resource:="%spl_shapeshift_iron_golem_gas_cloud%b"|match="s_opcode=318"}
+	]
+	
+	// give actual iron golems immunity to both effects
+	
+	itm.edit[goliro ironman|allow_missing:i=1]
+	[
+		m.immunity_spell{%GOLEM_GASCLOUD% %spl_shapeshift_iron_golem_gas_cloud%b}
+	]
+
+	////////////////
+	/// giant troll
+	////////////////
+	
+	LAF make_shapeshift_spell
+		INT_VAR name=50047
+				description=50048
+				thac0=8
+				str=22
+				dex=18
+				thac0=8
+				ac=4
+				apr=3
+				dicenumber=2
+				dicesize=6
+				block_spellcasting=0
+				timing=1
+				casting_time=0
+				auto_renew=1
+		STR_VAR weapon=trollall
+				spell="%SHAPECHANGE_GIANT_TROLL%"
+	END
+	
+	// regeneration
+	
+	COPY_EXISTING "trollall.itm" override
+		LPF ALTER_EFFECT INT_VAR match_opcode=98 parameter1=5 END
+	BUT_ONLY
+	
+	/////////////////
+	/// marilith
+	/////////////////
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "marili.itm" BEGIN
+		COPY "%MOD_FOLDER%/%component_loc%/resource/marili.itm" override
+	END
+	
+	LAF make_shapeshift_spell
+		INT_VAR name=50049
+				description=50050
+				thac0=8
+				str=19
+				dex=18
+				apr=5
+				ac="-6"
+				block_spellcasting=0
+				resistmagic=85
+				resistfire=100
+				resistelectricity=100
+				resistcold=50
+				timing=1
+				casting_time=0
+				auto_renew=1
+		STR_VAR	weapon="%itm_shapechange_marilith%"
+				copy_weapon=marili
+				spell="%spl_shapechange_marilith%"
+				copy_spell="%SHAPECHANGE_GIANT_TROLL%"
+				grant_spells="%spl_shapeshift_marilith_teleport%"
+				anim=marilith
+				icon=dw-ssma
+				ability_icon=dw-ssma
+				icon_path="%MOD_FOLDER%/%component_loc%/resource"
+	END
+	
+	// immunities
+	
+	itm.edit[%itm_shapechange_marilith%]
+	[
+		m.immunity_effect{charm fear poison diseased}
+	]
+	
+	// teleport
+	spl.copy[spwi931=>%spl_shapeshift_marilith_teleport%|source_location=resource]
+	[
+		m.ab_fx.alter{s_duration=0|match="s_opcode=124"}
+		m.ab.alter{s_casting_time=0}
+	]
+	LAF spl_make_innate_repeating_spell INT_VAR override_description=50056 delete_casting=1 overwrite=1 STR_VAR arguments="%spl_shapeshift_marilith_teleport%" END
+
+		
+	/////////////
+	/// Basilisk
+	/////////////
+	
+	ACTION_BASH_FOR "%MOD_FOLDER%/%component_loc%/resource/7101" ".*" BEGIN
+		ACTION_IF !FILE_EXISTS_IN_GAME "%BASH_FOR_FILE%" BEGIN
+			COPY "%BASH_FOR_FILESPEC%" override
+		END
+	END
+	
+	LAF make_shapeshift_spell
+		INT_VAR name=50051
+				description=50052
+				ac=2
+				apr=3
+				str=18
+				dex=10
+				thac0=11
+				dicenumber=1
+				dicesize=8
+				timing=1
+				casting_time=0
+				auto_renew=1
+		STR_VAR weapon="%itm_shapechange_basilisk%"
+				copy_weapon=plywyvrn
+				spell="%spl_shapechange_basilisk%"
+				copy_spell="%SHAPECHANGE_GIANT_TROLL%"
+				grant_spells="%spl_shapeshift_basilisk_gaze%"
+				anim=basilisk_greater	
+				icon=dw-ssbs
+				ability_icon=dw-ssbs
+				icon_path="%MOD_FOLDER%/%component_loc%/resource"
+	END
+	
+	// gaze attack
+	
+	LAF spl_make_innate_repeating_spell INT_VAR override_description=50054 delete_casting=1 new_is_ids=0 STR_VAR arguments="%WIZARD_FLESH_TO_STONE%=>%spl_shapeshift_basilisk_gaze%" END
+	spl.edit[%spl_shapeshift_basilisk_gaze%]
+	[
+		m.ab_fx.alter{s_savebonus="-6"}
+		m.ab.alter{s_projectile=64 s_casting_time=0}
+		m_name:=@50053
+	]
+	
+	// poison
+	
+	COPY_EXISTING "%itm_shapechange_basilisk%.itm" override
+		LPF ALTER_EFFECT INT_VAR match_opcode=25 savebonus=0 parameter1=3 END
+	BUT_ONLY
+
+	/////////////
+	/// Invisible stalker
+	/////////////
+	
+	LAF make_shapeshift_spell
+		INT_VAR name=50058
+				description=50059
+				thac0=11
+				timing=1
+				casting_time=0
+				auto_renew=1
+				use_template=1
+				block_spellcasting=0
+		STR_VAR weapon="%itm_shapechange_invisible_stalker%"
+				copy_weapon=stalkesu
+				spell="%spl_shapechange_invisible_stalker%"
+				cre=stalke
+				icon=dw-ssst
+				ability_icon=dw-ssst
+				icon_path="%MOD_FOLDER%/%component_loc%/resource"
+	END
+			
+	// invisibility effect
+	
+	LAF ds_resolve_stat STR_VAR id=CANNOT_TURN_INVISIBLE RET stat_ind END
+	
+	
+	spl.copy[%WIZARD_IMPROVED_INVISIBILITY%=>%spl_shapeshift_stalker_invisibility%]
+	[
+		m_name="-1"
+		m.ab.delete{s_level>1}
+		m.ab_fx.alter{s_duration=(s_duration>5)?6:s_duration}
+		m.ab_fx.delete{s_opcode=215}
+		m.ab_fx.add{s_opcode=318 s_target=1 s_parameter1=stat_ind s_parameter2=76 s_resource:="%spl_shapeshift_stalker_invisibility%"}
+		m.ab_fx.add{s_opcode=139 s_target=1 s_timing=1 s_parameter1=12021}
+	]
+
+	spl.make[%spl_shapeshift_stalker_invisibility_wrap%]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=326 s_timing=4 s_duration=6 s_target=1 s_resource:="%spl_shapeshift_stalker_invisibility_wrap%"}
+		m.ab_fx.add{s_opcode=326 s_timing=1 s_target=1 s_resource:="%spl_shapeshift_stalker_invisibility%"}
+	]
+	spl.edit[%spl_shapechange_invisible_stalker%]
+	[
+		m.ab_fx.add{s_opcode=326 s_target=1 s_timing=1 s_parameter1=1 s_resource:="%spl_shapeshift_stalker_invisibility_wrap%"}
+	]
+
+	APPEND_OUTER "%data_loc_shared%/shapeshift_applied_powers.txt" "%spl_shapeshift_stalker_invisibility%"
+	APPEND_OUTER "%data_loc_shared%/shapeshift_applied_powers.txt" "%spl_shapeshift_stalker_invisibility_wrap%"
+
+END
+
+

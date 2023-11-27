@@ -2,54 +2,58 @@ DEFINE_ACTION_FUNCTION pro_normal_missiles
 BEGIN
 
 
-   LAF log_this STR_VAR file="scs_modified_spells.2da" input=WIZARD_PROTECTION_FROM_NORMAL_MISSILES repeat=no END
+    LAF log_this INT_VAR repeat=0 STR_VAR file="scs_modified_spells.2da" input=WIZARD_PROTECTION_FROM_NORMAL_MISSILES END
 
-OUTER_SET number_to_add=0
-OUTER_SPRINT arrow_string ""
-ACTION_FOR_EACH arrow IN arow05 arow08 arow09 bolt03 bolt04 BEGIN
- OUTER_SET number_to_add +=1
- COPY_EXISTING ~%tutu_var%%arrow%.itm~ ~override~
-   READ_LONG 0x64 ab_off
-   READ_SHORT 0x2a + ab_off pro_num
-   SET pro_num -= 1
-   SPRINT arrow_string "%arrow_string% %pro_num%"
- BUT_ONLY
-END
+	ACTION_FOR_EACH arrow IN arow05 arow08 arow09 bolt03 bolt04 BEGIN
+		OUTER_SET count=0
+		COPY_EXISTING - ~%tutu_var%%arrow%.itm~ nowhere
+			READ_LONG 0x64 ab_off
+			READ_SHORT 0x2a + ab_off pro_num
+			SET pro_num -= 1
+			SET $extra_pros("%count%")=pro_num
+			++count
+		BUT_ONLY
+	END
 
 
     OUTER_SPRINT desc_add @100
 
-MAKE_PATCH
-     clone_effect_inline=>~match=>"opcode=83 and parameter2=4" number_to_add=>%number_to_add%
-                           parameter2=>"entry_index from [%arrow_string%]"~
-     append_description=>" %desc_add%"
-END
-
-LAF edit_whatever INT_VAR allow_missing=1 STR_VAR file="%WIZARD_PROTECTION_FROM_NORMAL_MISSILES%.spl SPRA303.spl %tutu_scriptm%agebrac.itm ohwi311.spl" edits=patch_data END
-LAF edit_item STR_VAR item="%WIZARD_PROTECTION_FROM_NORMAL_MISSILES_SCROLL%" editstring="append_description=>~%desc_add%~" END
-
+	spl.edit[%WIZARD_PROTECTION_FROM_NORMAL_MISSILES% spra303 ohwi311|allow_missing:i=1 edit_strrefs_in_place:i=1]
+	[
+		m.ab_fx.clone{s_parameter2=$extra_pros("%entry_index%")|number:i=count match="s_opcode=83 && s_parameter2=4"}
+		SPRINT m_description "%m_description%%desc_add%"
+	]
+	itm.edit[%tutu_scriptm%agebrac|allow_missing:i=1]
+	[
+		m.ab_fx.clone{s_parameter2=$extra_pros("%entry_index%")|number:i=count match="s_opcode=83 && s_parameter2=4"}
+	]
 
      // Flame Arrow spell needs its own projectile, and Physical Mirror/Entropy Shield need to know about that projectile
 
-      COPY_EXISTING ~arrowflm.pro~ ~%workspace%/dw#flam.pro~
-      ADD_PROJECTILE ~%workspace%/dw#flam.pro~
-	  ACTION_IF demivrgvs BEGIN
-		LAF edit_spell STR_VAR spell="%WIZARD_FLAME_ARROW%E" editstring=~patch_ability_inline=>"projectile=>%dw#flam%"~ END	  
-	  END ELSE BEGIN
-		LAF edit_spell STR_VAR spell=WIZARD_FLAME_ARROW editstring=~patch_ability_inline=>"projectile=>%dw#flam%"~ END
-	  END
-	  OUTER_SET pro_num="dw#flam" - 1
+	pro_num=pro.copy[arrowflm=>dw#flam][]
 	  
-	  ACTION_IF FILE_EXISTS_IN_GAME "%CLERIC_PHYSICAL_MIRROR%.spl" BEGIN
-		  COPY_EXISTING "%CLERIC_PHYSICAL_MIRROR%.spl" override
-			LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=197 match_parameter2=3 parameter2=pro_num END  // silent because some versions of game - BGEE, TUTU - don't protect against Flame Arrow projectile to start with
-		  BUT_ONLY
-	  END	  
-	  
-	  ACTION_IF FILE_EXISTS_IN_GAME "%CLERIC_ENTROPY_SHIELD%.spl" BEGIN
-		  COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
-			LPF CLONE_EFFECT INT_VAR match_opcode=83 match_parameter2=3 parameter2=pro_num END
-		  BUT_ONLY
-	  END
+	ACTION_IF demivrgvs BEGIN
+		OUTER_SPRINT spell "%WIZARD_FLAME_ARROW%E"
+	END ELSE BEGIN
+		OUTER_SPRINT spell "%WIZARD_FLAME_ARROW%"
+	END
+	spl.edit[%spell%]
+	[
+		m.ab.alter{s_projectile:=dw#flam}
+	]
+
+
+
+	ACTION_IF FILE_EXISTS_IN_GAME "%CLERIC_PHYSICAL_MIRROR%.spl" BEGIN
+	  COPY_EXISTING "%CLERIC_PHYSICAL_MIRROR%.spl" override
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=197 match_parameter2=3 parameter2=pro_num END  // silent because some versions of game - BGEE, TUTU - don't protect against Flame Arrow projectile to start with
+	  BUT_ONLY
+	END	  
+
+	ACTION_IF FILE_EXISTS_IN_GAME "%CLERIC_ENTROPY_SHIELD%.spl" BEGIN
+	  COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
+		LPF CLONE_EFFECT INT_VAR match_opcode=83 match_parameter2=3 parameter2=pro_num END
+	  BUT_ONLY
+	END
 
 END

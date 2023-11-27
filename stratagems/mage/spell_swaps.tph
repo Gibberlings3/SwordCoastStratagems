@@ -89,10 +89,13 @@ DEFINE_PATCH_FUNCTION mage_spell_swap_alignment
      RET spells
 BEGIN
      TO_LOWER filename
-     LPF CRE_is_good RET is_good=value END
-     PATCH_IF is_good BEGIN
-             LPF substitute_spells STR_VAR spells swap_out="SUMMON_PLANATAR_EVIL" swap_in="SUMMON_PLANATAR_GOOD" RET spells END
-     END
+     PATCH_IF is_bg2 && (BYTE_AT 0x234>=18) BEGIN    
+		 LPF CRE_is_good RET is_good=value END
+		 PATCH_IF is_good BEGIN
+				REPLACE_TEXTUALLY "%WIZARD_SUMMON_PLANATAR_EVIL%" "%WIZARD_SUMMON_PLANATAR_GOOD%" (8)
+				REPLACE_TEXTUALLY "%WIZARD_SUMMON_ULTROLOTH%" "%WIZARD_SUMMON_PLANATAR_GOOD%" (8)
+		 END
+	 END
 END
 
 DEFINE_PATCH_FUNCTION mage_spell_swap_specific
@@ -199,6 +202,11 @@ DEFINE_PATCH_FUNCTION mage_spell_swap_iwd
      STR_VAR spells=""
      RET spells
 BEGIN
+	PATCH_FOR_EACH element IN AIR EARTH FIRE WATER BEGIN
+		PATCH_IF !VARIABLE_IS_SET "WIZARD_CONJURE_LESSER_%element%_ELEMENTAL" BEGIN
+			LPF substitute_spells STR_VAR spells swap_out="CONJURE_LESSER_%element%_ELEMENTAL" swap_in="CONJURE_%element%_ELEMENTAL" RET spells END
+		END
+	END
 END
 
 
@@ -208,5 +216,56 @@ DEFINE_PATCH_FUNCTION mage_spell_swap_sr
      STR_VAR spells=""
      RET spells
 BEGIN
-         LPF substitute_spells STR_VAR spells swap_out=CACOFIEND swap_in=SUMMON_FIEND RET spells END  // catches the small number of wizards who (via override) get allocated Cacofiend
+         LPF substitute_spells STR_VAR spells swap_out="CACOFIEND" swap_in=SUMMON_FIEND RET spells END  // catches the small number of wizards who (via override) get allocated Cacofiend
+																										// also the ones who get it if we use IWD spells
+																										// they are mostly liches anyway so NBD
+		 PATCH_IF !VARIABLE_IS_SET "%WIZARD_CONJURE_WATER_ELEMENTAL%" BEGIN // allow for old version of IWDspells
+			LPF substitute_spells STR_VAR spells swap_out="CONJURE_WATER_ELEMENTAL" swap_in="CONJURE_AIR_ELEMENTAL" RET spells END
+		 END
+END
+
+////////////////////////////// based on Talents of Faerun - swaps out the new spells if not present //////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION mage_spell_swap_tof
+     STR_VAR spells=""
+     RET spells
+BEGIN
+	DEFINE_ASSOCIATIVE_ARRAY swap_array BEGIN
+		STONEFIST=>MAGIC_MISSILE
+		ICE_KNIFE=>MAGIC_MISSILE
+		MINOR_LIGHTNING_BOLT=>MELF_ACID_ARROW
+		COMBUST=>HORROR
+		TURN_PEBBLE_TO_BOULDER=>LANCE_OF_DISRUPTION
+		TELEKINESIS=>CONE_OF_COLD
+		TELEKINETIC_STORM=>ABI_DALZIMS_HORRID_WILTING
+		STORMBOLTS=>METEOR_SWARM
+		VERIDONS_ICY_RAY=>BIGBYS_CRUSHING_HAND
+		CREATE_BONEGUARD=>POWER_WORD_KILL
+	END
+	PHP_EACH swap_array AS swap_out=>swap_in BEGIN
+         LPF substitute_spells STR_VAR spells swap_out swap_in RET spells END  // catches the small number of wizards who (via override) get allocated Cacofiend
+	END
+END
+
+////////////////////////////// swap a few illegal/unsuitable spells for elementalists //////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION mage_spell_swap_elementalist
+     STR_VAR spells="" kit=""
+     RET spells
+BEGIN
+	PATCH_MATCH "%kit%" WITH
+	earth BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="FIRE_SHIELD_RED FIRE_SHIELD_BLUE" swap_in="" RET spells END
+	END
+	air BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="FIRE_SHIELD_RED STONE_SKIN FIRE_SHIELD_BLUE" swap_in="" RET spells END
+	END
+	fire BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="FIRE_SHIELD_BLUE" swap_in="" RET spells END	
+	END
+	water BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="FIRE_SHIELD_RED" swap_in="" RET spells END		
+	END
+	DEFAULT
+	END
 END

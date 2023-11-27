@@ -1,0 +1,859 @@
+//start//
+///////////////////////////////////////////////////////////////////////////////////
+///    Add some new portraits into the system, or modify existing ones (EE only)
+///
+///		The portraits should be listed in a 2DA table of form
+///
+///		       skin	hair	major	minor	race		sex		class		disabled
+/// EXAMPLE	   INT	INT		INT		INT		human		f		fighter		no	
+///
+/// (any of these columns can be missing, in which case defaults are assumed.) The function generates
+/// a master table of this form which lives in the 'shared' subdirectory of weidu_external (specifically,
+/// at weidu_external/data/shared/dw_portraits.2da)
+///
+/// The first time the function is run, this table is created; also the UI is edited to include the needed color-preset changes
+///
+///	'race' can be any of human, halfelf, elf, dwarf, halfling, gnome, halforc, special (the default).
+/// 'class' can be fighter, wizard, cleric, thief, bard, barbarian, special (the default).
+/// 'sex' can be f, m, fm (the default).
+/// 'disabled' can be yes or no (the default).
+
+/// The bmps themselves should be named as follows:
+///	- EXAMPLEhires.bmp (for large high-resolution portraits) - copied to the L slot
+/// - EXAMPLE330.bmp - also copied to the L slot
+/// - EXAMPLEL.bmp - copied direct to the L slot
+/// - EXAMPLE269.bmp - copied to the M slot
+/// - EXAMPLEM.bmp - copied to the M slot
+
+/// give the function these variables:
+///
+/// portrait_table: the full path to a new table, of the above form, to be added
+/// portrait_path: the path to the directory containing any new portrait BMPs listed in the table (or, if no table is given, containing any 
+/// portrait BMPs just to be copied over directly - mostly applies to the core IWD/BG/BG2 portraits)
+/// disable: a list, separated by spaces, of portrait base names to disable from the system
+/// enable: a list, separated by spaces, of portrait base names to enable in the systems
+/// lua_loc: the path to a folder containing the SFO_LUA lua libraries (only needed for the tables of 
+/// 		 portrait data; not needed if you're not using the bundled versio, ui_add_portraits.tpc)
+///
+/// On a non-EE install we default to CamDawg's cd_portrait_copy; you can force this even on EE by setting INT_VAR force_cd=1.
+
+
+DEFINE_ACTION_FUNCTION ui_add_portraits
+	INT_VAR force_cd=0
+	STR_VAR portrait_path=""
+			portrait_table=""
+			disable=""
+			enable=""
+			lua_loc="lua"
+BEGIN
+
+	ACTION_IF !enhanced_edition || force_cd BEGIN
+
+		LAF 2da_read STR_VAR table="%portrait_table%" RET_ARRAY portrait_names=rows END
+		ACTION_PHP_EACH rows AS source=>discard BEGIN
+			ACTION_TRY
+				LAF cd_pc_portrait_copy STR_VAR source source_path = "%portrait_path%" END
+			WITH DEFAULT
+				PRINT "ui_add_portraits error: on a non-EE game but the cd_portrait_copy library is not included, or else has been called incorrectly."
+				ACTION_RERAISE				
+			END
+		END
+
+	END ELSE BEGIN
+
+
+	// set up original portrait data if needed
+
+<<<<<<<< .../stratagems-inline/dw_portrait_data.2da
+2DA V1.0
+*
+			skin	hair	major	minor	race		sex		class     disabled
+>>>>>>>>
+
+
+		ACTION_IF !FILE_EXISTS "%data_loc_shared%/dw_portrait_data.2da" BEGIN
+			COPY ".../stratagems-inline/dw_portrait_data.2da" "%data_loc_shared%"
+
+			ACTION_FOR_EACH game IN iwd bg bg2 BEGIN
+				ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%lua_loc%/portrait_data/portrait_data_%game%.2da" BEGIN
+					OUTER_SPRINT to_read "%MOD_FOLDER%/%lua_loc%/portrait_data/portrait_data_%game%.2da"
+				END ELSE BEGIN
+					OUTER_SPRINT to_read ".../stratagems-inline/portrait_data_%game%.2da"			
+				END
+				LAF add_to_portrait_tables_helper
+					STR_VAR to_read
+							to_add_to="%data_loc_shared%/dw_portrait_data.2da"
+				END		
+			END
+		END
+		
+		// get parameters for portrait data in bgee.lua; extract data
+
+		COPY_EXISTING "bgee.lua" "%workspace%" 
+			SET index=INDEX_BUFFER ("Portraits")
+			LPF find_parenthesis_range INT_VAR index RET start end END
+			READ_ASCII start+1 bgee_data (end - start - 1)
+		BUT_ONLY
+
+		// get a list of all portraits currently in the system
+
+		<<<<<<<< .../stratagems-inline/dw_portrait_default.2da
+		2DA V1.0
+		*
+
+				sex		race	class
+		>>>>>>>>
+		COPY ".../stratagems-inline/dw_portrait_default.2da" "%workspace%"
+
+
+		OUTER_INNER_PATCH "%bgee_data%" BEGIN
+			REPLACE_TEXTUALLY "--.*" "" // remove lua comments
+			REPLACE_EVALUATE "{ *'\([^']*\)', *\([0-9]\)}" BEGIN
+				INNER_ACTION BEGIN
+					APPEND_OUTER "%workspace%/dw_portrait_default.2da" "%MATCH1% %MATCH2% special special"
+				END
+			END
+			""
+		END
+
+		// add them on if not present
+		LAF add_to_portrait_tables_helper
+			INT_VAR warn_of_repeats=0
+			STR_VAR to_read="%workspace%/dw_portrait_default.2da"
+					to_add_to="%data_loc_shared%/dw_portrait_data.2da"
+		END
+		
+		///////////////////////////////////////
+		/// At this stage we're initialised
+		///////////////////////////////////////
+		
+		////// Add new portraits ///////////////
+
+		ACTION_IF "%portrait_table%" STRING_COMPARE "" BEGIN
+			// add the data
+			LAF add_to_portrait_tables_helper
+				STR_VAR to_read="%portrait_table%"
+					to_add_to="%data_loc_shared%/dw_portrait_data.2da"
+			END
+			// add the portraits themselves
+			COPY "%portrait_table%" "%workspace%"
+			  COUNT_2DA_COLS colcount
+			  READ_2DA_ENTRIES_NOW portrait_table colcount
+				FOR (row=0;row<portrait_table;++row) BEGIN
+					READ_2DA_ENTRY_FORMER portrait_table row 0 resref_base
+					TO_UPPER resref_base
+					INNER_ACTION BEGIN
+						ACTION_IF FILE_EXISTS "%portrait_path%/%resref_base%hi_res.bmp" BEGIN
+							COPY "%portrait_path%/%resref_base%hi_res.bmp" "override/%resref_base%L.bmp"
+						END ELSE 
+						ACTION_IF FILE_EXISTS "%portrait_path%/%resref_base%330.bmp" BEGIN
+							COPY "%portrait_path%/%resref_base%330.bmp" "override/%resref_base%L.bmp"					
+						END ELSE
+						ACTION_IF FILE_EXISTS "%portrait_path%/%resref_base%L.bmp" BEGIN
+							COPY "%portrait_path%/%resref_base%L.bmp" "override/%resref_base%L.bmp"	
+						END
+						ACTION_IF FILE_EXISTS "%portrait_path%/%resref_base%269.bmp" BEGIN // IWD style					
+							COPY "%portrait_path%/%resref_base%269.bmp" "override/%resref_base%M.bmp"					
+						END ELSE	
+						ACTION_IF FILE_EXISTS "%portrait_path%/%resref_base%M.bmp" BEGIN // IWD style					
+							COPY "%portrait_path%/%resref_base%M.bmp" "override/%resref_base%M.bmp"					
+						END
+					END
+				END
+			BUT_ONLY
+		END
+		
+		///// Add missing portraits from the core list
+		
+		ACTION_IF "%portrait_table%" STRING_EQUAL "" && "%portrait_path%" STRING_COMPARE "" BEGIN
+			COPY "%portrait_path%" override
+		END
+		
+		
+		///// Enable/disable portraits
+
+
+		ACTION_CLEAR_ARRAY portrait_disable_array
+		ACTION_IF "%disable%" STRING_COMPARE "" BEGIN
+			OUTER_PATCH "%disable% " BEGIN
+				REPLACE_EVALUATE "\([^ ]+\) " BEGIN
+					SPRINT portrait "%MATCH1%"
+					TO_UPPER portrait
+					SPRINT $portrait_disable_array("%portrait%") "yes"
+				END
+				""
+			END		
+		END
+		ACTION_IF "%enable%" STRING_COMPARE "" BEGIN
+			OUTER_PATCH "%enable% " BEGIN
+				REPLACE_EVALUATE "\([^ ]+\) " BEGIN
+					SPRINT portrait "%MATCH1%"
+					TO_UPPER portrait
+					SPRINT $portrait_disable_array("%portrait%") "no"
+				END
+				""
+			END		
+		END
+		
+
+		ACTION_IF "%disable%%enable%" STRING_COMPARE "" BEGIN
+			COPY "%data_loc_shared%/dw_portrait_data.2da" "%data_loc_shared%"
+				COUNT_2DA_COLS colcount
+				COUNT_2DA_ROWS colcount rowcount
+				FOR (col=1; col<colcount;++col) BEGIN
+					READ_2DA_ENTRY 0 (col - 1) (colcount - 1) header
+					PATCH_IF "%header%" STRING_EQUAL_CASE disabled BEGIN
+						SET disable_column=col
+					END
+				END
+				FOR (row=0;row<rowcount;++row) BEGIN
+					READ_2DA_ENTRY row 0 colcount portrait
+					TO_UPPER portrait
+					PATCH_IF VARIABLE_IS_SET $portrait_disable_array("%portrait%") BEGIN
+						SPRINT temp $portrait_disable_array("%portrait%")
+						SET_2DA_ENTRY row disable_column colcount "%temp%"
+					END
+				END
+			BUT_ONLY
+		END
+		
+		////////////////////////////////////////////
+		/// Finish by actually installing
+		////////////////////////////////////////////
+
+		LAF install_portraits STR_VAR lua_loc END
+		
+	END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper function for the add function
+//
+// lightly adapted version of the function in add_subraces
+////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION add_to_portrait_tables_helper
+	INT_VAR warn_of_repeats=0
+	STR_VAR to_read=""
+			to_add_to=""
+BEGIN
+	// get data to add
+	COPY "%to_read%" "%workspace%"
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW to_read_table colcount
+		FOR (col=0;col<colcount;++col) BEGIN
+			PATCH_IF col>0 BEGIN
+				READ_2DA_ENTRY 0 (col - 1) (colcount - 1) header
+			END ELSE BEGIN
+				SPRINT header COL_IDENT
+			END
+			FOR (row=0;row<to_read_table;++row) BEGIN				
+				READ_2DA_ENTRY_FORMER to_read_table row col entry
+				TO_LOWER entry
+				SPRINT $new_data("%row%" "%header%") "%entry%"
+			END
+		END
+	BUT_ONLY
+	// get column locations for main table; also get idents, to check for repeats
+	COPY "%to_add_to%" "%workspace%"
+		COUNT_2DA_COLS colcount_main
+		COUNT_2DA_ROWS colcount_main rowcount
+		FOR (row=0;row<rowcount;++row) BEGIN
+			READ_2DA_ENTRY row 0 colcount_main ident
+			SPRINT $old_idents("%ident%") ""
+		END
+		COUNT_2DA_ROWS (colcount_main - 1) check
+		PATCH_IF rowcount=check BEGIN
+			colcount_main +=1
+		END 		
+		SPRINT $col_header("0") "COL_IDENT"
+		FOR (col=1;col<colcount_main;++col) BEGIN
+			READ_2DA_ENTRY 0 (col - 1) (colcount_main - 1) header
+			SPRINT $col_header("%col%") "%header%"
+		END
+	BUT_ONLY
+	// build the data
+	OUTER_SPRINT to_write ""
+	OUTER_FOR (row=0;row<to_read_table;++row) BEGIN
+	 OUTER_SPRINT ident_here $new_data("%row%" "COL_IDENT")
+	 ACTION_IF VARIABLE_IS_SET $old_idents("%ident_here%") BEGIN
+		ACTION_IF warn_of_repeats BEGIN
+			WARN "Entry %ident_here% in table %to_read% already exists in table %to_add_to%; this entry will be skipped"
+		END
+	 END ELSE BEGIN
+		ACTION_IF row>0 BEGIN
+			OUTER_SPRINT to_write "%to_write%%WNL%"
+		END
+		OUTER_FOR (col=0;col<colcount_main;++col) BEGIN
+			OUTER_SPRINT header $col_header("%col%")
+			ACTION_IF VARIABLE_IS_SET $new_data("%row%" "%header%") BEGIN
+				OUTER_SPRINT temp $new_data("%row%" "%header%")
+				OUTER_SPRINT to_write "%to_write%  %temp%"
+			END ELSE BEGIN
+				ACTION_MATCH "%header%" WITH
+				sex BEGIN
+					OUTER_SPRINT default "fm"
+				END
+				race class BEGIN
+					OUTER_SPRINT default "special"
+				END
+				disabled BEGIN
+					OUTER_SPRINT default "no"
+				END
+				DEFAULT
+					OUTER_SPRINT default "-1"
+				END
+				OUTER_SPRINT to_write "%to_write%  %default%"
+			END		
+		END
+	 END
+	END
+	// write the data
+	ACTION_IF "%to_write%" STRING_COMPARE_CASE "" BEGIN
+		APPEND_OUTER "%to_add_to%" "%to_write%" KEEP_CRLF
+		// tidy up
+		COPY "%to_add_to%" "%to_add_to%" PRETTY_PRINT_2DA
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Actually install into the lua system
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION install_portraits
+	STR_VAR	lua_loc="lua"
+BEGIN
+	// get the data
+	LAF read_portrait_data
+		RET_ARRAY 
+				portrait_skin
+				portrait_hair
+				portrait_major
+				portrait_minor
+				portrait_sex
+				portrait_race
+				portrait_class
+	END
+	// make the lists
+	LAF sort_portrait_data STR_VAR sex=f RET_ARRAY portrait_list_f=sorted_array END
+	LAF sort_portrait_data STR_VAR sex=m RET_ARRAY portrait_list_m=sorted_array END
+
+	// generate lua code
+	OUTER_SPRINT "bgee_new" "%WNL%"
+	ACTION_PHP_EACH portrait_list_m AS portrait=>discard BEGIN
+		// does it exist?
+		ACTION_IF FILE_EXISTS_IN_GAME "%portrait%L.bmp" BEGIN
+		  ACTION_TO_UPPER portrait
+		  OUTER_SPRINT bgee_new "%bgee_new%%TAB%{'%portrait%',1},%WNL%"
+		END
+	END
+	ACTION_PHP_EACH portrait_list_f AS portrait=>discard BEGIN
+		// does it exist?
+		ACTION_IF FILE_EXISTS_IN_GAME "%portrait%L.bmp" BEGIN
+		  ACTION_TO_UPPER portrait
+		  OUTER_SPRINT bgee_new "%bgee_new%%TAB%{'%portrait%',2},%WNL%"
+		END
+	END
+	OUTER_INNER_PATCH_SAVE bgee_new "%bgee_new%" BEGIN
+		DELETE_BYTES (BUFFER_LENGTH - 2) 1 // last comma 
+		SET new_length=BUFFER_LENGTH
+	END
+	//PRINT "%bgee_new%"
+	
+	// insert into bgee.lua
+	
+	COPY_EXISTING "bgee.lua" override
+		SET index=INDEX_BUFFER ("Portraits")
+		LPF find_parenthesis_range INT_VAR index RET start end END
+		DELETE_BYTES start+1 (end - start - 1)
+		INSERT_BYTES start+1 new_length
+		WRITE_ASCIIE start+1 "%bgee_new%"
+	BUT_ONLY
+
+
+	// shared LUA changes
+	
+	LAF shared_color_changes END
+	
+	// write color data into LUA
+	
+	COPY ".../stratagems-inline/blank" "override/m_dw_ptc.lua"
+	APPEND "m_dw_ptc.lua" "dwPortraitList = {}%WNL%"
+	
+	ACTION_PHP_EACH portrait_skin AS ident=>skin BEGIN
+		OUTER_SPRINT hair $portrait_hair("%ident%")
+		OUTER_SPRINT minor $portrait_minor("%ident%")
+		OUTER_SPRINT major $portrait_major("%ident%")
+		ACTION_TO_UPPER ident
+		APPEND "m_dw_ptc.lua" ~dwPortraitList["%ident%L"]= {skin=%skin%, hair=%hair%, major=%major%,minor=%minor%}~ KEEP_CRLF
+	END
+
+END
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Read in all the data
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION read_portrait_data 
+	RET_ARRAY	portrait_skin
+				portrait_hair
+				portrait_major
+				portrait_minor
+				portrait_sex
+				portrait_race
+				portrait_class
+BEGIN
+	COPY "%data_loc_shared%/dw_portrait_data.2da" "%workspace%"
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW all_portraits_table colcount 
+		FOR (col=1;col<colcount; ++col) BEGIN
+			READ_2DA_ENTRY 0 (col - 1) (colcount - 1) header
+			SPRINT $col_header("%col%") "%header%"
+		END
+		FOR (row=0;row<all_portraits_table;++row) BEGIN
+			READ_2DA_ENTRY_FORMER all_portraits_table row 0 ident
+			FOR (col=0;col<colcount;++col) BEGIN
+				SPRINT header $col_header("%col%")
+				READ_2DA_ENTRY_FORMER all_portraits_table row col temp
+				SPRINT $working("%header%") "%temp%"			
+			END
+			PATCH_IF "%working_disabled%" STRING_COMPARE_CASE "yes" && FILE_EXISTS_IN_GAME "%ident%L.bmp" BEGIN 
+				PATCH_FOR_EACH entry IN skin hair minor major sex race class BEGIN
+					SPRINT array "portrait_%entry%"
+					SPRINT $"%array%"("%ident%") $working("%entry%")
+				END
+			END
+		END
+	BUT_ONLY
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Sort the portraits
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sort_portrait_data STR_VAR sex="" RET_ARRAY sorted_array
+BEGIN
+
+ACTION_DEFINE_ASSOCIATIVE_ARRAY portrait_class_map BEGIN
+	fighter=>1
+	thief=>2
+	cleric=>3
+	wizard=>4
+	bard=>5
+	barbarian=>6
+	special=>7
+END
+ACTION_DEFINE_ASSOCIATIVE_ARRAY portrait_race_map BEGIN
+	human=>1
+	halfelf=>2
+	elf=>3
+	dwarf=>4
+	gnome=>5
+	halfling=>6
+	halforc=>7
+	special=>8
+END
+
+// get a list by sex, sortable by key
+	ACTION_CLEAR_ARRAY working_array
+	ACTION_PHP_EACH portrait_sex AS ident=>sex_here BEGIN
+		ACTION_MATCH "%sex_here%" WITH
+			"%sex%" mf fm BEGIN
+				OUTER_SPRINT race $portrait_race("%ident%")
+				OUTER_SPRINT race_id $portrait_race_map("%race%")
+				OUTER_SPRINT class $portrait_class("%ident%")
+				OUTER_SPRINT class_id $portrait_class_map("%class%")
+				OUTER_SPRINT key "%race_id%-%class_id%-%ident%"
+				OUTER_SPRINT $working_array("%key%") "%ident%"
+			END
+		DEFAULT
+		END
+	END
+	
+	// sort it
+	
+	ACTION_SORT_ARRAY_INDICES working_array LEXICOGRAPHICALLY
+	ACTION_CLEAR_ARRAY sorted_array
+	ACTION_PHP_EACH working_array AS discard=>portrait BEGIN
+		OUTER_SPRINT $sorted_array("%portrait%") ""
+	END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Activate the portrait-coloring code
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION activate_portrait_coloring BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_shr.lua" BEGIN
+		COPY "...\stratagems-inline\blank" "override/m_dw_shr.lua"
+	END
+	ACTION_IF !RESOURCE_CONTAINS "m_dw_shr.lua" "dwPortraitColorsActivated=true" BEGIN
+		APPEND "m_dw_shr.lua" "dwPortraitColorsActivated=true" KEEP_CRLF
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// NOT FOR LIVE USE - alter the UI so that the color customization screen displays the numerical values
+// of the chosen colors
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION color_finder_tool BEGIN
+	COPY_EXISTING "ui.menu"	override
+		REPLACE_TEXTUALLY ~text "MAJOR_LABEL"~ ~text lua "SLIDER_color_major"~
+		REPLACE_TEXTUALLY ~text "MINOR_LABEL"~ ~text lua "SLIDER_color_minor"~
+		REPLACE_TEXTUALLY ~text "SKIN_LABEL"~ ~text lua "SLIDER_color_skin"~
+		REPLACE_TEXTUALLY ~text "HAIR_LABEL"~ ~text lua "SLIDER_color_hair"~
+END		
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////	Add functionality to overwrite character colors
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION shared_color_changes BEGIN
+
+	// install shared functions
+	
+	LAF UI_install_function INT_VAR inline=1 STR_VAR new_function_path=".../stratagems-inline/update_colors.lua" lua_file="m_dw_shr" search_string=dwUpdateColors END
+
+	// edit ui.menu to incorporate the colors
+	
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARACTER_COLOR object_type=menu patch=add_color_update END
+END
+
+DEFINE_PATCH_FUNCTION add_color_update BEGIN
+	PATCH_IF INDEX_BUFFER ("dwUpdateColors")<0 BEGIN 
+		REPLACE_TEXTUALLY ~^\([%TAB% ]+\)Infinity_UpdateLuaStats()~ ~\1Infinity_UpdateLuaStats()%WNL%\1dwUpdateColors()~
+	END
+END
+
+<<<<<<<<.../stratagems-inline/update_colors.lua
+
+
+function dwUpdateColors()
+
+	 if currentChargenSubrace and currentChargenRace then
+	 		subcol=subraceList(dwRaces[currentChargenRace].id)[currentChargenSubrace].color
+			if subcol.hair~=-1 then
+				Infinity_SetHairColor(subcol.hair)
+			end
+			if subcol.skin~=-1 then
+				Infinity_SetSkinColor(subcol.skin)
+			end
+			if subcol.major~=-1 then
+				Infinity_SetMajorColor(subcol.major)
+			end
+			if subcol.minor~=-1 then
+				Infinity_SetMinorColor(subcol.minor)
+			end
+	end
+
+
+	 -- see if portrait has set colors (later, b/c higher priority)
+	 if chargen.portrait and dwPortraitList and dwPortraitColorsActivated then
+		if dwPortraitList[chargen.portrait] then
+			portrait_data=dwPortraitList[chargen.portrait]
+			Infinity_SetHairColor(portrait_data.hair)		
+			Infinity_SetSkinColor(portrait_data.skin)		
+			Infinity_SetMajorColor(portrait_data.major)		
+			Infinity_SetMinorColor(portrait_data.minor)		
+		end
+	 end
+	 
+
+end
+
+>>>>>>>>
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////	Tell whether we're levelling, dualling or in chargen
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION detect_chargen_status BEGIN
+
+	ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwIsLevelling=true" BEGIN
+		COPY_EXISTING "ui.menu" override
+			LPF UI_alter_object STR_VAR object=CHARGEN_GENDER object_type=menu patch=label_chargen END 
+			LPF UI_alter_object STR_VAR object=CHARGEN_DUALCLASS object_type=menu patch=dual_on_done END 
+			LPF UI_alter_object STR_VAR object=LEVELUP_PROFICIENCIES object_type=menu patch=levelling_on_done END
+			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnLevelUpButtonClick()~ ~dwIsChargen=false;dwIsLevelling=true;dwIsDualClassing=false;characterScreen:OnLevelUpButtonClick()~
+			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnDualClassButtonClick()~ ~dwIsChargen=false;dwIsLevelling=false;dwIsDualClassing=true;characterScreen:OnDualClassButtonClick()~
+			REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:AcceptCharacter~ ~dwIsChargen=false;createCharScreen:AcceptCharacter~
+		BUT_ONLY
+	END
+END
+
+DEFINE_PATCH_FUNCTION label_chargen BEGIN
+	REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ ~onOpen\1"%WNL%dwIsChargen=true;dwIsLevelling=false;dwIsDualClassing=false%WNL%~
+END
+
+DEFINE_PATCH_FUNCTION dual_on_done BEGIN
+	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsDualClassing=false;createCharScreen:OnDoneButtonClick()~
+END
+
+DEFINE_PATCH_FUNCTION levelling_on_done BEGIN
+	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsLevelling=false;createCharScreen:OnDoneButtonClick()~
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+// suppress certain rows on the Abilities list in the character screen
+// (currently used only by no_int_max_spells, but we may as well aim for generality)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION hide_displayed_ability_setup BEGIN
+
+
+
+	// setup the lua pages
+	
+	COPY ".../stratagems-inline/hide_ability_functions.lua" "override/m_dw_haf.lua"
+	COPY ".../stratagems-inline/hide_ability_data.lua" "override/m_dw_had.lua"
+
+	// make menu edit
+	
+	ACTION_IF is_iwd BEGIN
+		OUTER_SPRINT function buildCharacterDetails
+	END ELSE BEGIN
+		OUTER_SPRINT function updateAttrTable
+	END
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_function STR_VAR function patch=add_dwHideAbility END
+	BUT_ONLY
+
+END
+
+DEFINE_PATCH_FUNCTION add_dwHideAbility BEGIN
+
+	start = INDEX_BUFFER (EXACT_MATCH "for k, v in ipairs(characters[currentID].proficiencies.ability)")
+	end = INDEX_BUFFER ("end" start) + 3
+	READ_ASCII start data_old (end - start)
+	INNER_PATCH_SAVE data_new "%data_old%" BEGIN
+		PATCH_IF is_iwd BEGIN
+			REPLACE_TEXTUALLY EXACT_MATCH "addCharacterDetail(nil,nil,v.current)" "if not dwHideAbility(v.current) then %WNL% addCharacterDetail(nil,nil,v.current) %WNL%end"
+		END ELSE BEGIN
+			REPLACE_TEXTUALLY "--.*" ""
+			REPLACE_TEXTUALLY "\(table\.insert.*\)" "if not dwHideAbility(v.current) then %WNL% \1 %WNL%end"
+		END
+	END
+	DELETE_BYTES start (STRING_LENGTH "%data_old%")
+	INSERT_BYTES start (STRING_LENGTH "%data_new%")
+	WRITE_ASCIIE start "%data_new%"
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION hide_this_displayed_ability STR_VAR string="" BEGIN
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_haf.lua" BEGIN
+		LAF hide_displayed_ability_setup END
+	END
+	OUTER_WHILE "%string%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%string%" RET entry string=list END
+		COPY_EXISTING "enginest.2da" "%workspace%"
+			REPLACE_EVALUATE "%entry%[ %TAB%]+\([0-9]+\)" BEGIN
+				strref="%MATCH1%"
+			END
+			""
+		BUT_ONLY
+		APPEND "m_dw_had.lua" "dwHiddenAbilityText[%strref%]=true"
+	END
+	
+
+
+END
+
+
+<<<<<<<< .../stratagems-inline/hide_ability_functions.lua
+function dwHideAbility(text)
+
+	value=nil
+	for k,_ in pairs(dwHiddenAbilityText) do
+		if string.find(text,Infinity_FetchString(k)) then
+			value=true
+		end
+	end
+	
+	return value
+
+end
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/hide_ability_data.lua
+dwHiddenAbilityText={}
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/portrait_data_bg.2da
+			skin	hair	major	minor	race		sex		class
+man1		13		6		89		23		human		m		fighter
+man2		10		8		28		0		human		m		fighter
+gendwrf		13		6		37		0		dwarf		m		fighter
+genmelf		12		8		29		22		elf			m		thief
+genmhlf		10		1		51		8		halfling	m		thief
+manley0		16		24		41		95		dwarf		m		fighter
+manley1		9		14		9		8		elf			f		wizard
+manley2		17		1		90		73		human		f		fighter
+manley3		17		24		41		8		human		m		fighter
+manley4		17		24		3		41		gnome		m		wizard
+manley5		47		23		96		110		elf			f		cleric
+manley6		31		1		28		50		dwarf		m		wizard
+manley7		19		24		54		62		human		m		fighter
+manley8		51		7		104		34		human		m		fighter
+manley9		41		24		18		25		human		m		special
+manleyx		10		24		0		89		human		f		thief
+bdsham1		16		2		0		25		human		m		cleric
+bdorcm1		31		1		8		34		halforc		m		wizard
+helm		9		1		56		99		human		m		fighter
+hvln		12		1		21		56		human		m		fighter
+woman1		2		9		75		59		halfelf		f		fighter
+woman2		12		14		75		90		human		f		fighter
+bdshaf1		23		24		90		5		human		f		cleric
+bdorcf1		33		24		27		7		halforc		f		fighter
+skan		9		8		53		41		elf			mf		wizard
+kivan		12		6		46		20		elf			m		fighter
+alora		9		-1		110		125		halfling	f		thief
+branwe		12		6		46		20		human		f		cleric
+dynahei		22		-1		107		31		human		f		wizard
+faldorn		12		-1		7		59		human		f		cleric
+imoen		17		4		115		111		human		f		thief
+jaheira		0		-1		26		42		halfelf		f		cleric
+safana		9		4		29		33		human		f		thief
+shartel		12		9		98		99		human		f	 	fighter
+skie		9		26		0		119		human		f		thief
+viconia		-1		0		26		53		elf			f		special
+neera		9		3		9		15		halfelf		f		wizard
+ajantis		9		11		46		16		human		m		fighter
+coran		9		8		119		105		elf			m		thief
+edwin		9		-1		10		41		human		m		wizard
+eldoth		9		26		31		43		human		m		bard
+garrick		9		-1		31		48		human		m		bard
+kagain		20		15		20		27		dwarf		m		fighter
+khalid		9		4		21		45		halfelf		m		fighter
+minsc		12		-1		105		86		human		m		fighter
+montar		26		-1		97		105		halfling	m		fighter
+quayle		13		25		119		0		gnome		m		mage
+tiax		9		-1		42		14		gnome		m		cleric
+xan			9		26		119		109		elf			m		wizard
+xzar		12		-1		51		16		human		m		wizard
+yeslick		20		-1		20		30		dwarf		m		cleric
+rasaad		10		-1		33		20		human		m		cleric
+dorn		-1		-1		25		106		halforc		m		fighter
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/portrait_data_bg2.2da
+			skin	hair	major	minor	race		sex		class
+ncernd		20		2		36		56		human		m		cleric
+nkeldor		8		15		94		1		human		m		fighter
+nanomen		8		12		104		30		human		m		cleric
+nedwin		9		8		8		50		human		m		wizard
+nhaer		11		2		70		4		elf			m		thief
+njan		11		26		38		80		gnome		m		thief
+nminsc		20		6		105		86		human		m		fighter
+nvalyga		25		26		50		55		human		m		fighter
+nyoshim		23		24		15		42		human		m		thief
+nkorgan		20		22		39		29		dwarf		m		fighter
+nnalia		8		8		48		78		human		f		wizard
+nmazzy		10		8		28		13		halfling	f		fighter
+naerie		9		11		84		87		elf			f		wizard
+njaheir		10		8		31		49		elf			f		cleric
+nvicon		43		0		32		42		elf			f		cleric
+ohhex		14		24		61		28		human		f		wizard
+yanner1		51		24		88		101		human		f		thief
+yanner2		11		19		95		90		elf			m		wizard
+yanner3		2		1		98		34		elf			f		fighter
+yanner4		17		0		12		0		dwarf		m		fighter
+yanner5		10		1		0		17		human		m		fighter
+yanner6		17		24		82		72		elf			m		wizard
+nhorc		32		1		59		30		halforc		m		fighter
+
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/portrait_data_iwd.2da
+			skin	hair	major	minor	race		sex		class
+hff_		12		1		0		18		human		f		fighter
+hff2_		10		7		56		9		human		f		fighter
+2fbar1_		12		9		37		39		human		f		barbarian
+hft_		10		26		22		6		human		f		thief
+hft2_		9		26		23		1		human		f		thief
+2fhum4_		20		26		49		20		human		f		thief
+hfd_		9		8		28		33		human		f		cleric
+hfw_		9		26		32		96		human		f		wizard
+hfw2_		9		26		25		83		human		f		wizard
+hfw3_		13		26		2		105		human		f		wizard
+hmf_		12		26		5		8		human		m		fighter
+hmf2_		23		26		5		49		human		m		fighter
+hmf3_		13		26		55		90		human		m		fighter
+hmf4_		1		26		1		79		human		m		fighter
+hmf5_		9		9		28		76		human		m		fighter
+hmf6_		12		26		7		10		human		m		fighter
+hmf7_		13		1		28		13		human		m		fighter
+2mbar1_		20		26		27		22		human		m		barbarian
+2mhum1_		26		26		23		2		human		m		cleric
+hmc_		9		1		29		65		human		m		cleric
+hmc2_		24		26		2		105		human		m		cleric
+hmc3_		9		0		89		87		human		m		cleric
+hmc4_		10		1		23		59		human		m		cleric	
+hmw_		8		12		86		38		human		m		wizard
+hmw2_		14		26		100		19		human		m		wizard
+hmw3_		11		26		10		10		human		m		wizard
+hmw4_		4		26		82		7		human		m		wizard
+hmb_		23		26		27		28		human		m		bard
+hmb2_		10		8		23		10		human		m		bard
+hefb_		9		1		65		82		halfelf		f		bard
+hefc_		9		9		23		86		halfelf		f		cleric
+heff_		12		26		28		45		halfelf		f		fighter
+hefw_		10		26		26		27		halfelf		f		wizard
+hemf_		10		6		28		45		halfelf		m		fighter
+hemt_		20		8		28		63		halfelf		m		thief
+hemw_		12		26		37		32		human		m		wizard
+efc_		5		1		10		105		elf			f		cleric
+efw_		26		8		63		7		elf			f		wizard
+emf_		12		8		26		17		elf			m		fighter
+emf2_		9		26		20		26		elf			m		fighter
+emt_		9		8		54		0		elf			m		thief
+emw_		5		15		47		27		elf			m		wizard
+efw2_		42		26		105		105		elf			f		wizard
+eff_		10		1		45		56		elf			f		fighter
+emc_		43		25		33		105		elf			m		cleric
+dff_		9		8		20		18		dwarf		f		fighter
+dmc_		13		26		22		98		dwarf		m		cleric
+dmf_		11		9		23		98		dwarf		m		fighter
+dmt_		12		6		27		28		dwarf		m		thief
+dmf2_		9		9		0		86		dwarf		m		fighter
+gfw_		20		26		38		86		gnome		f		wizard
+gmt_		9		26		0		1		gnome		m		thief
+gmw_		10		8		29		8		gnome		m		wizard
+haff_		12		8		21		9		halfling	f		fighter
+haft_		8		26		90		82		halfling	f		thief
+hamf_		12		8		21		50		halfling	m		fighter
+hamt_		10		8		45		56		halfling	m		thief
+2morc1_		35		26		0		26		halforc		m		fighter
+2forc1_		29		4		21		23		halforc		f		fighter
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/portrait_data_nw.2da
+			skin	hair	major	minor	race		sex		class
+bdtma		5		26		89		34		dwarf		m		fighter
+bdtmb		5		6		18		32		halfelf		m		cleric
+bdtmc		15		8		26		65		halfelf		m		fighter
+bdtmd		5		23		93		75		gnome		m		wizard
+bdtme		34		13		107		109		halforc		m		thief
+bdtmf		10		7		9		29		human		f		thief
+bdtmg		5		1		108		65		elf			f		thief
+bdtmh		11		24		101		41		human		m		wizard
+bdtmi		11		24		98		101		elf			m		fighter
+bdtmj		11		1		109		125		elf			f		thief
+bdtmk		3		2		57		38		human		m		fighter
+>>>>>>>>
+
+
+
+
+
+

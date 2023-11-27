@@ -1,0 +1,507 @@
+
+////////////////////////////////////////////////////////////////
+/// shared setup
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION set_up_externalized_proficiencies BEGIN
+
+	// have we done it already?
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_epf.lua" BEGIN
+	
+		// install class/kit detection
+		
+		LAF ui_detect_class_kit END
+	
+		// copy over functions
+	
+		LAF check_ini INT_VAR silent=1 STR_VAR ini=discard_stat RET discard_stat=value END
+		OUTER_SET discard_stat=(discard_stat=0)?125:discard_stat
+		COPY ".../stratagems-inline/m_dw_epf.lua" override EVALUATE_BUFFER
+		
+		// set up main data page
+	
+		COPY ".../stratagems-inline/m_dw_epd.lua" override
+	
+		// patch UI
+		
+		COPY_EXISTING "ui.menu" override
+			LPF UI_alter_object STR_VAR object=CHARGEN_PROFICIENCIES object_type=menu patch=externalize_prof_patch END
+			LPF UI_alter_object STR_VAR object=LEVELUP_PROFICIENCIES object_type=menu patch=externalize_prof_patch END
+			LPF UI_alter_function STR_VAR function=proficiencyOrGeneralHelp patch=~REPLACE_TEXTUALLY EXACT_MATCH "chargen.proficiency" "dwProficiencyTable"~ END
+		BUT_ONLY
+		
+	END
+
+END
+
+////////////////////////////////////////////////////////////////
+/// externalize the max number of profs
+////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION externalize_profsmax BEGIN
+
+	LAF set_up_externalized_proficiencies END
+
+	// locate the real prof.2da
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/profs.2da" BEGIN
+		OUTER_SPRINT profs_path ""
+	END ELSE BEGIN
+		OUTER_SPRINT profs_path "%data_loc_shared%"
+	END
+
+	// get proficiency data
+
+	LAF 2da_read STR_VAR file="profs.2da" path="%profs_path%" rowmap="IDS_OF_SYMBOL (class ~%arguments%~)" RET_ARRAY prof_rows=rows prof_array=array END
+	LAF 2da_extract_array STR_VAR array=prof_array range=FIRST_LEVEL RET_ARRAY profs=array END
+	
+	// install the data
+	
+	COPY_EXISTING "m_dw_epd.lua" "override"
+		REPLACE_TEXTUALLY "dwProfMaxByClass={[^}]*}" ""
+	BUT_ONLY
+	
+	APPEND "m_dw_epd.lua" "dwProfMaxByClass={"
+	ACTION_PHP_EACH profs AS id=>num BEGIN
+		APPEND "m_dw_epd.lua" "%TAB%[%id%]=%num%," KEEP_CRLF
+	END
+	APPEND "m_dw_epd.lua" "}%WNL%"
+
+	//blank the existing profsmax file
+	
+	COPY_EXISTING profsmax.2da override
+		LPF 2da_read RET_ARRAY array END
+		PHP_EACH array AS k=>v BEGIN
+			SET $array("%k_0%" "%k_1%")=99
+		END
+		LPF 2da_write STR_VAR array default="0" END
+	BUT_ONLY
+
+END
+////////////////////////////////////////////////////////////////
+/// externalize the main weapprof table
+////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION externalize_weapprof BEGIN
+
+	LAF set_up_externalized_proficiencies END
+
+	// build a discard stat
+	
+	LAF check_label STR_VAR label=dw-set-up-discard-stat RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label=dw-set-up-discard-stat END
+		LAF check_ini INT_VAR silent=1 STR_VAR ini=discard_stat RET stat=value END
+		OUTER_SET stat=(stat=0)?125:stat
+		LAF set_signalling_stat INT_VAR stat END
+	END
+	
+	// if we haven't already, copy over weapprof.2da to data_loc_shared; wipe its entries
+	
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+		COPY_EXISTING weapprof.2da "%data_loc_shared%"	
+	END
+	LAF wipe_weapprof END
+
+
+	// read in the core classes and kits
+	LAF 2da_read STR_VAR file=clastext.2da RET_ARRAY clastext_rows=rows clastext_array=array END
+	ACTION_CLEAR_ARRAY class_map
+	ACTION_PHP_EACH clastext_rows AS class=>discard BEGIN
+		OUTER_SPRINT kit_val $clastext_array("%class%" "KITID") // needs to be a STR, not an INT, since some class IDs overflow WEIDU
+		ACTION_IF INDEX ("^FALLEN" "%class_label%") <0 && "%kit_val%" STR_EQ "16384" BEGIN // test for a class
+			OUTER_SET $class_map("%class%")=$clastext_array("%class%" "CLASSID")
+		END
+	END
+	
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_rows=rows kitlist_array=array END
+	
+	// externalise all the data
+	
+	OUTER_SPRINT class_data ""
+	OUTER_SPRINT kit_data ""
+	OUTER_SPRINT kit_restrict_data ""
+	LAF 2da_read STR_VAR file=weapprof.2da path="%data_loc_shared%" rowname_column=ID RET_ARRAY weapprof_cols=columns weapprof_array=array END
+	// classes
+	ACTION_PHP_EACH class_map AS label=>number BEGIN
+		ACTION_IF VARIABLE_IS_SET $weapprof_cols("%label%") BEGIN
+			OUTER_SPRINT class_data "%class_data%%TAB%[%number%]={"
+			OUTER_FOR (prof_id=89;prof_id<116;++prof_id) BEGIN
+				ACTION_IF VARIABLE_IS_SET $weapprof_array("%prof_id%" "%label%") BEGIN
+					OUTER_SPRINT val $weapprof_array("%prof_id%" "%label%")
+					OUTER_SPRINT class_data "%class_data%[%prof_id%]=%val%, "
+				END
+			END
+			OUTER_SPRINT class_data "%class_data%},%WNL%"
+		END
+	END
+	// kits
+	ACTION_PHP_EACH kitlist_rows AS kit=>discard BEGIN
+		OUTER_SPRINT kit_label $kitlist_array("%kit%" "ROWNAME")
+		ACTION_IF IS_AN_INT $kitlist_array("%kit%" "LOWER") && VARIABLE_IS_SET $weapprof_cols("%kit_label%") BEGIN // avoid dummy rows
+			OUTER_SET kit_parent_number=$kitlist_array("%kit%" "CLASS")
+			OUTER_PATCH "" BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT kit_parent class kit_parent_number
+				PATCH_IF "%kit_parent%" STRING_EQUAL_CASE SORCERER BEGIN
+					SPRINT kit_parent MAGE
+				END
+			END
+			OUTER_SPRINT kit_data "%kit_data%%TAB%[%kit%]={"
+			OUTER_SPRINT kit_restrict_data "%kit_restrict_data%%TAB%[%kit%]={"
+			OUTER_FOR (prof_id=89;prof_id<116;++prof_id) BEGIN
+				ACTION_IF VARIABLE_IS_SET $weapprof_array("%prof_id%" "%kit_label%") BEGIN
+					OUTER_SET val=$weapprof_array("%prof_id%" "%kit_label%")
+					OUTER_SPRINT kit_data "%kit_data%[%prof_id%]=%val%, "
+					OUTER_SET val_class=$weapprof_array("%prof_id%" "%kit_parent%")
+					ACTION_IF val<val_class BEGIN
+						OUTER_SPRINT kit_restrict_data "%kit_restrict_data%[%prof_id%]=%val%, "
+					END
+				END
+			END
+			OUTER_SPRINT kit_data "%kit_data%},%WNL%"
+			OUTER_SPRINT kit_restrict_data "%kit_restrict_data%},%WNL%"
+		END
+	END
+	
+
+<<<<<<<< .../stratagems-inline/m_dw_krd.lua
+dwClassProf={
+%class_data%
+}
+
+dwKitProf={
+%kit_data%
+}
+
+dwKitRestrict={
+%kit_restrict_data%
+}
+
+
+>>>>>>>>
+
+	COPY ".../stratagems-inline/m_dw_krd.lua" "override" EVALUATE_BUFFER
+
+END
+
+DEFINE_ACTION_FUNCTION wipe_weapprof BEGIN
+
+	COPY_EXISTING weapprof.2da override
+		LPF 2da_read RET_ARRAY rows columns array END
+		PHP_EACH rows AS row=>discard1 BEGIN
+			SPRINT id $array("%row%" "ID") 
+			PATCH_IF IS_AN_INT id && id>=89 && id<=115 BEGIN
+				PHP_EACH columns AS col=>discard2 BEGIN
+					PATCH_MATCH "%col%" WITH
+					ID NAME_REF DESC_REF BEGIN
+					END
+					DEFAULT
+						SET $array("%row%" "%col%")=5
+					END
+				END
+			END
+		END
+		LPF 2da_write STR_VAR array default="0" END
+	BUT_ONLY
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// set the single-class kits that override multiclass kit proficiencies for dc purposes
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION set_dual_class_kit_components_for_proficiencies STR_VAR kit="" components="" BEGIN
+
+	LAF set_up_externalized_proficiencies END
+	COPY_EXISTING "kitlist.2da" override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_number
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 kit_label
+			READ_2DA_ENTRY_FORMER kitlist_data row 8 class_number
+			PATCH_IF IS_AN_INT class_number BEGIN
+				TO_UPPER kit_label
+				SET $kit_map("%kit_label%")=kit_number
+				SET $kit_parent("%kit_label%")=class_number
+			END
+		END
+	BUT_ONLY
+	OUTER_SET kit_number=$kit_map("%kit%")
+	OUTER_SPRINT line "dwDCKitMap[%kit_number%]={"
+	OUTER_WHILE "%components%" STRING_COMPARE_CASE "" BEGIN
+		LAF return_first_entry STR_VAR list="%components%" RET entry components=list END
+		ACTION_TO_UPPER entry
+		ACTION_MATCH "%entry%" WITH
+		ARCHER BEGIN
+			OUTER_SPRINT entry FERALAN
+		END
+		ASSASSIN BEGIN
+			OUTER_SPRINT entry ASSASIN
+		END
+		AVENGER BEGIN
+			OUTER_SPRINT entry BEAST_FRIEND
+		END
+		DEFAULT
+		END
+		
+		OUTER_SET kit_number=$kit_map("%entry%")
+		OUTER_SET class_number=$kit_parent("%entry%")
+		OUTER_SPRINT line "%line%[%class_number%]=%kit_number%, "
+	END
+	OUTER_SPRINT line "%line%}%WNL%"
+	APPEND "m_dw_epd.lua" "%line%" KEEP_CRLF
+
+END
+
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// hide a proficiency
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION hide_proficiency INT_VAR id=0 BEGIN
+	LAF set_up_externalized_proficiencies END
+	APPEND "m_dw_epd.lua" "dwHideProficiencies[%id%]=true%WNL%"
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// define a stat for signalling
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION set_signalling_stat INT_VAR stat=0 BEGIN
+
+	LAF hide_proficiency INT_VAR id=stat END
+	COPY_EXISTING weapprof.2da override
+		LPF set_signalling_stat_helper INT_VAR stat END
+	BUT_ONLY
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+		COPY "%data_loc_shared%/weapprof.2da" "%data_loc_shared%" 
+			LPF set_signalling_stat_helper INT_VAR stat END
+		BUT_ONLY
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION set_signalling_stat_helper INT_VAR stat=0 BEGIN
+		COUNT_2DA_COLS colcount
+		COUNT_2DA_ROWS colcount rowcount
+		FOR (row=0;row<rowcount;row+=1) BEGIN
+			READ_2DA_ENTRY row 1 colcount prof_number
+			PATCH_IF prof_number=stat BEGIN
+				SET_2DA_ENTRY row 2 colcount RESOLVE_STR_REF("Signalling stat - should not be visible")
+				SET_2DA_ENTRY row 3 colcount "-1"		
+				FOR (col=4;col<colcount;col+=1) BEGIN
+					SET_2DA_ENTRY row col colcount 99
+				END
+			END
+		END
+		PRETTY_PRINT_2DA
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// menu patch
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION externalize_prof_patch BEGIN
+
+	REPLACE_TEXTUALLY EXACT_MATCH "chargen.proficiency" "dwProficiencyTable"
+	REPLACE_TEXTUALLY EXACT_MATCH "dwProficiencyTable[rowNumber].value" "chargen.proficiency[dwProficiencyLookup[rowNumber]].value"
+	REPLACE_TEXTUALLY ~onOpen\([^"]*\)"~ ~onOpen\1"%WNL%%TAB%dwProficiencyTable,dwProficiencyLookup,dwSpendableTotal=dwBuildProficiencyTable(chargen.proficiency)%WNL%~
+	REPLACE_TEXTUALLY ~\(OnOpen[^"]*"[^"]+\)"~ ~\1%WNL%%TAB%dwClearExcessProficiencies(dwSpendableTotal)%WNL%%TAB%dwProficienciesTotal=chargen.extraProficiencySlots%WNL%"~ // note that this is at the *end* of the OnOpen block, i.e. after any signal transmission
+END
+
+DEFINE_PATCH_FUNCTION externalize_prof_function_patch BEGIN
+
+	REPLACE_TEXTUALLY EXACT_MATCH "chargen.proficiency" "dwProficiencyTable"
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// route to the path, if we're not sure if we're externalized or not
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION get_weapprof_path RET weapprof_path BEGIN
+
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+		OUTER_SPRINT weapprof_path "%data_loc_shared%/weapprof.2da"
+	END ELSE BEGIN
+		COPY_EXISTING "weapprof.2da" "override"
+		OUTER_SPRINT weapprof_path "override/weapprof.2da"
+	END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// lua functions and data
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+<<<<<<<< .../stratagems-inline/m_dw_epd.lua
+dwHideProficiencies={}
+dwDCKitMap={}
+
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/m_dw_epf.lua
+
+function plusButtonClickable(row) -- overwrite the baseline one in util
+	local prof=chargen.proficiency[dwProficiencyLookup[row]]
+	local clickable =  (prof.value < prof.max)
+	clickable = clickable and chargen.extraProficiencySlots > 0 and dwStartingProfAllowed(prof) and dwNumProficiencySlots(prof.id)>prof.value
+	return clickable
+end
+
+function minusButtonClickable(row) -- overwrite the baseline one in util
+	local prof=chargen.proficiency[dwProficiencyLookup[row]]
+	return (prof.value > prof.min)
+end
+
+function dwStartingProfAllowed(prof) 
+  
+	if not dwProfMaxByClass then
+		return true
+	end
+  
+	if dwIsLevelling then
+		return true
+	end
+  
+	class,_=dwFindClassKit()
+	level_1_max=dwProfMaxByClass[class]
+
+	if currentChargenSubrace then
+		race=dwRaces[currentChargenRace]
+		subrace=subraceList(race.id)[currentChargenSubrace]
+		level_1_max = level_1_max + subrace.extraprof
+	end
+	
+  
+	if dwProficienciesTotal<=level_1_max then
+		permittedNumber=2
+	elseif dwProficienciesTotal==level_1_max + 1 then 
+		permittedNumber=3
+	elseif dwProficienciesTotal==level_1_max + 2 then
+		permittedNumber=4
+	else
+		permittedNumber=5
+	end
+
+	currentNumber=prof.value
+	if permittedNumber>currentNumber then
+		return true
+	else
+		return false
+	end
+
+end
+
+
+function dwNumProficiencySlots(index)
+
+	
+	if not dwClassProf then
+		return 99
+	end
+	class,kit=dwFindClassKit()
+	is_dualclass,class1,class2,oc_kit=dwFindDualClassData()
+	-- non dual-class is simplest
+	if not is_dualclass then
+		if (kit>0) then
+			return dwKitProf[kit][index]
+		else
+			return dwClassProf[class][index]
+		end
+	end
+	-- now we're dualclass
+	-- if it's actually unusable by your multiclass, return 0
+	if dwClassProf[class]==0 then
+		return 0
+	end
+	-- otherwise, get the maximum from your two kits
+	if dwDCKitMap[kit] then
+		kit1=dwDCKitMap[kit][class1]
+		kit2=dwDCKitMap[kit][class2]
+	end
+	if kit1 then 
+		val1=dwKitProf[kit1][index]
+	else
+		val1=dwClassProf[class1][index]
+	end
+	if kit2 and not dwDisableOCProficiencies then
+		val2=dwKitProf[kit2][index]	
+	else
+		if class2>0 and not dwDisableOCProficiencies then
+			val2=dwClassProf[class2][index]
+		else
+			val2=0
+		end
+	end
+	if val1>val2 then val=val1 else val=val2 end
+	-- now look for restrictions
+	if oc_kit>0 then
+		if dwEnableOCKitRestrictions and dwKitRestrict[oc_kit] then
+			max=dwKitRestrict[oc_kit][index]
+			if max then
+				if val>max then val=max end
+			end
+		end
+	end
+	if kit1 then
+		if dwKitRestrict[kit1] then
+			max =dwKitRestrict[kit1][index]
+			if max then
+				if val>max then val=max end
+			end
+		end
+	end
+	if kit2 then
+		if dwKitRestrict[kit2] then
+			max =dwKitRestrict[kit2][index]
+			if max then
+				if val>max then val=max end
+			end
+		end
+	end	
+	return val
+
+
+end
+
+function dwBuildProficiencyTable(proftable)
+
+	newtable={}
+	lookup={}
+	count=0
+	new_key=0
+	for k,v in pairs(proftable) do
+		if not dwHideProficiencies[v.id] then
+			if dwClassProf then
+				allowed=dwNumProficiencySlots(v.id)
+			else
+				allowed=v.max
+			end
+			if allowed>0 then
+				new_key=new_key+1
+				table.insert(newtable,v)
+				lookup[new_key]=k
+				count=count+allowed-v.value
+			end
+		end
+	end
+	return newtable,lookup,count
+
+end
+
+function dwClearExcessProficiencies(count)
+	spend=chargen.extraProficiencySlots
+	while count<spend do
+		spend=spend - 1
+		createCharScreen:OnProficiencyPlusMinusButtonClick(%discard_stat%, true)
+	end
+
+end
+
+>>>>>>>>
+

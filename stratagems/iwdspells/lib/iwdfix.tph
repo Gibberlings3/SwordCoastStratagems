@@ -1,9 +1,9 @@
 DEFINE_ACTION_FUNCTION iwd_spell_fixes BEGIN
 
 
-	LAF check_label STR_VAR label=dw#iwd_spell_fixes RET value END
+	LAF check_label STR_VAR label=dw_iwd_spell_fixes RET value END
 	ACTION_IF !value BEGIN
-	LAF make_label STR_VAR label=dw#iwd_spell_fixes END
+	LAF make_label STR_VAR label=dw_iwd_spell_fixes END
    // broken file
    
    COPY_EXISTING "#bonecir.spl" override WRITE_ASCII 0x0 "SPL "
@@ -21,9 +21,10 @@ DEFINE_ACTION_FUNCTION iwd_spell_fixes BEGIN
 
    // 7 eyes (eye of the sword shouldn't protect against stunning damage, which is only used for the hp backlash of the Enrage ability)
    // apparently still an issue in 2.6
-   
+   // luke (EYEMAGE should not absorb MAGIC damage, as per spell description)
    COPY_EXISTING "7eyes.2da" override
-     REPLACE_TEXTUALLY "12*0x8000000" "*"
+     REPLACE_TEXTUALLY "12\*0x8000000" "*"
+     REPLACE_TEXTUALLY EXACT_MATCH "12*0x400000" "*"
      PRETTY_PRINT_2DA
 
    // The projectile for Bombardier Beetle clouds has a duplicate string
@@ -46,7 +47,7 @@ DEFINE_ACTION_FUNCTION iwd_spell_fixes BEGIN
 	
 	COPY_EXISTING "%WIZARD_MIND_BLANK%.spl" override
 		LPF CLONE_EFFECT INT_VAR match_opcode=101 match_parameter2=175 parameter2=134 END // immune to petrification opcode
-		LPF CLONE_EFFECT INT_VAR match_opcode=267 match_parameter1=14102 parameter2=14127 END // immune to petrification string
+		LPF CLONE_EFFECT INT_VAR match_opcode=267 match_parameter1=14102 parameter1=14127 END // immune to petrification string
 		LPF CLONE_EFFECT INT_VAR match_opcode=169 match_parameter2=3 parameter2=171 END // immune to petrification icon
 	BUT_ONLY
 
@@ -67,127 +68,312 @@ DEFINE_ACTION_FUNCTION iwd_spell_fixes BEGIN
 	ACTION_FOR_EACH letter IN A B C BEGIN
 		COPY_EXISTING "SPWI914%letter%.bam" "override/%CLERIC_ENERGY_DRAIN%%letter%.bam"
 	END
-	// coded by Cam from here on
 
-	// iwdee fix: lich touch should paralyze, not hold
-	COPY_EXISTING ~ltouch.spl~ ~override~
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 175 opcode = 109 END  
-
-	// iwdee fix: avoid dupe messgages/effects
-	COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override~
-	  LPF CLONE_EFFECT INT_VAR match_opcode =  142 match_duration = 12
-		opcode = 206 parameter1 = 0 parameter2 = 0 duration = 1 STR_VAR resource = EVAL ~%WIZARD_GREAT_SHOUT%~ insert = below END 
-
-	// iwdee fix: emotion fear should only remove emotion courage if the normal save/MR checks work  
-	COPY_EXISTING ~%WIZARD_EMOTION_FEAR%.spl~ ~override~
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 321 resist_dispel = 1 savingthrow = BIT0 END
-
-	// iwdee: not always checking MR correctly  
-	COPY_EXISTING ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ ~override~
-	  PATCH_FOR_EACH op IN 61 174 333 BEGIN // everything but the portrait icon is wrong except at header 0
-		LPF ALTER_EFFECT INT_VAR match_opcode = op resist_dispel = 1 END
-	  END  
+/////                                                  \\\\\
+///// coded by Cam from here on (mainly EEFP)          \\\\\
+/////                                                  \\\\\
 
 	// Darts of Bone was offering a saving throw(!)
 	COPY_EXISTING ~dobone.itm~ ~override~
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 1 savingthrow = 0 END
-
-	COPY_EXISTING ~idpro313.pro~ ~override~
-	  WRITE_ASCII 0x18 ~#tra_59~ #8
-
-  
-	// iwdee bug: use 176 for movement speed, 321 needs save  
-	COPY_EXISTING ~%WIZARD_SUFFOCATE%.spl~ ~override~ 
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 321 savingthrow = BIT0 END
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 126 opcode = 176 END
-
-	  // stun icons provided by stun effect, remove redundant 142  
-	  COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override~
-					~%WIZARD_ICELANCE%.spl~    ~override~
-		LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 55 END 
-
-	// mold touch no longer needs to ignore center
-	COPY_EXISTING ~idmold.pro~ ~override~
-	  WRITE_LONG 0x0c 0 // remove 'ignore center' flag
-
-	// IWDEE bug: tie mold touch portrait to disease effect; 
-	COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~  ~override~
-				  ~%CLERIC_MOLD_TOUCH%b.spl~ ~override~
-	  LPF CLONE_EFFECT  INT_VAR match_parameter2 = 55 parameter2 = 68 END // prevent spread to someone who already has mold (matches 324 on main, 318 on sub)
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 142 END // delete portrait icons because...
-	  LPF ALTER_EFFECT  INT_VAR match_opcode =  78 special = 7 END  // we're attaching them directly to the disease effect
-	  LPF ALTER_EFFECT  INT_VAR match_opcode =  78 match_parameter2 = 12 timing = 3 duration = 0 END  // we're attaching them directly to the disease effect
-
-	// IWDEE bug: tie mold touch portrait to disease effect; 
-	COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~  ~override~
-	  LPF CLONE_EFFECT  INT_VAR match_opcode =  78 match_parameter1 = 2 opcode = 206 parameter1 = 0 parameter2 = 0 
-		timing = 0 duration = 1 savingthrow = BIT0 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%~ END
-
-	// IWDEE bug: tie mold touch portrait to disease effect; 
-	COPY_EXISTING ~%CLERIC_MOLD_TOUCH%b.spl~ ~override~
-
-	// iwdee bug: blood rage can avoid fatigue with a re-cast - clone 321 into 206 then delete it; also block ops 18 and 98
-	COPY_EXISTING ~%CLERIC_BLOOD_RAGE%.spl~  ~override~
-	  LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 STR_VAR insert = last END
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 101 match_parameter2 = 17 multi_match = 1 END
-	  LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 parameter2 = 18 END
-	  LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 parameter2 = 98 END
-	  LPF CLONE_EFFECT  INT_VAR match_opcode = 321 opcode = 206 timing = 0 duration = 120 STR_VAR match_resource = EVAL ~%CLERIC_BLOOD_RAGE%~ insert = last END
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 321 STR_VAR match_resource = EVAL ~%CLERIC_BLOOD_RAGE%~ END
-
-	// iwdee fix: remove extraneous 321
-	COPY_EXISTING ~%CLERIC_ANIMAL_RAGE%.spl~  ~override~
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 321 match_timing = 4 END
-
-	// iwdee fix: fix power levels
-	COPY_EXISTING ~%CLERIC_ANIMAL_RAGE%b.spl~  ~override~
-	  LPF ALTER_EFFECT INT_VAR power = 0 END
-
-	// iwdee fix: static charge dispellable, but the icon lives on
-	COPY_EXISTING ~%CLERIC_STATIC_CHARGE%.spl~  ~override~
-	  LPF ALTER_EFFECT INT_VAR match_opcode = 142 resist_dispel = 3 END
-	  
-	// oiwd fix
-	COPY_EXISTING ~%CLERIC_WHIRLWIND%.spl~  ~override~
-	  LPF ALTER_EFFECT INT_VAR match_resist_dispel = 0 resist_dispel = 1 END
-		
-	// iwdee fix: dupe 'unconscious' strings, remove redundant 318 at end
-	COPY_EXISTING ~%CLERIC_SMASHING_WAVE%.spl~ ~override~
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 139 match_duration = 12 END 
-	  LPF DELETE_EFFECT INT_VAR match_opcode = 318 match_parameter2 = 0 END 
-		
-	// iwdee fix: weird durations for 318/324s
-	COPY_EXISTING ~%CLERIC_CLOUD_OF_PESTILENCE%.spl~ ~override~
-  LPF ALTER_EFFECT INT_VAR match_duration = 85 duration = 0 END 
-
-  // IWDEE bug wall of moonlight shouldn't have powers set on its damage since its AoE
-  COPY_EXISTING ~%CLERIC_WALL_OF_MOONLIGHT%.spl~ ~override~
-    LPF ALTER_EFFECT INT_VAR resist_dispel = 1 END
+    LPF CLONE_EFFECT INT_VAR silent = 1 match_opcode = 44 opcode = 142 parameter1 = 0 parameter2 = 91 END // clone strength malus into 'ability score drained' icon
     
-  COPY_EXISTING ~%CLERIC_WALL_OF_MOONLIGHT%a.spl~ ~override~
-                ~%CLERIC_WALL_OF_MOONLIGHT%b.spl~ ~override~
-    LPF ALTER_EFFECT INT_VAR match_opcode = 12 power = 0 resist_dispel = 0 END
-
-
-  // IWDEE bug 321 should be timing 1/dur 0
-  COPY_EXISTING ~%CLERIC_SPIKE_STONES%.spl~ ~override~
-    LPF ALTER_EFFECT INT_VAR match_opcode = 321 timing = 1 duration = 0 END
-
-  // IWDEE bug 321 should be subject to same MR check as AC effect
-  COPY_EXISTING ~%CLERIC_ALICORN_LANCE%.spl~ ~override~
-    LPF ALTER_EFFECT INT_VAR match_opcode = 321 resist_dispel = 1 END
-
-  // stun icons provided by stun effect in EE, remove redundant 142  
-  COPY_EXISTING ~%CLERIC_SMASHING_WAVE%.spl~ ~override~
-                ~%CLERIC_WHIRLWIND%.spl~     ~override~
-    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 55 END 
-
+  // correcting probability  
 	COPY_EXISTING ~%BARD_SONG_KAUDIES%.spl~  ~override~
 	  LPF ALTER_EFFECT INT_VAR match_probability1 = 50 probability1 = 49 END // correcting
 
+/* 
+everything below is stuff borrowed in advance of EEFP's first release, trimmed down to just the stuff
+that is imported by this tool (e.g. I don't care about a fix for Magic Missile). 
+*/
 
-	END
+    
+  // ie-5943, cam
+  // lots of mold touch fixes
+  COPY_EXISTING ~idmold.pro~ ~override~
+    WRITE_LONG 0x0c 0 // remove 'ignore center' flag
 
+  COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~  ~override~ // sppr326
+                ~%CLERIC_MOLD_TOUCH%b.spl~ ~override~ // sppr326b
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 END // delete portrait icons because...
+    LPF ALTER_EFFECT  INT_VAR match_opcode =  78 special = 7 END  // we're attaching them directly to the disease effect
+    LPF ALTER_EFFECT  INT_VAR match_opcode =  78 match_parameter2 = 12 timing = 3 duration = 0 END  // we're attaching them directly to the disease effect
+
+  COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~  ~override~ // sppr326
+    LPF ALTER_EFFECT  INT_VAR match_opcode =  78 match_duration = 18 opcode = 146 parameter1 = 0 parameter2 = 2 duration = 7
+      special = 0 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%a~ END // change final (saved) mold touch burst to another subspell
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 324 match_parameter2 = 55 parameter2 = 68 END // prevent spread to someone who already has mold
+    LPF CLONE_EFFECT  INT_VAR match_opcode =  78 match_parameter1 = 2 opcode = 206 parameter1 = 0 parameter2 = 0 
+      timing = 0 duration = 1 savingthrow = BIT0 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%~ END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 174 resist_dispel = 3 END  // always play audio/visual
+    LPF ALTER_EFFECT INT_VAR match_opcode = 215 resist_dispel = 3 END  // always play audio/visual
+
+  COPY_EXISTING ~%CLERIC_MOLD_TOUCH%b.spl~ ~override~ // sppr326b
+    WRITE_BYTE 0x1c 2 // spell type
+    WRITE_BYTE 0x25 8 // subspell should have proper school set 
+    
+  COPY_EXISTING ~%CLERIC_MOLD_TOUCH%.spl~  ~override/%CLERIC_MOLD_TOUCH%a.spl~ // create new subspell sppr326a for final 1d6 of mold touch damage when saved against  
+    WRITE_LONG 0x08 "-1" // blank name
+    LPF DELETE_EFFECT END // delete eveything
+    LPF ADD_SPELL_EFFECT INT_VAR opcode = 78 target = 2 parameter1 = 1 parameter2 = 12 timing = 3 special = 7 STR_VAR resource = EVAL ~%CLERIC_MOLD_TOUCH%b~ END
+
+  // ie-6036 cont: self-visuals and movement speed shouldn't be blocked
+  COPY_EXISTING ~%CLERIC_CIRCLE_OF_BONES%.spl~ ~override~ // sppr323
+    LPF ALTER_EFFECT INT_VAR match_target = 1 power = 0 END
+    BUT_ONLY
+
+  // ie-6036 cont: caster pause shouldn't be blocked by spell protections, deafness string bypassing save
+  COPY_EXISTING ~%WIZARD_SHOUT%.spl~       ~override~ // spwi431 shout
+                ~%WIZARD_GREAT_SHOUT%.spl~ ~override~ // spwi806 great shout
+    LPF ALTER_EFFECT INT_VAR match_target = 1 power = 0 END
+    BUT_ONLY // tbd, cam
+    
+  // tieflings should not be included in effects that target 'outer' or 'extraplanars'
+  COPY_EXISTING //~devaheal.spl~ ~override~ // heal (deva)
+//                ~spcl102.spl~  ~override~ // absorb health
+//                ~spcl111.spl~  ~override~ // cure disease (innate)
+//                ~spcl211.spl~  ~override~ // lay on hands
+//                ~spin200.spl~  ~override~ // cure serious wounds (innate)
+//                ~spin202.spl~  ~override~ // cause serious wounds (innate)
+//                ~spin923.spl~  ~override~ // heal (via limited wish)
+//                ~sppr103.spl~  ~override~ // cure light wounds
+                ~sppr114.spl~  ~override~ // cause light wounds
+                ~sppr217.spl~  ~override~ // cure moderate wounds 
+                ~sppr220.spl~  ~override~ // cause moderate wounds
+//                ~sppr315.spl~  ~override~ // cure medium wounds
+//                ~sppr317.spl~  ~override~ // cure disease
+                ~sppr320.spl~  ~override~ // cause disease
+                ~sppr330.spl~  ~override~ // cause medium wounds
+                ~sppr331.spl~  ~override~ // favor of ilmater
+//                ~sppr401.spl~  ~override~ // cure serious wounds
+                ~sppr414.spl~  ~override~ // cause serious wounds
+//                ~sppr417.spl~  ~override~ // lesser restoration
+//                ~sppr502.spl~  ~override~ // cure critical wounds
+                ~sppr510.spl~  ~override~ // cause critical wounds
+//                ~sppr514.spl~  ~override~ // mass cure light wounds
+                ~sppr523.spl~  ~override~ // mass cause light wounds
+//                ~sppr607.spl~  ~override~ // heal 
+//                ~sppr608.spl~  ~override~ // harm
+//                ~sppr699.spl~  ~override~ // harm (enemy)
+//                ~sppr711.spl~  ~override~ // regeneration
+//                ~sppr713.spl~  ~override~ // greater restoration
+                ~sppr739.spl~  ~override~ // energy drain (divine)
+                ~sppr740.spl~  ~override~ // wither
+//                ~spwi914.spl~  ~override~ // energy drain (arcane)
+//                ~spwish07.spl~ ~override~ // greater restoration (via wish)
+//                ~spwish19.spl~ ~override~ // energy drain (via wish)
+//                ~spwish28.spl~ ~override~ // heal (via wish)
+//                ~spwish39.spl~ ~override~ // heal (via wish)
+//                ~spwish46.spl~ ~override~ // greater restoration (via wish)
+//                ~spwm168.spl~  ~override~ // heal (via wild surge)
+    LPF DELETE_EFFECT INT_VAR match_opcode = 324 match_parameter1 = 153 match_parameter2 = 104 END 
+    
+  // deleting item effs that target tieflings for the wrong reasons
+  COPY_EXISTING ~smcudge.itm~ ~override~ // Star Metal Cudgel: bonus damage vs. outer-planar
+    LPF DELETE_EFFECT INT_VAR match_opcode = 177 match_parameter1 = 153 match_parameter2 = 4 END 
+    
+  // ie-6019, cam
+  // Portrait icon fixes for items
+  COPY_EXISTING ~moonbla.itm~ ~override~
+    LPF CLONE_EFFECT INT_VAR multi_match = 1 match_opcode = 60 opcode = 142 parameter2 = 105 END
+    BUT_ONLY
+            
+// ie-5937, cam
+// darts of bone shouldn't have a saving throw on their APR boost
+COPY_EXISTING ~dobone.itm~ ~override~
+  LPF ALTER_EFFECT INT_VAR match_opcode = 1 savingthrow = 0 END
+  BUT_ONLY
+  
+    /*
+  luke
+  **Iron Body**
+  - Move spell features from `SPL` file to `ITM` file
+  */
+	// SPL file
+	COPY_EXISTING "%WIZARD_IRON_BODY%.spl" "override" // spwi814
+		LPF "DELETE_EFFECT" INT_VAR "check_globals" = 0 "match_opcode" = 1 END // already present on "ibody.itm"
+		LPF "DELETE_EFFECT" INT_VAR "check_globals" = 0 "match_opcode" = 321 STR_VAR "match_resource" = "%DEST_RES%" END // useless (`op111` does not leave behind a removable effect)
+		SET "#_effects" = SHORT_AT (LONG_AT 0x64 + 0x1E) // # effects on the 1st ability
+		READ_ASCII (LONG_AT 0x6A + 0x30 * SHORT_AT 0x70) "effects_data" (0x30 * "%#_effects%") // store all effects (1st ability)
+		PATCH_WITH_SCOPE BEGIN
+			FOR ("i" = 0 ; "%i%" < "%#_effects%" ; "i" += 1) BEGIN // loop through all effects on the 1st ability
+				SET "match_opcode" = SHORT_AT (LONG_AT 0x6A + 0x30 * SHORT_AT 0x70 + "%i%" * 0x30 + 0x0) // current effect ID
+				SET "match_timing" = BYTE_AT (LONG_AT 0x6A + 0x30 * SHORT_AT 0x70 + "%i%" * 0x30 + 0xC) // current `timing_mode`
+				PATCH_MATCH "%match_timing%" WITH
+					"0" WHEN ("%match_opcode%" != 111) BEGIN
+						LPF "DELETE_EFFECT" INT_VAR "check_globals" = 0 "multi_match" = 1 "match_opcode" END // delete one effect at a time (the function does not return the number of deleted effects)
+						// We need to take into account the effect we've just deleted
+						SET "#_effects" -= 1 // total number of effects
+						SET "i" -= 1 // current index
+					END
+					DEFAULT
+				END
+			END
+		END
+	BUT_ONLY_IF_IT_CHANGES
+	// ITM file
+  COPY_EXISTING "ibody.itm" "override"
+    INSERT_BYTES 0xAA STRING_LENGTH "%effects_data%"
+    WRITE_ASCIIE 0xAA "%effects_data%"
+    WRITE_SHORT 0x70 (THIS + "%#_effects%")
+    LPF ~FJ_SPL_ITM_REINDEX~ END // re-index the file
+    // Clean up
+    LPF "DELETE_EFFECT" INT_VAR "check_headers" = 0 "match_opcode" = 111 END // Create weapon
+    LPF "DELETE_EFFECT" INT_VAR "check_headers" = 0 "match_timing" = 1 END
+    LPF "ALTER_EFFECT" INT_VAR "check_headers" = 0 "target" = 1 "power" = 0 "resist_dispel" = 0 "timing" = 2 "duration" = 0 END
+  BUT_ONLY_IF_IT_CHANGES
+    
+  // ie-5938, cam
+  // Lich Touch should paralyze, not hold
+  COPY_EXISTING ~ltouch.spl~ ~override~
+    LPF ALTER_EFFECT INT_VAR match_opcode = 175 opcode = 109 END  
+    BUT_ONLY 
+    
+  // tbd, cam
+  // stuns, but plays spmindat; iwd generally uses glows so change to that instead
+  COPY_EXISTING ~spcl118.spl~  ~override~ // the siren's yearning—enthralls creatures - plays spmindat
+    LPF ALTER_EFFECT INT_VAR match_opcode = 215 opcode = 8 parameter1 = ((46 << 8) + (56 << 16) + (0 << 24)) parameter2 = 255 STR_VAR match_resource = spmindat END
+    BUT_ONLY
+    
+  // ie-6029, cam
+  // Hopelessness not always canceling Hope
+  COPY_EXISTING ~%CLERIC_SYMBOL_OF_HOPELESSNESS%.spl~ ~override~ // sppr716 Symbol: Hopelessness
+    LPF CLONE_EFFECT INT_VAR multi_match = 1 match_opcode = 139 opcode = 321 parameter1 = 0 parameter2 = 0 STR_VAR resource = spwi429 END // remove Emotion: Hope
+    BUT_ONLY
+
+  // tbd, cam
+  // IWDEE bug 321 should be subject to same MR check as AC effect
+  COPY_EXISTING ~%CLERIC_ALICORN_LANCE%.spl~ ~override~ // sppr218
+    LPF ALTER_EFFECT INT_VAR match_opcode = 321 resist_dispel = 1 END
+
+  // ie-5947, cam
+  // Cloudburst should remove Fireshields
+  COPY_EXISTING ~%CLERIC_CLOUDBURST%.spl~ ~override~ // sppr325
+    LPF CLONE_EFFECT INT_VAR match_opcode = 321 STR_VAR match_resource = firau1d6 resource = spwi403 END // fireshield blue
+    LPF CLONE_EFFECT INT_VAR match_opcode = 321 STR_VAR match_resource = firau1d6 resource = spwi418 END // fireshield red
+    LPF CLONE_EFFECT INT_VAR match_opcode = 206 STR_VAR match_resource = firau1d2 resource = sppr730d END // immune to aura of flaming death damage
+
+  // ie-5945, cam
+  // Static Charge icon should be dispellable like the rest of the spell
+  COPY_EXISTING ~%CLERIC_STATIC_CHARGE%.spl~  ~override~ // sppr420
+    LPF ALTER_EFFECT INT_VAR match_opcode = 142 resist_dispel = 3 END
+
+  // ie-5753, cam
+  // iwdee bug: blood rage can avoid fatigue with a re-cast - clone 321 into 206 then delete it; also block ops 18 and 98
+  COPY_EXISTING ~%CLERIC_BLOOD_RAGE%.spl~  ~override~ // sppr422
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 STR_VAR insert = last END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 101 match_parameter2 = 17 multi_match = 1 END
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 parameter2 = 18 END
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 101 match_parameter2 = 17 parameter2 = 98 END
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 321 opcode = 206 timing = 0 duration = 120 STR_VAR match_resource = EVAL ~%CLERIC_BLOOD_RAGE%~ insert = last END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 STR_VAR match_resource = EVAL ~%CLERIC_BLOOD_RAGE%~ END
+    
+  // tbd, cam  
+  // iwdee fix: weird durations for 318/324s
+  COPY_EXISTING ~%CLERIC_CLOUD_OF_PESTILENCE%.spl~ ~override~ // sppr423
+    LPF ALTER_EFFECT INT_VAR match_duration = 85 duration = 0 END 
+
+  // tbd, cam
+  // iwdee fix: dupe 'unconscious' strings, remove redundant 318 at end
+  COPY_EXISTING ~%CLERIC_SMASHING_WAVE%.spl~ ~override~ // sppr426
+    LPF DELETE_EFFECT INT_VAR match_opcode = 139 match_duration = 12 END 
+    LPF DELETE_EFFECT INT_VAR match_opcode = 318 match_parameter2 = 0 END 
+
+  // tbd, cam
+  // stun icons provided by stun effect in EE, remove redundant 142
+  COPY_EXISTING ~%CLERIC_SMASHING_WAVE%.spl~ ~override~ // sppr426
+                ~%CLERIC_WHIRLWIND%.spl~     ~override~ // sppr617
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 55 END 
+
+  // ie-5946, cam
+  // Wall of Moonlight should not interact with spell protections
+  COPY_EXISTING ~%CLERIC_WALL_OF_MOONLIGHT%.spl~ ~override~ // sppr428
+    LPF ALTER_EFFECT INT_VAR resist_dispel = 1 END
+  COPY_EXISTING ~%CLERIC_WALL_OF_MOONLIGHT%a.spl~ ~override~ // sppr428a
+                ~%CLERIC_WALL_OF_MOONLIGHT%b.spl~ ~override~ // sppr428b
+    LPF ALTER_EFFECT INT_VAR match_opcode = 12 power = 0 resist_dispel = 0 END
+
+  // tbd, cam
+  // IWDEE bug 321 should be timing 1/dur 0
+  COPY_EXISTING ~%CLERIC_SPIKE_STONES%.spl~ ~override~ // sppr519
+    LPF ALTER_EFFECT INT_VAR match_opcode = 321 timing = 1 duration = 0 END
+
+  // ie-5944, cam
+  // Animal Rage needs power level corrections
+  COPY_EXISTING ~%CLERIC_ANIMAL_RAGE%.spl~  ~override~ // sppr522
+    LPF DELETE_EFFECT INT_VAR match_opcode = 321 match_timing = 4 END
+  COPY_EXISTING ~%CLERIC_ANIMAL_RAGE%b.spl~  ~override~ // sppr522b
+    LPF ALTER_EFFECT INT_VAR power = 0 END
+
+  // ie-5942, cam
+  // Mass Cause Light Wounds should not be available to druids
+  COPY_EXISTING ~%CLERIC_MASS_CAUSE_LIGHT_WOUNDS%.spl~ ~override~ // sppr523.spl
+    WRITE_LONG 0x1e (THIS BOR BIT31) // adds druid flag
+    
+  // tbd, cam
+  // oiwd fix
+  COPY_EXISTING ~%CLERIC_WHIRLWIND%.spl~  ~override~ // sppr617
+    LPF ALTER_EFFECT INT_VAR match_resist_dispel = 0 resist_dispel = 1 END 
+
+  // tbd, cam
+  // stun icons provided by stun effect, remove redundant 142  
+  COPY_EXISTING ~%WIZARD_ICELANCE%.spl~    ~override~ // spwi327
+                ~%WIZARD_GREAT_SHOUT%.spl~ ~override~ // spwi806
+    LPF DELETE_EFFECT INT_VAR match_opcode = 142 match_parameter2 = 55 END 
+
+  // ie-5941, 1i-6031, cam
+  // iwdee: not always checking MR correctly  
+  COPY_EXISTING ~%WIZARD_BELTYNS_BURNING_BLOOD%.spl~ ~override~ // spwi422
+    PATCH_FOR_EACH op IN 61 142 174 215 321 333 BEGIN // everything but the portrait icon is wrong except at header 0
+      LPF ALTER_EFFECT INT_VAR match_opcode = op resist_dispel = 1 END
+    END  
+   
+  // ie-5940, cam
+  // Emotion, Fear bypasses save/MR checks for removing Emotion, Courage
+  COPY_EXISTING ~%WIZARD_EMOTION_FEAR%.spl~ ~override~ // spwi428
+    LPF ALTER_EFFECT INT_VAR match_opcode = 321 resist_dispel = 1 savingthrow = BIT0 END
+
+  // tbd, cam
+  // iwdee fix: deafness from (great) shout not including portrait icon
+  COPY_EXISTING ~%WIZARD_SHOUT%.spl~       ~override~ // spwi431
+                ~%WIZARD_GREAT_SHOUT%.spl~ ~override~ // spwi806
+    LPF CLONE_EFFECT INT_VAR silent = 1 match_opcode = 80 opcode = 142 parameter2 = 112 END // clone deaf into deafness icon
+
+  // tbd, cam
+  // iwdee bug: use 176 for movement speed, 321 needs save  
+  COPY_EXISTING ~%WIZARD_SUFFOCATE%.spl~ ~override~ // spwi726
+    LPF ALTER_EFFECT INT_VAR match_opcode = 321 savingthrow = BIT0 END
+    LPF ALTER_EFFECT INT_VAR match_opcode = 126 opcode = 176 END
+   
+  // ie-5939, cam
+  // Great Shout duplicates combat feedback on a failed save
+  COPY_EXISTING ~%WIZARD_GREAT_SHOUT%.spl~ ~override~ // spwi806 great shout
+    LPF DELETE_EFFECT INT_VAR match_opcode = 174 END
+    LPF DELETE_EFFECT INT_VAR match_opcode = 139 match_target = 2 END // delete existing deaf/stun strings
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 13 match_dicesize = 4 opcode = 139 parameter1 = 35568 dicenumber = 0 dicesize = 0 STR_VAR insert = below END // add stunned string in better spot
+    LPF CLONE_EFFECT  INT_VAR match_opcode = 13 match_dicesize = 4 opcode = 139 parameter1 = 14073 dicenumber = 0 dicesize = 0 STR_VAR insert = below END // add deafness string in better spot
+    LPF CLONE_EFFECT INT_VAR match_opcode =  45 match_duration = 6 opcode = 206 parameter1 = 0 parameter2 = 0 duration = 1 savingthrow = BIT0 STR_VAR resource = EVAL ~%WIZARD_GREAT_SHOUT%~ insert = above END 
+    LPF ADD_SPELL_EFFECT INT_VAR insert_point = 0 opcode = 174 target = 1 power = 0 timing = 1 resist_dispel = 2 STR_VAR resource = ~#ff_m101~ END
+    BUT_ONLY
+
+  /*
+  luke
+  **Cause Disease**
+  - Make sure `op78` displays the `Diseased` portrait icon
+    - function "remove_redundant_effects" won't be able to properly deal with this file because there are multiple op78 effects and just one op142 effect
+  */
+    COPY_EXISTING "%CLERIC_CAUSE_DISEASE%.spl" "override" // sppr320
+      LAUNCH_PATCH_FUNCTION "ALTER_EFFECT" INT_VAR "match_opcode" = 78 "special" = 7 END // Disease
+      LAUNCH_PATCH_FUNCTION "DELETE_EFFECT" INT_VAR "match_opcode" = 142 "match_parameter2" = 7 END // op78 can naturally provide the "Diseased" portrait icon
+    BUT_ONLY_IF_IT_CHANGES
+
+  
+  // tbd, cam
+  // broken sound reference in lance of disruption projectile
+  COPY_EXISTING ~idpro313.pro~ ~override~
+    WRITE_ASCII 0x18 ~#tra_59~ #8
+
+
+  END
 END
 
 DEFINE_ACTION_FUNCTION iwd_misc_fixes BEGIN

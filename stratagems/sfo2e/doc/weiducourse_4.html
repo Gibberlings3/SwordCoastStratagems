@@ -1,0 +1,375 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course in WEIDU - chapter 1</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+  <div class="ribbon_menu">
+    <ul>
+      <li><a href="#immutability">Immutability</a></li>
+      <li><a href="#encapsulation">Encapsulation</a></li>
+      <li><a href="#optimization">Optimization</a></li>
+    </ul>
+    <span><img src="files/logo.gif" width="305" height="83" alt="G3" /></span> 
+	</div>
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on WEIDU - chapter 4: More advanced topics</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+
+
+<div class="section">
+<p>This chapter considers a few (somewhat) more advanced applications of the material discussed in chapters 2-3.</p>
+<p><a href="weiducourse.html">Back to main menu</a>
+</div>
+
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="immutability" id="immutability"></a>4.1 Immutability and modding on multiple installs</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>A mod is <em>immutable</em> (the term is drawn from academic computer science) if the actual mod folder and its contents are entirely unchanged when the mod installs. Traditional WEIDU mods were not immutable: they modified their own folders during install and uninstall. But there are significant advantages in immutability, and the modern trend is in that direction. (<a href="https://www.gibberlings3.net/forums/topic/29677-immutability-and-encapsulation-in-mod-design/">This thread at Gibberlings 3</a> is a discussion of the virtues of immutability, and overlaps with my discussion here.)</p>
+<p><h4>Benefits of immutability</h4></p>
+<p><ul>
+<li>You don't risk accidentally distributing things you didn't intend to, like partly-built files, your backup directory, or UTF-8 tra files.</li>
+<li>It's one fewer source of bug reports, given that users have been known to copy the mod folder from one game to another.</li>
+<li> You can have the mod simultaneously present on multiple versions of the game while developing it, by putting the mod in one place and doing a virtual link between that place and your various game folders. (In Windows, for instance, you can do this with the 'mklink /j' command at the command line.)</li>
+<li>It's easier to use online backup services and synchronize between multiple computers. Any mod I'm developing lives in my Dropbox folder, so gets backed up, and synced between my desktop and my laptop, in real time. That gets very cumbersome if Dropbox has to copy several thousand files out of the Backup directory every time I install a component; more importantly, I can have different install states on different machines without confusing things.</li>
+</ul></p>
+<p><h4>Achieving immutability</h4></p>
+<p>There are basically three causes of mutability in (most) mods.
+<ol>
+<li>Traditionally, WEIDU mods back up to a subfolder of the mod folder, e.g. 'mymod/backup'.</li>
+<li>Many mods build complicated files inside a 'working' or 'temp' subfolder of the mod folder. Usually these are game files that subsequently get copied into override; in some more complicated mods, they are data files built from the game and subsequently used. </li>
+<li>As we'll see in section 4.x, if you want your mod to simultaneously support the Enhanced Edition and the original game, you will need to convert your tra files between formats. The usual convention is to do that when the mod is installed, and if the converted files are placed back in your original mod folder, that breaks immutability.</li>
+</ol>
+</p>
+<p>
+The solution is the same in each case: the new or modified files need to placed in an external folder. There is a standard convention for this folder: is is called 'weidu_external'.</p>
+<p>Because weidu_external is shared between all mods, a certain amount of discipline is required to make sure your mod doesn't clash with another mod (if your mod and another mod both back up to 'weidu_external/backup', for instance, you will have problems.) There are two available conventions here, and you can use whichever one you like:
+<ul>
+<li>In the <b>DavidW convention</b> (which I made up when weidu_external was stratagems_external, and carried over when I renamed it to encourage others to use it) there are top-level folders weidu_external/backup (for backup folders), weidu_external/data (for files you create and want to keep), weidu_external/lang (for converted tra files), and weidu_external/workspace (for files you build and then throw away or else drop into override). Back up to weidu_external/backup/mymod, put files you want to keep into weidu_external/data/mymod, put your language files in weidu_external/lang/mymod. (Just put your temporary files into weidu_external/workspace: they're temporary, so it doesn't matter if they get overwritten later.)</li>
+<li>
+In the <b>CamDawg convention</b> (which in many respects is simpler) you create a top-level subfolder, weidu_external/mymod. Then you put all your files in there, however you want them (though 'weidu_external/mymod/backup' is a good choice for your backup directory).
+</li>
+</ul>
+</p>
+</div>
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="encapsulation" id="encapsulation"></a>4.2 Encapsulation and the structure of your TP2 file</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>Encapsulation (which we touched on briefly in section 2.7) is the principle that a given unit of your mod (in this case, a component) should function the same way, whether or not you have installed other components in the same run. By default, WEIDU components are not encapsulated; the reason is that WEIDU variables by default have global scope, so that a variable set in one component remains set in the next.</p>
+<p>Failures of encapsulation lead to subtle, but very annoying bugs, and so in complicated mods I think it's good practice to ensure your components are encapsulated. Here I want to talk about various ways of doing that, and in doing so give some biased advice about how to structure your mod more generally.</p>
+<p><h4>Brute-force encapsulation: CLEAR_EVERYTHING</h4></p>
+<p>
+The simplest way to make your tp2 encapsulated is just to put 'CLEAR_EVERYTHING' at the start of your mod's ALWAYS block. This works perfectly well and if you don't want to use either of the more sophisticated methods below, you should definitely do it.</p>
+<p>Other than being inelegant (which is, to be sure, a matter of taste), the problem with CLEAR_EVERYTHING is that it prevents you using your ALWAYS block to do some setup work for all components. CLEAR_EVERYTHING will clear any variables set (and any functions defined) by your ALWAYS block, requiring you to run it again when you move on to the next component. In some mods, this can be a major source of slowdowns.</p>
+<p><h4>Encapsulation via WITH_SCOPE</h4></p>
+<p>
+A more elegant way to encapsulate a component is to wrap it in WITH_SCOPE. All variables will then have scope restricted to the component. Provided you are careful to use WITH_TRA rather than LOAD_TRA to load tra entries, then (short of some rather obscure bugs involving defining functions) the component is guaranteed to be encapsulated.</p>
+<p>While it isn't strictly necessary to do this, I recommend that you put the entire code of each component into a file that you INCLUDE. That way, you have a clean separation of (i) the code that controls which components are installable and which ensures encapsulation, from (ii) the actual code that modifies in-game files. On this basis, a component looks something like this:
+<div class="code"><pre><code>BEGIN @44 DESIGNATED 100 SUBCOMPONENT @77 GROUP @9
+REQUIRE_COMPONENT "setup-stratagems.tp2" 5900 @205 // require SCS AI initialize
+
+WITH_SCOPE BEGIN
+	INCLUDE "%MOD_FOLDER%/components/awesome_minsc.tph"
+END
+<p>
+</code></pre></div></p>
+<p><h4>Encapsulation via functions</h4></p>
+<p>Since variables defined in a function are automatically local-scope unless explicitly returned, an alternative way to encapsulate is to make your entire component into a function with no outputs. This is my own preferred way of doing encapsulation, and can usefully be combined with tra management.</p>
+<p>More precisely, I define a function 'run', which looks (something) like this:
+<div class="code"><pre><code>DEFINE_ACTION_FUNCTION run
+	STR_VAR file=""
+			location=""
+			tra=""
+BEGIN
+	// sanity check
+	ACTION_IF "%file%" STR_EQ "" BEGIN
+		FAIL "run function requires a non-empty argument 'file'"
+	END
+	ACTION_IF "%location%" STR_EQ "" BEGIN
+		FAIL "run function requires a non-empty argument 'location'"
+	END
+	// include component
+	ACTION_IF !FILE_EXISTS "%MOD_FOLDER%/%location%/%file%.tpa" BEGIN
+		FAIL "run function: File %file%.tpa not found in location %MOD_FOLDER%/%location%"
+	END
+	INCLUDE "%MOD_FOLDER%/%location%/%file%.tpa"
+	// run component
+	ACTION_IF "%tra%" STR_CMP "" BEGIN
+		WITH_TRA "%MOD_FOLDER%/lang/%LANGUAGE%/%tra%.tra" BEGIN
+			LAF "%file%" END
+		END
+	END ELSE BEGIN
+		LAF "%file%" END	
+	END
+END
+</code></pre></div>
+<p>(This assumes your tra files live in 'mymod/lang'; you can adjust if they're somewhere else.)</p>
+<p>I then use the convention that any file 'name'.tpa contains an action function called 'name'.</p>
+<p>A component then looks like:
+<div class="code"><pre><code>BEGIN @44 DESIGNATED 100 SUBCOMPONENT @77 GROUP @9
+REQUIRE_COMPONENT "setup-stratagems.tp2" 5900 @205 // require SCS AI initialize
+
+LAF run STR_VAR file=awesome_minsc location=gameplay tra=minsc END
+</code></pre></div></p><p>This then looks in the 'mymod/gameplay' folder for 'awesome_minsc.tpa'. If it finds it, it runs it, using tra file 'minsc.tra'. By default this function assumes the tra file has the same name as the folder in which the component function is located, so that</p>
+<div class="code"><pre><code>LAF run STR_VAR file=awesome_minsc location=gameplay END
+</code></pre></div>
+loads gameplay.tra. Of course, if your preferred conventions are different, you can tweak this.</p>
+
+
+<p><h4>Encapsulation within components</h4></p>
+<p>Just as it makes sense to encapsulate your components, in complicated mods it can be a good idea to encapsulate their separate parts. For instance, suppose you have a component which modifies all orcs, all hobgoblins, and all goblins in the game. The traditional way to write the component (here I'll assume the component is wrapped in a big function) would be</p>
+<div class="code"><pre><code>
+DEFINE_ACTION_FUNCTION modify_humanoids BEGIN
+
+// modify orcs
+
+[lots of code]
+
+// modify hobgoblins
+
+[lots of code]
+
+// modify goblins
+
+[[lots of code]
+
+END
+</code></pre></div>
+A more encapsulated version would be:
+<div class="code"><pre><code>
+DEFINE_ACTION_FUNCTION modify_humanoids BEGIN
+
+	LAF modify_orcs END
+	LAF modify_hobgoblins END
+	LAF modify_goblins END
+	
+
+END
+
+DEFINE_ACTION_FUNCTION modify_orcs BEGIN
+
+[lots of code]
+
+END
+
+DEFINE_ACTION_FUNCTION modify_hobgoblins BEGIN
+
+[lots of code]
+
+END
+
+DEFINE_ACTION_FUNCTION modify_goblins BEGIN
+
+[lots of code]
+
+END
+</code></pre></div></p>
+<p>Now any variables set by the individual bits of code remain confined to those bits of code and don't escape to have unexpected consequences elsewhere. You can also do this with WITH_SCOPE, but I find the code more readable if you use functions (it also makes it easier, during development, to turn bits on and off.)
+</p>
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="optimization" id="optimization"></a>4.3 Optimization</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>By 'optimization', I mean, 'making your code run faster'. Mostly <b>you should not worry about this</b>: on a modern computer, most individual WEIDU commands are effectively infinite. But in some contexts this is not true, and there it can be useful to pay attention to ways to speed things up.</p>
+<p><h4>Causes of WEIDU slowdown</h4></p>
+<p>These are some rules of thumb from my experience:
+<ul>
+<li>Almost all cases where WEIDU runs slow, it's because it's editing hundreds or (more often) thousands of files and doing something to each one. The most common cause of this is a COPY_EXISTING_REGEXP, so focus almost all your optimization attention on your COPY_EXISTING_REGEXP loops (and don't use a COPY_EXISTING_REGEXP unless you actually need to).</li>
+<li>Functions tend to run more slowly than basic WEIDU code, so if you have a slow bit of code, try doing it directly in WEIDU code. (Usually it suffices to do this only for code in a COPY_EXISTING_REGEXP.)</li>
+<li>APPENDING to a file is relatively slow. Try to avoid doing hundreds of APPENDs to the same file: collect the data you want to append in a string, and do it all once only.</li>
+<li>String matching is pretty fast; look for ways to use INDEX_BUFFER or similar to check if a file needs patching, even if only as a first pass.</li>
+<li>Bulk decompilation and recompilation of dlg and bcs files can take a long time: don't put a DECOMPILE_AND_PATCH into a COPY_EXISTING_REGEXP if you can help it.</li>
+</ul>
+</p>
+<p><h4>Timing WEIDU</h4></p>
+<p>
+To work out how long your code runs, a stopwatch often suffices, but sometimes it is more convenient to get a sharp time for a specific part of your mod. You can do so with the ACTION_TIME component, like this:
+<div class="code"><pre><code>ACTION_TIME my_timer BEGIN
+
+	[some bit of your code]
+
+END
+</code></pre></div>
+</p> 
+If you run this code and then check at the end of weidu.log, you'll find an entry: 'my timer xyz', where 'xyz' is how long that component took to execute. (You'll also find a number of hardcoded timers that WEIDU runs, tracking how long it took to do a number of tasks.) PATCH_TIME is the patch-context version.</p>
+<p>My experience is that WEIDU's time for the same code can vary up to 10-20% between runs, so don't take precise timer values too seriously. It is also occasionally a bit unreliable, especially when doing large numbers of APPENDs. In the following examples, I give the time for each piece of code to execute as recorded by a WEIDU timer, in each case running on my laptop (a 2-year-old Surface laptop) on unmodded BG2EE.</p>
+<p><h4>Making a first pass in REGEXP</h4></p>
+<p>As a case study, suppose you want to make a bespoke copy, DWWP213, of the wizard spell SPWI213, Stinking Cloud, perhaps to use in a kit. Various spells and items grant immunity to Stinking cloud (using one of three opcodes: 206, 318, 324) and so you need to patch those spells and items to also protect from your new spell. If you were applying your mod to the unmodded game you could just use CLONE_EFFECT directly on the x files that in fact do this, but in a general modded environment you don't know which spells do it, and so you have to do a COPY_EXISTING_REGEXP through all spells and items.</p>
+<p>A simple way to do that with WEIDU's built-in functions is:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=206 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=318 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=324 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+	BUT_ONLY
+	
+<font color="green">(Run-time: 8.6 sec)</font>
+</code></pre></div>
+(The 'silent=1' suppresses a WARNING the CLONE_EFFECT function normally gives when it fails to find a match.)</p>
+<p>This is easy to write and to understand, but as you can see, it takes a relatively long time to run. If this is the only bit of your mod that does something like this, you could just suck it up, but if you do a lot of things like this, your installation time is going to get painful.</p>
+<p>The reason the code takes so long is twofold: (i) the CLONE_EFFECT function is quite a lot slower than doing a manual pass through a spell or item's effects; (ii) more straightforwardly, we use the function three times, so the code loops three times through every spell and item.</p>
+<p>We could address this by hardcoding the whole thing - but hardcoding the addition or removal of effects is a timeconsuming and bug-prone nuisance. The solution is to do a first, hard-coded look through the spell to see if it needs patching at all, and if it does, use CLONE_EFFECT. Here's an implementation:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
+COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
+	match=0
+	// loop through item equipped effects
+	PATCH_IF "%SOURCE_EXT%" STR_EQ itm BEGIN
+		GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+		PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+			PATCH_IF !match BEGIN
+				READ_SHORT fx_off opcode
+				PATCH_IF opcode=206 || opcode=318 || opcode=324 BEGIN
+					READ_ASCII 0x14+fx_off resource
+					match=("%resource%" STR_EQ SPWI213)
+				END
+			END	
+		END			
+	END
+	// if we haven't found a match already, loop through item/spell casting/use effects
+	PATCH_IF !match BEGIN
+		PATCH_IF "%SOURCE_EXT%" STR_EQ itm BEGIN
+			GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS			
+		END ELSE BEGIN
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		END
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			PATCH_IF !match BEGIN
+				// ITM_V10_HEAD_EFFECTS and SPL_V10_HEAD_EFFECTS coincide, no need to check if ITM/SPL
+				GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS 
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					PATCH_IF !match BEGIN
+						READ_SHORT fx_off opcode
+						PATCH_IF opcode=206 || opcode=318 || opcode=324 BEGIN
+							READ_ASCII 0x14+fx_off resource
+							match=("%resource%" STR_EQ SPWI213)
+						END
+					END
+				END			
+			END
+		END
+	END
+	PATCH_IF match BEGIN
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=206 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=318 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=324 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+	END
+BUT_ONLY
+	
+<font color="green">(Run-time: 0.98 sec)</font>
+</code></pre></div></p>
+<p>This is much more complicated, of course (though it's a template for other such tasks, and you can write it very quickly once you get the hang of it). But it's almost 10x faster.</p>
+<p>In this particular case, though, this complicated code is overkill. There is a much faster way to pre-sift: just search for the string SPWI213!
+<div class="code"><pre><code>
+COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
+	PATCH_IF INDEX_BUFFER (SPWI213)>=0 BEGIN
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=206 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=318 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+		LPF CLONE_EFFECT INT_VAR silent=1 match_opcode=324 STR_VAR match_resource=SPWI213 resource=DWWP213 END
+	END
+BUT_ONLY
+
+<font color="green">(Run-time: 0.47 sec)</font>
+</code></pre></div></p>
+<p>Way faster to write, and twice as fast! Notice that this crude filter will produce some false positives - the scroll of Stinking Cloud will be caught by it, for instance - but it doesn't matter. The CLONE_EFFECTs themselves guarantee that we only patch the objects we ought to patch - all the filter has to do is get rid of most of the non-matching files before we do the slower, more careful CLONE_EFFECT.</p>
+
+<p><h4>Avoiding multiple APPENDs</h4></p>
+<p>Suppose you want to build a list of every creature in the game along with its class(perhaps to plug into some subsequent bit of code). Here's a simple, direct implementation:
+<div class="code"><pre><code><<<<<<<<.../stratagems-inline/classlist.txt
+>>>>>>>>
+	
+MKDIR "weidu_external/data/mymod"
+COPY ".../stratagems-inline/classlist.txt" "weidu_external/data/mymod"
+
+COPY_EXISTING_REGEXP - ".*\.cre" nowhere
+	LOOKUP_IDS_SYMBOL_OF_INT classname class (BYTE_AT 0x273) 
+	INNER_ACTION BEGIN
+		APPEND_OUTER "weidu_external/data/mymod/classlist.txt" "%SOURCE_RES%%TAB%%classname%"
+	END
+	
+<font color="green">(Run-time: officially 7.7 sec according to ACTION_TIME, actually more like 45 sec)</font>
+</code></pre></div></p>
+<p>This is simple and gets the job done, but it's <em>painfully</em> slow, almost entirely because of all the APPEND_OUTERs. The solution is to collect all the appended data into a string and append it right at the end, like this:
+<div class="code"><pre><code><<<<<<<<.../stratagems-inline/classlist.txt
+>>>>>>>>
+MKDIR "weidu_external/data/mymod"
+COPY ".../stratagems-inline/classlist.txt" "weidu_external/data/mymod"
+
+OUTER_SPRINT data ""
+COPY_EXISTING_REGEXP - ".*\.cre" nowhere
+	LOOKUP_IDS_SYMBOL_OF_INT classname class (BYTE_AT 0x273) 
+	SPRINT data "%data%%SOURCE_RES%%TAB%%classname%%WNL%"
+	
+APPEND_OUTER "weidu_external/data/mymod/classlist.txt" "%data%"
+	
+<font color="green">(Run-time: 0.67 sec)</font>
+</code></pre></div></p>
+<p>This is almost instant. A variant version is:
+<div class="code"><pre><code><<<<<<<<.../stratagems-inline/classlist.txt
+%data%
+>>>>>>>>	
+
+OUTER_SPRINT data ""
+COPY_EXISTING_REGEXP - ".*\.cre" nowhere
+	LOOKUP_IDS_SYMBOL_OF_INT classname class (BYTE_AT 0x273) 
+	SPRINT data "%data%%SOURCE_RES%%TAB%%classname%%WNL%"
+	
+MKDIR "weidu_external/data/mymod"
+COPY ".../stratagems-inline/classlist.txt" "weidu_external/data/mymod" EVALUATE_BUFFER
+	
+<font color="green">(Run-time: 0.59 sec)</font>
+</code></pre></div></p>
+<p>This takes about the same time to run; I find it a bit more elegant, but tastes may differ. (In practice I tend to do the first, because I have a standardly defined blank inline file I can copy over, without having to declare a new one explicitly.)</p>
+<p><h4>Directly searching scripts</h4></p>
+<p>
+Suppose we want to introduce a variable,, 'dw_no_fireballs', so that no creature in the game casts Fireball (SPWI304) from their spellbook if the variable is non-zero. Here's a search-and-replace that does that for a specific script (say, mage16b, which casts Fireball):
+<div class="code"><pre><code>COPY_EXISTING "mage16b.bcs" override
+	DECOMPILE_AND_PATCH BEGIN
+		REPLACE_TEXTUALLY 
+			~HaveSpell(WIZARD_FIREBALL)~ 
+			~Global("dw_no_fireballs","GLOBAL",0)HaveSpell(WIZARD_FIREBALL)~
+	END
+BUT_ONLY
+</code></pre></div>
+So we could carry out our task by just wrapping this in COPY_EXISTING_REGEXP:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.bcs" override
+	DECOMPILE_AND_PATCH BEGIN
+		REPLACE_TEXTUALLY 
+			~HaveSpell(WIZARD_FIREBALL)~ 
+			~Global("dw_no_fireballs","GLOBAL",0)HaveSpell(WIZARD_FIREBALL)~
+	END
+BUT_ONLY
+
+<font color="green">(Run-time: 6.7 sec)</font>
+</code></pre></div>
+</p>
+<p>But this requires thousands of scripts to be decompiled and recompiled, which takes time. (A lot of time if you have a mod like Sword Coast Stratagems installed, which introduces many long scripts.)</p>
+<p>The trick to optimize this is to work out how to search the <em>compiled</em> script to find whatever it is we're planning to search-and-replace. As with the spell-patching examples we considered earlier, it doesn't matter if our method produces the occasional false positive, since the search-and-replace itself will take care of that. All we need to do is get the number of scripts down to a manageable number.</p>
+<p>In this case, a simple way is to remember that 'WIZARD_FIREBALL' is an element in spell.ids, and when compiled will be replaced by the associated number (in this case 2304). So we just filter for that:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.bcs" override
+	PATCH_IF INDEX_BUFFER (2304)>=0 BEGIN
+		DECOMPILE_AND_PATCH BEGIN
+			REPLACE_TEXTUALLY 
+				~HaveSpell(WIZARD_FIREBALL)~ 
+				~Global("dw_no_fireballs","GLOBAL",0)HaveSpell(WIZARD_FIREBALL)~
+		END
+	END
+BUT_ONLY
+
+<font color="green">(Run-time: 1.0 sec)</font>
+</code></pre></div></p>
+</div>
+
+</body>

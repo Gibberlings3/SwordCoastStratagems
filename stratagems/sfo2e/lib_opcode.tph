@@ -1,0 +1,461 @@
+// try to avoid dependencies here
+
+/*
+describe-library
+{
+Functions here are associated with the association of opcodes to various secondary effects, and the extraction of those opcodes and secondary effects into subspells. At the moment we are trying to avoid dependencies here so the library can be self-contained.}
+
+*/
+
+/* document{opcode_load_data}
+{
+	Load the library data used by lib_opcode functions. The default assumption is that the data is in %MOD_FOLDER%/%sfo_library_path%/data, but you can override by setting sfo_opcode_data_path to the (full) path to the data. Returns sfo_opcode_data_loaded=1.
+
+}
+*/
+
+DEFINE_ACTION_MACRO opcode_load_data
+BEGIN
+	LOCAL_SPRINT data_path ""
+	ACTION_IF !IS_AN_INT sfo_opcode_data_loaded || !sfo_opcode_data_loaded BEGIN
+		ACTION_IF VARIABLE_IS_SET sfo_opcode_data_path BEGIN
+			OUTER_SPRINT data_path "%sfo_opcode_data_path%"
+		END ELSE 
+		ACTION_IF VARIABLE_IS_SET sfo_library_path BEGIN
+			OUTER_SPRINT data_path "%MOD_FOLDER%/%sfo_library_path%/data"
+		END ELSE BEGIN
+			OUTER_SPRINT data_path "%MOD_FOLDER%/sfo/data"	
+		END
+		LAF opcode_load_data STR_VAR data_path RET_ARRAY opcode_strrefs opcode_glows opcode_icons opcode_animations opcode_sparkles opcode_eff_arr END
+		OUTER_SET sfo_opcode_data_loaded=1
+	END
+END
+
+DEFINE_ACTION_FUNCTION opcode_load_data//internal
+	STR_VAR data_path="%MOD_FOLDER%/%sfo_library_path%/data"
+	RET_ARRAY opcode_strrefs opcode_glows opcode_icons opcode_animations opcode_sparkles opcode_eff_arr
+BEGIN
+
+	ACTION_FOR_EACH array IN opcode_strrefs opcode_glows opcode_icons opcode_animations opcode_sparkles opcode_eff_arr BEGIN
+		ACTION_CLEAR_ARRAY "%array%"
+	END
+
+	// load in the list of icons,strrefs,anims etc
+	
+	ACTION_IF GAME_IS "BG2EE EET BGT SOA TOB" BEGIN
+		OUTER_SPRINT file opcode_associations_bg2.2da
+	END ELSE 
+	ACTION_IF GAME_IS "BGEE TUTU TUTU_TOTSC" BEGIN
+		OUTER_SPRINT file opcode_associations_bg.2da	
+	END ELSE
+	ACTION_IF GAME_IS IWDEE BEGIN
+		OUTER_SPRINT file opcode_associations_iwd.2da	
+	END ELSE
+	BEGIN
+		FAIL "game not supported"
+	END
+	COPY - "%data_path%/%file%" nowhere
+		READ_2DA_ENTRIES_NOW opcode_data 7
+		FOR (row=0;row<opcode_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER opcode_data row 1 opcode
+			READ_2DA_ENTRY_FORMER opcode_data row 2 strrefs
+			READ_2DA_ENTRY_FORMER opcode_data row 3 icons
+			READ_2DA_ENTRY_FORMER opcode_data row 4 animations
+			READ_2DA_ENTRY_FORMER opcode_data row 5 sparkles
+			READ_2DA_ENTRY_FORMER opcode_data row 6 glows
+			PATCH_FOR_EACH type IN strrefs icons animations sparkles BEGIN
+				SPRINT data EVAL "%%type%%"
+				TO_UPPER data
+				PATCH_IF "%data%" STR_CMP "*" BEGIN
+					INNER_PATCH	"%data%," BEGIN
+						REPLACE_EVALUATE "\([^,]+\)," BEGIN
+							SPRINT $"opcode_%type%"("%opcode%" "%MATCH1%") ""
+						END
+						""
+					END
+				END
+			END
+			PATCH_IF "%glows%" STR_CMP "*" BEGIN
+				INNER_PATCH "%glows%" BEGIN
+					REPLACE_EVALUATE "\([0-9]+\)|\([0-9]+\)|\([0-9]+\)" BEGIN
+						val=MATCH1*0x100 + MATCH2*0x10000 + MATCH3*0x1000000
+						SPRINT $"opcode_glows"("%opcode%" "%val%") ""
+					END
+					""
+				END
+			END
+		END
+
+	// work out the content of each .eff file
+	
+	COPY_EXISTING_REGEXP - ".*\.eff" nowhere
+		TO_UPPER SOURCE_RES
+		SET $opcode_eff_arr("%SOURCE_RES%")=LONG_AT 0x10
+		SET $opcode_eff_arr("%SOURCE_RES%" param1)=LONG_AT 0x1c
+		SET $opcode_eff_arr("%SOURCE_RES%" param2)=LONG_AT 0x20
+
+END
+
+
+/* document{opcode_secondary_effects}
+{
+	Given the offset of an fx block, and a primary opcode, returns 1 if the opcode of the block is associated with the primary opcode (that is: it is an appropriate icon or other cosmetic 
+	effect, or else is a reliably-associated secondary effect). If include_primary is set to 1 (default=0) return the primary opcode itself here. If include_all_cosmetics is set to 1 (default=0), 
+	returns true for any cosmetic effect (except icons and strrefs, which always get checked).</p>
+	<p>For convenience, we also return the opcode itself (as 'opcode').</p>
+	<p>parent_resource should be set to the file in which the block is assumed to be (defaults to SOURCE_RES)
+
+}
+*/
+
+
+
+DEFINE_PATCH_FUNCTION opcode_secondary_effects
+	INT_VAR primary_opcode="-1"
+			fx_off=0
+			include_all_cosmetics=0//boolean
+			include_primary=0//boolean
+	STR_VAR parent_resource="%SOURCE_RES%"
+	RET value  opcode
+BEGIN
+	// sanity
+	PATCH_IF !sfo_opcode_data_loaded BEGIN
+		PATCH_FAIL "opcode_secondary_effects needs opcode_load_data to be run before it is used"
+	END
+	// get the opcode here
+	opcode=SHORT_AT fx_off
+	// if it's 177, replace it with the data from 
+	PATCH_IF opcode=177 BEGIN
+		READ_ASCII fx_off+0x14 resource
+		TO_UPPER resource
+		PATCH_IF VARIABLE_IS_SET $opcode_eff_arr("%resource%") BEGIN
+			is_177=1
+			opcode=$opcode_eff_arr("%resource%")
+			param1=$opcode_eff_arr("%resource%" "param1")
+			param2=$opcode_eff_arr("%resource%" "param2")
+		END
+	END ELSE BEGIN
+		is_177=0
+		SPRINT resource "NO_RESOURCE"
+	END
+	// go through possible opcodes
+	PATCH_MATCH opcode WITH
+	primary_opcode BEGIN
+		value=include_primary
+	END
+	6 10 15 19 44 49 WHEN primary_opcode=700 BEGIN
+		// ability drain effects
+		value=include_primary
+	END
+	206 318 324 BEGIN
+		// persistent immunity blocks associated with anything except the resource itself are assumed to be associated to all opcodes, provided they are persistent (duration>6)
+		READ_ASCII (fx_off+0x14)imm_res
+		value = "%imm_res%" STR_EQ "%parent_resource%" && (LONG_AT (fx_off+0xe))>6
+	END 
+	328 BEGIN
+		// spellstates are assumed to be unassociated, except that we associate spellstate 0 (hopelessness) with Sleep
+		READ_LONG (fx_off+0x8) splstate
+		value = (primary_opcode=39 && splstate=0 && (LONG_AT (fx_off+0xe))>6)  
+	END
+	174 BEGIN
+		// sound effects are assumed unassociated, unless we use all_cosmetics
+		value=include_all_cosmetics
+	END
+	142 BEGIN 
+		// icons are looked up
+		PATCH_IF is_177 BEGIN
+			icon=param2
+		END ELSE BEGIN
+			READ_LONG fx_off+0x8 icon
+		END
+		value=VARIABLE_IS_SET $opcode_icons("%primary_opcode%" "%icon%") 
+	END
+	139 BEGIN
+		// strrefs are looked up
+		PATCH_IF is_177 BEGIN
+			strref=param1
+		END ELSE BEGIN
+			READ_LONG fx_off+0x4 strref
+		END
+		value=VARIABLE_IS_SET $opcode_strrefs("%primary_opcode%" "%strref%")
+	END
+	215 WHEN opcode=55 BEGIN // the FoD animation is associated with death
+		value="%resource%" STR_EQ "FINGER"
+	END
+	215 BEGIN
+		// animations are looked up
+		READ_ASCII fx_off+0x14 anim
+		TO_UPPER anim
+		value=VARIABLE_IS_SET $opcode_animations("%primary_opcode%" "%anim%") || include_all_cosmetics
+	END
+	141 BEGIN
+		// sparkles are looked up
+		READ_LONG fx_off+0x8 sparkle
+		value=VARIABLE_IS_SET $opcode_sparkles("%primary_opcode%" "%sparkle%") || include_all_cosmetics
+	END
+	327 BEGIN
+		// icewind dale hit effects get included only on include_all_cosmetics
+		value=include_all_cosmetics
+	END
+	7 8 9 50 51 52 60 61 BEGIN
+		// glows are looked up
+		READ_LONG fx_off+0x4 param1
+		value=VARIABLE_IS_SET $opcode_glows("%primary_opcode%" "%param1%") || include_all_cosmetics
+	END	
+	0 54 WHEN primary_opcode=700 BEGIN
+		// ability drain effects, plus we associate AC and THAC0 penalties with ability drain effects
+		value=1
+	END
+	93 WHEN primary_opcode=16 BEGIN
+		// fatigue is associated with haste
+		value=1
+	END
+	106 WHEN primary_opcode=24 BEGIN
+		// morale break modifier is associated with fear
+		value=1
+	END
+	13 WHEN primary_opcode=25 BEGIN
+		// kill target is associated with poison
+		value=1
+	END
+	235 WHEN primary_opcode=39 BEGIN
+		// wing buffet is associated with sleep
+		value=1
+	END
+	0 54 158 240 WHEN primary_opcode=40 BEGIN
+		// AC and THAC0 modifiers, grease, and the removal of special-effect icons is associated with Slow
+		value=1
+	END
+	12 WHEN primary_opcode=55 BEGIN //FoD-style damage is associated with Slay
+		value= (SHORT_AT (fx_off+0xa))=64 
+	END
+	168 WHEN primary_opcode=55 BEGIN // the DESTSELF 177 is associated with Slay
+		value=("%resource%" STR_EQ "DESTSELF")
+	END
+	0 126 WHEN primary_opcode=154 BEGIN // AC and move penalties are associated with Entanglement
+		value=1
+	END
+	DEFAULT
+		value=0
+	END
+END
+
+
+/* document{opcode_find_subspell_name}
+{
+	Given 'parent', the resref of an item or spell, returns a unique, not-previously-used, name for a subspell. We start by returning the resref itself (only for items); failing that, we try adding 1 letters; if that's not possible, we try replacing the last letter; failing all of that, we just use the DWSB[A-Z0-9]+ namespace.
+
+}
+*/
+
+DEFINE_DIMORPHIC_FUNCTION opcode_find_subspell_name///////////////////////////////////////////////////////////////////////////
+	STR_VAR parent=""
+	RET subspell
+		done
+BEGIN
+	OUTER_SET done=0
+	ACTION_TO_UPPER parent // just for tidiness
+	ACTION_IF !FILE_EXISTS_IN_GAME "%parent%.spl" BEGIN // only applies for items - kicks in if we can just use the item name	
+		OUTER_SPRINT subspell "%parent%"
+		OUTER_SET done=1
+	END ELSE BEGIN
+		// <8-letter spells: try appending a letter or number to the spell
+		ACTION_IF STRING_LENGTH "%parent%"<8 BEGIN
+			ACTION_FOR_EACH char IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 BEGIN
+				ACTION_IF !done && !FILE_EXISTS_IN_GAME "%parent%%char%.spl" BEGIN
+					OUTER_SET done=1
+					OUTER_SPRINT subspell "%parent%%char%"
+				END
+			END
+		END
+		// <7-letter spells: try appending 2 letters/numbers (a bit of an edge case TBH, there'd have to be 36 subspells already for above not to work)
+		ACTION_IF !done && STRING_LENGTH "%parent%"<7 BEGIN
+			ACTION_FOR_EACH char1 IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 BEGIN
+				ACTION_FOR_EACH char2 IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 BEGIN
+					ACTION_IF !done && !FILE_EXISTS_IN_GAME "%parent%%char1%%char2%.spl" BEGIN
+						OUTER_SET done=1
+						OUTER_SPRINT subspell "%parent%%char1%%char2%"
+					END
+				END
+			END
+		END
+		// if that fails (most likely because the parent has 8 letters) look for something with the same first 7 letters
+		ACTION_IF !done && STRING_LENGTH "%parent%"=8 BEGIN
+			OUTER_PATCH_SAVE parent "%parent%" BEGIN
+				DELETE_BYTES 0x7 1
+			END
+			ACTION_FOR_EACH char IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 BEGIN
+				ACTION_IF !done && !FILE_EXISTS_IN_GAME "%parent%%char%.spl" BEGIN
+					OUTER_SET done=1
+					OUTER_SPRINT subspell "%parent%%char%"
+				END
+			END
+
+		END
+		//if that fails, use standardized namespace (36^4 ~ 10^6 possibilities)
+		ACTION_IF !done BEGIN
+			// this is optimized a bit, just looping 4 times with ACTION_FOR_EACH is mildly slow
+			ACTION_DEFINE_ARRAY char_array BEGIN 0 1 2 3 4 5 6 7 8 9 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z END
+			OUTER_FOR (c1=0;c1<36;++c1) BEGIN			
+				OUTER_FOR (c2=0;c2<36;++c2) BEGIN			
+					OUTER_FOR (c3=0;c3<36;++c3) BEGIN			
+						OUTER_FOR (c4=0;c4<36;++c4) BEGIN
+							OUTER_SPRINT char1 $char_array("%c1%")
+							OUTER_SPRINT char2 $char_array("%c2%")
+							OUTER_SPRINT char3 $char_array("%c3%")
+							OUTER_SPRINT char4 $char_array("%c4%")
+							ACTION_IF !done && !FILE_EXISTS_IN_GAME "DWSB%char1%%char2%%char3%%char4%.spl" BEGIN
+								OUTER_SET done=1
+								OUTER_SPRINT subspell "DWSB%char1%%char2%%char3%%char4%"								
+								OUTER_SET c1=36
+								OUTER_SET c2=36
+								OUTER_SET c3=36
+								OUTER_SET c4=36								
+							END
+						END
+					END
+				END
+			END
+		END	
+		ACTION_IF !done BEGIN
+			WARN "find_subspell cannot create more than 1,679,616 subspells. (Also, if you are trying to do this, reconsider your life choices.)"
+			OUTER_SPRINT subspell "failed"
+		END
+	END
+END
+
+
+/* document{opcode_extract}
+{
+	Given 'file', which should be an item or spell, and 'opcode', we extract the any associated effects from file and cast them as a subspell. If header is set to a nonnegative number, we do this only for that header (header is required for item files). Returns the resref of the subspell.</p>
+	<p>By default, the saving throws/MR checks and probabilities are checked when the subspell is called. Set saves=1 and probs=1 to keep those checks with the individual effects in the subspell.</p>
+	<p>Also by default, the opcode itself is not extracted. Set include_primary=1 to extract it.</p>
+	<p>If you set sectype to a positive number, the subspell receives that sectype. (Otherwise it has sectype 0).}</p>
+	<p>If you set "eff" to a nonempty string, we assume the opcode is applied via %eff%.eff
+*/
+
+DEFINE_ACTION_FUNCTION opcode_extract
+	INT_VAR opcode="-1"
+			header="-1"
+			saves=0//boolean
+			probs=0//boolean
+			include_primary=0//boolean
+			sectype=0
+	STR_VAR file=""
+			eff=""
+	RET subspell
+BEGIN
+	OUTER_PATCH "%file%" BEGIN
+		REPLACE_EVALUATE "\(.*\)\.\(.*\)" BEGIN
+			SPRINT resref "%MATCH1%"
+			SPRINT ext "%MATCH2%"
+		END
+		""
+	END
+	ACTION_IF "%ext%" STR_EQ "itm" && header<0 BEGIN
+		FAIL "opcode_extract: you're trying to extract opcode %opcode% from file %file%, but it's an item file and you haven't specified a header"
+	END
+	// find secondary spell name
+	LAF opcode_find_subspell_name STR_VAR parent="%resref%" RET subspell END
+	// make subspell
+	ACTION_IF header<0 BEGIN
+		COPY_EXISTING "%file%" "override/%subspell%.spl"
+			WRITE_LONG 0x8 "-1"
+	END ELSE BEGIN
+		COPY_EXISTING - "%file%" nowhere
+			PATCH_IF "%SOURCE_EXT%" STR_EQ "itm" BEGIN
+				GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+			END ELSE BEGIN
+				GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS			
+			END
+			ab_off=$ab_arr("%header%")
+			READ_SHORT ab_off+0x20 fx_index
+			READ_SHORT ab_off+0x1e fx_count
+			READ_LONG 0x6a fx_offset
+			READ_ASCII (fx_offset + 0x30*fx_index) data (0x30*fx_count)
+			INNER_ACTION BEGIN
+				CREATE spl "%subspell%"
+					INSERT_BYTES 0x72 0x28
+					WRITE_LONG 0x6a (0x72+0x28)
+					WRITE_SHORT 0x68 1
+					WRITE_BYTE 0x7e 1
+					WRITE_SHORT 0x82 1
+					WRITE_SHORT 0x98 1
+					WRITE_SHORT 0x90 fx_count
+					INSERT_BYTES (0x72+0x28) (0x30*fx_count)
+					WRITE_ASCII (0x72+0x28) "%data%"
+			END	
+	END
+	COPY_EXISTING "%subspell%.spl" override
+		// set sectype 
+		WRITE_BYTE 0x27 sectype
+		// remove everything not part of opcode
+		GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			WRITE_SHORT ab_off+0x26 1 // switch off projectile
+			GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				LPF opcode_secondary_effects INT_VAR primary_opcode=opcode include_primary fx_off STR_VAR parent_resource="%resref%" RET value END
+				PATCH_IF !value BEGIN
+					WRITE_SHORT fx_off 999
+				END ELSE BEGIN
+					WRITE_BYTE fx_off+0x2 2 // target
+					PATCH_IF !saves BEGIN
+						WRITE_LONG fx_off+0x24 0
+						WRITE_LONG fx_off+0x28 0
+						WRITE_BYTE fx_off+0xd (THIS=1)?3:THIS
+					END
+					PATCH_IF !probs BEGIN
+						WRITE_BYTE fx_off+0x12 100
+						WRITE_BYTE fx_off+0x13 0
+					END
+				END
+			END			
+		END
+		LPF DELETE_EFFECT INT_VAR match_opcode=999 END
+	BUT_ONLY
+	// patch the subspell in; remove the associated effects
+	COPY_EXISTING "%file%" override		
+		// insert the subspell, immediately following the opcode
+		PATCH_IF opcode=700 && "%eff%" STR_EQ "" BEGIN
+			PATCH_FOR_EACH match_opcode IN 6 10 15 19 44 49 BEGIN
+				LPF ALTER_EFFECT INT_VAR silent=1 match_opcode opcode=700 END
+			END
+		END 
+		PATCH_IF "%eff%" STR_EQ "" BEGIN
+			LPF CLONE_EFFECT INT_VAR header match_opcode=opcode opcode=146 parameter1=0 parameter2=1 duration=0 timing=1 multi_match=1 STR_VAR resource="%subspell%" insert="below" END
+		END ELSE BEGIN
+			LPF CLONE_EFFECT INT_VAR header match_opcode=177 opcode=146 parameter1=0 parameter2=1 duration=0 timing=1 multi_match=1 STR_VAR match_resource="%eff%" resource="%subspell%" insert="below" END		
+		END
+		PATCH_IF "%ext%" STR_EQ "itm" BEGIN
+			GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+		END ELSE BEGIN
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		END
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			PATCH_IF ab_ind=header || header<0 BEGIN
+				GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					READ_ASCII fx_off+0x14 resource
+					PATCH_IF "%resource%" STR_EQ "%subspell%" BEGIN // if this is the block we just added, set saves/MR and probs if appropriate
+						PATCH_IF saves BEGIN
+							WRITE_LONG fx_off+0x24 0
+							WRITE_LONG fx_off+0x28 0
+							WRITE_BYTE fx_off+0xd (THIS=1)?3:THIS
+						END
+						PATCH_IF probs BEGIN
+							WRITE_BYTE fx_off+0x12 100
+							WRITE_BYTE fx_off+0x13 0
+						END
+					END ELSE BEGIN // otherwise, filter
+						LPF opcode_secondary_effects INT_VAR primary_opcode=opcode include_primary fx_off STR_VAR parent_resource="%resref%" RET value END
+						PATCH_IF value BEGIN
+							WRITE_SHORT fx_off 999
+						END 
+					END
+				END
+			END
+		END
+		LPF DELETE_EFFECT INT_VAR match_opcode=999 END
+
+END

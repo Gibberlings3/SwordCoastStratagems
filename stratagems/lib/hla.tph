@@ -20,7 +20,7 @@ BEGIN
           SET has_hlas=0
           SPRINT hla ""
   END ELSE BEGIN
-    PATCH_IF !VARIABLE_IS_SET hla_choices_already_read BEGIN
+	PATCH_IF !VARIABLE_IS_SET hla_choices_already_read BEGIN
        INNER_ACTION BEGIN
           LAM read_in_hla_choices
        END
@@ -33,10 +33,15 @@ BEGIN
        LPF return_first_entry STR_VAR list="%classlist%" RET this_class=entry classlist=list END
        LPF number_of_hlas INT_VAR force_level num_classes_total class_number STR_VAR class="%this_class%" RET num_hla END
        LPF determine_hlas INT_VAR spellcaster STR_VAR class="%this_class%" kit resref RET hla_list END
-       LPF add_elements_to_list INT_VAR number_to_add=num_hla STR_VAR list="%hlas_to_add%" elements="%hla_list%" RET hlas_to_add=list END
+	   FOR (count=0;count<num_hla;++count) BEGIN
+			PATCH_IF "%hla_list%" STR_CMP "" BEGIN
+				LPF return_first_entry STR_VAR list="%hla_list%" RET entry hla_list=list END
+				SPRINT hlas_to_add "%hlas_to_add% %entry%"
+			END
+	   END
     END
     PATCH_IF "%hlas_to_add%" STRING_COMPARE "" BEGIN
-       LPF delete_hlas END
+	   LPF delete_hlas END
        LPF give_hlas STR_VAR hlas_to_add END
     END ELSE BEGIN
     END
@@ -61,7 +66,7 @@ DEFINE_PATCH_FUNCTION determine_hlas
     STR_VAR class="" kit="" resref=""
     RET hla_list
 BEGIN
-//  PATCH_PRINT "Considering HLAs for class %class%, kit %kit%..."
+ //PATCH_PRINT "Considering HLAs for class %class%, kit %kit%..."
   PATCH_MATCH "%class%" WITH
      MAGE CLERIC SHAMAN BARD DRUID SORCERER BEGIN
         SET continue=spellcaster
@@ -91,6 +96,30 @@ BEGIN
   END ELSE BEGIN
      SPRINT hla_list ""
  //    PATCH_PRINT "...skipping"
+  END
+  // hardcoded replacements 
+  PATCH_IF talents_of_faerun_hlas BEGIN
+	PATCH_IF "%class%" STR_EQ "blackguard" && BYTE_AT 0x27b=IDS_OF_SYMBOL (align LAWFUL_EVIL) BEGIN
+		INNER_PATCH_SAVE hla_list "%hla_list%" BEGIN
+			REPLACE_TEXTUALLY "ABYSSAL_PACT" "INFERNAL_CONTRACT"
+			REPLACE_TEXTUALLY "SUMMON_BALOR" "SUMMON_PIT_FIEND"
+		END
+	END ELSE
+	PATCH_IF "%class%" STR_EQ "monk" BEGIN
+		READ_BYTE 0x27b align
+		PATCH_IF align=IDS_OF_SYMBOL (align LAWFUL_EVIL) || align=IDS_OF_SYMBOL (align NEUTRAL_EVIL) || align=IDS_OF_SYMBOL (align LAWFUL_EVIL) BEGIN
+			INNER_PATCH_SAVE hla_list "%hla_list%" BEGIN
+				REPLACE_TEXTUALLY "MONK_SECOND_WIND" ""
+			END
+		END
+		READ_BYTE 0x244 kit
+		PATCH_IF kit=IDS_OF_SYMBOL (kit DARK_MOON) BEGIN
+			SPRINT hla_list "DARK_MOON_SOUL_OF_ICE %hla_list%"
+		END ELSE
+		PATCH_IF kit=IDS_OF_SYMBOL (kit SUN_SOUL) BEGIN
+			SPRINT hla_list "SUN_SOUL_SEARING_FISTS %hla_list%"		
+		END
+	END
   END
 END
 
@@ -144,6 +173,7 @@ BEGIN
     END
     LPF hla_level_minimum INT_VAR num_classes=num_classes_total STR_VAR class RET minimum END
     SET num_hla = (level >= minimum) ? (level + 1 - minimum) : 0
+
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -158,9 +188,14 @@ BEGIN
    SPRINT type $hla_type("%hla%")
    PATCH_MATCH "%type%" WITH
    grant BEGIN
-         SPRINT resref EVAL "%%hla%%"
-         
-         LPF CRE_add_spells STR_VAR arguments=~%resref%~ END
+		 PATCH_MATCH "%hla%" WITH
+		 POISON_NERVE_VENOM POISON_DEATHKISS POISON_BLUE_WHINNIS POISON_NIGHTMARE_PASTE POISON_CARRION_ICHOR BEGIN
+			LPF apply_hla STR_VAR hla END
+		 END
+		 DEFAULT
+			SPRINT resref EVAL "%%hla%%" 
+			LPF CRE_add_spells STR_VAR arguments=~%resref%~ END
+		 END
    END
    apply BEGIN
          LPF apply_hla STR_VAR hla END
@@ -186,6 +221,151 @@ BEGIN
    END
    EXTRA_LEVEL_6 EXTRA_LEVEL_7 EXTRA_LEVEL_8 BEGIN
         // we don't bother implementing this in code
+   END
+   WARRIOR_GREATER_WAR_CRY BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F2 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END    
+   END
+   WARRIOR_GREATER_DEATHBLOW BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F7 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END   
+   END
+   PALADIN_HOLY_AURA BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=326 timing=1 target=1 STR_VAR resource=tg#hola END
+   END
+   WARRIOR_GREATER_WHIRLWIND BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F1 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END
+   END
+   MONK_DIAMOND_SOUL BEGIN
+		// add explicit immunity to polymorph other
+		
+		LPF ADD_CRE_EFFECT INT_VAR opcode=206 timing=9 target=1 STR_VAR resource="%WIZARD_POLYMORPH_OTHER%" END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=206 timing=9 target=1 STR_VAR resource="%MAJOR_POLYMORPH%" END
+
+		// add spellstate immunity to disintegrate and petrify
+		
+		LPF ds_resolve_stat STR_VAR id=DISINTEGRATE_IMMUNITY RET disint_stat=stat_ind END
+		LPF ds_resolve_stat STR_VAR id=PETRIFY_IMMUNITY RET petrify_stat=stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 target=1 timing=9 special=1 parameter2=disint_stat END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 target=1 timing=9 special=1 parameter2=petrify_stat END 
+   END
+   MONK_DISPLACEMENT BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=232 target=1 timing=9 parameter1=0 parameter2=3 STR_VAR resource=tg#dis2 END
+   END
+   MONK_SECOND_WIND BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=232 target=1 timing=9 parameter1=0 parameter2=3 STR_VAR resource=tg#sec2 END
+   END
+   MONK_REGENERATION BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=98 target=1 timing=9 power=7 parameter1=3 parameter2=3 END
+   END
+   PALADIN_HOLY_AURA BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=272 target=1 timing=9 parameter2=3 STR_VAR resource=tg#hol1 END
+   END
+   BLACKGUARD_BLOOD_WAR_SECRETS BEGIN
+	LPF ADD_CRE_EFFECT INT_VAR opcode=177 target=1 timing=9 parameter1=IDS_OF_SYMBOL (race DEMONIC) parameter2=4 STR_VAR resource=demhit2 END
+	LPF ADD_CRE_EFFECT INT_VAR opcode=177 target=1 timing=9 parameter1=IDS_OF_SYMBOL (race DEMONIC) parameter2=4 STR_VAR resource=demdam2 END   
+   END
+   EMPOWERED_MONSTER_SUMMONING BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_C5 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END       
+   END
+   EMPOWERED_UNDEAD_SUMMONING BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_C6 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END          
+   END
+   "ARCANE_KNOWLEDGE_.*" BEGIN
+	INNER_PATCH_SAVE school "%hla%" BEGIN
+		REPLACE_TEXTUALLY "ARCANE_KNOWLEDGE_" ""
+	END
+	TO_LOWER school
+	DEFINE_ASSOCIATIVE_ARRAY school_map BEGIN
+		abjuration=>1
+		conjuration=>2
+		divination=>3
+		enchantment=>4
+		illusion=>5
+		invocation=>6
+		necromancy=>7
+		alteration=>8
+	END
+	LPF ADD_CRE_EFFECT INT_VAR opcode=346 target=1 timing=9 parameter1=1 special=$school_map("%school%") END
+   END
+   ASSASSIN_POISON_APTITUDE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_T2 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END          
+   END
+   ASSASSIN_POISON_EXPERTISE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_T3 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END          
+   END
+   ROGUE_ADVANCED_AVOID_DANGER BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_T1 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END          
+   END
+   POISON_BLUE_WHINNIS BEGIN
+		LPF check_ini STR_VAR ini=poison_stat RET poison_stat=value END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=282 target=1 timing=1 parameter2=(poison_stat - 156) parameter1=1 END
+   END
+   POISON_CARRION_ICHOR BEGIN
+		LPF check_ini STR_VAR ini=poison_stat RET poison_stat=value END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=282 target=1 timing=1 parameter2=(poison_stat - 156) parameter1=2 END
+   END
+   POISON_NIGHTMARE_PASTE BEGIN
+		LPF check_ini STR_VAR ini=poison_stat RET poison_stat=value END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=282 target=1 timing=1 parameter2=(poison_stat - 156) parameter1=3 END
+   END
+   POISON_DEATHKISS BEGIN
+		LPF check_ini STR_VAR ini=poison_stat RET poison_stat=value END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=282 target=1 timing=1 parameter2=(poison_stat - 156) parameter1=4 END
+   END
+   POISON_NERVE_VENOM BEGIN
+		LPF check_ini STR_VAR ini=poison_stat RET poison_stat=value END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=282 target=1 timing=1 parameter2=(poison_stat - 156) parameter1=5 END   
+   END
+   BARBARIAN_TIRELESS_RAGE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F3 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END
+   BARBARIAN_GREATER_RAGE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F4 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END
+   BARBARIAN_SUPERNATURAL_FURY BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F5 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END  
+   BARBARIAN_FIERY_RAGE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F6 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END
+   BARBARIAN_THUNDEROUS_RAGE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F8 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END
+   BARBARIAN_VOLCANIC_RAGE BARBARIAN_TEMPESTUOUS_RAGE BEGIN
+		LPF ds_resolve_stat STR_VAR id=DW_POWER_UPGRADE_F6 RET stat_ind END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=328 timing=9 special=1 target=1 parameter2=stat_ind END            
+   END
+   ELEMENTAL_IMMUNITY_ACID CLERIC_ELEMENTAL_IMMUNITY_ACID BEGIN
+		WRITE_BYTE 0x5c 100
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=27 END
+   END
+   ELEMENTAL_IMMUNITY_ELECTRICITY CLERIC_ELEMENTAL_IMMUNITY_ELECTRICITY BEGIN
+		WRITE_BYTE 0x5b 100
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=29 END
+   END
+   ELEMENTAL_IMMUNITY_COLD CLERIC_ELEMENTAL_IMMUNITY_COLD BEGIN
+		WRITE_BYTE 0x5a 100
+		WRITE_BYTE 0x5f 100
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=28 END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=85 END
+   END
+   ELEMENTAL_IMMUNITY_FIRE CLERIC_ELEMENTAL_IMMUNITY_FIRE BEGIN
+		WRITE_BYTE 0x59 100
+		WRITE_BYTE 0x5e 100
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=30 END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=101 timing=9 target=1 parameter2=84 END
    END
    DEFAULT
       LPF warning STR_VAR warning="Trying to apply HLA %hla% but I don't have code for it" END
@@ -241,10 +421,10 @@ BEGIN
          OUTER_SET hla_choices_already_read=1
          ACTION_FOR_EACH localroot IN genai mage priest BEGIN
            ACTION_BASH_FOR "%MOD_FOLDER%/%localroot%/hla_choices/%base_folder_hlas%" ".*\.2da" BEGIN
-              OUTER_SPRINT kit "%BASH_FOR_RES%"
+             OUTER_SPRINT kit "%BASH_FOR_RES%"
               ACTION_TO_UPPER kit
               ACTION_IF "%kit%" STRING_EQUAL_CASE override BEGIN
-                COPY "%MOD_FOLDER%/%localroot%/hla_choices/%base_folder_hlas%/%kit%.2da" "%workspace%"
+                COPY - "%MOD_FOLDER%/%localroot%/hla_choices/%base_folder_hlas%/%kit%.2da" nowhere
                    COUNT_2DA_ROWS 3 rowcount
                    FOR (row=1;row<rowcount;row+=1) BEGIN
                         READ_2DA_ENTRY row 0 3 cre
@@ -267,17 +447,19 @@ BEGIN
                   OUTER_SET proceed=1
                END
                ACTION_IF proceed BEGIN
-                COPY "%MOD_FOLDER%/%localroot%/hla_choices/%base_folder_hlas%/%kit%.2da" "%workspace%"
-                   LPF read_variable_array RET_ARRAY array_data END
-                   SET rowcount=0
-                   PHP_EACH array_data AS row=>short_list BEGIN
-                     PATCH_IF IS_AN_INT row BEGIN
-                       LPF deabbreviate_hla_list STR_VAR short_list RET list END
-                       SPRINT $hla_allocation_list("%kit%" "%row%") "%list%"
-                       SET rowcount+=1
-                     END
-                   END
-                   SET $hla_allocation_list_count("%kit%")=rowcount - 1
+                COPY - "%MOD_FOLDER%/%localroot%/hla_choices/%base_folder_hlas%/%kit%.2da" nowhere
+					row=0
+					REPLACE_EVALUATE "^\([0-9]+\)[ %TAB%]+\(.*\)$" BEGIN
+						INNER_PATCH_SAVE short_list "%MATCH2%" BEGIN
+							REPLACE_TEXTUALLY "\(%WNL%\|%MNL%\|%LNL%\)" ""
+							REPLACE_TEXTUALLY "[ %TAB%]+" " "
+						END
+						LPF deabbreviate_hla_list STR_VAR short_list RET list END
+						++row
+						SPRINT $hla_allocation_list("%kit%" "%row%") "%list%"						
+					END
+					""
+					SET $hla_allocation_list_count("%kit%")=row
                 BUT_ONLY
                END
               END
@@ -315,10 +497,10 @@ BEGIN
       PATCH_IF duplicate BEGIN
          LPF warning STR_VAR warning="abbreviated HLA %short_hla% is ambiguous; defaulting to %hla%" END
       END
-   END
-   PATCH_IF !VARIABLE_IS_SET hla BEGIN
-      SPRINT hla "%short_hla%" 
-      LPF warning STR_VAR warning="unrecognised HLA %hla%" END
+	  PATCH_IF !found_already BEGIN 
+		SPRINT hla "%short_hla%" 
+		LPF warning STR_VAR warning="unrecognised HLA %hla%" END
+	  END
    END
 END
 

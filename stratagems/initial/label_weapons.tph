@@ -1,54 +1,37 @@
-DEFINE_PATCH_FUNCTION check_if_weapon
-            RET value
-            BEGIN
-               LPF ITM_read_ability_type RET wpn=value END
-               PATCH_IF (wpn=1||wpn=2) BEGIN
-                  SET value=1
-               END ELSE BEGIN
-                  SET value=0
-               END
-            END
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 DEFINE_ACTION_FUNCTION label_weapons
-            INT_VAR weapon_enchantment_type=233    // The assumption is that slot 109 ("CLERIC_HALLOW") is used to
-                    weapon_enchantment_stat=109    //   indicate weapon enchantment. It's a proficiency,
-                                                   /// not a scripting state - that's what  the ~type~ codes
-     BEGIN
-     COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
-          PATCH_IF SOURCE_SIZE > 0x1 BEGIN
-            PATCH_TRY  
-			  SET weapon=0
-              LPF walk_entries STR_VAR file_ext=ITM entry_type=ability function=check_if_weapon RET weapon=value END
-              PATCH_IF (weapon=1) BEGIN
-                  LPF ITM_read_enchantment RET enchantment=value END
-                  PATCH_IF enchantment>0 BEGIN
-                      LPF ADD_ITEM_EQEFFECT
-                         INT_VAR opcode=~weapon_enchantment_type~
-                                 timing=2
-                                 target=1
-                                 parameter1=~enchantment~
-                                 parameter2=~weapon_enchantment_stat~
-                      END
-                  END
-              END
+	INT_VAR weapon_enchantment_type=233    // The assumption is that slot 109 ("CLERIC_HALLOW") is used to
+			weapon_enchantment_stat=109    //   indicate weapon enchantment. It's a proficiency,
+BEGIN
+    COPY_EXISTING_REGEXP GLOB ~.*\.itm~ ~override~
+        PATCH_IF SOURCE_SIZE > 0x1 BEGIN
+			PATCH_TRY  
+				GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+				is_weapon=0
+				PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+					is_weapon=((BYTE_AT ab_off)=1 || (BYTE_AT ab_off)=2)?1:is_weapon
+				END
+				PATCH_IF is_weapon BEGIN	
+					READ_LONG 0x60 enchantment 
+					PATCH_IF enchantment>0 BEGIN
+						LPF ADD_ITEM_EQEFFECT INT_VAR opcode=weapon_enchantment_type timing=2 target=1 parameter1=enchantment parameter2=weapon_enchantment_stat END
+					END
+				END
 			WITH DEFAULT
-						LPF regexp_warning STR_VAR parent=label_weapons END
+				LPF regexp_warning STR_VAR parent=label_weapons END
 			END
-          END
-     BUT_ONLY
+		END
+	BUT_ONLY
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION relabel_weapons
-      BEGIN
-           LPF ITM_read_enchantment RET enchantment=value END
-           PATCH_CLEAR_ARRAY patch_data
-           PATCH_DEFINE_ASSOCIATIVE_ARRAY patch_data BEGIN
-                 match => "opcode=233 and parameter2=109"
-                 parameter1=> ~%enchantment%~
-           END
-           LPF patch_entry STR_VAR file_ext=ITM arguments=patch_data type=effect_global END
+	INT_VAR weapon_enchantment_type=233    // The assumption is that slot 109 ("CLERIC_HALLOW") is used to
+			weapon_enchantment_stat=109    //   indicate weapon enchantment. It's a proficiency,
+BEGIN	
+	LPF DELETE_EFFECT INT_VAR match_opcode=weapon_enchantment_type match_parameter2=weapon_enchantment_stat END
+	READ_LONG 0x60 enchantment 
+	PATCH_IF enchantment>0 BEGIN
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=weapon_enchantment_type timing=2 target=1 parameter1=enchantment parameter2=weapon_enchantment_stat END
+	END
 END

@@ -1,0 +1,126 @@
+DEFINE_DIMORPHIC_FUNCTION RES_NUM_OF_SPELL_NAME
+	INT_VAR silent=0
+	STR_VAR spell_name=""
+	RET spell_res spell_num success
+BEGIN
+	OUTER_SET success=0
+	OUTER_SPRINT spell_res ""
+	OUTER_SET spell_num=IDS_OF_SYMBOL (spell "%spell_name%")
+	ACTION_IF spell_num<0 BEGIN
+		ACTION_IF !VARIABLE_IS_SET data_loc_shared BEGIN
+			OUTER_SPRINT data_loc_shared "weidu_external/data/dw_shared"
+		END	
+		ACTION_IF FILE_EXISTS "%data_loc_shared%/dw_ext_spell.ids" BEGIN
+			COPY - "%data_loc_shared%/dw_ext_spell.ids" nowhere
+				READ_2DA_ENTRIES_NOW ext_spell_data 2
+				FOR (row=0;row<ext_spell_data;++row) BEGIN
+					READ_2DA_ENTRY_FORMER ext_spell_data row 1 name
+					PATCH_IF "%name%" STR_EQ "%spell_name%" BEGIN
+						READ_2DA_ENTRY_FORMER ext_spell_data row 0 spell_res
+					END
+				END
+			
+		END
+		ACTION_IF "%spell_res%" STR_EQ "" BEGIN
+			CLEAR_IDS_MAP
+			OUTER_SET spell_num=IDS_OF_SYMBOL (spell "%spell_res%")
+		END
+	END
+	ACTION_IF spell_num>=0 BEGIN
+		OUTER_PATCH_SAVE spell_res "%spell_num%" BEGIN
+			REPLACE_TEXTUALLY "^1" "SPPR"
+			REPLACE_TEXTUALLY "^2" "SPWI"
+			REPLACE_TEXTUALLY "^3" "SPIN"
+			REPLACE_TEXTUALLY "^4" "SPCL"
+		END
+	END
+	OUTER_SET success=("%spell_res%" STR_CMP "")
+	ACTION_IF !success && !silent BEGIN
+		WARN "RES_NUM_OF_SPELL_NAME: cannot find spell %spell_name%"
+	END
+END	
+
+DEFINE_DIMORPHIC_FUNCTION NAME_NUM_OF_SPELL_RES
+	INT_VAR silent=0
+	STR_VAR spell_res=""
+	RET spell_name spell_num success
+BEGIN
+	OUTER_SET spell_num="-1"
+	OUTER_SET success=0
+	OUTER_SPRINT spell_name ""
+	OUTER_SPRINT warning ""
+	ACTION_TO_UPPER spell_res
+	// is spell in standard format? is so get number
+	OUTER_PATCH "%spell_res%" BEGIN
+		REPLACE_EVALUATE
+			"SP\(PR\|WI\|IN\|CL\)\([0-9A-Z][0-9A-Z][0-9A-Z]\)" BEGIN
+				success=1
+				PATCH_IF IS_AN_INT "%MATCH2%" BEGIN
+					PATCH_MATCH "%MATCH1%" WITH
+					"PR" BEGIN
+						start=1
+					END
+					"WI" BEGIN
+						start=2
+					END
+					"IN" BEGIN
+						start=3
+					END
+					"CL" BEGIN
+						start=4
+					END
+					DEFAULT
+						PATCH_FAIL "shouldn't happen"
+					END
+					SPRINT spell_num "%start%%MATCH2%"
+				END
+			END
+			""			
+	END
+	ACTION_IF !success BEGIN
+		OUTER_SPRINT warning "NAME_NUM_OF_SPELL_RES: spell %spell_res% is not a legal form"
+	END
+	ACTION_IF success BEGIN
+		OUTER_PATCH "" BEGIN
+			// look up number, if it's set
+			PATCH_IF spell_num>=0 BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT spell_name spell spell_num
+				PATCH_IF IS_AN_INT spell_name BEGIN
+					INNER_ACTION BEGIN
+						CLEAR_IDS_MAP
+					END
+					LOOKUP_IDS_SYMBOL_OF_INT spell_name spell spell_num
+				
+				END
+				PATCH_IF IS_AN_INT spell_name BEGIN
+					SPRINT spell_name ""
+				END
+			END
+			// if you haven't found it, try dw_ext_spell.ids
+			PATCH_IF "%spell_name%" STR_EQ "" BEGIN
+				PATCH_IF !VARIABLE_IS_SET data_loc_shared BEGIN
+					SPRINT data_loc_shared "weidu_external/data/dw_shared"
+				END	
+				PATCH_IF FILE_EXISTS "%data_loc_shared%/dw_ext_spell.ids" BEGIN
+					INNER_ACTION BEGIN
+						COPY - "%data_loc_shared%/dw_ext_spell.ids" nowhere
+							READ_2DA_ENTRIES_NOW ext_spell_data 2
+							FOR (row=0;row<ext_spell_data;++row) BEGIN
+								READ_2DA_ENTRY_FORMER ext_spell_data row 0 res
+								PATCH_IF "%res%" STR_EQ "%spell_res%" BEGIN
+									READ_2DA_ENTRY_FORMER ext_spell_data row 1 spell_name
+								END
+							END
+					END
+				END
+			END	
+			PATCH_IF "%spell_name%" STR_EQ "" BEGIN
+				success=0
+				SPRINT warning "NAME_NUM_OF_SPELL_RES: spell %spell_res% is not listed in spell.ids or dw_ext_spell.ids"
+			END
+		END
+	END
+	ACTION_IF !silent && "%warning%" STR_CMP "" BEGIN
+		WARN "%warning%"
+	END
+END

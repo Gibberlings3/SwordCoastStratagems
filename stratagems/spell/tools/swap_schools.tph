@@ -1,0 +1,60 @@
+DEFINE_ACTION_FUNCTION swap_schools_for_these
+	INT_VAR old_desc=0
+			new_desc=0
+	STR_VAR substring=""
+			old_school=""
+			new_school=""
+BEGIN
+	LAM data_scroll_resrefs
+	CLEAR_IDS_MAP
+	COPY_EXISTING "spell.ids" "%workspace%"
+		REPLACE_EVALUATE "\([A-Z0-9_]+%substring%[A-Z0-9_]+\)" BEGIN
+			SPRINT ids "%MATCH1%"
+			SPRINT resref EVAL "%%ids%%"
+			PATCH_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+				SPRINT scroll EVAL "%%ids%_SCROLL%"
+				INNER_ACTION BEGIN
+					PRINT "swapping school for %ids%"
+					LAF swap_school INT_VAR old_desc new_desc STR_VAR old_school new_school resref scroll END
+				END					
+			END
+		END
+		""
+	BUT_ONLY	
+END
+
+DEFINE_ACTION_FUNCTION swap_school 
+	INT_VAR old_desc=0
+			new_desc=0
+	STR_VAR resref=""
+			scroll=""
+			old_school=""
+			new_school=""
+BEGIN
+	spl.edit[%resref%|edit_strrefs_in_place:i=1 debug:i=0]
+	[
+		PATCH_IF "%m_school%" STR_EQ "%old_school%" BEGIN
+			m.spl_enforce_school{"%new_school%"}
+			PATCH_IF !IS_AN_INT m_description BEGIN
+				m_description=m_description.patch{				
+					SPRINT old (AT old_desc)
+					SPRINT new (AT new_desc)
+					REPLACE_TEXTUALLY "%old%" "%new%"
+				}
+			END
+			INNER_ACTION BEGIN
+				ACTION_IF FILE_EXISTS_IN_GAME "%scroll%.itm" BEGIN
+					COPY_EXISTING "%scroll%.itm" override
+						LPF struct_read RET_ARRAY scr=struct END
+						PATCH_FOR_EACH spec IN abjurer transmuter conjurer diviner enchanter invoker illusionist necromancer BEGIN
+							"scr_unusable_%spec%"="m_unusable_%spec%"
+						END
+						LPF struct_write STR_VAR struct=scr END
+					BUT_ONLY
+				END			
+			END
+		END
+	
+	]
+	
+END

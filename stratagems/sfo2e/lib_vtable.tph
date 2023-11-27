@@ -3,6 +3,7 @@ DEFINE_ACTION_MACRO vtable_initialize
 BEGIN
 	LOCAL_SPRINT file ""
 	LOCAL_SPRINT array ""
+	LOCAL_SPRINT id ""
 	LOCAL_SPRINT type ""
 	LOCAL_SPRINT old ""
 	LOCAL_SPRINT new ""
@@ -14,67 +15,100 @@ BEGIN
 	
 	ACTION_IF !VARIABLE_IS_SET SFO_vtables_initialized BEGIN
 		OUTER_SET SFO_vtables_initialized=1
-		SILENT
-		ACTION_FOR_EACH file IN kit class BEGIN
-			LAF 2da_read STR_VAR file="vtable_%file%.2da" case=lower path="%MOD_FOLDER%/%sfo_library_path%/vtables" RET_ARRAY array END
-			ACTION_PHP_EACH array AS k=>v BEGIN
-				ACTION_MATCH "%k_1%" WITH 
-				reflect BEGIN
-					OUTER_SPRINT $"sfo_vtable_%file%_files"("%k_0%") ""
-					OUTER_SPRINT $"sfo_vtable_%file%_reflects"("%k_0%") "%v%"
-				END
-				rowname_column BEGIN
-					OUTER_SPRINT $"sfo_vtable_%file%_rowname_columns"("%k_0%") "%v%"			
-				END
-				alias insert_loc BEGIN
-					OUTER_SPRINT $"sfo_vtable_%file%_%k_1%"("%k_0%") "%v%"
-				END
-				DEFAULT
-					// cruft
-				END
-			END
-			ACTION_IF !FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_alias.txt" BEGIN
-				LAF vtable_generate_aliases STR_VAR vtable="%file%" END
-			END
-			LAF array_read STR_VAR case=lower file="%file%_alias.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_alias"=array END
-			LAF array_invert STR_VAR array="sfo_vtable_%file%_alias" RET_ARRAY "sfo_vtable_%file%_alias_backwards"=array END
-
-			ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_strrefs.txt" BEGIN
-				LAF array_read STR_VAR case=lower file="%file%_strrefs.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_strrefs"=array END		
-			END
-			ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_specials.txt" BEGIN
-				LAF array_read STR_VAR case=lower file="%file%_specials.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_specials"=array END	 // keep the full array for debugging	
-				ACTION_PHP_EACH "sfo_vtable_%file%_specials" AS id=>type BEGIN
-					OUTER_PATCH_SAVE type "%type%" BEGIN
-						REPLACE_EVALUATE "\(.*\)(\(.*\))" BEGIN
-							SPRINT args "%MATCH2%"
-						END
-						"%MATCH1%"
+		ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/auto_vtable.tpc" BEGIN
+			INCLUDE "%MOD_FOLDER%/%sfo_library_path%/vtables/auto_vtable.tpc"
+		END ELSE BEGIN
+			OUTER_SPRINT data_output ""
+			SILENT
+			ACTION_FOR_EACH file IN kit class BEGIN
+				LAF 2da_read STR_VAR file="vtable_%file%.2da" case=lower path="%MOD_FOLDER%/%sfo_library_path%/vtables" RET_ARRAY array END
+				ACTION_PHP_EACH array AS k=>v BEGIN
+					ACTION_MATCH "%k_1%" WITH 
+					reflect BEGIN
+						OUTER_SPRINT $"sfo_vtable_%file%_files"("%k_0%") ""
+						OUTER_SPRINT $"sfo_vtable_%file%_reflects"("%k_0%") "%v%"
+						OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_files(~%k_0%~) ~~%WNL%"
+						OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_reflects(~%k_0%~) ~%v%~%WNL%"
 					END
-					ACTION_MATCH "%type%" WITH
-					multiple commalist  mixedcase BEGIN
-						OUTER_SPRINT $"sfo_vtable_%file%_%type%"("%id%") "%args%"
+					rowname_column BEGIN
+						OUTER_SPRINT $"sfo_vtable_%file%_rowname_columns"("%k_0%") "%v%"
+						OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_rowname_columns(~%k_0%~) ~%v%~%WNL%"			
 					END
-					multiple_fill BEGIN
-						OUTER_SPRINT $"sfo_vtable_%file%_multiple_fill"("%id%") "%args%"
-						OUTER_SPRINT $"sfo_vtable_%file%_multiple"("%id%") "%args%"			
+					alias insert_loc BEGIN
+						OUTER_SPRINT $"sfo_vtable_%file%_%k_1%"("%k_0%") "%v%"
+						OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_%k_1%(~%k_0%~) ~%v%~%WNL%"			
 					END
 					DEFAULT
-						WARN "unidentified special %type% for vtable %file%"
+						// cruft
 					END
 				END
+				ACTION_IF !FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_alias.txt" BEGIN
+					LAF vtable_generate_aliases STR_VAR vtable="%file%" END
+				END
+				LAF array_read STR_VAR case=lower file="%file%_alias.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_alias"=array END
+				OUTER_SPRINT array "sfo_vtable_%file%_alias"
+				ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+					OUTER_SPRINT data_output "%data_output%SPRINT $%array%(~%k%~) ~%v%~%WNL%"
+				END
+				LAF array_invert STR_VAR array="sfo_vtable_%file%_alias" RET_ARRAY "sfo_vtable_%file%_alias_backwards"=array END
+				OUTER_SPRINT array "sfo_vtable_%file%_alias_backwards"
+				ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+					OUTER_SPRINT data_output "%data_output%SPRINT $%array%(~%k%~) ~%v%~%WNL%"
+				END
+
+				ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_strrefs.txt" BEGIN
+					LAF array_read STR_VAR case=lower file="%file%_strrefs.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_strrefs"=array END		
+				END
+				OUTER_SPRINT array "sfo_vtable_%file%_strrefs"
+				ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+					OUTER_SPRINT data_output "%data_output%SPRINT $%array%(~%k%~) ~%v%~%WNL%"
+				END
+
+				ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%sfo_library_path%/vtables/%file%_specials.txt" BEGIN
+					LAF array_read STR_VAR case=lower file="%file%_specials.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY "sfo_vtable_%file%_specials"=array END	 // keep the full array for debugging	
+					OUTER_SPRINT array "sfo_vtable_%file%_specials"
+					ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+						OUTER_SPRINT data_output "%data_output%SPRINT $%array%(~%k%~) ~%v%~%WNL%"
+					END
+					ACTION_PHP_EACH "sfo_vtable_%file%_specials" AS id=>type BEGIN
+						OUTER_PATCH_SAVE type "%type%" BEGIN
+							REPLACE_EVALUATE "\(.*\)(\(.*\))" BEGIN
+								SPRINT args "%MATCH2%"
+							END
+							"%MATCH1%"
+						END
+						ACTION_MATCH "%type%" WITH
+						multiple commalist  mixedcase BEGIN
+							OUTER_SPRINT $"sfo_vtable_%file%_%type%"("%id%") "%args%"
+							OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_%type%(~%id%~) ~%args%~%WNL%"
+						END
+						multiple_fill BEGIN
+							OUTER_SPRINT $"sfo_vtable_%file%_multiple_fill"("%id%") "%args%"
+							OUTER_SPRINT $"sfo_vtable_%file%_multiple"("%id%") "%args%"			
+							OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_multiple_fill(~%id%~) ~%args%~%WNL%"
+							OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_multiple(~%id%~) ~%args%~%WNL%"
+
+						END
+						DEFAULT
+							WARN "unidentified special %type% for vtable %file%"
+						END
+					END
+				END
+				ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_array
+				ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_rows // in case there's no remap file
+				LAF 2da_read INT_VAR silent=1 STR_VAR type=table_header case=lower file="%file%_remap.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY SFO_reserved_vtable_remap_rows=rows SFO_reserved_vtable_remap_array=array END
+				ACTION_PHP_EACH SFO_reserved_vtable_remap_rows AS row=>discard BEGIN
+					OUTER_SPRINT 2dafile $SFO_reserved_vtable_remap_array("%row%" "2da")
+					OUTER_SPRINT old $SFO_reserved_vtable_remap_array("%row%" "row")
+					OUTER_SPRINT new $SFO_reserved_vtable_remap_array("%row%" "remap")
+					OUTER_SPRINT $"sfo_vtable_%file%_%2dafile%_remap"("%old%") "%new%"
+					OUTER_SPRINT data_output "%data_output%SPRINT $sfo_vtable_%file%_%2dafile%_remap(~%old%~) ~%new%~%WNL%"
+				END
 			END
-			ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_array
-			ACTION_CLEAR_ARRAY SFO_reserved_vtable_remap_rows // in case there's no remap file
-			LAF 2da_read INT_VAR silent=1 STR_VAR type=table_header case=lower file="%file%_remap.txt" locbase="%sfo_library_path%/vtables" RET_ARRAY SFO_reserved_vtable_remap_rows=rows SFO_reserved_vtable_remap_array=array END
-			ACTION_PHP_EACH SFO_reserved_vtable_remap_rows AS row=>discard BEGIN
-				OUTER_SPRINT 2dafile $SFO_reserved_vtable_remap_array("%row%" "2da")
-				OUTER_SPRINT old $SFO_reserved_vtable_remap_array("%row%" "row")
-				OUTER_SPRINT new $SFO_reserved_vtable_remap_array("%row%" "remap")
-				OUTER_SPRINT $"sfo_vtable_%file%_%2dafile%_remap"("%old%") "%new%"
-			END
+			VERBOSE
+			OUTER_SPRINT data_output "OUTER_PATCH ~~ BEGIN%WNL%%data_output%END%WNL%"
+			LAF new_file INT_VAR no_log=1 STR_VAR file=auto_vtable.tpc path="%MOD_FOLDER%/%sfo_library_path%/vtables" arguments="%data_output%" END
 		END
-		VERBOSE
 	END
 END
 
@@ -195,12 +229,15 @@ BEGIN
 								SPRINT id $"sfo_vtable_%vtable%_alias_backwards"("%id%")
 							END
 							READ_2DA_ENTRY_FORMER "vtable_data_%file%" row_number col data
+							PATCH_IF "%file%" STR_EQ "clastext" || "%file%" STR_EQ "kitlist" BEGIN
+							END
 							PATCH_IF VARIABLE_IS_SET $"sfo_vtable_%vtable%_strrefs"("%id%") BEGIN
 								PATCH_IF data>=0 BEGIN
 									SET $struct("%id%" strref)=data
 									GET_STRREF data data
 								END
 							END 
+							
 							SPRINT $struct("%id%") "%data%"
 							SPRINT $struct("%id%" "o") "%data%"
 						END
@@ -211,9 +248,15 @@ BEGIN
 	END
 	// fill multiples
 	ACTION_PHP_EACH "sfo_vtable_%vtable%_multiple_fill" AS id=>vars BEGIN
-		LAF return_first_entry STR_VAR list="%vars%" separator="," RET var=entry END
-		OUTER_SPRINT val $struct("%var%")
-		OUTER_SPRINT $struct("%id%") "%val%"
+		OUTER_SET done=0
+		OUTER_WHILE !done && "%vars%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%vars%" separator="," RET var=entry vars=list END
+			ACTION_IF VARIABLE_IS_SET $"%struct%"("%var%") BEGIN
+				OUTER_SPRINT val $"%struct%"("%var%")
+				OUTER_SPRINT $struct("%id%") "%val%"
+				OUTER_SET done=1
+			END
+		END
 	END
 	// record ID
 	OUTER_SPRINT $struct("extra_data" "row_id") "%row%"
@@ -240,8 +283,7 @@ BEGIN
 	ACTION_PHP_EACH "sfo_vtable_%vtable%_mixedcase" AS id=>vars BEGIN
 		ACTION_IF VARIABLE_IS_SET $"%struct%"("%id%") BEGIN
 			OUTER_SPRINT mixed $"%struct%"("%id%")
-			OUTER_SPRINT lower "%mixed%"
-			ACTION_TO_LOWER lower
+			LAF tolower_safe STR_VAR arguments="%mixed%" RET lower=value END
 			LAF return_first_entry STR_VAR list="%vars%" separator="," RET var_mixed=entry var_lower=list END
 			OUTER_SPRINT $"%struct%"("%var_mixed%") "%mixed%"
 			OUTER_SPRINT $"%struct%"("%var_lower%") "%lower%"
@@ -283,7 +325,6 @@ BEGIN
 			END
 		END
 	END
-
 	ACTION_PHP_EACH "sfo_vtable_%vtable%_alias" AS key=>id BEGIN
 		ACTION_IF VARIABLE_IS_SET $"%struct%"("%key%") BEGIN
 			OUTER_SPRINT v $"%struct%"("%key%")
@@ -351,7 +392,6 @@ BEGIN
 			PATCH_IF reflect BEGIN
 				LPF 2daq_has_column STR_VAR column="%row_here%" RET value END
 				PATCH_IF !value BEGIN 
-				
 					PATCH_IF $"sfo_vtable_%vtable%_insert_loc"("%file%") STR_EQ "*" BEGIN
 						LPF 2daq_insert_column STR_VAR column="%row_here%" END
 					END ELSE BEGIN
@@ -361,7 +401,7 @@ BEGIN
 				END
 			END ELSE BEGIN
 				LPF 2daq_has_row INT_VAR rowname_column STR_VAR row="%row_here%" RET value END	
-				PATCH_IF !value BEGIN
+				PATCH_IF !value && !"%file%" STR_EQ "mgsrcreq" BEGIN
 					LPF 2daq_insert_row INT_VAR rowname_column STR_VAR row="%row_here%" END
 				END
 			END

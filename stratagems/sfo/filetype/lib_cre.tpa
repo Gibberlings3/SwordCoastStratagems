@@ -506,6 +506,9 @@ BEGIN
     AVENGER BEGIN
          LPF CRE_kit_vanilla STR_VAR arguments=BEASTFRIEND END
     END
+	HELM LATHANDER TALOS BEGIN
+        LPF CRE_kit_vanilla STR_VAR arguments="GOD%arguments%" END	
+	END
     NO_KIT NONE BEGIN
          WRITE_LONG 0x244 0
     END
@@ -1022,11 +1025,11 @@ BEGIN
     END
     TO_UPPER spell
     PATCH_IF VARIABLE_IS_SET ~%spellname%_LEVEL~ BEGIN
-      SET ~spell_level~=  ~%%spellname%_LEVEL%~
-      SPRINT ~spell_type~ EVALUATE_BUFFER ~%%spellname%_TYPE%~
+      SET ~spell_level~=  ~%%spellname%_LEVEL%~ - 1
+	  SPRINT ~spell_type~ EVALUATE_BUFFER ~%%spellname%_TYPE%~
     END ELSE
     PATCH_IF VARIABLE_IS_SET ~RESREF_%spell%_LEVEL~ BEGIN
-      SET ~spell_level~=  ~%RESREF_%spell%_LEVEL%~
+      SET ~spell_level~=  ~%RESREF_%spell%_LEVEL%~ - 1
       SPRINT ~spell_type~ EVALUATE_BUFFER ~%RESREF_%spell%_TYPE%~
     END ELSE BEGIN
       // hardcode spells in SCS's trigger space as innate
@@ -1519,60 +1522,69 @@ DEFINE_PATCH_FUNCTION CRE_enforce_saves
        STR_VAR arguments=""
 BEGIN
        INNER_ACTION BEGIN
-         LAM read_in_saving_throws
+         LAM data_saving_throws
        END
+	   DEFINE_ASSOCIATIVE_ARRAY save_loc BEGIN
+			death=>0x54
+			wands=>0x55
+			polymorph=>0x56
+			breath=>0x57
+			spells=>0x58
+	   END
        // initialise the enforced values
-       PATCH_FOR_EACH save IN death wand polymorph breath spell BEGIN
-          SET  ~enforced_%save%~ = 20
-       END
+       PHP_EACH save_loc AS save=>discard BEGIN
+		"enforced_%save%"=20
+	   END
        // read in class and decompose
-       LPF CRE_read_class RET classlist=value END
-       // go through each class, get its saves for the CRE's level, and update the record of the correct saves
-       SET levelnum=1
+       classnumber=BYTE_AT 0x273
+	   PATCH_IF classnumber>21 BEGIN
+	    SPRINT classlist fighter
+	   END ELSE BEGIN
+		LOOKUP_IDS_SYMBOL_OF_INT classlist class classnumber
+	   END
+		
+
+      // go through each class, get its saves for the CRE's level, and update the record of the correct saves
+       levelnum=1
        WHILE ~%classlist%~ STRING_COMPARE ~~ BEGIN
           LPF return_first_entry STR_VAR list= ~%classlist%~ separator ="_" RET classlist=list class=entry END
-          TO_UPPER class
-          PATCH_IF !VARIABLE_IS_SET $class_file_save_map( ~%class%~) BEGIN
-             SPRINT core_type WAR
-          END ELSE BEGIN
-             SPRINT core_type $class_file_save_map( ~%class%~)
-          END
-          LPF ~CRE_read_level%levelnum%~ RET level=value END
-          SET level=level<1?1:level
-          SET level=level>maximum_character_level?maximum_character_level:level
-          PATCH_FOR_EACH save IN death wand polymorph breath spell BEGIN
-             SET possible = $saving_throw_value_base(~%core_type%~ ~%level%~ ~%save%~)
-             SET  ~enforced_%save%~ =  ~enforced_%save%~ >possible ? possible :  ~enforced_%save%~
-          END
-          SET levelnum=levelnum+1
+          TO_LOWER class
+          level=BYTE_AT (0x233 + levelnum)
+          level=level<1?1:level
+          level=level>maximum_character_level?maximum_character_level:level
+          PHP_EACH save_loc AS save=>discard BEGIN
+			possible="sfo_saves_%class%_%level%_%save%"
+			~enforced_%save%~=~enforced_%save%~ >possible ? possible :  ~enforced_%save%~
+		  END
+          levelnum+=1
        END
        // do the comparison
-       PATCH_FOR_EACH save IN death wand polymorph breath spell BEGIN
-          LPF ~CRE_read_save_vs_%save%~ RET currentsave = value END
-          SET possiblesave =  ~enforced_%save%~
+	   PHP_EACH save_loc AS save=>loc BEGIN
+		  currentsave= BYTE_AT loc
+          possiblesave =  ~enforced_%save%~
           PATCH_MATCH ~%arguments%~ WITH
           at_worst
           BEGIN
-             SET newsave=currentsave<possiblesave ? currentsave : possiblesave
+             newsave=currentsave<possiblesave ? currentsave : possiblesave
           END
           at_best
           BEGIN
-             SET newsave=currentsave>possiblesave ? currentsave : possiblesave
+             newsave=currentsave>possiblesave ? currentsave : possiblesave
           END
           within_tolerance
           BEGIN
              LPF check_ini STR_VAR ini=save_tolerance RET tolerance=value END
-             SET new=(ABS(possible - current))<tolerance ? possible : current
+             new=(ABS(possible - current))<tolerance ? possible : current
           END
           only_if_new
           BEGIN
-             SET newsave=currentsave=100 ? possiblesave : currentsave
+             newsave=currentsave=100 ? possiblesave : currentsave
           END
           DEFAULT
-             SET newsave=possiblesave
+             newsave=possiblesave
           END
-          LPF ~CRE_save_vs_%save%~ STR_VAR arguments="%newsave%" END
-       END
+		  WRITE_BYTE loc newsave
+        END
 
 END
 
@@ -1589,31 +1601,25 @@ BEGIN
        CLEAR_ARRAY class_array
        CLEAR_ARRAY class_level
        CLEAR_ARRAY newthac0
-       LPF CRE_read_class RET classlist=value END
+       classnumber=BYTE_AT 0x273
+	   LOOKUP_IDS_SYMBOL_OF_INT classlist class classnumber
        SET levelnum=1
-
        SET possible=99
        WHILE ~%classlist%~ STRING_COMPARE ~~ BEGIN
           LPF return_first_entry STR_VAR list= ~%classlist%~ separator ="_" RET classlist=list class=entry END
-          LPF ~CRE_read_level%levelnum%~ RET level=value END
-          PATCH_IF level=0 BEGIN
-             SET level=1
-          END
-          PATCH_IF level>21 BEGIN
-             SET level=21
-          END
-          PATCH_IF VARIABLE_IS_SET $thac0_table_row("%class%") BEGIN
-             SET row=$thac0_table_row("%class%")
-             READ_2DA_ENTRY_FORMER thac0_table_read row level thac0_here
-             SET possible = (thac0_here < possible) ? thac0_here : possible
+          level=BYTE_AT (0x233 + levelnum)
+          level=(level=0)?1:level
+		  level=(level>21)?21:level
+          PATCH_IF VARIABLE_IS_SET $thac0_table_row("%class%" "%level%") BEGIN
+             thac0_here=$thac0_table_row("%class%" "%level%")
+             possible = (thac0_here < possible) ? thac0_here : possible
           END
       END
       PATCH_IF possible=99 BEGIN // must be a monster
-         LPF CRE_read_level1 RET level1=value END
+         level1=BYTE_AT 0x234
          SET possible = level1 > 20 ? 0 : (20 - level1)
       END
-
-       LPF CRE_read_thac0 RET current=value END
+	   current=BYTE_AT 0x52
        PATCH_MATCH ~%arguments%~ WITH
        at_worst
        BEGIN
@@ -1635,8 +1641,8 @@ BEGIN
        DEFAULT
              SET new=possible
        END
-       LPF CRE_thac0 STR_VAR arguments="%new%" END
-END
+	   WRITE_BYTE 0x52 new
+ END
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2288,7 +2294,7 @@ DEFINE_PATCH_FUNCTION CRE_is_PC
 BEGIN
         LPF CRE_read_dv RET dv=value END
         TO_LOWER dv
-        PATCH_IF VARIABLE_IS_SET $script_name_pdialog( ~%dv%~) BEGIN
+        PATCH_IF VARIABLE_IS_SET $script_name_pdialog( ~%dv%~) || VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN // allow for 2e data system
            PATCH_MATCH "%filename%" WITH
               sarev1 sarevo sarevo2 // BG1 sarevok in EET, shares DV with joinable sarevok
               "%tutu_var%arkani3" "%tutu_var%deder3" // false positives - all copies of the illusionary Candlekeep NPCs who exist in RL as INNOCENTs

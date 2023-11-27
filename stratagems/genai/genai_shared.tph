@@ -1,5 +1,6 @@
 LAF include STR_VAR files="hla.tph" locbase=lib END
 
+
 DEFINE_ACTION_FUNCTION build_genai_script
        INT_VAR force_build=0
        STR_VAR script=""
@@ -138,7 +139,7 @@ BEGIN
               END
       END
       ACTION_IF warning=0 BEGIN
-         LAF ssl_to_bcs STR_VAR script= ~%base%~ variables location=~genai/ssl~ rename_to= ~%scriptname%~ END
+         LAF ssl_to_bcs STR_VAR script= ~%base%=>%scriptname%~ variables location=ssl locbase=genai END
       END ELSE BEGIN
          LAF warning STR_VAR warning= ~Cannot parse genai script %script%~ END
       END
@@ -162,16 +163,18 @@ BEGIN
                  SET  ~install_%argtype%~=0
               END
            END
-           // split up the GPxxx scripts
+		   
+          // split up the GPxxx scripts
            LPF split_gp_scripts END
            // check if there is a script we're willing to swap
-           LPF locate_genai_script RET loc wander END
+           LPF locate_genai_script RET loc wander bdsum END
            // THAC0 adjustments
-           PATCH_IF (install_fix_thac0=1) BEGIN
+           PATCH_IF (install_fix_thac0) BEGIN
               LPF CRE_enforce_thac0 STR_VAR arguments=within_tolerance END
            END
+
            // look to see if we should be assigning a script
-           PATCH_IF (install_all=1 || install_script=1) BEGIN
+           PATCH_IF (install_all || install_script) BEGIN
                  PATCH_IF loc>=0 BEGIN
                        
 					   LPF identify_weapon_preferences STR_VAR filename RET has_ranged skip_me onhandprof offhandprof rangedprof damagetype enchantment style END
@@ -183,15 +186,16 @@ BEGIN
 					   
                  END
            END 
+
            // hlas (we only install hlas if we are adding a script)
-           PATCH_IF ((install_all=1 || install_hla=1) && (identified=1 || install_conditional=0) && loc>=0 && !disable_hlas ) BEGIN
+           PATCH_IF ((install_all || install_hla) && (identified || !install_conditional) && loc>=0 && !disable_hlas ) BEGIN
                LPF grant_hlas STR_VAR class kit resref="%filename%" RET has_hlas END
            END ELSE BEGIN
               SET has_hlas=0
            END
            // actually assign the script
            PATCH_IF identified BEGIN
-                       LPF assign_genai_script INT_VAR loc wander is_moron has_ranged enchantment has_hlas STR_VAR damagetype filename END
+                LPF assign_genai_script INT_VAR loc wander is_moron has_ranged enchantment has_hlas STR_VAR damagetype filename END
            END
            // kit
            PATCH_IF ((install_all=1 || install_kit=1) && (identified=1 || install_conditional=0)) BEGIN
@@ -199,24 +203,33 @@ BEGIN
            END
            // profs
            PATCH_IF ((install_all=1 || install_prof=1) && (identified=1 || install_conditional=0)) BEGIN
-              PATCH_IF identified=0 BEGIN
+              PATCH_IF !identified BEGIN
                        LPF identify_weapon_preferences STR_VAR filename RET has_ranged skip_me onhandprof offhandprof rangedprof style END
               END
-              PATCH_IF skip_me=0 BEGIN
-                  LPF allocate_proficiencies INT_VAR onhandprof offhandprof rangedprof style level STR_VAR class kit END
+              PATCH_IF !skip_me BEGIN
+                  LPF allocate_proficiencies INT_VAR level onhandprof offhandprof rangedprof style STR_VAR class kit  END
               END
            END
+		   // summons script if appropriate
+		   PATCH_IF bdsum BEGIN
+				PATCH_IF rangedprof>0 BEGIN
+					LPF CRE_insert_script_high STR_VAR arguments=dw#surni  END
+				END ELSE BEGIN
+					LPF CRE_insert_script_high STR_VAR arguments=dw#sumei  END		
+				END
+		   END ELSE BEGIN
+		   END
            // ability scores
-           PATCH_IF (install_all=1 || install_abils=1) BEGIN
+           PATCH_IF (install_all || install_abils) BEGIN
               PATCH_MATCH "%class%" WITH
               ".*FIGHTER.*" ".*RANGER" PALADIN MONK BEGIN
-                   LPF determine_stat INT_VAR lower=12 higher=18 STR_VAR stat=strength END
-                   LPF determine_stat INT_VAR lower=12 higher=18 STR_VAR stat=constitution END
+                   LPF determine_stat INT_VAR lower=12 higher=18 STR_VAR stat=str END
+                   LPF determine_stat INT_VAR lower=12 higher=18 STR_VAR stat=con END
               END
               DEFAULT END
               PATCH_MATCH "%class%" WITH
               ".*THIEF.*" BEGIN
-                   LPF determine_stat INT_VAR lower=14 higher=18 STR_VAR stat=dexterity END
+                   LPF determine_stat INT_VAR lower=14 higher=18 STR_VAR stat=dex END
               END
               DEFAULT END
            END
@@ -254,47 +267,62 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////    Go through the script slots (hardcoded) looking for a combat script. If found, return loc=location (0-5) of
-////    first script and delete all scripts. Also return wander=1 if script is wdasight or the like, and delete gpuse et al
+////    first script and delete all scripts. Also return wander=1 if script is wdasight or the like, and delete gpuse et al.
+////	If we find bdsum00, automatically treat it as a combat script and also insert dw#sumei at the top. 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION locate_genai_script
-RET loc wander combatscript
+RET loc wander combatscript bdsum
 BEGIN
-   PATCH_IF !VARIABLE_IS_SET combat_scripts_read BEGIN
-      LAUNCH_PATCH_MACRO read_in_combat_scripts
-   END
-   SPRINT combatscript ~~
-   SET loc= "-1"
-   SET wander=0
-   FOR (i=0;i<5;i+=1) BEGIN
-      READ_ASCII 0x248+8*i script
-      READ_ASCII 0x248+8*i script8 (8)
-      TO_LOWER script
-      INNER_PATCH "%script8%" BEGIN
-         READ_ASCII 0x0 prefix (3)
-         PATCH_MATCH "%prefix%" WITH 
-         DW1 DW2 DW3 BEGIN
-             SET loc=i
-             READ_ASCII 0x7 wander_char (1)
-             PATCH_IF "%wander_char%" STRING_EQUAL_CASE w BEGIN
-                SET wander=1
-             END
-         END
-         DEFAULT END
-      END
-      PATCH_IF VARIABLE_IS_SET $combat_script( ~%script%~) BEGIN
-         PATCH_IF (loc="-1") BEGIN
-           PATCH_MATCH ~%script%~ WITH gpuse useitem BEGIN END DEFAULT SET loc=i END
-         END
-         PUSH combatscript ~%script%~
-         WRITE_ASCII 0x248+8*i ~~ (8)
-
-      END
-      PATCH_MATCH ~%script%~ WITH wdasight wdarsgt _dasight _wdarsgt BEGIN
-         SET wander=1
-      END
-      DEFAULT END
-   END
+	PATCH_IF !VARIABLE_IS_SET combat_scripts_read BEGIN
+		LPM read_in_combat_scripts
+	END
+	SPRINT combatscript ~~
+	loc= "-1"
+	wander=0
+	bdsum=0
+	bdsum_redundant=0
+	FOR (i=0;i<5;i+=1) BEGIN
+		READ_ASCII 0x248+8*i script
+		READ_ASCII 0x248+8*i script8 (8)
+		TO_LOWER script
+		INNER_PATCH "%script8%" BEGIN
+			READ_ASCII 0x0 prefix (3)
+			PATCH_MATCH "%prefix%" WITH 
+			DW1 DW2 DW3 BEGIN
+				loc=i
+				READ_ASCII 0x7 wander_char (1)
+				wander=wander || ("%wander_char%" STR_EQ w)
+			END
+			DEFAULT 
+			END
+		END
+		PATCH_IF VARIABLE_IS_SET $combat_script( ~%script%~) BEGIN
+			PATCH_IF (loc="-1") BEGIN
+				PATCH_MATCH ~%script%~ WITH 
+				gpuse useitem BEGIN 
+				END 
+				bdsum00 BEGIN
+					bdsum=1
+					loc=i
+				END
+				DEFAULT 
+					loc=i 
+				END
+			END
+			SPRINT combatscript ~%combatscript% %script%~
+			WRITE_ASCII 0x248+8*i ~~ (8)
+		END ELSE
+		PATCH_MATCH ~%script%~ WITH 
+		wdasight wdarsgt _dasight _wdarsgt BEGIN
+			wander=1
+		END
+		dw#sumei dw#surni dw#sutwi BEGIN
+			bdsum_redundant=1
+		END
+		DEFAULT END
+	END
+	bdsum=bdsum_redundant?0:bdsum
 END
 
 
@@ -436,6 +464,7 @@ DEFINE_PATCH_MACRO read_in_combat_scripts BEGIN
                wtasight wtarsgt wdasight wdarsgt
               _tasight _wtarsgt _dasight _wdarsgt gpuse useitem gorcamb4 gorcamb5
               balmonk cmonk20b sendai4 ohbai01
+			  bdsum00
        BEGIN
           TO_LOWER ~script~
           SPRINT $combat_script(~%script%~) ~~

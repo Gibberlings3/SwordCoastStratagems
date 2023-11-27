@@ -1,0 +1,108 @@
+DEFINE_ACTION_FUNCTION faerie_fire BEGIN
+
+ LAF check_label STR_VAR label=dw#faerie_fire RET value END
+ ACTION_IF !value BEGIN
+ 
+   LAF make_label STR_VAR label=dw#faerie_fire END
+	
+  WITH_TRA "%scs_tra_loc%/english/faerie_fire.tra" "%scs_tra_loc%/%LANGUAGE%/faerie_fire.tra" BEGIN
+
+
+	// get icon entry
+
+	OUTER_SPRINT string @701
+	LAF resolve_statdesc STR_VAR string bam="dwfaeico" locbase="shared/icon" RET stat_num END	
+		
+	// make base spell (innate version)
+	
+	COPY "%MOD_FOLDER%/shared/resource/sppr116.spl" "%workspace%/faerie_fire.spl" 
+		SAY 0x8 @701
+		SAY 0x50 @702
+		WRITE_LONG 0x18 0 // non-hostile (could be disputed)
+		WRITE_SHORT 0x1c 4
+		WRITE_ASCII 0x3a DWFAEC (8)
+		LPF ALTER_SPELL_HEADER INT_VAR projectile=0 location=4 speed=1 STR_VAR icon=dwfaeb END
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=326 target=2 timing=1 STR_VAR resource="%spl_faerie_fire_secondary%" END
+		LPF ALTER_EFFECT INT_VAR match_opcode=215 target=2 END
+		LPF ALTER_EFFECT INT_VAR match_opcode=139 parameter1=RESOLVE_STR_REF (@701) END
+		LPF ALTER_EFFECT INT_VAR match_opcode=318 STR_VAR resource="faer_plc" END
+		LPF DELETE_EFFECT INT_VAR match_opcode=206 END
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 timing=1 target=2 STR_VAR resource="faer_plc" END
+		LPF ALTER_EFFECT INT_VAR match_opcode=142 parameter2=stat_num END
+	
+	// install innate spell
+	
+	COPY "%workspace%/faerie_fire.spl" "override/%spl_faerie_fire%.spl"
+		REPLACE_TEXTUALLY faer_plc "%spl_faerie_fire%" (8)
+		
+	// if appropriate, install priest spell
+	
+	ACTION_IF !VARIABLE_IS_SET CLERIC_FAERIE_FIRE BEGIN
+		COPY "%workspace%/faerie_fire.spl" "%workspace%/faerie_fire_priest.spl"
+			WRITE_SHORT 0x1c 2
+			LPF ALTER_SPELL_HEADER INT_VAR location=2 speed=4 END
+		LAF extended_add_spell STR_VAR id=CLERIC_FAERIE_FIRE file="faerie_fire_priest" path="%workspace%" RET CLERIC_FAERIE_FIRE=resref END
+		APPEND "hidespl.2da" "%CLERIC_FAERIE_FIRE% 1 0 0"
+		LAF spl_make_scroll STR_VAR spell_resref="%CLERIC_FAERIE_FIRE%" END
+	END ELSE BEGIN
+		// if not, make sure it doesn't work in daylight
+		COPY_EXISTING "%CLERIC_FAERIE_FIRE%.spl" override
+			LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=326 target=2 timing=1 STR_VAR resource="%spl_faerie_fire_secondary%" END
+		
+	END
+	
+	// bring across icons
+	
+	LAF install STR_VAR file="dwfaec.bam dwfaeb.bam dwfaeico.bam" locbase="shared/icon" END
+	
+	// make sure the versions play nice with each other
+	
+	COPY_EXISTING "%spl_faerie_fire%.spl" override
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 timing=1 target=2  STR_VAR resource="%CLERIC_FAERIE_FIRE%" END
+	BUT_ONLY
+		
+	// block FF outdoors
+	LAF resolve_splprot_entry INT_VAR stat=0x106 value="-1" relation_number=11 RET outdoor_value=value END // when NOT outdoor
+	spl.make["%spl_faerie_fire_secondary%"][m.ab.add{}]
+	COPY_EXISTING "%spl_faerie_fire_secondary%.spl" override
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=318 duration=1 target=2 parameter2=90 STR_VAR resource="%spl_faerie_fire_secondary%" END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=318 duration=1 target=2 parameter1=0b11 parameter2=outdoor_value STR_VAR resource="%spl_faerie_fire_secondary%" END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=139 target=2 timing=1 parameter1=RESOLVE_STR_REF(@705) END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=318 duration=1 target=2 STR_VAR resource="%spl_faerie_fire%" END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=318 duration=1 target=2 STR_VAR resource="%CLERIC_FAERIE_FIRE%" END
+	BUT_ONLY
+	
+	
+	// Innate version should play nice with priestly version
+		
+	COPY_EXISTING "%spl_faerie_fire%.spl" override
+			LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 timing=1 target=2  STR_VAR resource="%CLERIC_FAERIE_FIRE%" END
+	BUT_ONLY
+
+	COPY_EXISTING "%CLERIC_FAERIE_FIRE%.spl" override
+			LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 timing=1 target=2  STR_VAR resource="%spl_faerie_fire_secondary%" END
+	BUT_ONLY
+
+
+	ACTION_IF GAME_INCLUDES sod BEGIN
+
+	
+		COPY_EXISTING "%CLERIC_FAERIE_FIRE%.spl" override
+			LPF ALTER_EFFECT INT_VAR match_opcode=142 parameter2=stat_num END
+		BUT_ONLY
+		
+	
+	END
+
+
+
+
+  END
+  END
+
+
+
+
+
+
+END

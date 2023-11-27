@@ -78,11 +78,77 @@ BEGIN
 
 END
 
+////////////////////////////// special //////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION priest_spell_swap_special_preparatory
+     STR_VAR spells=""
+     RET spells
+BEGIN
+	PATCH_IF !IS_AN_INT shield_of_lathander_rebalance BEGIN
+		LPF check_label STR_VAR label=dw_rebalance_lathander RET shield_of_lathander_rebalance=value END
+	END
+	PATCH_IF !shield_of_lathander_rebalance BEGIN
+       LPF substitute_spells STR_VAR spells swap_out=~SHIELD_OF_LATHANDER GREATER_SHIELD_OF_LATHANDER~ swap_in=~~ RET spells=spells END
+	END
+END
+
+
+
+////////////////////////////// based on god //////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION priest_spell_swap_god_preparatory
+     STR_VAR spells="" god="" filename=""
+     RET spells
+BEGIN
+      
+	PATCH_MATCH "%god%" WITH
+	kossuth BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SPIRITUAL_HAMMER SHIELD_OF_THE_ARCHONS FIENDISH_WARDING~ swap_in=~~ RET spells END		
+	END
+	helm BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SHIELD_OF_THE_ARCHONS FIENDISH_WARDING~ swap_in=~~ RET spells END			
+	END
+	tempus BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~FREE_ACTION SHIELD_OF_THE_ARCHONS FIENDISH_WARDING~ swap_in=~~ RET spells END			
+	END
+	tymora BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="SPIRITUAL_HAMMER BLADE_BARRIER" swap_in="" RET spells END
+	END
+	gruumsh BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="SPIRITUAL_HAMMER" swap_in="" RET spells END	
+	END
+	helm BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="SPIRITUAL_HAMMER" swap_in="" RET spells END			
+	END
+	ilmater BEGIN
+		LPF substitute_spells STR_VAR spells swap_out="REMOVE_FEAR SPIRITUAL_HAMMER BLADE_BARRIER" swap_in="" RET spells END	
+	END
+	malar BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SPIRITUAL_HAMMER SHIELD_OF_THE_ARCHONS FIENDISH_WARDING~ swap_in=~~ RET spells END			
+	END
+	mask BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SPIRITUAL_HAMMER BLADE_BARRIER~ swap_in=~~ RET spells END			
+	END
+	myrkul velsharoon BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SPIRITUAL_HAMMER~ swap_in=~~ RET spells END					
+	END
+	shar BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~SPIRITUAL_HAMMER BLADE_BARRIER~ swap_in=~~ RET spells END					
+	END
+	talona BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=~CURE_DISEASE~ swap_in=~~ RET spells END
+	END
+	DEFAULT
+	END
+END
+
 
 ////////////////////////////// based on vanilla IWD //////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION priest_spell_swap_iwd
-     STR_VAR spells=""
+     STR_VAR spells="" filename=""
      RET spells
 BEGIN
 END
@@ -92,28 +158,45 @@ END
 DEFINE_PATCH_FUNCTION priest_spell_swap_misc
    STR_VAR spells=""
            filename=""
+		   god=""
+		   spell_list=""
    RET spells
 BEGIN
     // people with Wands of the Heavens don't need Flame Strike
-    TO_LOWER filename
     PATCH_MATCH ~%filename%~ WITH
     aasim _aasim pbhunt04 saerk BEGIN
-       LPF substitute_spells STR_VAR spells swap_out=FLAME_STRIKE swap_in=~SLAY_LIVING SLAY_LIVING MASS_CURE CURE_CRITICAL_WOUNDS~ RET spells=spells END
+       LPF substitute_spells STR_VAR spells swap_out=FLAME_STRIKE swap_in=~SLAY_LIVING SLAY_LIVING MASS_CURE CURE_CRITICAL_WOUNDS~ RET spells END
 
     END
     DEFAULT END
     // MR creatures don't use MAGIC_RESISTANCE
-    LPF CRE_read_resist_magic RET mr=value END
-    PATCH_IF mr>40 BEGIN
-        LPF substitute_spells STR_VAR spells swap_out=MAGIC_RESISTANCE swap_in=MASS_CURE RET spells=spells END
+    PATCH_IF (BYTE_AT 0x5d)>40 BEGIN
+        LPF substitute_spells STR_VAR spells swap_out=MAGIC_RESISTANCE swap_in=MASS_CURE RET spells END
     END
     // undead don't heal
-    LPF CRE_read_general RET general=value END
-    PATCH_IF general STRING_EQUAL_CASE UNDEAD BEGIN
-       LPF substitute_spells STR_VAR spells swap_out=MASS_CURE swap_in=SLAY_LIVING RET spells=spells END
-       LPF substitute_spells STR_VAR spells swap_out=CURE_CRITICAL_WOUNDS swap_in=SLAY_LIVING RET spells=spells END
-       LPF substitute_spells STR_VAR spells swap_out=HEAL swap_in=HARM RET spells=spells END
+    PATCH_IF (BYTE_AT 0x271)=4 BEGIN
+       LPF substitute_spells STR_VAR spells swap_out=MASS_CURE swap_in=SLAY_LIVING RET spells END
+       LPF substitute_spells STR_VAR spells swap_out=CURE_CRITICAL_WOUNDS swap_in=SLAY_LIVING RET spells END
+       LPF substitute_spells STR_VAR spells swap_out=HEAL swap_in=HARM RET spells END
     END
+	// elementals might not be available
+	PATCH_IF !VARIABLE_IS_SET "%CLERIC_CONJURE_WATER_ELEMENTAL%" BEGIN
+		PATCH_IF "%god%" STR_EQ "" BEGIN
+			LPF substitute_spells STR_VAR spells swap_out=CONJURE_WATER_ELEMENTAL swap_in=CONJURE_FIRE_ELEMENTAL RET spells END		
+			LPF substitute_spells STR_VAR spells swap_out=CONJURE_AIR_ELEMENTAL swap_in=CONJURE_EARTH_ELEMENTAL RET spells END		
+		END ELSE BEGIN
+			LPF substitute_spells STR_VAR spells swap_out="CONJURE_WATER_ELEMENTAL CONJURE_AIR_ELEMENTAL" swap_in="" RET spells END
+		END
+	END
+	// giant insects might not be available
+	PATCH_IF !VARIABLE_IS_SET "%CLERIC_GIANT_INSECT%" BEGIN
+		LPF substitute_spells STR_VAR spells swap_out=GIANT_INSECT swap_in=ANIMAL_SUMMONING_1 RET spells END
+	END
+	// Druids only get Flame Strike in ToF
+	PATCH_IF !tof_spheres && "%spell_list%" STR_EQ druid BEGIN
+		 LPF substitute_spells STR_VAR spells swap_out=FLAME_STRIKE swap_in=INSECT_PLAGUE RET spells END	
+	END
+	
 END
 
 DEFINE_PATCH_FUNCTION priest_spell_swap_alignment
@@ -125,6 +208,11 @@ BEGIN
      LPF CRE_is_good RET is_good=value END
      PATCH_IF is_good BEGIN
              LPF substitute_spells STR_VAR spells swap_out="SUMMON_DEVA_EVIL" swap_in="SUMMON_DEVA_GOOD" RET spells END
-     END
+             LPF substitute_spells STR_VAR spells swap_out="CIRCLE_OF_BONES" swap_in="" RET spells END
+     END ELSE BEGIN
+			PATCH_IF VARIABLE_IS_SET "CLERIC_FIENDISH_WARDING" BEGIN
+				LPF substitute_spells STR_VAR spells swap_out="SHIELD_OF_THE_ARCHONS" swap_in="FIENDISH_WARDING" RET spells END	 
+			END
+	 END
 END
 

@@ -1,38 +1,33 @@
 DEFINE_ACTION_FUNCTION acid_storm_tonedown
 BEGIN
 
-    LAF log_this STR_VAR file="scs_modified_spells_iwd.2da" input=WIZARD_ACID_STORM repeat=no END
+    LAF log_this INT_VAR repeat=0 STR_VAR file="scs_modified_spells_iwd.2da" input=WIZARD_ACID_STORM END
 
-    // find the name of the Vitriolic Sphere subspell
-    // as of v32 RC3, we copy our own unaltered version of the IWD-SCS version
+    // patch main spell
 
-    OUTER_SPRINT secondary_spell dw#vitri
-    COPY "%MOD_FOLDER%/spell/resource/SPWI431Z.spl" "override/%secondary_spell%.spl"
-           REPLACE_TEXTUALLY CASE_INSENSITIVE "SPWI431Z" "%secondary_spell%" (8)
+	ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_ACID_STORM%D.spl" BEGIN //  NWN spell deflection
+	  OUTER_SPRINT spell "%WIZARD_ACID_STORM%D"
+	END ELSE BEGIN
+	  OUTER_SPRINT spell "%WIZARD_ACID_STORM%"
+	END	
+	
+	spl.edit[%spell%|edit_strrefs_in_place:i=1]
+	[
+		m.ab.delete{s_level>1}
+		m.ab_fx.delete{s_opcode=12 AND s_timing==DelayPermanent} // remove all delayed-effect acid consequences
+		m.ab_fx.add{s_opcode=146 s_target=2 s_power=7 s_parameter1=8 s_parameter2=1 s_timing=4 s_duration=6 s_resource:=%WIZARD_ACID_STORM%Z s_dispel_resist=1}
+		m.ab_fx.add{s_opcode=142 s_target=2 s_power=7 s_parameter2=102 s_timing=4 s_duration=6 s_dispel_resist=1}
+		m.ab_fx.alter{s_dicenumber=10 s_dicesize=6|match="s_opcode=12"}
+		m_description:=@40013
+	]
 
-
-       // patch main spell
-       MAKE_PATCH
-          delete_ability=>"ability_min_level>1"
-          delete_effect=>"opcode=12 and timing=4" // remove all delayed-effect acid consequences
-          add_effect_inline=>"opcode=>146 target=>2 power=>7 parameter1=>8 parameter2=>1 timing=>4 duration=>6 resource=>%secondary_spell% dispel=>1 at_end=>1" // payload
-          add_effect_inline'=>"opcode=>142 target=>2 power=>7 parameter2=>102 dispel=>1 duration=>6 at_end=>1" // icon
-          patch_effect_inline=>"match=>~opcode=12~ dicenum=>10 dicesize=>6 at_end=>1"
-       END
-       ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_ACID_STORM%D.spl" BEGIN //  NWN spell deflection
-          OUTER_SPRINT spell "%WIZARD_ACID_STORM%D"
-       END ELSE BEGIN
-          OUTER_SPRINT spell "%WIZARD_ACID_STORM%"
-       END
-       LAF edit_spell STR_VAR spell edits=patch_data END
-       LAF edit_spell STR_VAR spell=WIZARD_ACID_STORM editstring="say_description=>40013" END
-       LAF edit_item STR_VAR item="%WIZARD_ACID_STORM_SCROLL%" editstring="say_description=>40013" END  
-       // make payload, copying from Vitriolic Sphere
-       
-       MAKE_PATCH
-          patch_effect_inline=>"power=>7"
-          patch_effect_inline=>"match=>~opcode=12~ dicesize=>6"
-       END
-       LAF clone_spell STR_VAR spell="%secondary_spell%=>%WIZARD_ACID_STORM%Z" edits=patch_data END
+    // make payload, copying from Vitriolic Sphere
+      
+	spl.copy[SPWI431Z=>%WIZARD_ACID_STORM%Z|source_location="resource"]
+	[
+		m.ab_fx.alter{s_power=7}
+		m.ab_fx.alter{s_dicesize=6|match="s_opcode=12"}
+		m.ab_fx.alter{s_resource:=%WIZARD_ACID_STORM%Z|match="~%s_resource%~ STR_EQ spwi431Z"}
+	]
 
 END

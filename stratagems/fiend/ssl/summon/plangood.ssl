@@ -1,0 +1,242 @@
+VARIABLE(IsSummoned=True)
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/summon/shared_summons.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	death effects
+//////////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	Die()
+	Alignment(Myself,MASK_EVIL)
+THEN
+	RESPONSE #100
+		CreateVisualEffectObject("SPUNHOLY",Myself)
+		DestroySelf()
+END
+
+IF
+	Die()
+	!Alignment(Myself,MASK_EVIL)
+THEN
+	RESPONSE #100
+		CreateVisualEffectObject("SPHOLY",Myself)
+		DestroySelf()
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Planetar combat script
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/fiend_definitions_summoned.ssl)
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Start with Globe of Blades
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF
+	See(NearestEnemyOf(Myself))
+	!GlobalTimerNotExpired("blades","LOCALS")
+THEN 
+	RESPONSE #100
+		ReallyForceSpellRES("%CLERIC_GLOBE_OF_BLADES%",Myself)
+		SetGlobalTimer("blades","LOCALS",1000)
+		Continue()
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Emergency healing for me
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+IF TRIGGER
+	HPPercentLT(Myself,70)
+THEN DO
+    Action(SpellMyself,CLERIC_HEAL)
+END
+
+IF TRIGGER
+    StateCheck(Myself,STATE_BLIND)
+	!CheckSpellState(Myself,DO_NOT_CURE_BLINDNESS)
+THEN DO
+       Action(SpellMyself,CLERIC_HEAL)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Healing for allies
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+// start with disabled-and-injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+	OR(2)
+            StateCheck(scstarget,STATE_BLIND)
+            StateCheck(scstarget,STATE_FEEBLEMINDED)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+	HPPercentLT(scstarget,75)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+// then disabled-but-not-injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+        StateCheck(scstarget,STATE_FEEBLEMINDED)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Combine()
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+IF TRIGGER
+        IgnoreBlock(Demivrgvs)
+	TargetBlock(HumanoidVillains)
+	StateCheck(scstarget,STATE_BLIND)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+       CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+// then just injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+	HPPercentLT(scstarget,50)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+	Action(Spell,CLERIC_HEAL|100|50)
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider moving to a more interesting location in the battle
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/jump.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+VARIABLE(FirstDispel=True)
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/dispel.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Truesight
+//////////////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	Gender(scstarget,ILLUSIONARY)
+	!Allegiance(scstarget,ENEMY)
+	TriggerBlock(TruesightAlreadyCast|Enemy|SIDivination|EasyPlus)
+THEN DO
+	Action(SpellMyself,INNATE_FIEND_TRUE_SIGHT)
+END
+//////////////////////////////////////////////////////////////////////////////////////
+///	Use offensive magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////
+///   Holy Word
+//////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,10)
+	TriggerBlock(MR|Enemy|Helpless|SIConjuration)
+	Alignment(scstarget,MASK_GOOD)
+THEN DO
+	Action(SpellMyself,CLERIC_UNHOLY_WORD|200|50)
+END
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	Range(scstarget,10)
+	TriggerBlock(MR|Enemy|Helpless|SIConjuration)
+	Alignment(scstarget,MASK_EVIL)
+THEN DO
+	Action(SpellMyself,CLERIC_HOLY_WORD|200|50)
+END
+
+//////////////////////////////
+///   Symbol: Stun
+//////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrder)
+	!Gender(scstarget,SUMMONED)
+	!Gender(scstarget,20)
+	TriggerBlock(Stun|MR|SIConjuration|Enemy|Helpless|EasyPlus)
+THEN DO
+	Combine()
+	Action(Spell,WIZARD_NPC_SYMBOL_STUN|100|100)
+END
+
+
+//////////////////////////////
+///   Flame Strike
+//////////////////////////////
+
+
+IF TRIGGER
+	TargetBlock(PCsPreferringWeak)
+	TargetBlock(EnemiesInOrderShort)
+	TriggerBlock(Disabled|MR|ResistFire|Enemy|SIEvocation|FlameStrike)
+THEN DO
+	Action(Spell,CLERIC_FLAME_STRIKE|80|20)
+END
+
+
+//////////////////////////////////////////////////////////////////////////////
+///	Combat
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////
+////	At least *consider* chewing on stunned victims
+///////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+	TargetBlock(EnemiesInOrderShort)
+	StateCheck(scstarget,STATE_STUNNED)
+	TriggerBlock(Enemy|Plus5Safe)
+THEN DO
+	Action(Attack|100|100)
+END
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core combat block
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  !Allegiance(Myself,ENEMY)
+  TargetBlock(EnemiesInOrderShort)
+  TriggerBlock(Plus3Safe)
+THEN DO
+   Action(Literal)
+   AttackOneRound(scstarget)
+END
+
+
+BEGIN LOOP(MyWeaponStrength||3)
+BEGIN LOOP(MyWeaponDamageType||Slashing)
+INCLUDE FILE(%MOD_FOLDER%/genai/ssl/easy_melee.ssl)
+INCLUDE FILE(%MOD_FOLDER%/genai/ssl/dw#wtacor.ssl)
+INCLUDE FILE(%MOD_FOLDER%/genai/ssl/move.ssl)
+END LOOP
+END LOOP
+

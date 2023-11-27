@@ -1,33 +1,37 @@
 DEFINE_ACTION_FUNCTION iwd_divine_spells_postproduction BEGIN
 
-		LAF array_read STR_VAR file=iwd_spells_installed.txt path="%data_loc%" RET_ARRAY IWD_spell_installed=array END
-		LAM data_spells_by_level // needed for scroll
-        LAF make_physical_mirror_level_5 END
-		LAM data_spell_resrefs // load in new physical mirror as well as new IWD spells
-		LAF entropy_shield_flame_strike END
-		LAF monster_summoning_divine_cosmetic END
-        LAF no_chant_spell_failure END
-        LAF patch_cures_into_stores END
-		LAF cre_set_joinable_priest_spells END
-        LAF clearair_divine END
-		LAF surplus_cleric_protections END
-		LAF run STR_VAR file=summoned_monsters_divine location=lib END
-		LAF run STR_VAR file=dealign_cleric_spells version=1 location=lib END
-		ACTION_IF !MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 0 BEGIN
-			LAF bg2ify_cure_moderate_wounds END
-			LAF hide_old_cause_wounds END
-		END
-		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cd_divine_post.tpa" // just in case Cam's code isn't SFO-sugar-compliant
-		LAF cd_divine_post END
-		ACTION_IF !enhanced_edition BEGIN
-			OUTER_SPRINT obg2_res_path "%MOD_FOLDER%/%component_loc%/obg2_res"
-			INCLUDE "%MOD_FOLDER%/%component_loc%/lib/obg2_divine.tpa"
-			LAF obg2_divine END
-		END
-		ACTION_IF MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 55 BEGIN
-			LAF run STR_VAR file=sr_nwn_spelldeflection location=lib version=sr_nwn_arcane END
-		END
-	
+  LAF array_read STR_VAR file=iwd_spells_installed.txt path="%data_loc%" RET_ARRAY IWD_spell_installed=array END
+  LAM data_spells_by_level // needed for scroll
+  LAF make_physical_mirror_level_5 END
+  LAM data_spell_resrefs // load in new physical mirror as well as new IWD spells
+
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_ENTROPY_SHIELD") BEGIN
+    LAF entropy_shield_flame_strike END
+  END  
+  
+  LAF monster_summoning_divine_cosmetic END
+  LAF no_chant_spell_failure END
+  LAF patch_cures_into_stores END
+  LAF cre_set_joinable_priest_spells END
+  LAF clearair_divine END
+  LAF surplus_cleric_protections END
+  LAF run STR_VAR file=summoned_monsters_divine location=lib END
+  LAF run STR_VAR file=dealign_cleric_spells version=1 location=lib END
+  ACTION_IF !MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 0 BEGIN
+    LAF bg2ify_cure_moderate_wounds END
+    LAF hide_old_cause_wounds END
+  END
+  INCLUDE "%MOD_FOLDER%/%component_loc%/lib/cd_divine_post.tpa" // just in case Cam's code isn't SFO-sugar-compliant
+  LAF cd_divine_post END
+  ACTION_IF !enhanced_edition BEGIN
+    OUTER_SPRINT obg2_res_path "%MOD_FOLDER%/%component_loc%/obg2_res"
+    INCLUDE "%MOD_FOLDER%/%component_loc%/lib/obg2_divine.tpa"
+    LAF obg2_divine END
+  END
+  ACTION_IF MOD_IS_INSTALLED "spell_rev/setup-spell_rev.tp2" 55 BEGIN
+    LAF run STR_VAR file=sr_nwn_spelldeflection location=lib version=sr_nwn_arcane END
+  END
+  
 
 END
 
@@ -36,15 +40,32 @@ END
 
 DEFINE_ACTION_FUNCTION surplus_cleric_protections BEGIN // these protect against spells that aren't moved over, and whose namespace might be occupied; we need to clear the cruft out
 
-	// Cloudburst protects against salamander auras
-	COPY_EXISTING "%CLERIC_CLOUDBURST%.spl" override
-		LPF DELETE_EFFECT STR_VAR match_function="READ_ASCII 0x14 resref;; PATCH_MATCH ~%resref%~ WITH SPIN193 SPIN194 SPIN187 SPIN128 BEGIN value=1 END DEFAULT value=0 END" END
-	BUT_ONLY
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CLOUDBURST") BEGIN
 
-	//entropy shield protects against MM trap
-	COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
-		LPF DELETE_EFFECT STR_VAR match_resource="SPWI033" END
-	BUT_ONLY
+    // Cloudburst protects against salamander auras
+    COPY_EXISTING "%CLERIC_CLOUDBURST%.spl" override
+      LPF DELETE_EFFECT STR_VAR match_function="READ_ASCII 0x14 resref;; PATCH_MATCH ~%resref%~ WITH SPIN193 SPIN194 SPIN187 SPIN128 BEGIN value=1 END DEFAULT value=0 END" END
+      BUT_ONLY
+      
+  END    
+
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_ENTROPY_SHIELD") BEGIN
+
+    //entropy shield protects against MM trap
+    COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
+      LPF DELETE_EFFECT STR_VAR match_resource="SPWI033" END
+      BUT_ONLY
+      
+  END    
+
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL") BEGIN
+
+    //same-alignment version of RWotF cancels haste, but not Mazzy's version; also in bgee, no need to gate this with a game check
+    COPY_EXISTING "%CLERIC_RIGHTEOUS_WRATH_OF_THE_FAITHFUL%a.spl" override
+      LPF CLONE_EFFECT STR_VAR match_resource="SPWI305" resource="spin828" END // should dupe both the 321 and 206
+      BUT_ONLY
+  
+  END
 
 END
 
@@ -52,57 +73,56 @@ END
 
 DEFINE_ACTION_FUNCTION no_chant_spell_failure BEGIN
   
-	ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CHANT") BEGIN
-   // remove spell-failure effect from CHANT
-   
-		COPY_EXISTING "%CLERIC_CHANT%.spl" override
-			LPF DELETE_EFFECT INT_VAR match_opcode=145 END
-			SAY 0x50 @101
-		BUT_ONLY
-	END
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CHANT") BEGIN
+    // remove spell-failure effect from CHANT   
+    COPY_EXISTING "%CLERIC_CHANT%.spl" override
+      LPF DELETE_EFFECT INT_VAR match_opcode=145 END
+      SAY 0x50 @101
+      BUT_ONLY
+  END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION patch_cures_into_stores BEGIN
 
-	ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CURE_MODERATE_WOUNDS") BEGIN
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CURE_MODERATE_WOUNDS") BEGIN
 
-	   // patch Cure Moderate Wounds into temples
-	   // (while we're at it, do Cure Medium Wounds, which gets left out quite often)
-	   
-	   // get the data
-	   LAF array_read STR_VAR file=strref_map.txt path="%data_loc%" RET_ARRAY strref_map=array END
-		OUTER_SET desc=$strref_map(19397)
-		APPEND ~speldesc.2da~ ~%CLERIC_CURE_MODERATE_WOUNDS%%TAB%%desc%~
-		ACTION_CLEAR_ARRAY has_light
-		ACTION_CLEAR_ARRAY no_medium
-		COPY_EXISTING_REGEXP GLOB ".*\.sto" "%workspace%"
-			 PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_LIGHT_WOUNDS%")>=0 BEGIN
-				SPRINT $has_light("%SOURCE_RES%") ""
-				PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_MEDIUM_WOUNDS%")<0 BEGIN
-					SPRINT $no_medium("%SOURCE_RES%") ""
-				END
-			 END
-		BUT_ONLY
+    // patch Cure Moderate Wounds into temples
+    // (while we're at it, do Cure Medium Wounds, which gets left out quite often)
+     
+    // get the data
+    LAF array_read STR_VAR file=strref_map.txt path="%data_loc%" RET_ARRAY strref_map=array END
+    OUTER_SET desc=$strref_map(19397)
+    APPEND ~speldesc.2da~ ~%CLERIC_CURE_MODERATE_WOUNDS%%TAB%%desc%~
+    ACTION_CLEAR_ARRAY has_light
+    ACTION_CLEAR_ARRAY no_medium
+    COPY_EXISTING_REGEXP GLOB ".*\.sto" "%workspace%"
+      PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_LIGHT_WOUNDS%")>=0 BEGIN
+        SPRINT $has_light("%SOURCE_RES%") ""
+        PATCH_IF INDEX_BUFFER ("%CLERIC_CURE_MEDIUM_WOUNDS%")<0 BEGIN
+          SPRINT $no_medium("%SOURCE_RES%") ""
+        END
+      END
+      BUT_ONLY
 
-		// do the patching
-		
-		ACTION_PHP_EACH no_medium AS sto=>discard BEGIN
-			sto.edit["%sto%"]
-			[
-				m.cure.clone{s_resref:=%CLERIC_CURE_MEDIUM_WOUNDS%;; s_price=3*s_price|match="~%s_resref%~==sppr103"}
-			]
-		END
-		
-		ACTION_PHP_EACH has_light AS sto=>discard BEGIN
-			sto.edit["%sto%"]
-			[
-				m.cure.clone{s_resref:=%CLERIC_CURE_MODERATE_WOUNDS%;; s_price=2*s_price|match="~%s_resref%~==sppr103"}
-			]
-		END	
+    // do the patching
+    
+    ACTION_PHP_EACH no_medium AS sto=>discard BEGIN
+      sto.edit["%sto%"]
+      [
+        m.cure.clone{s_resref:=%CLERIC_CURE_MEDIUM_WOUNDS%;; s_price=3*s_price|match="~%s_resref%~==sppr103"}
+      ]
+    END
+    
+    ACTION_PHP_EACH has_light AS sto=>discard BEGIN
+      sto.edit["%sto%"]
+      [
+        m.cure.clone{s_resref:=%CLERIC_CURE_MODERATE_WOUNDS%;; s_price=2*s_price|match="~%s_resref%~==sppr103"}
+      ]
+    END  
 
-	END
+  END
 
 END
 
@@ -113,13 +133,14 @@ DEFINE_ACTION_FUNCTION clearair_divine BEGIN
 
   ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CLOUD_OF_PESTILENCE") BEGIN
 
-   COPY_EXISTING "%CLERIC_CLOUD_OF_PESTILENCE%.spl" "%override%"
-        READ_LONG 0x64 ab_off
-        READ_SHORT (0x26+ab_off) proj
-   BUT_ONLY
-   OUTER_SET proj -= 1
-   APPEND "clearair.2da" "cloud_of_pest %proj%"
-   COPY_EXISTING "clearair.2da" override PRETTY_PRINT_2DA
+    COPY_EXISTING "%CLERIC_CLOUD_OF_PESTILENCE%.spl" "%override%"
+      READ_LONG 0x64 ab_off
+      READ_SHORT (0x26+ab_off) proj
+      BUT_ONLY
+    OUTER_SET proj -= 1
+    APPEND "clearair.2da" "cloud_of_pest %proj%"
+    COPY_EXISTING "clearair.2da" override PRETTY_PRINT_2DA
+  
   END
 
 END
@@ -130,40 +151,40 @@ END
 
 DEFINE_ACTION_FUNCTION make_physical_mirror_level_5 BEGIN
 
-   // we leave the old one in to aid mod compatibility
+  // we leave the old one in to aid mod compatibility
    
-   LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name=CLERIC_PHYSICAL_MIRROR RET resref_old=spell_res END
+  LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name=CLERIC_PHYSICAL_MIRROR RET resref_old=spell_res END
    
-   // disable original version from spell.ids and from the selection screen (no need to remove it from spellbooks since we redo them globally for IWD anyway)
+  // disable original version from spell.ids and from the selection screen (no need to remove it from spellbooks since we redo them globally for IWD anyway)
    
-   COPY_EXISTING spell.ids override
-          REPLACE_TEXTUALLY CLERIC_PHYSICAL_MIRROR CLERIC_MIRROR_OLD  // avoid 'CLERIC_PHYSICAL_MIRROR' because it's better not to have an ids entry that's a substring of another one
-   BUT_ONLY
-   ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
-		ACTION_IF enhanced_edition BEGIN
-			APPEND "hidespl.2da" "%CLERIC_PHYSICAL_MIRROR% 1 0 0"
-		END ELSE BEGIN
-			APPEND "hidespl.2da" "%CLERIC_PHYSICAL_MIRROR% ****"		
-		END
-   END ELSE BEGIN
- 		spl.edit[%resref_old%]
-		[
-			m_unusable_druid=1
-			m_unusable_cleric=1
-		]  
-   END
+  COPY_EXISTING spell.ids override
+    REPLACE_TEXTUALLY CLERIC_PHYSICAL_MIRROR CLERIC_MIRROR_OLD  // avoid 'CLERIC_PHYSICAL_MIRROR' because it's better not to have an ids entry that's a substring of another one
+    BUT_ONLY
+  ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
+    ACTION_IF enhanced_edition BEGIN
+      APPEND "hidespl.2da" "%CLERIC_PHYSICAL_MIRROR% 1 0 0"
+    END ELSE BEGIN
+      APPEND "hidespl.2da" "%CLERIC_PHYSICAL_MIRROR% ****"    
+    END
+  END ELSE BEGIN
+    spl.edit[%resref_old%]
+    [
+      m_unusable_druid=1
+      m_unusable_cleric=1
+    ]  
+  END
 
    // copy in new version
    
-   CLEAR_IDS_MAP
+  CLEAR_IDS_MAP
    spl.copy["%resref_old%"=>CLERIC_PHYSICAL_MIRROR|standard_icons:i=0]
    [
-		m_level=5
-		m.ab.alter{s_casting_time=5}
-		m.ab_fx.alter{s_power=5}
-		INNER_PATCH_SAVE m_description "%m_description%" BEGIN
-			REPLACE_TEXTUALLY 6 5
-		END
+     m_level=5
+     m.ab.alter{s_casting_time=5}
+     m.ab_fx.alter{s_power=5}
+     INNER_PATCH_SAVE m_description "%m_description%" BEGIN
+       REPLACE_TEXTUALLY 6 5
+     END
    ]
    
 END
@@ -172,52 +193,53 @@ END
 
 DEFINE_ACTION_FUNCTION entropy_shield_flame_strike BEGIN
 
-	ACTION_DEFINE_ASSOCIATIVE_ARRAY flame_strike_map BEGIN
-	sppr503=>sppr503d
-	sppr985=>sppr985d
-	spin799=>spin799d
-	ohbeflam=>"dw#ohbef"
-	spimix01=>"dw#spimi"
-	END
-	ACTION_PHP_EACH flame_strike_map AS spell=>helper BEGIN
-		LAF externalise_flame_strike_damage STR_VAR spell helper END
-	END 
-
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY flame_strike_map BEGIN
+    sppr503=>sppr503d
+    sppr985=>sppr985d
+    spin799=>spin799d
+    ohbeflam=>"dw#ohbef"
+    spimix01=>"dw#spimi"
+  END
+  ACTION_PHP_EACH flame_strike_map AS spell=>helper BEGIN
+    LAF externalise_flame_strike_damage STR_VAR spell helper END
+  END 
+  
 END
 
 DEFINE_ACTION_FUNCTION externalise_flame_strike_damage
-	STR_VAR spell=""
-			helper=""
+  STR_VAR spell=""
+          helper=""
 BEGIN
-		ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-		// make duplicate of spell that only does damage
-		  ACTION_IF !FILE_EXISTS_IN_GAME "%helper%.spl" BEGIN
-			COPY_EXISTING "%spell%.spl" "override/%helper%.spl"
-				LPF DELETE_EFFECT STR_VAR match_function="!(SHORT_AT 0x0=12)" END
-				LPF ALTER_SPELL_HEADER INT_VAR projectile=0 END
-				WRITE_LONG 0x8 "-1"
-		// replace damage effects in spell with casting of new spell
-			COPY_EXISTING "%spell%.spl" override
-				LPF ALTER_EFFECT INT_VAR match_opcode=12 dicenumber=0 dicesize=0 opcode=146 savingthrow=0 savebonus=0 parameter1=0 parameter2=2 STR_VAR resource="%helper%" END
-			BUT_ONLY
-		  END
-		// alter protection from Entropy Shield to protect against helper
-			COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
-				REPLACE_TEXTUALLY "%spell%" "%helper%" (8)
-		END
+  ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+    // make duplicate of spell that only does damage
+    ACTION_IF !FILE_EXISTS_IN_GAME "%helper%.spl" BEGIN
+      COPY_EXISTING "%spell%.spl" "override/%helper%.spl"
+        LPF DELETE_EFFECT STR_VAR match_function="!(SHORT_AT 0x0=12)" END
+        LPF ALTER_SPELL_HEADER INT_VAR projectile=0 END
+        WRITE_LONG 0x8 "-1"
+    // replace damage effects in spell with casting of new spell
+      COPY_EXISTING "%spell%.spl" override
+        LPF ALTER_EFFECT INT_VAR match_opcode=12 dicenumber=0 dicesize=0 opcode=146 savingthrow=0 savebonus=0 parameter1=0 parameter2=2 STR_VAR resource="%helper%" END
+        BUT_ONLY
+    END
+    // alter protection from Entropy Shield to protect against helper
+    COPY_EXISTING "%CLERIC_ENTROPY_SHIELD%.spl" override
+      REPLACE_TEXTUALLY "%spell%" "%helper%" (8)
+  END
+    
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION monster_summoning_divine_cosmetic BEGIN
 
-	ACTION_FOR_EACH 2da IN ginsect sshamb BEGIN
-		ACTION_IF FILE_EXISTS_IN_GAME "%2da%.2da" BEGIN
-			COPY_EXISTING "%2da%.2da" override
-				REPLACE_TEXTUALLY "msumm1h.*" "spanisum none"
-			BUT_ONLY
-		END
-	END
+  ACTION_FOR_EACH 2da IN ginsect sshamb BEGIN
+    ACTION_IF FILE_EXISTS_IN_GAME "%2da%.2da" BEGIN
+      COPY_EXISTING "%2da%.2da" override
+        REPLACE_TEXTUALLY "msumm1h.*" "spanisum none"
+        BUT_ONLY
+    END
+  END
 
 END
 
@@ -226,29 +248,32 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION bg2ify_cure_moderate_wounds BEGIN
+
+  ACTION_IF VARIABLE_IS_SET $IWD_spell_installed("CLERIC_CURE_MODERATE_WOUNDS") BEGIN
   
-	COPY_EXISTING "%CLERIC_CURE_MODERATE_WOUNDS%.spl" "override"
-		READ_LONG 0x8 name_new_strref
-		READ_STRREF 0x8 name_new
-	BUT_ONLY
-	COPY_EXISTING "%CLERIC_CURE_MEDIUM_WOUNDS%.spl" "override/%CLERIC_CURE_MODERATE_WOUNDS%.spl"
-		READ_STRREF 0x8 name_old
-		WRITE_LONG 0x8 name_new_strref
-		WRITE_LONG 0x34 2
-		READ_STRREF 0x50 desc
-		INNER_PATCH_SAVE desc "%desc%" BEGIN
-			REPLACE_TEXTUALLY 14 11
-			REPLACE_TEXTUALLY 3 2
-			REPLACE_TEXTUALLY "%name_old%" "%name_new%"
-		END
-		SAY_EVALUATED 0x50 "%desc%"
-		WRITE_ASCIIE 0x3a "%CLERIC_CURE_MODERATE_WOUNDS%C" (8)
-		WRITE_ASCIIE 0x76 "%CLERIC_CURE_MODERATE_WOUNDS%B" (8)
-		LPF ALTER_EFFECT INT_VAR power=2 END
-		LPF ALTER_EFFECT INT_VAR match_opcode=17 parameter1=11 END
-	BUT_ONLY
+    COPY_EXISTING "%CLERIC_CURE_MODERATE_WOUNDS%.spl" "override"
+      READ_LONG 0x8 name_new_strref
+      READ_STRREF 0x8 name_new
+      BUT_ONLY
+    COPY_EXISTING "%CLERIC_CURE_MEDIUM_WOUNDS%.spl" "override/%CLERIC_CURE_MODERATE_WOUNDS%.spl"
+      READ_STRREF 0x8 name_old
+      WRITE_LONG 0x8 name_new_strref
+      WRITE_LONG 0x34 2
+      READ_STRREF 0x50 desc
+      INNER_PATCH_SAVE desc "%desc%" BEGIN
+        REPLACE_TEXTUALLY 14 11
+        REPLACE_TEXTUALLY 3 2
+        REPLACE_TEXTUALLY "%name_old%" "%name_new%"
+      END
+      SAY_EVALUATED 0x50 "%desc%"
+      WRITE_ASCIIE 0x3a "%CLERIC_CURE_MODERATE_WOUNDS%C" (8)
+      WRITE_ASCIIE 0x76 "%CLERIC_CURE_MODERATE_WOUNDS%B" (8)
+      LPF ALTER_EFFECT INT_VAR power=2 END
+      LPF ALTER_EFFECT INT_VAR match_opcode=17 parameter1=11 END
+      BUT_ONLY
  
- 
+  END
+  
 END
 
 
@@ -260,19 +285,19 @@ DEFINE_ACTION_FUNCTION hide_old_cause_wounds BEGIN
    // hide BG2 versions of Cause Serious/Critical Wounds (we leave them in just to avoid AI confusions in other mods)
    
    ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
-	   ACTION_IF enhanced_edition BEGIN
-		   APPEND "hidespl.2da" "%CLERIC_CAUSE_SERIOUS_WOUNDS%  1 0 0"
-		   APPEND "hidespl.2da" "%CLERIC_CAUSE_CRITICAL_WOUNDS% 1 0 0"
-	   END ELSE BEGIN
-		   APPEND "hidespl.2da" "%CLERIC_CAUSE_SERIOUS_WOUNDS%  ****"
-		   APPEND "hidespl.2da" "%CLERIC_CAUSE_CRITICAL_WOUNDS% ****"	   
-	   END
+     ACTION_IF enhanced_edition BEGIN
+       APPEND "hidespl.2da" "%CLERIC_CAUSE_SERIOUS_WOUNDS%  1 0 0"
+       APPEND "hidespl.2da" "%CLERIC_CAUSE_CRITICAL_WOUNDS% 1 0 0"
+     END ELSE BEGIN
+       APPEND "hidespl.2da" "%CLERIC_CAUSE_SERIOUS_WOUNDS%  ****"
+       APPEND "hidespl.2da" "%CLERIC_CAUSE_CRITICAL_WOUNDS% ****"     
+     END
    END ELSE BEGIN
-		spl.edit[%CLERIC_CAUSE_SERIOUS_WOUNDS% %CLERIC_CAUSE_CRITICAL_WOUNDS%]
-		[
-			m_unusable_druid=1
-			m_unusable_cleric=1
-		]
+    spl.edit[%CLERIC_CAUSE_SERIOUS_WOUNDS% %CLERIC_CAUSE_CRITICAL_WOUNDS%]
+    [
+      m_unusable_druid=1
+      m_unusable_cleric=1
+    ]
    END
 
 

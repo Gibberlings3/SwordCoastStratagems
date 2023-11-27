@@ -1,0 +1,432 @@
+/*
+document{disjunctive_substitution}
+{
+For each bcs in the space-separated list 'script', and each dlg in the space-separated list 'dialog', swap 'match' for 'replace', keeping to the rules of Boolean algebra.</p>
+<p>The syntax for 'replace' is either "OR()line1|line2|..." or :line1|line2|...".</p>
+<p>If 'script'='all', process all scripts except those listed  in 'exclude_array_script'; likewise for dialogs.</p>
+<p>Set telemetry=1 to get some debugging information.
+
+}
+
+*/
+
+
+DEFINE_ACTION_FUNCTION disjunctive_substitution
+	INT_VAR telemetry=0//boolean
+	STR_VAR script=""
+			dialog=""
+			match=""
+			replace=""
+			exclude_array_script="NO_ARRAY"
+			exclude_array_dialog="NO_ARRAY"
+BEGIN
+	LAF disjunctive_substitution_bcs INT_VAR telemetry STR_VAR script match replace exclude_array="%exclude_array_script%" END
+	LAF disjunctive_substitution_dlg INT_VAR telemetry STR_VAR dialog match replace exclude_array="%exclude_array_dialog%" END
+END
+
+
+DEFINE_ACTION_FUNCTION disjunctive_substitution_bcs//internal 
+	INT_VAR telemetry=0//boolean
+	STR_VAR script=""
+			match=""   
+			replace=""
+			exclude_array="NO_ARRAY" 
+BEGIN
+	SILENT
+	ACTION_TO_LOWER exclude_array
+	// parse input
+	LAF parse_disjunctive_match_input STR_VAR replace RET swap_is_or RET_ARRAY replace_array END
+	// apply
+	ACTION_MATCH "%script%" WITH 
+	all BEGIN
+		ACTION_CLEAR_ARRAY all_scripts
+		COPY_EXISTING_REGEXP ".*\.bcs" override
+			SPRINT filename "%SOURCE_RES%"
+			TO_LOWER filename
+			PATCH_IF !VARIABLE_IS_SET $"%exclude_array%"("%filename%") BEGIN
+				SPRINT $all_scripts("%filename%") ""
+			END
+		BUT_ONLY
+
+		ACTION_PHP_EACH all_scripts AS script=>null BEGIN
+			LAF ALTER_SCRIPT_BLOCK INT_VAR STR_VAR script match patch=disjunctive_substitution_bcs_helper END
+		END
+	END
+	DEFAULT
+	    ACTION_CLEAR_ARRAY disj_subj_done
+		OUTER_WHILE "%script%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list="%script%" RET entry script=list END	
+			ACTION_TO_LOWER entry
+			ACTION_IF !VARIABLE_IS_SET $disj_subj_done("%entry%") BEGIN // catch duplicates
+				OUTER_SPRINT $disj_subj_done("%entry%") ""
+				LAF ALTER_SCRIPT_BLOCK INT_VAR STR_VAR script="%entry%" match patch=disjunctive_substitution_bcs_helper END
+			END
+		END
+	END
+	VERBOSE
+END
+
+DEFINE_ACTION_FUNCTION disjunctive_substitution_dlg//internal
+	INT_VAR telemetry=0//boolean
+	STR_VAR dialog=""
+			match="" 
+			replace=""
+			exclude_array="NO_ARRAY" 
+BEGIN
+	SILENT
+	ACTION_TO_LOWER exclude_array
+	// parse input
+	LAF parse_disjunctive_match_input STR_VAR replace RET swap_is_or RET_ARRAY replace_array END
+	// apply
+	ACTION_MATCH "%dialog%" WITH
+	all BEGIN
+		ACTION_CLEAR_ARRAY all_dialogs
+		COPY_EXISTING_REGEXP ".*\.dlg" override
+			SPRINT filename "%SOURCE_RES%"
+			TO_LOWER filename
+			PATCH_IF !VARIABLE_IS_SET $"%exclude_array%"("%filename%") BEGIN
+				SPRINT $all_dialogs("%SOURCE_RES%") ""
+			END
+		BUT_ONLY
+
+		ACTION_PHP_EACH all_dialogs AS dialog=>null BEGIN
+			COPY_EXISTING "%dialog%.dlg" override
+				LPF disjunctive_substitution_dlg_helper END
+			BUT_ONLY
+		END
+	
+	END
+	DEFAULT
+	  ACTION_CLEAR_ARRAY disj_subj_done
+	  OUTER_WHILE "%dialog%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%dialog%" RET entry dialog=list END
+		ACTION_TO_LOWER entry
+		ACTION_IF !VARIABLE_IS_SET $disj_subj_done("%entry%") BEGIN // catch duplicates
+			OUTER_SET $disj_subj_done("%entry%")=1
+			COPY_EXISTING "%entry%.dlg" override
+				LPF disjunctive_substitution_dlg_helper END
+			BUT_ONLY
+		END
+	  END
+	END
+	VERBOSE
+END
+
+
+
+DEFINE_PATCH_FUNCTION disjunctive_substitution_bcs_helper BEGIN
+	
+	LPF get_trigger_array RET rest_of_block RET_ARRAY trigger_array END
+	LPF disjunctive_substitution_core STR_VAR trigger_array RET output END
+	// write output
+	SPRINT new_block "IF%WNL%%output%%rest_of_block%"
+	DELETE_BYTES 0x0 BUFFER_LENGTH
+	INSERT_BYTES 0x0 (STRING_LENGTH "%new_block%")
+	WRITE_ASCIIE 0x0 "%new_block%"
+
+END
+
+DEFINE_PATCH_FUNCTION disjunctive_substitution_dlg_helper//internal
+BEGIN
+
+		DECOMPILE_AND_PATCH BEGIN
+			REPLACE_EVALUATE "IF ~\([^~]+\)~" BEGIN
+			  PATCH_IF INDEX ("%match%" "%MATCH1%")>=0 BEGIN
+				CLEAR_ARRAY trigger_array 
+				INNER_PATCH "%MATCH1%" BEGIN
+					LPF get_trigger_array RET_ARRAY trigger_array END
+				END
+				LPF disjunctive_substitution_core STR_VAR trigger_array RET output END
+			  END ELSE BEGIN
+				SPRINT output "%MATCH1%"
+			  END
+			END
+			"IF ~%output%~"
+			
+		END
+
+
+END
+
+///////////////////////////////////////////////////////
+// Acts on single BCS block
+//
+// Generates a single line that's the substituted block
+///////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION disjunctive_substitution_core//internal
+ STR_VAR trigger_array="" 
+ RET output 
+ BEGIN
+	SPRINT output ""
+	SET or_level=0
+	SET in_or=0
+	SET or_count=0
+	SET conjunction_stashed=0
+	PHP_EACH "%trigger_array%" AS discard=>line BEGIN
+		PATCH_IF telemetry BEGIN
+			PATCH_PRINT "Line: %line%"
+		END
+		PATCH_MATCH "%line%" WITH
+		".*OR([0-9]+).*" BEGIN
+			INNER_PATCH "%line%" BEGIN
+				REPLACE_EVALUATE "OR(\([0-9]+\))" BEGIN
+					SET or_level="%MATCH1%"
+				END
+				""
+			END
+			SPRINT or_buffer ""
+			in_or=1
+			PATCH_IF telemetry BEGIN
+				PATCH_PRINT "In OR() block: level is %or_level%"
+			END
+		END
+		DEFAULT
+			LPF substitute_helper STR_VAR line RET found_match array_is_or array_length RET_ARRAY swapped_array  END
+			PATCH_IF found_match BEGIN
+				PATCH_IF in_or BEGIN
+					PATCH_IF array_is_or BEGIN
+					
+						or_level +=array_length - 1
+						or_count +=array_length
+						PHP_EACH swapped_array AS ind=>newline BEGIN
+							SPRINT or_buffer "%or_buffer%%newline%%WNL%"
+						END 	
+					END ELSE BEGIN
+						conjunction_stashed=1
+						SPRINT or_buffer "%or_buffer%DW_SUBSTITUTE_PLACEHOLDER%WNL%"
+						CLEAR_ARRAY conjunction_stash
+						PHP_EACH swapped_array AS ind=>newline BEGIN
+							SPRINT $conjunction_stash("%ind%") "%newline%"
+						END
+						++or_count
+					END
+				END ELSE BEGIN
+					SPRINT to_add ""
+					PHP_EACH swapped_array AS ind=>array_line BEGIN
+						SPRINT to_add "%to_add%%array_line%%WNL%"
+					END
+					PATCH_IF array_is_or BEGIN
+						SPRINT to_add "OR(%array_length%)%to_add%"
+					END 
+					SPRINT output "%output%%to_add%"
+				END
+			END ELSE BEGIN
+				PATCH_IF in_or BEGIN
+					SPRINT or_buffer "%or_buffer%%line%%WNL%"
+					++or_count
+				END ELSE BEGIN
+					SPRINT output "%output%%line%%WNL%"	
+				END
+			END	
+			PATCH_IF in_or && or_count=or_level BEGIN
+				PATCH_IF conjunction_stashed BEGIN
+					SPRINT or_buffer "OR(%or_level%)%WNL%%or_buffer%"
+					PHP_EACH conjunction_stash AS ind=>newline BEGIN
+						INNER_PATCH_SAVE to_add "%or_buffer%" BEGIN
+							REPLACE_TEXTUALLY "DW_SUBSTITUTE_PLACEHOLDER" "%newline%"
+						END
+						SPRINT output "%output%%to_add%%WNL%"
+					END			
+					conjunction_stashed=0
+				END ELSE BEGIN
+					SPRINT output "%output%OR(%or_level%)%WNL%%or_buffer%"
+				END
+				in_or=0
+				or_level=0
+				or_count=0
+			END
+
+		END
+	END
+	LPF eliminate_logic_redundancies STR_VAR line="%output%" RET output END
+
+
+
+
+END
+
+///////////////////////////////////////////////////////
+// operating destructively on a single BAF block, return its trigger in an array and the rest of the block as a line
+///////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION get_trigger_array //internal
+RET rest_of_block 
+RET_ARRAY trigger_array 
+BEGIN
+	reached_end=0
+	count=0
+	SPRINT rest_of_block ""
+	REPLACE_EVALUATE "^\(.*[A-Za-z].*\)" BEGIN
+		PATCH_MATCH "%MATCH1%" WITH
+		"IF" BEGIN
+		END
+		".*THEN.*" BEGIN
+			reached_end=1
+			SPRINT rest_of_block "THEN%WNL%"
+		END
+		DEFAULT
+			PATCH_IF reached_end BEGIN
+				SPRINT rest_of_block "%rest_of_block%%MATCH1%%WNL%"
+			END ELSE BEGIN
+				SPRINT $trigger_array("%count%") "%MATCH1%"
+				++count
+			END
+		END
+	END
+	""
+	PATCH_IF count=0 BEGIN
+		SPRINT $trigger_array("0") ""
+	END
+END
+
+
+//////////////////////////////////////////////////////////////
+// Do the substitution on a line .
+// Assumes, in background, an array called replace_array that has
+// the new lines, a line 'match' with the swap regexp, and a variable
+// swap_is_or
+/////////////////////////////////////////////////////////////
+
+
+DEFINE_PATCH_FUNCTION substitute_helper//internal
+	STR_VAR line=""
+	RET found_match 
+		array_is_or 
+		array_length 
+	RET_ARRAY swapped_array  
+BEGIN
+	found_match=0
+	array_is_or=0
+	array_length=0
+	SPRINT $swapped_array("0") ""
+	PATCH_IF INDEX ("!%match%" "%line%")>=0 BEGIN
+		PHP_EACH replace_array AS ind=>new BEGIN
+			INNER_PATCH_SAVE newline "%line%" BEGIN
+				REPLACE_TEXTUALLY "%match%" "%new%"
+				REPLACE_TEXTUALLY "!!" "" // with apologies to L.E.J. Brouwer
+				++array_length
+			END
+			SPRINT $swapped_array("%ind%") "%newline%"
+		END
+		found_match=1
+		array_is_or=1 - swap_is_or
+	END ELSE 
+	PATCH_IF INDEX ("%match%" "%line%")>=0 BEGIN
+		PHP_EACH replace_array AS ind=>new BEGIN
+			INNER_PATCH_SAVE newline "%line%" BEGIN
+				REPLACE_TEXTUALLY "%match%" "%new%"
+				++array_length
+			END
+			SPRINT $swapped_array("%ind%") "%newline%"
+		END
+		found_match=1
+		array_is_or=swap_is_or	
+	END
+	
+END
+
+//////////////////////////////////////////////////////////////
+// Parse the original input
+/////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION parse_disjunctive_match_input//internal
+	STR_VAR replace=""
+	RET swap_is_or
+	RET_ARRAY replace_array
+BEGIN
+	OUTER_SET swap_is_or=0
+	OUTER_SET ind=0
+	OUTER_PATCH_SAVE last_entry "%replace%" BEGIN
+		REPLACE_EVALUATE "OR([0-9]*)" BEGIN
+			swap_is_or=1
+		END
+		""
+		REPLACE_EVALUATE "\([^|]+\)|" BEGIN
+			SPRINT $replace_array("%ind%") "%MATCH1%"
+			++ind
+		END
+		""
+	END
+	OUTER_SPRINT $replace_array("%ind%") "%last_entry%"
+END
+
+
+//////////////////////////////////////////////////////////////
+// Eliminate redundancies
+// acts on a single line assumed to be a trigger block
+/////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION eliminate_logic_redundancies 
+	STR_VAR line="" 
+	RET output
+BEGIN
+	SPRINT output ""
+	INNER_PATCH "%line%" BEGIN
+		done=0
+		or_count=0
+		in_or=0
+		REPLACE_EVALUATE "^[ %TAB%]*\([^ %TAB%%WNL%]+\)%WNL%" BEGIN 
+			SPRINT this_line "%MATCH1%"
+			PATCH_MATCH "%this_line%" WITH
+			"OR([0-9]+)" BEGIN
+				in_or=1
+				SPRINT or_line ""
+				INNER_PATCH_SAVE or_count "%this_line%" BEGIN
+					REPLACE_TEXTUALLY "OR(" ""
+					REPLACE_TEXTUALLY ")" ""
+				END
+				PHP_EACH or_array AS k=>v BEGIN
+					SPRINT $or_array("%k%") "SFO_NULL"
+				END
+				CLEAR_ARRAY or_array
+			END
+			DEFAULT
+				PATCH_IF in_or BEGIN
+					SPRINT $or_array("%this_line%") ""
+					or_count -=1
+					PATCH_IF or_count=0 BEGIN
+						new_count=0
+						proceed=1
+						PHP_EACH or_array AS k=>v BEGIN
+							PATCH_IF "%v%" STR_CMP "SFO_NULL" BEGIN
+								PATCH_MATCH "%k%" WITH 
+								"!.*" BEGIN
+									INNER_PATCH_SAVE non_negated_k "%k%" BEGIN
+										DELETE_BYTES 0x0 1
+									END
+									PATCH_IF !(VARIABLE_IS_SET $or_array("%non_negated_k%") && $or_array("%non_negated_k%") STR_CMP "SFO_NULL") BEGIN
+										SPRINT "or_line" "%or_line%%k%"
+										new_count +=1
+									END ELSE BEGIN
+										proceed=0
+									END
+								END
+								DEFAULT
+									PATCH_IF !(VARIABLE_IS_SET $or_array("!%k%") && $or_array("!%k%") STR_CMP "SFO_NULL") BEGIN
+										SPRINT "or_line" "%or_line%%k%"
+										new_count +=1
+									END ELSE BEGIN
+										proceed=0
+									END
+								END								
+							END
+						END
+						PATCH_IF proceed BEGIN
+							SPRINT output "%output%OR(%new_count%)%WNL%%or_line%"	
+						END						
+						in_or=0
+					END
+				END ELSE BEGIN
+					SPRINT output "%output%%this_line%%WNL%"
+				END
+				
+			END
+		END
+		""
+	
+	END
+
+
+END

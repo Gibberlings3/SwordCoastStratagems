@@ -24,9 +24,9 @@ BEGIN
 		LPF strref_struct STR_VAR function END
 		LPF strref_script STR_VAR function END // no need to decompile, scripts in dlg files aren't compiled
 	END
-	bam wav wed bmp vvc vef pro BEGIN // no strrefs in these
+	bam wav wed bmp vvc vef BEGIN // no strrefs in these
 	END
-	are cre eff itm spl sto BEGIN
+	are cre eff itm spl sto pro BEGIN
 		LPF strref_struct STR_VAR function END
 	END
 	DEFAULT
@@ -54,7 +54,7 @@ BEGIN
 	//extended headers
 	PHP_EACH "SFO_%m_strtype%_extended_types" AS type=>discard BEGIN
 		PATCH_IF "SFO_%m_strtype%_%type%_has_strrefs" BEGIN
-			LPF struct_iter STR_VAR struct=m strtype="%m_strtype%" type RET length RET_ARRAY iter_array END
+			LPF struct_iter STR_VAR struct=m type RET length RET_ARRAY iter_array END
 			PATCH_IF length>0 BEGIN
 				PHP_EACH iter_array AS index=>lookup BEGIN
 					// get the data
@@ -65,8 +65,28 @@ BEGIN
 						LPF struct_write STR_VAR strtype="%m_strtype%_%type%" struct=s END
 					END
 					SPRINT $m("%type%" "%lookup%") "%data%"
+					PHP_EACH "SFO_%m_strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
+						SPRINT temp $"SFO_%m_strtype%_parent_child_data"("%pc_id%" "parent")
+						PATCH_IF  $"SFO_%m_strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%type%" BEGIN	
+							SPRINT child $"SFO_%m_strtype%_parent_child_data"("%pc_id%" "child")
+							PATCH_IF "SFO_%m_strtype%_%child%_has_strrefs" BEGIN
+								LPF struct_iter_child INT_VAR parent_index=index STR_VAR struct=m pc_id RET child_length=length RET_ARRAY iter_array_child=iter_array END
+								PATCH_IF child_length>0 BEGIN
+									PHP_EACH iter_array_child AS child_index=>child_lookup BEGIN
+										SPRINT data $m("%type%" "%index%" "%pc_id%" "%child_index%")
+										INNER_PATCH_SAVE data "%data%" BEGIN
+											LPF struct_read STR_VAR strtype="%m_strtype%_%child%" RET_ARRAY s=struct END
+											LPF strref_struct_helper STR_VAR struct=s strtype="%m_strtype%_%child%" function RET_ARRAY s=struct END
+											LPF struct_write STR_VAR strtype="%m_strtype%_%child%" struct=s END
+										END	
+										SPRINT $m("%parent_type%" "%index%" "%child%" "%child_index%") "%data%"
+									END							
+								END
+							END
+						END
+					END
 				END	
-			END					
+			END	
 		END			
 	END
 	// write back

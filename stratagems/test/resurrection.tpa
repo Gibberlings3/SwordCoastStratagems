@@ -1,0 +1,660 @@
+DEFINE_ACTION_FUNCTION resurrection BEGIN
+
+	// get parameters
+	
+
+	LAF check_ini STR_VAR ini=resurrection_requires_diamond RET diamond_required=value END
+	LAF check_ini STR_VAR ini=resurrection_rod_cost_per_charge RET cost_per_charge=value END
+	LAF check_ini STR_VAR ini=resurrection_spell_cost_uptick RET cost_uptick=value END
+	LAF check_ini STR_VAR ini=slayer_change_on_imprisonment_end RET slayer_change_on_imprisonment=value END
+	LAF check_ini STR_VAR ini=imprisonment_end_duration RET end_timer=value END
+	LAF check_ini STR_VAR ini=resurrection_rod_max_charges RET rod_max_charges=value END
+
+	//make sure new state is present
+	
+	APPEND "state.ids" "0x000007C0 STATE_PERMANENT_DEATH" UNLESS "STATE_PERMANENT_DEATH"
+	OUTER_SET massive_damage_state=0x7c0
+
+	//add imprisonment spellstates
+	
+	LAF ds_resolve_stat STR_VAR id=DW_WAS_IMPRISONED RET imprisonment_stat=stat_ind END
+	LAF ds_resolve_stat STR_VAR id=DW_IS_CHARNAME RET charname_stat=stat_ind END
+	LAF ds_resolve_stat STR_VAR id=DW_CAN_BE_SLAYER RET slayer_stat=stat_ind END
+
+	// get NPC data
+	LAM data_joinable_dvs
+	
+	// get colors
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY color_offset_map BEGIN
+		metal=>0x2c
+		minor=>0x2d
+		major=>0x2e
+		skin=>0x2f
+		leather=>0x30
+		armor=>0x31
+		hair=>0x32
+	END
+	
+	// put label on player 1
+	
+	LAF 2daq_extract STR_VAR resref=campaign column=WORLDSCRIPT RET_ARRAY worldscripts=array END
+	OUTER_SPRINT $worldscripts("BALDUR") ""
+	OUTER_SPRINT $worldscripts("BALDUR25") ""
+	ACTION_PHP_EACH worldscripts AS script=>discard BEGIN
+		LAF extend INT_VAR allow_missing=1 inline=1 STR_VAR script top=labeled_player1 END
+	END
+	
+	spl.make[dw#lbpl1]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=328 s_target=2 s_timing=9 s_parameter2=charname_stat s_special=1}
+	]
+
+	// make player1 version of petrify effect
+	
+	LAF 2da_read STR_VAR file=enginest.2da RET_ARRAY enginest_array=array END
+	OUTER_SET petrify_strref=$enginest_array(STRREF_DAMAGE_STONE_DEAD STRREF)
+	LAF resolve_statdesc INT_VAR strref=petrify_strref STR_VAR bam=SPWI604C RET petrify_icon=stat_num END
+	
+	spl.make[dw#p1pet]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=58 s_target=2 s_timing=1} //dispel
+		m.ab_fx.add{s_opcode=328 s_target=2 s_timing=1 s_parameter2=imprisonment_stat s_special=1} // we can safely double up
+		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=1 s_parameter1=petrify_strref}
+		m.ab_fx.add{s_opcode=142 s_target=2 s_timing=1 s_parameter2=petrify_icon}
+		m.ab_fx.add{s_opcode=165 s_target=2 s_timing=1}  //pause target
+		m.ab_fx.add{s_opcode=365 s_target=2 s_timing=1 s_special=1} // make unselectable
+		m.ab_fx.add{s_opcode=38 s_target=2 s_timing=1 s_special=1} // make silent
+		m.ab_fx.add{s_opcode=7 s_target=2 s_parameter1=72 s_parameter2=255 s_timing=1}
+		m.ab_fx.add{s_opcode=7 s_target=2 s_parameter1=72 s_parameter2=entry_index s_timing=1|number:i=7}//
+		m.ab_fx.add{s_opcode=12 s_target=2 s_timing=1 s_parameter1=1 s_parameter2a=1 s_parameter2b=64} // 1 hp
+		m.ab_fx.add{s_opcode=100 s_target=2 s_timing=1 s_parameter1=255 s_parameter2=2} // protection from enemies
+		m.ab_fx.add{s_opcode=101 s_target=2 s_timing=1 s_parameter2=12} // protection from damage
+		m.ab_fx.add{s_opcode=326 s_timing=4 s_duration=end_timer  s_target=2 s_resource:=dw#p1ime} // restored
+	]
+
+	// make effect to remove player 1 petrify effect
+	
+	spl.make[dw#p1ptr]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#p1pet} 
+	]
+	
+	// make non-player1 petrify effect
+	
+	spl.make[dw#gnpet]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_target=2 s_timing=1 s_opcode=134}
+	]
+
+	// make player1 version of Imprisonment
+	
+	spl.make[dw#p1imp]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=213 s_parameter2=1 s_duration=end_timer s_target=2 s_target=2 s_special=79}
+		m.ab_fx.add{s_opcode=326 s_timing=4 s_duration=end_timer  s_target=2 s_resource:=dw#p1ime}
+	]
+	
+	// make non-player1 imprisonment effect effect
+	
+	spl.make[dw#gnimp]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_target=2 s_timing=1 s_opcode=211}
+	]
+
+	// make spell to encode effects (cosmetics and slayer change) of timed return
+	
+	spl.make[dw#p1ime]
+	[
+		slayer_time=12
+		m.ab.add{s_projectile=255}
+		m.ab_fx.add{s_opcode=141 s_parameter2=6 s_timing=1} // cosmetics (borrowed from Slayer Change End)
+		m.ab_fx.add{s_opcode=174 s_timing=1 s_resource:=eff_m61}
+		m.ab_fx.add{s_opcode=215 s_target=2 s_timing=1 s_resource:=icfirsdi}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#p1imp} // clear out original spells 
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#p1pet} // clear out original spells 		
+		m.ab_fx.add{s_opcode=330 s_timing=1 s_target=2 s_parameter1=RESOLVE_STR_REF(@23007)}
+		m.ab_fx.add{s_opcode=139 s_timing=1 s_target=2 s_parameter1=35553} // freedom
+		IF {slayer_change_on_imprisonment AND is_bg2}
+		{{
+			m.ab_fx.add{s_opcode=318 s_timing=0 s_duration=1 s_parameter1=slayer_stat s_parameter2=111 s_resource:=%sfo_filename%}
+			m.ab_fx.add{s_opcode=111 s_timing=0 s_duration=slayer_time s_target=2 s_resource:=SLAYERW2}
+			m.ab_fx.add{s_opcode=3 s_timing=0 s_duration=slayer_time s_parameter2=1 s_target=2}
+			m.ab_fx.add{s_opcode=141 s_parameter2=6 s_timing=4 s_duration=slayer_time} // cosmetics (borrowed from Slayer Change End)
+			m.ab_fx.add{s_opcode=174 s_timing=4 s_duration=slayer_time s_resource:=eff_m61}
+			m.ab_fx.add{s_opcode=215 s_target=2 s_timing=4 s_duration=slayer_time s_resource:=icfirsdi}
+			m.ab_fx.add{s_opcode=321 s_timing=4 s_duration=slayer_time s_target=2 s_resource:=%sfo_filename%}
+		}}
+	]
+	
+	// make spell purely to remove the effects of player imprisonment (difficult to wrap it directly into Freedom
+	// since opcodes don't stick on imprisoned creatures)
+	
+	spl.make[dw#p1imr]
+	[
+		m.ab.add{s_target=5}
+		m.ab_fx.add{s_target=3 s_timing=1 s_opcode=321 s_resource:=dw#p1imp}
+	]
+	
+
+	ACTION_IF (is_bg2 && slayer_change_on_imprisonment) BEGIN
+
+		// build slayer-label spell
+
+		spl.make[dw#lbsly]
+		[
+			m.ab.add{}
+			m.ab_fx.add{s_opcode=321 s_target=2 s_timing=9 s_resource:=%sfo_filename%}
+			m.ab_fx.add{s_opcode=328 s_target=2 s_timing=9 s_parameter2=slayer_stat s_special=1}	
+		]
+		
+		// apply the spell
+		
+		// Spellhold - initial change
+		COPY_EXISTING "ar1514.bcs" override
+			DECOMPILE_AND_PATCH BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH 
+				"ActionOverride(Player1,ReallyForceSpell(Myself,SLAYER_ENEMY))"
+				~ApplySpellRES("dw#lbsly",Player1)ActionOverride(Player1,ReallyForceSpell(Myself,SLAYER_ENEMY))~		
+			END
+		
+		// player dialog - discretionary change (if you start in ToB)
+		
+		COPY_EXISTING "player1.dlg" override
+			DECOMPILE_AND_PATCH BEGIN
+				REPLACE_TEXTUALLY EXACT_MATCH
+					~ApplySpell(Player1,SLAYER_CHANGE_TWO)~
+					~ApplySpellRES("dw#lbsly",Player1)ApplySpell(Player1,SLAYER_CHANGE_TWO)~
+			END
+	
+	
+	END
+	
+	// build imprisonment-label spell
+	
+	spl.make[dw#lbimp]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=328 s_target=2 s_timing=1 s_parameter2=imprisonment_stat s_special=1}	
+	]
+	
+	//make remover
+	
+	spl.make[dw#lbimr]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#lbimp}
+	]
+
+
+	// get data from cre files
+
+	COPY_EXISTING_REGEXP - ".*\.cre" nowhere
+		READ_ASCII 0x280 dv (0x20) NULL
+		TO_LOWER dv
+		PATCH_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN//&& !VARIABLE_IS_SET $color_array("%dv%" "metal") BEGIN
+			PHP_EACH color_offset_map AS area=>offset BEGIN
+				SET $color_array("%dv%" "%area%")=BYTE_AT offset
+			END
+			READ_ASCII 0x248 override_script
+			SPRINT $override_scripts("%dv%" "%override_script%") ""
+		END 
+	BUT_ONLY
+	
+	OUTER_SPRINT $override_scripts("null" dplayer2) ""
+	OUTER_SPRINT $override_scripts("null" dplayer3) ""
+	
+	// build baseline spell
+	
+	CREATE spl dwres0
+		LPF add_basic_spell_ability END
+		LPF ALTER_SPELL_HEADER INT_VAR target=3 END
+		index=0
+		PHP_EACH color_offset_map AS color=>discard BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=7 target=2 timing=9 END
+		END
+		//LPF ADD_SPELL_EFFECT INT_VAR opcode=101 target=2 timing=9 parameter2=32 END
+
+	// build per-character ones
+	
+	OUTER_SET spell_index=0
+	ACTION_PHP_EACH sfo_joinable_dvs AS dv=>discard BEGIN
+		ACTION_IF VARIABLE_IS_SET $color_array("%dv%" metal) BEGIN
+			COPY_EXISTING "dwres0.spl" "override/dwres%spell_index%.spl"
+				fx_ind=0
+				PHP_EACH color_offset_map AS color=>discard2 BEGIN
+					color_here=$color_array("%dv%" "%color%")
+					WRITE_LONG (0x4+0x9a+0x30*fx_ind) color_here
+					WRITE_LONG (0x8+0x9a+0x30*fx_ind) fx_ind
+					++fx_ind
+				END
+				SPRINT $res_array("%dv%") "%DEST_RES%"	
+				++ spell_index
+		END
+	END
+	
+
+	
+	// append local scripts
+	
+	ACTION_PHP_EACH override_scripts AS k=>discard BEGIN
+		OUTER_SPRINT deathvar "%k_0%"
+		OUTER_SPRINT script "%k_1%"
+		ACTION_IF FILE_EXISTS_IN_GAME "%script%.bcs" BEGIN
+			OUTER_SPRINT res_spell $res_array("%deathvar%")
+			LAF extend INT_VAR inline=1 STR_VAR script top=local_add END
+		END
+	END
+
+	// alter Raise Dead to be blocked by massive damage
+	
+	
+	CREATE spl "dw#radm"
+		LPF add_basic_spell_ability END
+		LPF ALTER_SPELL_HEADER INT_VAR target=3 END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=139 target=9 parameter1=RESOLVE_STR_REF (@23001) timing=1 END
+
+	
+	spl.edit[%CLERIC_RAISE_DEAD%|edit_strrefs_in_place:i=1]
+	[
+		new:=@23000
+		m_description:="%m_description%%WNL%%WNL%%new%"
+		// this must be the first block, and must be a 324, in order that stores block it
+		m.ab_fx.add{s_opcode=324 s_target=2 s_timing=0 s_duration=1 s_parameter1=massive_damage_state s_parameter2=138 s_resource:="%sfo_filename%"|insert_point:i=0}
+		// but we can change higher levels of the spell, since temples cast at L1
+		m.ab.clone{s_level=2}
+		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=massive_damage_state s_parameter2=138 s_resource:="dw#radm"|insert_point:i=0 match_parent="p_level=2"}
+		m.ab_fx.alter{s_opcode=318|match="p_level=2 AND s_opcode=324 AND s_parameter1=massive_damage_state"}
+	]
+
+	// versions of Raise Dead not cast by temples
+
+	spl.edit[%CLERIC_RECALL_SPIRIT% %CLERIC_MASS_RAISE_DEAD% SPJA01|edit_strrefs_in_place:i=1]
+	[
+		new:=@23000
+		m_description:="%m_description%%WNL%%WNL%%new%"
+		m.ab_fx.add{s_opcode=318 s_target=2 s_timing=0 s_duration=1 s_parameter1=massive_damage_state s_parameter2=138 s_resource:="%sfo_filename%"|insert_point:i=0}
+		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=massive_damage_state s_parameter2=138 s_resource:="dw#radm"|insert_point:i=0}
+	]
+	
+	ACTION_IF diamond_required BEGIN
+		LAF require_diamonds END
+	END
+	
+	// update Resurrection description; resurrection cannot be used in combat
+	
+	
+	spl.edit[%CLERIC_RESURRECTION% BHAAL4A|edit_strrefs_in_place:i=1]
+	[
+		new:=@23002
+		m_description:="%m_description%%WNL%%WNL%%new%"
+		m_non_combat=1
+		IF {diamond_required}
+		{{
+			m.fx.add{s_opcode=177 s_target=1 s_power=9 s_parameter2=3 s_duration=60 s_resource:="dw#diamo"}
+			extra:=@23004
+			m_description:="%m_description%%WNL%%WNL%%extra%"
+			
+		}}
+	]
+	
+	// alter all raise dead effects to restore animation;
+	// collect spells/items that use Freedom, Petrify, or Cure Petrify
+
+	COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
+		PATCH_IF "%SOURCE_EXT%" STR_EQ itm BEGIN
+			GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+		END ELSE BEGIN
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS		
+		END
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				READ_SHORT fx_off opcode_here
+				PATCH_IF opcode_here = 32 BEGIN
+					WRITE_LONG (fx_off+0x8) 1 
+				END ELSE
+				PATCH_MATCH "%opcode_here%" WITH
+				212 134 43 BEGIN
+					SET $"uses_%opcode_here%_opcode"("%SOURCE_FILE%")=1
+				END 
+				DEFAULT
+				END
+			END
+		END
+	BUT_ONLY
+	
+	// imprisonment needs to apply player 1 version
+	
+	ACTION_FOR_EACH file IN "%WIZARD_IMPRISONMENT%.spl" "%DEMILICH_TRAP_SOUL%.spl" BEGIN
+		COPY_EXISTING "%file%" override
+				LPF CLONE_EFFECT INT_VAR match_opcode=211 opcode=326 parameter1=charname_stat parameter2=110 STR_VAR resource=dw#p1imp END
+				LPF ALTER_EFFECT INT_VAR match_opcode=211 opcode=326 parameter1=charname_stat parameter2=111 STR_VAR resource=dw#gnimp END
+		BUT_ONLY	
+	END
+
+	// freedom needs to remove player1 imprisonment
+	
+	ACTION_PHP_EACH uses_212_opcode AS file=>discard BEGIN
+		ACTION_IF !("%file%" STR_EQ "dw#p1imp.spl") BEGIN
+			COPY_EXISTING "%file%" override
+				LPF CLONE_EFFECT INT_VAR match_opcode=212 opcode=146 parameter2=1 timing=1 STR_VAR resource="dw#p1imr" insert=below END
+			BUT_ONLY
+		END
+	END
+	
+	// petrify needs to apply player 1 version
+	
+	ACTION_PHP_EACH uses_134_opcode AS file=>discard BEGIN
+		ACTION_IF !("%file%" STR_EQ "dw#gnpet.spl") BEGIN
+			COPY_EXISTING "%file%" override
+				LPF CLONE_EFFECT INT_VAR match_opcode=134 opcode=326 parameter1=charname_stat parameter2=110 STR_VAR resource=dw#p1pet END
+				LPF ALTER_EFFECT INT_VAR match_opcode=134 opcode=326 parameter1=charname_stat parameter2=111 STR_VAR resource=dw#gnpet END
+		END
+	END
+
+	// cure petrify needs to remove player 1 version
+	
+	ACTION_PHP_EACH uses_43_opcode AS file=>discard BEGIN
+		COPY_EXISTING "%file%" override
+			LPF CLONE_EFFECT INT_VAR match_opcode=43 opcode=326 timing=1 duration=0 parameter1=charname_stat parameter2=110 STR_VAR resource=dw#p1ptr END
+	END
+	
+	
+	// append temple descriptions
+	
+	LAF 2da_read STR_VAR file=speldesc.2da RET_ARRAY speldesc_array=array END
+	OUTER_SET raise_desc=$speldesc_array("SPPR504" "DESCRIPTION")
+	OUTER_SET res_desc=$speldesc_array("SPPR712" "DESCRIPTION")
+	STRING_SET_EVALUATE raise_desc @23005
+	STRING_SET_EVALUATE res_desc @23006
+	
+	//adjust resurrection rod parameters
+	
+	itm.edit[rods03]
+	[
+		m_price=rod_max_charges*cost_per_charge
+		m.ab.alter{s_number_charges=rod_max_charges}
+	]
+	
+	// cycle through stores: increase resurrection price, decrease rod of resurrection charges
+	
+	COPY_EXISTING_REGEXP - ".*\.sto" nowhere
+		PATCH_IF INDEX_BUFFER (SPPR712) >=0 BEGIN
+			SPRINT $res_stores("%SOURCE_RES%") ""
+		END
+		PATCH_IF INDEX_BUFFER (RODS03)>=0 BEGIN
+			SPRINT $rod_stores("%SOURCE_RES%") ""
+		END
+	BUT_ONLY
+	
+	ACTION_PHP_EACH res_stores AS store=>discard BEGIN
+		sto.edit[%store%]
+		[
+			m.cure.alter{s_price += cost_uptick|match="~%s_resref%~ STR_EQ ~sppr712~"}
+		]		
+	END
+	
+	ACTION_PHP_EACH rod_stores AS store=>discard BEGIN
+		sto.edit[%store%]
+		[
+			m.item.alter{s_charges_1=rod_max_charges |match="~%s_resref%~ STR_EQ ~rods03~"}
+		]		
+	END
+	
+	// cycle through areas: decrease rod charges
+	
+	COPY_EXISTING_REGEXP - ".*\.are" override
+		PATCH_IF INDEX_BUFFER (RODS03)>=0 BEGIN
+			SPRINT $res_areas("%SOURCE_RES%") ""
+		END
+	BUT_ONLY
+	
+	ACTION_PHP_EACH res_areas AS area=>discard BEGIN
+		are.edit[%area%]
+		[
+			m.container_item.alter{s_charges_1=rod_max_charges|match="~%s_resref%~ STR_EQ ~rods03~"}
+		]
+	END
+	
+	// cycle through creatures likewise
+
+	
+	COPY_EXISTING_REGEXP - ".*\.cre" override
+		PATCH_IF INDEX_BUFFER (RODS03)>=0 BEGIN
+			SPRINT $res_creatures("%SOURCE_RES%") ""
+		END
+	BUT_ONLY
+	
+	ACTION_PHP_EACH res_creatures AS creature=>discard BEGIN
+		cre.edit[%creature%]
+		[
+			m.item.alter{s_charges1=rod_max_charges|match="~%s_resref%~ STR_EQ ~rods03~"}
+		]
+	END
+	
+	// on BG2, make sure sacrificing a companion in Selfishness phase is still a perma-kill
+	
+	ACTION_IF is_bg2 BEGIN
+	
+		
+	
+	END
+	
+	
+END
+
+DEFINE_ACTION_FUNCTION require_diamonds BEGIN
+
+   // the invisible creature
+   
+   COPY "%MOD_FOLDER%/initial/cre/dw#cloud.cre" "override/dw#diamo.cre"
+      REPLACE_TEXTUALLY "dw#cldki" "dw#diamo" (8)
+
+	// its script
+	
+	COMPILE ".../stratagems-inline/dw#diamo.baf" EVALUATE_BUFFER
+
+   // the effect that summons it
+
+	eff.make[dw#diamo]
+	[
+		m_opcode=67
+		m_target=1
+		m_power=9
+		m_parameter1=0
+		m_timing=1
+		m_duration=6
+		m_resource2:=NONE
+		m_resource:="dw#diamo"
+	]
+
+END
+
+
+<<<<<<<<.../stratagems-inline/local_add.baf
+
+IF
+	!Global("dw_is_in_party","LOCALS",1)
+	InPartyAllowDead(Myself)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party","LOCALS",1)
+		Continue()
+END	
+
+
+IF
+	Global("dw_is_in_party","LOCALS",1)
+	!InPartyAllowDead(Myself)
+	!CheckSpellState(Myself,DW_WAS_IMPRISONED)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party","LOCALS",0)
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party","LOCALS",1)
+	!InPartyAllowDead(Myself)
+	CheckSpellState(Myself,DW_WAS_IMPRISONED)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#lbimr",Myself)
+		JoinParty()
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party","LOCALS",1)
+	!InPartyAllowDead(Myself)
+	StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party","LOCALS",2)
+		JoinParty()
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party","LOCALS",2)
+	InParty(Myself)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party","LOCALS",1)
+		ReallyForceSpellRES("%res_spell%",Myself)
+		Continue()
+END
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/local_add_previous.baf
+
+IF
+	!Global("dw_is_in_party_%deathvar%","GLOBAL",1)
+	InPartyAllowDead(Myself)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party_%deathvar%","GLOBAL",1)
+		Continue()
+END	
+
+
+IF
+	Global("dw_is_in_party_%deathvar%","GLOBAL",1)
+	!InPartyAllowDead(Myself)
+	!CheckSpellState(Myself,DW_WAS_IMPRISONED)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party_%deathvar%","GLOBAL",0)
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party_%deathvar%","GLOBAL",1)
+	!InPartyAllowDead(Myself)
+	CheckSpellState(Myself,DW_WAS_IMPRISONED)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#lbimr",Myself)
+		JoinParty()
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party_%deathvar%","GLOBAL",1)
+	!InPartyAllowDead(Myself)
+	StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party_%deathvar%","GLOBAL",2)
+		JoinParty()
+		Continue()
+END	
+
+IF
+	Global("dw_is_in_party_%deathvar%","GLOBAL",2)
+	InParty(Myself)
+	!StateCheck(Myself,STATE_PERMANENT_DEATH)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_is_in_party_%deathvar%","GLOBAL",1)
+		ReallyForceSpellRES("%res_spell%",Myself)
+		Continue()
+END
+
+>>>>>>>>
+
+
+
+<<<<<<<<.../stratagems-inline/global_add.baf
+%global_add%
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/dw#diamo.baf
+IF
+	PartyHasItem("misc42") // diamond
+THEN
+	RESPONSE #100
+		TakePartyItem("misc42")
+		DestroySelf()
+END
+
+IF
+	!PartyHasItem("misc42") // diamond
+THEN
+	RESPONSE #100
+		ActionOverride(LastSummonerOf(Myself),ReallyForceSpell(Myself,DO_NOTHING))
+		DisplayString(LastSummonerOf(Myself),@23003)
+		DestroySelf()
+END
+
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/labeled_player1.baf
+IF
+	Global("dw_labeled_player1","GLOBAL",0)
+THEN
+	RESPONSE #100
+		SetGlobal("dw_labeled_player1","GLOBAL",1)
+		ApplySpellRES("dw#lbpl1",Player1)
+		Continue()
+END
+
+IF
+	CheckSpellState(Player1,DW_WAS_IMPRISONED) // this is actually a petrify check
+	OR(2)
+		!InParty(Player2)
+		StateCheck(Player2,STATE_HELPLESS)
+	OR(2)
+		!InParty(Player3)
+		StateCheck(Player3,STATE_HELPLESS)
+	OR(2)
+		!InParty(Player4)
+		StateCheck(Player4,STATE_HELPLESS)
+	OR(2)
+		!InParty(Player5)
+		StateCheck(Player5,STATE_HELPLESS)
+	OR(2)
+		!InParty(Player6)
+		StateCheck(Player6,STATE_HELPLESS)
+THEN
+	RESPONSE #100
+		GameOver(-1)
+END
+
+>>>>>>>>
+

@@ -1,51 +1,11 @@
 INCLUDE ~%MOD_FOLDER%/lib/ai_wrap.tph~
-DEFINE_ACTION_FUNCTION demilich BEGIN
+DEFINE_ACTION_FUNCTION demilich STR_VAR version=0 BEGIN
 
+	// shared features
+	
        // modify pro/undead scrolls
        
        LAF run STR_VAR file=undeadscroll locbase=tactical_bg2 tra=tactical_bg2 END
-
-       // CRE files (includes saves of 2)
-
-       MAKE_PATCH
-          class=>MAGE
-          ac_natural=>~-6~
-          ac_effective=>~-6~
-          resist_magic=>100
-          add_effect_inline=>~opcode=>292 parameter2=>1~ // immunity to backstab
-          add_effect_inline'=>~opcode=>189 parameter1=>4~ // increased casting speed
-          enforce_mage=>~null~
-		  save_vs_death=>2
-		  save_vs_poly=>2
-		  save_vs_breath=>2
-		  save_vs_death=>2
-		  save_vs_spell=>2
-       END
-       LAF edit_creature STR_VAR creature=hldemi edits=patch_data editstring="strip_script=>demilich insert_script_high=>dw#kanga" END
-       LAF edit_creature STR_VAR creature=demilich edits=patch_data editstring="strip_script=>dlich01" END
-
-		// demiliches are immune to the Mace of Disruption
-		
-		COPY_EXISTING demilich.itm override
-			LPF ADD_ITEM_EQEFFECT INT_VAR target=1 timing=2 opcode=267 parameter1=10554 END
-			LPF ADD_ITEM_EQEFFECT INT_VAR target=1 timing=2 opcode=101 parameter2=13 END
-		BUT_ONLY
-
-
-       // demiliches lose immunity to spells above L5
-
-       LAF edit_item STR_VAR item=demilich editstring=~delete_effect_global=>parameter1>5~ END
-
-       // if SR isn't installed, modify demilich imprisonment to grant a saving throw at -5
-       
-       ACTION_IF !demivrgvs BEGIN
-          MAKE_PATCH
-             say_name=>2700
-             patch_effect_inline=>~save_vs_death=>1 savebonus=>"-5"~
-          END
-          LAF edit_spell STR_VAR spell=DEMILICH_TRAP_SOUL edits=patch_data END
-
-       END
 
        // scripts
        
@@ -86,4 +46,131 @@ DEFINE_ACTION_FUNCTION demilich BEGIN
      ACTION_FOR_EACH area IN ar3022 ar3027 BEGIN
         LAF extend_area_script STR_VAR area bottom=~%area%~ location=resource END
      END
+	 
+	ACTION_IF "%version%" STR_EQ "new" BEGIN
+	
+	// new version
+ 
+
+		// cre files
+		
+		cre.edit[hldemi demilich]
+		[
+			m_class:=MAGE
+			m_ac="-6"
+			m_resist_slashing=100
+			m_resist_piercing=100
+			m_resist_missile=100
+			m_resist_crushing=95
+			m_resist_fire=100
+			m_resist_cold=100
+			m_resist_magic_fire=100
+			m_resist_magic_cold=100
+			m_resist_electricity=100
+			m_resist_acid=100
+			m.fx.add{s_opcode=292 s_parameter2=1} //immunity to backstab
+			m.fx.add{s_opcode=189 s_parameter2=4}  // increased casting speed
+			m_saves:="2,2,2,2,2"
+		]
+		
+		ACTION_FOR_EACH resref IN hldemi demilich BEGIN
+			COPY_EXISTING "%resref%.cre" override
+				LPF enforce_mage STR_VAR arguments="skip_defensive_spells" END
+		END
+		
+		// imprisonment should be called 'trap the soul' and should grant a saving throw at -8 (skip if SR installed).
+
+       
+       ACTION_IF !demivrgvs BEGIN
+	   
+		spl.edit[%DEMILICH_TRAP_SOUL%]
+		[
+			m_name:=@2700
+			m.ab_fx.add{s_opcode=326 s_power=10 s_timing=4 s_duration=0 s_resource:="dw#dmldt"}
+			m.ab_fx.add{s_opcode=174 s_power=10 s_target=2 s_timing=1 s_resource:=eff_m43}
+			m.ab_fx.add{s_opcode=215 s_power=10 s_target=2 s_timing=1 s_resource:=spdusty2}
+		//	m.ab_fx.add{s_opcode=139 s_power=10 s_target=2 s_timing=1 s_parameter1=RESOLVE_STR_REF (@2900)}
+			m.ab_fx.alter{s_save_vs_poison=1 s_savebonus="-8"}
+		]
+		
+		spl.make[dw#dmldt]
+		[
+			m.ab.add{}
+			m.ab_fx.add{s_opcode=238 s_target=2 s_parameter2=2 s_timing=1}
+		]
+		
+	   END
+	   
+	   // disruption weapons do extra damage (but don't disrupt)
+	   // Holy Smite/Holy Word, likewise
+	   
+	   spl.make[dw#dmexd]
+	   [
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=12 s_target=2 s_power=10 s_dicenumber=3 s_dicesize=6 s_parameter2b=64 s_timing=1}
+	   ]
+		
+		itm.edit[blun12 blun25 deva ohbdeva|allow_missing:i=1]
+		[
+			m.ab_fx.add{s_opcode=318 s_target=2 s_duration=1 s_parameter1=IDS_OF_SYMBOL (race DEMILICH) s_parameter2=104 s_resource:=%sfo_filemame%|insert_point:i=0}
+			m.ab_fx.add{s_opcode=326 s_target=2 s_power=10 s_timing=1 s_parameter1=IDS_OF_SYMBOL (race DEMILICH) s_parameter2=104 s_resource:=dw#dmexd|insert_point:i=0}
+		]
+		
+		spl.edit[%CLERIC_HOLY_WORD% %CLERIC_HOLY_SMITE%]
+		[
+			m.ab_fx.add{s_opcode=326 s_target=2 s_power=10 s_timing=1 s_parameter1=IDS_OF_SYMBOL (race DEMILICH) s_parameter2=104 s_resource:=dw#dmexd|insert_point:i=0}
+		]
+		
+	
+	END ELSE BEGIN
+	
+	// old version
+
+
+       // CRE files (includes saves of 2)
+
+       MAKE_PATCH
+          class=>MAGE
+          ac_natural=>~-6~
+          ac_effective=>~-6~
+          resist_magic=>100
+          add_effect_inline=>~opcode=>292 parameter2=>1~ // immunity to backstab
+          add_effect_inline'=>~opcode=>189 parameter1=>4~ // increased casting speed
+          enforce_mage=>~null~
+		  save_vs_death=>2
+		  save_vs_poly=>2
+		  save_vs_breath=>2
+		  save_vs_death=>2
+		  save_vs_spell=>2
+       END
+       LAF edit_creature STR_VAR creature=hldemi edits=patch_data editstring="strip_script=>demilich insert_script_high=>dw#kanga" END
+       LAF edit_creature STR_VAR creature=demilich edits=patch_data editstring="strip_script=>dlich01" END	
+
+
+		// demiliches are immune to the Mace of Disruption
+		
+		COPY_EXISTING demilich.itm override
+			LPF ADD_ITEM_EQEFFECT INT_VAR target=1 timing=2 opcode=267 parameter1=10554 END
+			LPF ADD_ITEM_EQEFFECT INT_VAR target=1 timing=2 opcode=101 parameter2=13 END
+		BUT_ONLY
+
+
+       // demiliches lose immunity to spells above L5
+
+       LAF edit_item STR_VAR item=demilich editstring=~delete_effect_global=>"opcode=102 and parameter1>5"~ END
+
+       // if SR isn't installed, modify demilich imprisonment to grant a saving throw at -5
+       
+       ACTION_IF !demivrgvs BEGIN
+          MAKE_PATCH
+             say_name=>2700
+             patch_effect_inline=>~save_vs_death=>1 savebonus=>"-5"~
+          END
+          LAF edit_spell STR_VAR spell=DEMILICH_TRAP_SOUL edits=patch_data END
+
+       END
+
+
+	 
+	END
 END

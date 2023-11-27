@@ -1,0 +1,162 @@
+DEFINE_ACTION_FUNCTION innate_triggers BEGIN
+
+	// define the spells to change (this also sets an icon for those spells where we change the icon)
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_trigger_array BEGIN
+		WIZARD_CONTINGENCY=>null
+		WIZARD_CHAIN_CONTINGENCY=>null
+		WIZARD_MINOR_SEQUENCER=>dw#msicb
+		WIZARD_SPELL_SEQUENCER=>dw#ssicb
+		WIZARD_SPELL_TRIGGER=>dw#sticb
+	END
+
+   // load some data
+
+	LAM data_spells_by_level
+
+   // for Contingency, make a shell spell that casts the original 
+   // (this keeps the original as a Wizard spell, which avoids screwyness for its caster
+   // level with MC/DC characters)  
+   
+   // We need to name the shell, make it innate and remove the name on the original
+
+	spl.copy[%WIZARD_CONTINGENCY%=>dw#cnss]
+	[
+		m_non_combat=1
+		m_type:=Innate
+		m.ab.delete{s_level>1}
+		m.ab_fx.delete{}
+		m.ab.alter{s_casting_time=0 s_location=4}
+		m.ab_fx.add{s_opcode=146 s_target=2 s_parameter2=0 s_timing=1 s_resource:="%WIZARD_CONTINGENCY%"}		
+	]
+	COPY_EXISTING "%WIZARD_CONTINGENCY%.spl" override
+		WRITE_LONG 0x8 "-1"
+
+	// make rest innate; add icons if necessary
+	// make CC innate
+	
+	spl.edit[%WIZARD_CHAIN_CONTINGENCY%]
+	[
+		m_non_combat=1
+		m_type:=Innate
+		m.ab.alter{s_location=4}
+	]
+
+   // rename sequencers; grant them new icons; make them innate
+
+    OUTER_SPRINT prepare_string @1004
+    ACTION_FOR_EACH spell IN SPELL_SEQUENCER SPELL_TRIGGER MINOR_SEQUENCER BEGIN
+	   OUTER_SPRINT bam $spell_trigger_array("WIZARD_%spell%")
+	   spl.edit[%WIZARD_%spell%%|edit_strrefs_in_place:i=0]
+	   [
+			m_non_combat=1
+			m_name:="%prepare_string% %m_name%"
+			m_type:=Innate
+			m.ab.alter{s_location=4 s_icon:="%bam%"}
+	   ]
+	   LAF install STR_VAR file="%bam%.bam" location=resource END
+	END
+	   
+   // make applicators for each spell
+   
+   OUTER_SET desc_ind=0
+   OUTER_SPRINT gain_abil_string @1005
+   OUTER_SPRINT string_bard ""
+   OUTER_SPRINT string_mage ""
+   ACTION_PHP_EACH spell_trigger_array AS spell=>discard BEGIN
+		OUTER_SET ++desc_ind
+		ACTION_IF "%spell%" STR_EQ "WIZARD_CONTINGENCY" BEGIN
+			OUTER_SPRINT payload "dw#cnss"
+		END ELSE BEGIN
+			OUTER_SPRINT payload "%%spell%%"
+		END
+		COPY_EXISTING - "%payload%.spl" nowhere
+			READ_STRREF 0x8 name
+		OUTER_SPRINT applicator "dwsqds%desc_ind%"
+		OUTER_SPRINT wrap "dwsqwr%desc_ind%"
+		spl.make[%applicator%]
+		[
+			m_name:="%gain_abil_string%: %name%"
+			m.ab.add{}
+			m.ab_fx.add{s_opcode=172 s_target=2 s_timing=1 s_resource:="%payload%"}
+			m.ab_fx.add{s_opcode=171 s_target=2 s_timing=1 s_resource:="%payload%"}
+		]
+		eff.make[%applicator%]
+		[
+			m_opcode=146
+			m_target=2
+			m_timing=1
+			m_parameter2=1
+			m_resource:="%applicator%"
+		]
+		spl.make[%wrap%]
+		[
+			m.ab.add{}
+			PATCH_FOR_EACH class IN MAGE CLERIC_MAGE FIGHTER_MAGE MAGE_THIEF FIGHTER_MAGE_CLERIC FIGHTER_MAGE_THIEF BARD BEGIN
+				m.ab_fx.add{s_opcode=177 s_parameter1=IDS_OF_SYMBOL (class "%class%") s_target=2 s_parameter2=5 s_timing=1 s_resource:="%applicator%"}
+			END
+		]
+		ACTION_FOR_EACH class IN mage bard BEGIN
+			OUTER_SET spell_level="%spell%_LEVEL"
+			OUTER_SET level="sfo_spell_level_sl_to_cl_%class%_%spell_level%"
+			ACTION_IF level<99 BEGIN
+			ACTION_IF "%string_%class%%" STR_CMP "" BEGIN
+				OUTER_SPRINT  "string_%class%" EVAL "%string_%class%%,"
+			END 
+			OUTER_SPRINT  "string_%class%" EVAL "%string_%class%%%wrap% %level%"
+			END
+		END
+   END
+   
+   // apply the wraps to the CLAB files
+   
+   kit.edit_all[mage]
+   [
+		k.kit_apply_powers{%string_mage%}
+   ]
+    kit.edit_all[bard]
+   [
+		k.kit_apply_powers{%string_bard%}
+   ]
+   
+   	// hide the spells
+	
+	LAF spl_hide_spells STR_VAR spell_array=spell_trigger_array END
+	// ToF compatibility
+	
+	
+	LAF 2da_read STR_VAR file=luabbr.2da RET_ARRAY luabbr_array=array END
+	ACTION_PHP_EACH luabbr_array AS k=>lua BEGIN
+		COPY_EXISTING "lu%lua%.2da" override
+			REPLACE_TEXTUALLY "%WIZARD_CONTINGENCY%" "dw#cnss"
+		BUT_ONLY
+		IF_EXISTS
+	END
+
+	// Item Upgrade compatibility
+
+	LAF cd_item_upgrade_compat END
+
+END  
+ // There is no real reason for this to be a function, but there is a principle at stake - DW
+ 
+DEFINE_ACTION_FUNCTION cd_item_upgrade_compat BEGIN
+
+	// this violates every ethos of David's being: straight tp2 code
+	// I'm sure it will be rewritten to pass through 18 sfo functions across 6 different libraries
+	// love ya David :)
+	ACTION_IF (((MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~0~) OR    // soa item upgrades, wes-style
+				(MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~1~) OR    // tob item upgrades, wes-style
+				(MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~10~) OR   // soa item upgrades, bg2-style
+				(MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~11~)) AND // tob item upgrades, bg2-style
+				(FILE_EXISTS ~itemupgrade/bcs/scs_compat.baf~)) THEN BEGIN  // sanity check in case they downloaded an old IU 
+
+	  ACTION_FOR_EACH area IN ar0334 ar4500 BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME ~%area%.are~ BEGIN
+		  EXTEND_BOTTOM ~%area%.bcs~ ~itemupgrade/bcs/scs_compat.baf~ // adds an area var for crom and cespy to check in-game (crom has no script)
+		END
+	  END
+
+	END // end of ACTION_IF
+
+END // end of function

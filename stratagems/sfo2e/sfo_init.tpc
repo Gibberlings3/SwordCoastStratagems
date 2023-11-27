@@ -2,6 +2,9 @@
 ///  LIVE CODE!
 //////////////////////////////////////////////
 
+ACTION_IF !VARIABLE_IS_SET sfo_library_path BEGIN
+	OUTER_SPRINT sfo_library_path sfo
+END
 
 //////////////////////////////////////////////////////////////////////////
 // include all libraries (extremely fast so we may as well do it for every
@@ -9,8 +12,15 @@
 //////////////////////////////////////////////////////////////////////////
 
 ACTION_TIME sfo_setup_libraries BEGIN
-	ACTION_BASH_FOR "%MOD_FOLDER%/%sfo_library_path%" ".*\.tph" BEGIN
-		INCLUDE "%BASH_FOR_FILESPEC%"
+	ACTION_BASH_FOR "%MOD_FOLDER%/%sfo_library_path%" ".*\.tph$" BEGIN
+		ACTION_TRY
+			INCLUDE "%BASH_FOR_FILESPEC%"
+		WITH DEFAULT
+			PRINT "fatal error installing library %BASH_FOR_FILESPEC%; attempting to give details."
+			VERBOSE
+			INCLUDE "%BASH_FOR_FILESPEC%"
+			ACTION_RERAISE
+		END
 	END
 END
 
@@ -22,37 +32,58 @@ ACTION_TIME sfo_setup_variables BEGIN
 	LAM sfo_setup
 END
 
+//////////////////////////////////////////////////////////////////////////
+// include LUA libraries if present
+//////////////////////////////////////////////////////////////////////////
+
+ACTION_TIME sfo_setup_lua_libraries BEGIN
+	ACTION_IF DIRECTORY_EXISTS "%MOD_FOLDER%/%lua_loc%" BEGIN
+		ACTION_BASH_FOR "%MOD_FOLDER%/%lua_loc%" ".*\.tph" BEGIN
+			INCLUDE "%BASH_FOR_FILESPEC%"
+		END
+	END
+END
+
 ////////////////////////////////////////////////////////////////////////////
 // handle tra files (this is immutable so we only do it once)
+// in SFO we'll do the conversion once per run
 ////////////////////////////////////////////////////////////////////////////
 
 ACTION_TIME sfo_setup_charsets BEGIN
-	LAF sfo_handle_charsets 
-		INT_VAR sfo_from_utf8
-		STR_VAR sfo_tra_path
-				sfo_iconv_path
-		RET sfo_tra_loc
+	ACTION_IF VARIABLE_IS_SET "LANGUAGE" && !VARIABLE_IS_SET sfo_charset_wrapper_run BEGIN
+		OUTER_SET sfo_charset_wrapper_run=1
+		LAF charset_wrapper
+			INT_VAR from_utf8=sfo_from_utf8
+					overwrite=1
+			STR_VAR tra_path="%sfo_tra_path%"
+					setup_tra="NULL_SKIP_ME"
+			RET out_path 
+		END
+		OUTER_SPRINT sfo_tra_loc "%out_path%"
+		OUTER_SPRINT scs_tra_loc "%out_path%"
+		OUTER_SET SFO_charsets_handled=1
 	END
+/* old version
+	
+	ACTION_IF VARIABLE_IS_SET "LANGUAGE" BEGIN
+		LAF sfo_handle_charsets 
+			INT_VAR sfo_from_utf8
+			STR_VAR sfo_tra_path
+					sfo_iconv_path
+			RET sfo_tra_loc scs_tra_loc
+		END
+		OUTER_SET SFO_charsets_handled=1
+	END
+*/ 
 END
+
 
 ////////////////////////////////////////////////////////////////////////////
 // load ini file
 ////////////////////////////////////////////////////////////////////////////
 
 ACTION_TIME sfo_setup_ini BEGIN
-	ACTION_IF !VARIABLE_IS_SET SFO_ini_loaded BEGIN
-		OUTER_SET SFO_ini_loaded=1
-		ACTION_IF !VARIABLE_IS_SET SFO_ini_file BEGIN
-			OUTER_SPRINT SFO_ini_file "%MOD_FOLDER%.ini"
-		END
-		ACTION_IF !VARIABLE_IS_SET SFO_ini_file_location BEGIN
-			OUTER_SPRINT SFO_ini_file_location "%MOD_FOLDER%"
-		END
-		ACTION_IF FILE_EXISTS "%SFO_ini_file_location%/%SFO_ini_file%" BEGIN
-			LAF ini_read INT_VAR flat=1 STR_VAR file="%SFO_ini_file%" path="%SFO_ini_file_location%" RET_ARRAY SFO_reserved_ini_hash=array END
-			LAF ini_read INT_VAR flat=0 STR_VAR file="%SFO_ini_file%" path="%SFO_ini_file_location%" RET_ARRAY SFO_reserved_ini_hash_2d=array END
-		END
-	END	
+	LAM ini_load
 END
 
 
@@ -83,6 +114,7 @@ ACTION_TIME sfo_setup_structs BEGIN
 	LAM vtable_initialize
 END
 
+
 ////////////////////////////////////////////////////////////////////////////
 // load data (this isn't immutable, safest to do it for every component)
 // at the moment we're only loading spell data and NPC dvs
@@ -94,3 +126,6 @@ ACTION_TIME sfo_setup_data BEGIN
 	LAM data_joinable_dvs
 END
 
+///// mark that it's installed
+
+OUTER_SET sfo_is_installed=1

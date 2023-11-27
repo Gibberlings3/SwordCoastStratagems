@@ -9,7 +9,7 @@ BEGIN
       READ_ASCII i check5 (5)
       TO_LOWER check5
       PATCH_MATCH ~%check4%~ WITH  // caster
-         dw#2 dw#1 dw1r dw2r dw3r dw1m dw2m dw3m BEGIN
+         "dw#.*" dw1r dw2r dw3r dw1m dw2m dw3m BEGIN
             WRITE_ASCII i ~~ (8)
          END
          DEFAULT
@@ -28,6 +28,10 @@ BEGIN
    END
  END
 END
+
+
+
+
 DEFINE_PATCH_FUNCTION is_tob_char
       RET value
 BEGIN
@@ -217,8 +221,17 @@ DEFINE_PATCH_FUNCTION determine_stat
    STR_VAR stat=""
    RET value
 BEGIN
-   LPF "CRE_read_%stat%" RET value END
-   PATCH_IF value=9 BEGIN
+	DEFINE_ASSOCIATIVE_ARRAY stat_offset BEGIN
+		str=>0x238
+		int=>0x23a
+		wis=>0x23b
+		dex=>0x23c
+		con=>0x23d
+		cha=>0x23e
+	END
+	TO_LOWER stat
+	offset=$stat_offset("%stat%")
+   PATCH_IF BYTE_AT offset=9 BEGIN
       SET value=RANDOM (lower higher)
    END
 END
@@ -422,24 +435,55 @@ END
 // Update difficulty widget; set difficulty variable
 //////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION define_difficulty 
+DEFINE_DIMORPHIC_FUNCTION define_difficulty 
     STR_VAR type=""
     RET difficulty_variable
 BEGIN
-  ACTION_IF FILE_EXISTS_IN_GAME "dw#diffi.dlg" BEGIN
-    // read the table to get out the actual difficulty variable
-    LAF read_table_entry_external INT_VAR colnum=1 STR_VAR file="difficulty_controls.2da" locbase=lib row="%type%" RET difficulty_variable=value END
-    // check to see if it's been installed in the dlg file already
-    LAF check_label STR_VAR label="dw#%type%_difficulty" RET value END
-    ACTION_IF !value BEGIN
-      // if not, install it, and make a marker to say so
-      LAF make_label STR_VAR label="dw#%type%_difficulty" END
-      LAF swap_text STR_VAR files="dw#diffi.dlg" swaps=~Global("DW_%type%_disable","GLOBAL",99)=>null~ END
-    END
-  END ELSE BEGIN
-     LAF warning STR_VAR warning="Cannot set difficulty variable: difficulty system not initialised" END
-     OUTER_SPRINT difficulty_variable DMWW_placeholder_difficulty
-  END
+
+	// setup
+	LAF check_label STR_VAR label="dw#difficulty_controls_set_up" RET value END
+	ACTION_IF !value BEGIN
+		LAF run STR_VAR file=difficulty_controls locbase=lib tra=difficulty END
+	END
+
+	// main part
+	ACTION_TO_LOWER type
+	// read the table to get the actual value
+	LAF 2da_read STR_VAR file=difficulty_controls.2da locbase=lib location=data case=mixed RET_ARRAY diff_array=array END
+	ACTION_IF VARIABLE_IS_SET $diff_array("%type%" variable) BEGIN
+		OUTER_SPRINT difficulty_variable $diff_array("%type%" variable)
+		// installed already?
+		LAF check_label STR_VAR label="dw#%type%_difficulty" RET value END
+		ACTION_IF !value BEGIN			
+			// activate the setting
+			ACTION_IF FILE_EXISTS_IN_GAME "m_dw_did.lua" BEGIN // new EE system
+				LAF make_label STR_VAR label="dw#%type%_difficulty" END
+				OUTER_SPRINT to_add ""
+				COPY_EXISTING - "m_dw_did.lua" nowhere
+					PATCH_IF INDEX_BUFFER ("dwAnyDifficultyActive")<0 BEGIN
+						SPRINT to_add "dwAnyDifficultyActive=1%WNL%"
+					END
+					REPLACE_EVALUATE "dw_difficulty\[\([0-9]+\)\]={code='%type%'" BEGIN
+						diff_number="%MATCH1%"
+					END
+					""
+					SPRINT to_add "%to_add%dw_difficulty[%diff_number%].active=1"
+				BUT_ONLY
+				APPEND "m_dw_did.lua" "%to_add%"
+			END ELSE
+			ACTION_IF FILE_EXISTS_IN_GAME "dw#diffi.dlg" BEGIN // old dlg-based system
+				LAF make_label STR_VAR label="dw#%type%_difficulty" END
+				LAF swap_text STR_VAR files="dw#diffi.dlg" swaps=~Global("DW_%type%_disable","GLOBAL",99)=>null~ END
+			END ELSE BEGIN
+				LAF warning STR_VAR warning="Cannot set difficulty variable for type %type%: difficulty system not initialised" END
+			END
+		END
+	END ELSE BEGIN
+		LAF warning STR_VAR warning="Cannot set/retrieve difficulty variable for type %type%: not found in difficulty_controls.2da" END
+		OUTER_SPRINT difficulty_variable DMWW_placeholder_difficulty
+	END
+
+
 END
 
 /////////////////////////////////////////////////////////////////////////////

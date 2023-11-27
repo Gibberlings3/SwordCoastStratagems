@@ -1,0 +1,510 @@
+DEFINE_ACTION_FUNCTION deolvynize RET value BEGIN
+
+	ACTION_IF FILE_EXISTS_IN_GAME "M_MEEXSP.lua" BEGIN
+		OUTER_SET value=1
+		PRINT "shifting ClassSpellTool spells to SFO format..."
+		// remove changes to ui.menu
+		LAF deolvynize_menu END
+		// parse M_MEEXSP.lua to get data on added spells
+		LAF deolvynize_parse_spell_list RET exclude_all_priest exclude_all_mage RET_ARRAY olvyn_spells olvyn_array END
+		// remove M_MEEXSP.lua (keep it around for reference and debugging)
+		// this needs to happen before deolvynize_add_spells runs, since it in turn calls deolvynize and we need to avoid a loop
+		ACTION_IF FILE_EXISTS "override/M_MEEXSP.lua" BEGIN
+			MOVE "override/M_MEEXSP.lua" "%data_loc%"
+		END ELSE BEGIN
+			DISABLE_FROM_KEY "M_MEEXSP.lua"
+		END
+		// clear out ClassSpellTool entries from CLAB
+		LAF deolvynize_clab END
+		// add ClassSpellTools using SFO format
+		LAF deolvynize_add_spells END
+		PRINT "...ClassSpellTools move done"
+	END ELSE BEGIN
+		OUTER_SET value=0
+	END
+END
+
+
+
+DEFINE_ACTION_FUNCTION deolvynize_add_spells
+BEGIN
+	LAF spell_system_extension_setup END
+	MKDIR "%workspace%/temp_spells"
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_rows=rows kitlist_array=array END
+	LAM data_spells_by_level
+	ACTION_PHP_EACH olvyn_spells AS resref=>discard BEGIN
+		// get data
+		ACTION_FOR_EACH datatype IN type scroll class_include kit_exclude alignment_exclude kit_include BEGIN
+			OUTER_SPRINT "%datatype%" $olvyn_array("%resref%" "%datatype%")
+		END
+		ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+			// parse class_include
+			ACTION_CLEAR_ARRAY class_exclude
+			ACTION_IF type=1 BEGIN
+				ACTION_FOR_EACH class IN BARD MAGE FIGHTER_MAGE CLERIC_MAGE MAGE_THIEF FIGHTER_MAGE_CLERIC FIGHTER_MAGE_THIEF BEGIN
+					OUTER_SET $class_exclude("%class%")=1
+				END
+			END ELSE
+			ACTION_IF type=2 BEGIN
+				ACTION_FOR_EACH class IN CLERIC FIGHTER_CLERIC CLERIC_MAGE CLERIC_THIEF CLERIC_RANGER FIGHTER_MAGE_CLERIC DRUID FIGHTER_DRUID PALADIN RANGER SHAMAN BEGIN
+					OUTER_SET $class_exclude("%class%")=1
+				END			
+			END
+			OUTER_PATCH_SAVE class_include "%class_include%" BEGIN
+				REPLACE_TEXTUALLY "," " "
+			END
+			OUTER_WHILE "%class_include%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%class_include%" RET entry class_include=list END
+				OUTER_PATCH "" BEGIN
+					LOOKUP_IDS_SYMBOL_OF_INT class class entry
+				END				
+				ACTION_TO_UPPER class
+				OUTER_SET $class_exclude("%class%")=0
+			END
+			OUTER_SPRINT include_class ""
+			ACTION_PHP_EACH class_exclude AS class=>value BEGIN
+				ACTION_IF !value BEGIN
+					OUTER_SPRINT include_class "%include_class%%class% "
+				END
+			END
+			// parse kit_include
+			ACTION_CLEAR_ARRAY kit_include_array
+			OUTER_PATCH_SAVE kit_include "%kit_include%" BEGIN
+				REPLACE_TEXTUALLY "," " "
+			END
+			OUTER_WHILE "%kit_include%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%kit_include%" RET entry kit_include=list END
+				OUTER_SET $kit_include_array("%entry%")=1
+			END
+			// parse kit_exclude
+			ACTION_IF type=1 BEGIN
+				OUTER_SPRINT kit_exclude_base "%exclude_all_mage%"
+			END ELSE BEGIN
+				OUTER_SPRINT kit_exclude_base "%exclude_all_priest%"
+			END
+			OUTER_SPRINT exclude_kit ""
+			OUTER_PATCH_SAVE kit_exclude "%kit_exclude_base% %kit_exclude%" BEGIN
+				REPLACE_TEXTUALLY "," " "
+			END
+			OUTER_WHILE "%kit_exclude%" STR_CMP "" && "%kit_exclude%" STR_CMP " " BEGIN
+				LAF return_first_entry STR_VAR list="%kit_exclude%" RET entry kit_exclude=list END
+				OUTER_PATCH "" BEGIN
+					LOOKUP_IDS_SYMBOL_OF_INT kit kit entry
+				END				
+				ACTION_TO_UPPER kit
+				OUTER_SET exclude=1
+				ACTION_PHP_EACH kit_include_array AS include=>value BEGIN
+					ACTION_IF "%entry%" STR_EQ "%include%" && value BEGIN
+						OUTER_SET $kit_include_array("%include%")=0
+						OUTER_SET exclude=0
+					END
+				END
+				ACTION_IF exclude BEGIN
+					ACTION_IF VARIABLE_IS_SET $kitlist_rows("%kit%") BEGIN
+						OUTER_SET kit_number=$kitlist_array("%kit%" ROWNUMBER)
+					END ELSE BEGIN
+						OUTER_SET kit_number=9999
+						OUTER_SET kit_idsnumber=IDS_OF_SYMBOL (kit "%kit%")
+						ACTION_PHP_EACH kitlist_rows AS kitid=>discard BEGIN
+							OUTER_SPRINT val $kitlist_array("%kitid%" "KITIDS")
+							ACTION_IF IS_AN_INT $kitlist_array("%kitid%" "KITIDS") && kit_idsnumber=$kitlist_array("%kitid%" "KITIDS") BEGIN
+								OUTER_SET kit_number=$kitlist_array("%kitid%" ROWNUMBER)
+							END
+						END
+					END
+					ACTION_IF !(kit_number=9999) BEGIN
+						OUTER_SPRINT exclude_kit "%exclude_kit%%kit_number% "
+					END
+				END
+			END		
+			// parse alignment_exclude
+			OUTER_SPRINT exclude_alignment ""
+			OUTER_PATCH_SAVE alignment_exclude "%alignment_exclude%" BEGIN
+				REPLACE_TEXTUALLY "," " "
+			END
+			OUTER_WHILE "%alignment_exclude%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list="%alignment_exclude%" RET entry alignment_exclude=list END
+				OUTER_PATCH "" BEGIN
+					LOOKUP_IDS_SYMBOL_OF_INT alignment align entry
+				END				
+				ACTION_TO_UPPER alignment
+				OUTER_PATCH_SAVE alignment "%alignment%" BEGIN
+					REPLACE_TEXTUALLY "\([LCN]\).*_\([EGN]\).*" "\1_\2"
+					REPLACE_TEXTUALLY "NEUTRAL" "N_N"
+				END
+				OUTER_SPRINT exclude_alignment "%exclude_alignment%%alignment% "
+			END	
+			// attempt to handle kit_include entries that don't just whitelist default kit-exclude
+			ACTION_PHP_EACH kit_include_array AS kit_number=>value BEGIN
+				ACTION_IF value BEGIN
+					// find the kit name
+					ACTION_PHP_EACH kitlist_rows AS kitname=>discard BEGIN
+						ACTION_IF IS_AN_INT $kitlist_array("%kitname%" KITIDS) && $kitlist_array("%kitname%" KITIDS)=kit_number BEGIN
+							OUTER_SPRINT kit "%kitname%"
+						END
+					END
+					// is it a cleric/druid/paladin/ranger kit?
+					ACTION_IF IS_AN_INT $kitlist_array("%kit%" CLASS) BEGIN
+						OUTER_SET classnumber=$kitlist_array("%kit%" CLASS)
+						ACTION_MATCH classnumber WITH 3 6 11 12 BEGIN
+							OUTER_SET divine_class=1
+						END
+						DEFAULT
+							OUTER_SET divine_class=0
+						END
+						ACTION_IF divine_class BEGIN
+							OUTER_PATCH "" BEGIN
+								LOOKUP_IDS_SYMBOL_OF_INT class class classnumber
+								TO_LOWER class
+							END
+							COPY_EXISTING - "%resref%.spl" nowhere
+								READ_LONG 0x34 spell_level
+								caster_level="sfo_spell_level_sl_to_cl_%class%_%spell_level%"
+							ACTION_IF caster_level<99 BEGIN
+								LAF kit_edit STR_VAR kit edits="k.kit_grant_powers{%resref% %caster_level%}" END
+							END
+						END ELSE BEGIN
+							LAF warning STR_VAR warning="deOlvynizer: include_kit for %resref% is %kit%, which we don't know how to handle - we can only do kits for divine prepared-spell classes at present" END
+						END					
+					END
+				END
+			END			
+			// install, assuming there are any classes to install it to 
+			ACTION_IF "%include_class%" STR_CMP "" BEGIN
+			// make sure the spell is in the temp directory (we can't just use override, it might be biffed)
+				COPY_EXISTING "%resref%.spl" "%workspace%/temp_spells"
+				// find an id
+				ACTION_IF type=1 BEGIN
+					OUTER_SPRINT id "WIZARD_CST_%resref%"			
+				END ELSE BEGIN
+					OUTER_SPRINT id "CLERIC_CST_%resref%"		
+				END
+				ACTION_TO_UPPER id
+				LAF extended_add_spell STR_VAR id file="%resref%" path="%workspace%/temp_spells" include_class exclude_kit exclude_alignment RET resref_new=resref END
+				// reroute the scroll
+				ACTION_IF "%scroll%" STR_CMP "" BEGIN
+					COPY_EXISTING "%scroll%.itm" override
+						LPF ALTER_EFFECT INT_VAR match_opcode=146 silent=1 STR_VAR resource="%resref_new%" END
+						LPF ALTER_EFFECT INT_VAR match_opcode=147 silent=1 STR_VAR resource="%resref_new%" END
+						LPF ALTER_EFFECT INT_VAR match_opcode=148 silent=1 STR_VAR resource="%resref_new%" END
+					IF_EXISTS
+				END
+			END
+		END
+	END
+
+END
+
+DEFINE_ACTION_FUNCTION deolvynize_clab
+BEGIN
+	LAF 2daq_extract STR_VAR resref=kitlist column=ABILITIES RET_ARRAY clab_array=array END
+	ACTION_FOR_EACH core_clab IN CLABDR01 CLABPA01 CLABPR01 CLABRN01 BEGIN
+		OUTER_SPRINT $clab_array("%core_clab%") "%core_clab%"
+	END
+	ACTION_PHP_EACH clab_array AS discard=>clab BEGIN
+		COPY_EXISTING "%clab%.2da" override
+			REPLACE_TEXTUALLY "MENO49.*%WNL%" ""
+			PHP_EACH olvyn_array AS k=>discard BEGIN
+				SPRINT resref "%k_0%"
+				REPLACE_TEXTUALLY "ME_%resref%.*%WNL%" ""
+			END
+		BUT_ONLY
+		IF_EXISTS
+	END
+END
+
+DEFINE_ACTION_FUNCTION deolvynize_parse_spell_list
+	RET exclude_all_mage exclude_all_priest
+	RET_ARRAY olvyn_array olvyn_spells
+BEGIN
+	ACTION_CLEAR_ARRAY olvyn_array
+	ACTION_CLEAR_ARRAY olvyn_spells
+	COPY_EXISTING - "m_meexsp.lua" nowhere
+		SPRINT exclude_all_mage ""
+		SPRINT exclude_all_priest ""
+		REPLACE_EVALUATE "me_excludeAllNormalPriestSpellsFromTheseKits *= *{\([^}]*\)}" BEGIN
+			SPRINT exclude_all_priest "%MATCH1%"
+		END
+		""
+		REPLACE_EVALUATE "me_excludeAllNormalWizardSpellsFromTheseKits *= *{\([^}]*\)}" BEGIN
+			SPRINT exclude_all_mage "%MATCH1%"
+		END
+		""
+		ind1=INDEX_BUFFER ("me_addSpellChoice = {")
+		ind_now=INDEX_BUFFER ("{" ind1)+1
+		sanity=0
+
+		WHILE INDEX_BUFFER ("{" ind_now)>=0 && sanity<10000 BEGIN
+			++sanity
+			LPF find_parenthesis_range INT_VAR index=ind_now RET start end END
+			READ_ASCII start data (end+1 - start)
+			type="-1"
+			PATCH_FOR_EACH datatype IN resref scroll class_include kit_exclude alignment_exclude kit_include BEGIN
+				SPRINT "%datatype%" ""
+			END
+			INNER_PATCH "%data%" BEGIN
+				REPLACE_EVALUATE ~\["resref"\] *= *"\([^"]+\)~ BEGIN
+					SPRINT resref "%MATCH1%"
+				END
+				""
+				SPRINT scroll "no_scroll"
+				REPLACE_EVALUATE ~\["scroll"\] *= *"\([^"]+\)~ BEGIN
+					SPRINT scroll "%MATCH1%"
+				END
+				""
+				REPLACE_EVALUATE ~\["type"\] *= *\([0-9]\)~ BEGIN
+					type=MATCH1
+				END
+				""
+				REPLACE_EVALUATE ~\["\(class_include\|kit_include\|kit_exclude\|alignment_exclude\)"\] *= *{\([^}]+\)}~ BEGIN
+					SPRINT "%MATCH1%" "%MATCH2%"
+				END
+				""
+			END	
+			SPRINT $olvyn_spells("%resref%") ""
+			PATCH_FOR_EACH datatype IN type scroll class_include kit_exclude alignment_exclude kit_include  BEGIN
+				SPRINT $olvyn_array("%resref%" "%datatype%") EVAL "%%datatype%%"
+			END
+			ind_now=end+1
+		END
+		
+
+
+END
+
+/*
+document{deolvynize_menu}
+{
+This removes the ClassSpellTool tweaks to ui.menu (excluding the HLA- and contingency-related ones). }
+
+*/
+DEFINE_ACTION_FUNCTION deolvynize_menu 
+	INT_VAR remove_contingency=0
+BEGIN
+	COPY_EXISTING "ui.menu" override
+		PATCH_IF remove_contingency BEGIN
+			REPLACE_TEXTUALLY EXACT_MATCH
+"-- Fixing contingency crash
+if bookMode == 1 and me_alt_contingency[contingencyResRef] ~= nil then
+	if me_alt_contingency[contingencyResRef]['conditions'] ~= nil then
+		contingencyConditions = me_alt_contingency[contingencyResRef]['conditions']
+	end
+	if me_alt_contingency[contingencyResRef]['targets'] ~= nil then
+		contingencyTargets = me_alt_contingency[contingencyResRef]['targets']
+	end
+end
+if mageBookStrings[contingencyResRef] == nil then
+	contingencyDescription = 0
+else
+	contingencyDescription = mageBookStrings[contingencyResRef].tip
+end"
+
+"contingencyDescription = mageBookStrings[contingencyResRef].tip"
+			LPF UI_replace_function INT_VAR inline=1 STR_VAR function=mageBookDescription new_function="deolvynize_mageBookDescription.lua" END
+		END ELSE BEGIN // add tabbing so as not to confuse UI functions
+			REPLACE_TEXTUALLY EXACT_MATCH
+"-- Fixing contingency crash
+if bookMode == 1 and me_alt_contingency[contingencyResRef] ~= nil then
+	if me_alt_contingency[contingencyResRef]['conditions'] ~= nil then
+		contingencyConditions = me_alt_contingency[contingencyResRef]['conditions']
+	end
+	if me_alt_contingency[contingencyResRef]['targets'] ~= nil then
+		contingencyTargets = me_alt_contingency[contingencyResRef]['targets']
+	end
+end
+if mageBookStrings[contingencyResRef] == nil then
+	contingencyDescription = 0
+else
+	contingencyDescription = mageBookStrings[contingencyResRef].tip
+end"		
+"-- Fixing contingency crash
+	if bookMode == 1 and me_alt_contingency[contingencyResRef] ~= nil then
+		if me_alt_contingency[contingencyResRef]['conditions'] ~= nil then
+			contingencyConditions = me_alt_contingency[contingencyResRef]['conditions']
+		end
+		if me_alt_contingency[contingencyResRef]['targets'] ~= nil then
+			contingencyTargets = me_alt_contingency[contingencyResRef]['targets']
+		end
+	end
+	if mageBookStrings[contingencyResRef] == nil then
+		contingencyDescription = 0
+	else
+		contingencyDescription = mageBookStrings[contingencyResRef].tip
+	end"	
+	
+		END
+		LPF UI_replace_function INT_VAR inline=1 STR_VAR function=mageBookDescription new_function="deolvynize_mageBookDescription.lua" END
+		PATCH_IF GAME_IS "IWDEE" BEGIN
+			LPF UI_replace_function INT_VAR inline=1 STR_VAR function=refreshMageBook new_function="deolvynize_refreshMageBook_iwd.lua" END		
+		END ELSE BEGIN
+			LPF UI_replace_function INT_VAR inline=1 STR_VAR function=refreshMageBook new_function="deolvynize_refreshMageBook.lua" END
+		END
+		LPF UI_alter_object STR_VAR object=MAGE object_type=menu patch=deolvynize_magebookenabled END
+		LPF UI_alter_object STR_VAR object=CHARGEN_CHOOSE_SPELLS object_type=menu patch=deolvynize_choose_spells_open END
+		LPF UI_alter_object STR_VAR object=CHARGEN_MEMORIZE_PRIEST object_type=menu patch=deolvynize_choose_spells_open END
+		REPLACE_TEXTUALLY "me_classTextID.*" ""
+		REPLACE_TEXTUALLY "me_alignmentTextID.*" ""
+		LPF UI_remove_function STR_VAR function=me_CanLearnSpell END
+		REPLACE_TEXTUALLY ~enabled "me_canLearnSpell()"~ ~enabled "itemDescRightButtonEnabled()"~
+	BUT_ONLY
+
+END
+
+/*
+document{deolvynize_hla_menu}
+{
+This removes the HLA-related me_spells tweaks to ui.menu
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION deolvynize_hla_menu
+BEGIN
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES object_type=menu patch=deolvynize_hla END	
+	BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION deolvynize_contingency
+BEGIN
+	COPY_EXISTING "ui.menu" override
+		REPLACE_TEXTUALLY EXACT_MATCH
+"-- Fixing contingency crash
+if bookMode == 1 and me_alt_contingency[contingencyResRef] ~= nil then
+	if me_alt_contingency[contingencyResRef]['conditions'] ~= nil then
+		contingencyConditions = me_alt_contingency[contingencyResRef]['conditions']
+	end
+	if me_alt_contingency[contingencyResRef]['targets'] ~= nil then
+		contingencyTargets = me_alt_contingency[contingencyResRef]['targets']
+	end
+end
+if mageBookStrings[contingencyResRef] == nil then
+	contingencyDescription = 0
+else
+	contingencyDescription = mageBookStrings[contingencyResRef].tip
+end"
+
+"contingencyDescription = mageBookStrings[contingencyResRef].tip"
+	LPF UI_replace_function INT_VAR inline=1 STR_VAR function=mageBookDescription new_function="deolvynize_mageBookDescription.lua" END
+
+
+END
+
+
+
+
+DEFINE_PATCH_FUNCTION deolvynize_magebookenabled BEGIN
+	REPLACE_TEXTUALLY EXACT_MATCH ~mageBookEnabled == false and bookMode == 0~ ~mageBookEnabled == false~
+END
+
+DEFINE_PATCH_FUNCTION deolvynize_choose_spells_open BEGIN
+	start=INDEX_BUFFER (EXACT_MATCH "local me_")
+	end=INDEX_BUFFER (EXACT_MATCH "table.sort(chargen.choose_spell,")
+	PATCH_IF (start>=0 && end>=0) BEGIN
+		DELETE_BYTES start (end - start)
+	END ELSE BEGIN
+		PATCH_WARN "Failed to deolvynize choose_spells_open" 
+	END
+END
+
+DEFINE_PATCH_FUNCTION deolvynize_hla BEGIN
+	// onopen
+	start=INDEX_BUFFER (EXACT_MATCH "local me_")
+	end=INDEX_BUFFER (EXACT_MATCH "currentHLASelection = nil")
+	DELETE_BYTES start (end - start)
+	// later block
+	start=INDEX_BUFFER (EXACT_MATCH "for k, ability in ipairs(chargen.HLAs) do")
+	end=INDEX_BUFFER (elseif start)
+	DELETE_BYTES start (end - start)
+	start=INDEX_BUFFER (EXACT_MATCH "for k, ability in ipairs(chargen.HLAs) do")
+	end1=INDEX_BUFFER ("end" start)
+	end2=INDEX_BUFFER ("end" end1+1)
+	end=INDEX_BUFFER ("end" end2+1)
+	DELETE_BYTES start (end - start)
+	
+	
+END
+
+<<<<<<<<.../stratagems-inline/deolvynize_mageBookDescription.lua
+function mageBookDescription()
+	if mageBookEnabled == true then
+		if bookMode == 0 then
+			if characters[id].mageSpells[currentSpellLevel][currentBookSpell] then
+				return Infinity_FetchString(characters[id].mageSpells[currentSpellLevel][currentBookSpell].description)
+			else
+				return t('SPELL_MEMORIZATION_HELP')
+			end
+		elseif bookMode == 1 then
+			if contingencyDescription == 0 and currentBookSpell ~= 0 then
+				return Infinity_FetchString(bookSpells[currentBookSpell].description)
+			else
+				lastCurrentBookSpell = 0
+				if contingencyDescription == 0 then
+					contingencyDescription = mageBookStrings[contingencyResRef].tip
+				end
+				return Infinity_FetchString(contingencyDescription)
+			end
+		end
+	end
+	return ""
+end
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/deolvynize_refreshMageBook.lua
+function refreshMageBook()
+	if currentSpellLevel == nil then
+		currentSpellLevel = 1
+	end
+	if bookMode == 0 then
+		if characters[id].hasMageBook then
+			bookSpells = characters[id].mageSpells[currentSpellLevel]
+			newBottomSpells = filterMemorizedMageSpells()
+			
+			if showMageMemorizationFlash == true then
+				createMageMemorizationSparkle(0,0,36,36,"memorizedListMage", findFirstDifferenceInSpellList(bottomSpells, newBottomSpells))
+				showMageMemorizationFlash = false
+			end
+			bottomSpells = newBottomSpells
+			bottomSpellsPlaceHolder = makeBlankTable(characters[id].mageDetails[currentSpellLevel].maxMemorized) 
+		else
+			bookSpells = characters[id].mageSpells[currentSpellLevel]
+			bottomSpells = {}
+			bottomSpellsPlaceHolder = {}
+		end
+	elseif bookMode == 1 then
+		bookSpells = filterContingencyMageSpells()
+		bottomSpells = sequencerSpells
+		bottomSpellsPlaceHolder = makeBlankTable(contingencyMaxSpells) 
+		contingencyDescription = mageBookStrings[contingencyResRef].tip
+	end
+end
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/deolvynize_refreshMageBook_iwd.lua
+function refreshMageBook()
+	if currentSpellLevel == nil then
+		currentSpellLevel = 1
+	end
+	if bookMode == 0 then
+		if characters[id].hasMageBook then
+			bookSpells = characters[id].mageSpells[currentSpellLevel]
+			newBottomSpells = filterMemorizedMageSpells()
+			
+			if showMageMemorizationFlash == true then
+				showMageMemorizationFlash = false
+			end
+			bottomSpells = newBottomSpells
+			bottomSpellsPlaceHolder = makeBlankTable(characters[id].mageDetails[currentSpellLevel].maxMemorized) 
+		else
+			bookSpells = characters[id].mageSpells[currentSpellLevel]
+			bottomSpells = {}
+			bottomSpellsPlaceHolder = {}
+		end
+	elseif bookMode == 1 then
+		bookSpells = filterContingencyMageSpells()
+		bottomSpells = sequencerSpells
+		bottomSpellsPlaceHolder = makeBlankTable(contingencyMaxSpells) 
+		contingencyDescription = mageBookStrings[contingencyResRef].tip
+	end
+end
+>>>>>>>>

@@ -1,0 +1,117 @@
+/*
+document{charset_wrapper}
+{
+Wrapper for HANDLE_CHARSETS. Copies files over to weidu_external/lang/%MOD_FOLDER%, whether or not conversion is required. Makes sure all tra are present by using 
+default-language ones if preferred-language ones aren't available.</p>
+<p>Set from_utf8=0 if tra files are in non-EE format. Set overwrite=1 to have all files copied every time it's run (instead of only the first time) Set verbose=1 to
+get more feedback from HANDLE_CHARSETS. Set tra_path to the location of your tra files if it's not 'lang' or 'tra'. Set setup_tra to the tra file you keep component names
+in, if it's not setup.tra. Set load to a space-separated list of tra files you want always to load (the .tra is optional). Set 'default_language' to the language the 
+mod is written in, if it's not English.</p>
+<p>The returned variable out_path is where the language files are copied to (hardcoded to weidu_external/lang/%MOD_FOLDER%).</p>
+<p>Because I want to share this, it needs to have no dependencies and to run without AUTO_EVAL_STRINGS.
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION charset_wrapper
+	INT_VAR from_utf8=1//boolean // set to 0 if your tra files aren't in UTF8
+			overwrite=0//boolean	 // set to 1 if you want to regenerate the converted files every run
+			verbose=0//boolean	// set to 1 to get more feedback from HANDLE_CHARSETS
+	STR_VAR	tra_path="" // set to where your tra files are (with or without '%MOD_FOLDER%'
+						// if they're not in %MOD_FOLDER%/tra or %MOD_FOLDER%/lang
+			setup_tra="setup"	// set to whatever you're keeping your WEIDU installation strings in
+			load=""	// set to a space-separated list of any tra files you want loaded 
+			default_language="english" // set to whatever language you wrote the mod in
+	RET out_path
+BEGIN
+	// set out path
+	OUTER_SPRINT out_path "weidu_external/lang/%MOD_FOLDER%"
+	// find the tra location
+	ACTION_IF "%tra_path%" STR_EQ "" BEGIN
+		// try to guess 'tra' or 'lang'
+		ACTION_IF DIRECTORY_EXISTS "%MOD_FOLDER%/lang" && DIRECTORY_EXISTS "%MOD_FOLDER%/tra" BEGIN
+			FAIL "charset_wrapper error: %MOD_FOLDER% contains both tra and lang subfolders(!) You need to specify which one you use for your tra files."
+		END ELSE
+		ACTION_IF DIRECTORY_EXISTS "%MOD_FOLDER%/lang" BEGIN
+			OUTER_SPRINT tra_path "%MOD_FOLDER%/lang"
+		END ELSE
+		ACTION_IF DIRECTORY_EXISTS "%MOD_FOLDER%/tra" BEGIN
+			OUTER_SPRINT tra_path "%MOD_FOLDER%/tra"
+		END ELSE BEGIN
+			FAIL "charset_wrapper error: you didn't specify tra_path and it's not 'tra' or 'lang'."
+		END
+	END ELSE 
+	// add '%MOD_FOLDER%' if it's not there already
+	ACTION_IF !(INDEX ("%MOD_FOLDER%" "%tra_path%")=0) BEGIN
+		OUTER_SPRINT tra_path "%MOD_FOLDER%/%tra_path%"
+	END
+	ACTION_IF overwrite BEGIN 
+		OUTER_SET proceed=1 // always proceed if overwrite=1
+	END ELSE BEGIN
+		OUTER_SET proceed=1
+		ACTION_BASH_FOR "%out_path%/%LANGUAGE%" ".*\.tra$" BEGIN
+			OUTER_SET proceed=0 // proceed if out_path is empty
+		END
+	END
+	ACTION_IF proceed BEGIN
+		// set the no-copy array
+		ACTION_CLEAR_ARRAY noconvert_array
+		OUTER_SPRINT $noconvert_array(0) "%setup_tra%"
+		// set the reload array
+		ACTION_CLEAR_ARRAY reload_array
+		OUTER_PATCH "%load% " BEGIN
+			ind=0
+			REPLACE_EVALUATE "\([^ ]+\) " BEGIN
+				SPRINT $reload_array("%ind%") "%MATCH1%"
+				++ind
+			END
+			""
+		END
+		// are we on enhanced edition?
+		// later versions of EE have bgee.lua. Very early versions of BGEE have monkfist.2da
+		OUTER_SET enhanced_edition=( FILE_EXISTS_IN_GAME bgee.lua || FILE_EXISTS_IN_GAME monkfist.2da )
+		// are we converting?
+		OUTER_SET convert=!(enhanced_edition=from_utf8)
+		ACTION_IF convert && !FILE_EXISTS "%tra_path%/iconv/iconv.exe" BEGIN
+			OUTER_SET convert=0
+			WARN "charset_wrapper warning: can't find iconv.exe"
+		END
+		ACTION_IF convert BEGIN
+			// run HANDLE_CHARSETS
+			LAF HANDLE_CHARSETS
+				INT_VAR from_utf8=from_utf8
+						infer_charsets=1
+						verbose=verbose
+				STR_VAR tra_path = EVAL "%tra_path%" // I hate not being able to assume AUTO_EVAL_STRINGS
+						out_path = EVAL "%out_path%"
+						noconvert_array = noconvert_array
+						reload_array = reload_array
+						default_language = EVAL "%default_language%"
+			END
+		END ELSE BEGIN
+			// do our own copies
+			MKDIR "%out_path%"
+			MKDIR "%out_path%/%LANGUAGE%"
+			ACTION_BASH_FOR "%tra_path%/%default_language%" ".*\.tra$" BEGIN
+				ACTION_IF !"%BASH_FOR_RES%" STR_EQ "%setup" BEGIN // don't bother copying this
+					ACTION_IF FILE_EXISTS "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%" BEGIN
+						OUTER_SPRINT tra "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%"
+					END ELSE BEGIN
+						OUTER_SPRINT tra "%tra_path%/%default_language%/%BASH_FOR_FILE%"
+					END
+					COPY "%tra%" "%out_path%/%LANGUAGE%"
+				END
+			END	
+			// do our own reloads
+			ACTION_PHP_EACH reload_array AS int=>tra BEGIN
+				ACTION_IF "%tra%" STRING_MATCHES_REGEXP ".+\.tra$" = 0 BEGIN
+					LOAD_TRA "%out_path%/%LANGUAGE%/%tra%"				
+				END ELSE BEGIN
+					LOAD_TRA "%out_path%/%LANGUAGE%/%tra%.tra"
+				END
+			END
+		END
+	END
+END
+

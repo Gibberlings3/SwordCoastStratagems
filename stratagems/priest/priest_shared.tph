@@ -12,19 +12,29 @@ BEGIN
    INNER_ACTION BEGIN
       OUTER_SPRINT type priest
       OUTER_SPRINT component_loc priest
-      LAUNCH_ACTION_MACRO read_in_spells_per_level
+      LAUNCH_ACTION_MACRO data_spells_by_level
       LAUNCH_ACTION_MACRO read_in_spell_choices
-      LAUNCH_ACTION_MACRO read_in_individual_overrides
+      LAUNCH_ACTION_MACRO read_in_individual_overrides	
+		LAM read_in_instant_prebuff_spells
+	  LAM read_extra_tof_priest_spells
       ACTION_IF !VARIABLE_IS_SET priest_tra_loaded BEGIN
            LOAD_TRA "%scs_tra_loc%/english/priest.tra" "%scs_tra_loc%/%LANGUAGE%/priest.tra"
       END
+	  ACTION_IF !IS_AN_INT cleric_kits_found || !cleric_kits_found BEGIN // the function itself does this too but there is probably slowdown in passing the array
+		LAF find_cleric_kits RET_ARRAY gods_installed cleric_kit_array kit_god_map END
+		OUTER_SET cleric_kits_found=1
+	    LAF read_tof_war_cries RET_ARRAY tof_war_cries END
+	  END
+	  LAM data_saving_throws
+	  LAM data_thac0
+
 
    END
-   LPF determine_stat STR_VAR stat=wisdom RET wisdom=value END
-   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment game spells_are_bg1 modify_level kitdata script_required=script END
-   LPF find_priest_type STR_VAR class alignment kitdata filename RET class kit castertype fighter spell_list spell_list_defensive END
+   LPF determine_stat STR_VAR stat=wis RET wisdom=value END
+   LPF initialise_enforce_caster STR_VAR filename type arguments RET class race alignment game spells_are_bg1 modify_level kitdata script_required=script god END  
+   LPF find_priest_type STR_VAR class alignment kitdata filename god RET class kit castertype fighter spell_list spell_list_defensive END
    LPF get_caster_level INT_VAR modify_level STR_VAR type=priest castertype filename RET level END
-   LPF allocate_priest_spells INT_VAR level spells_are_bg1 fighter refinements wisdom STR_VAR class kit race filename spell_list spell_list_defensive RET spells level_seven_max spell_turn_list END
+   LPF allocate_priest_spells INT_VAR level spells_are_bg1 fighter refinements wisdom STR_VAR class kit god race filename spell_list spell_list_defensive RET spells level_seven_max spell_turn_list END
    LPF check_ini STR_VAR ini=no_swift_shapeshift RET no_swift_shapeshift=value END
    PATCH_IF "%script%" STRING_EQUAL_CASE "" BEGIN
      LPF determine_caster_script_name STR_VAR prefix="pr" RET script END
@@ -33,7 +43,7 @@ BEGIN
      SET insert_script=0
    END
    LPF minimum_healing_level INT_VAR level RET minimum_healing_level END
-   LPF build_priest_script INT_VAR level level_seven_max no_swift_shapeshift minimum_healing_level STR_VAR filename kit race script spells castertype spell_turn_list END
+   LPF build_priest_script INT_VAR level level_seven_max no_swift_shapeshift minimum_healing_level STR_VAR filename kit race god script spells castertype spell_turn_list END
    PATCH_IF insert_script BEGIN
        LPF strip_scs_scripts END
        LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
@@ -55,6 +65,7 @@ DEFINE_PATCH_FUNCTION find_priest_type
                kitdata=""
                alignment=""
                filename=""
+			   god=""
        RET castertype
            class
            kit
@@ -89,19 +100,25 @@ BEGIN
       DEFAULT
          SPRINT castertype cleric
          SPRINT spell_list_defensive cleric
-         PATCH_MATCH ~%alignment%~ WITH
-         LAWFUL_EVIL NEUTRAL_EVIL CHAOTIC_EVIL BEGIN
-             SPRINT spell_list cleric_evil
-             SPRINT kit cleric_evil
-         END
-         LAWFUL_GOOD NEUTRAL_GOOD CHAOTIC_GOOD BEGIN
-             SPRINT spell_list cleric_good
-             SPRINT kit cleric_good
-         END
-         DEFAULT
-             SPRINT spell_list cleric_neutral
-             SPRINT kit cleric_neutral
-         END
+		 PATCH_IF "%god%" STR_CMP "" BEGIN
+			 TO_LOWER god
+			 SPRINT spell_list "%god%"
+			 SPRINT kit "%god%"
+		 END ELSE BEGIN
+			 PATCH_MATCH ~%alignment%~ WITH
+			 LAWFUL_EVIL NEUTRAL_EVIL CHAOTIC_EVIL BEGIN
+				 SPRINT spell_list cleric_evil
+				 SPRINT kit cleric_evil
+			 END
+			 LAWFUL_GOOD NEUTRAL_GOOD CHAOTIC_GOOD BEGIN
+				 SPRINT spell_list cleric_good
+				 SPRINT kit cleric_good
+			 END
+			 DEFAULT
+				 SPRINT spell_list cleric_neutral
+				 SPRINT kit cleric_neutral
+			 END
+		 END
          PATCH_IF (~%class%~ STRING_EQUAL_CASE FIGHTER_CLERIC || ~%class%~ STRING_EQUAL_CASE FIGHTER_MAGE_CLERIC) BEGIN
             SET fighter=1
          END ELSE BEGIN
@@ -127,9 +144,9 @@ END
 /////          Build a priest script
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION build_priest_script
+DEFINE_DIMORPHIC_FUNCTION build_priest_script
       INT_VAR prebuff=1 level=0 level_seven_max=99 no_swift_shapeshift=0 minimum_healing_level=1
-      STR_VAR filename="" script="" kit="" race="" spells="" castertype="" spell_turn_list=""
+      STR_VAR filename="" script="" kit="" race="" god="" spells="" castertype="" spell_turn_list=""
 BEGIN
      ACTION_IF !VARIABLE_IS_SET difficulty_variable BEGIN
                LAF define_difficulty STR_VAR type=priest RET difficulty_variable END
@@ -168,6 +185,27 @@ BEGIN
      ACTION_IF VARIABLE_IS_SET CLERIC_CAUSE_SERIOUS_WOUNDS_IWD BEGIN
         OUTER_SPRINT variables_extra "%variables_extra%&CauseWoundsIWD=True"     
      END
+	 ACTION_IF is_iwd BEGIN 
+		OUTER_SET value=1
+	 END ELSE BEGIN
+		LAF check_label STR_VAR label=dw_use_iwd_slay_living_targeting RET value END
+	 END
+	 ACTION_IF value BEGIN
+		OUTER_SPRINT variables_extra "%variables_extra%&SlayLivingIWD=True" 
+	 END
+	 ACTION_IF "%god%" STR_CMP "" BEGIN
+		ACTION_TO_LOWER god
+		OUTER_SPRINT variables_extra "%variables_extra%&God:%god%=True" 
+		OUTER_SET war_cry_count=$tof_war_cries("%god%" count)
+		ACTION_IF war_cry_count>0 BEGIN
+			OUTER_SET crynum=RANDOM(1 war_cry_count)
+			OUTER_SET god_war_cry=$tof_war_cries("%god%" "%crynum%")
+		END ELSE BEGIN
+			OUTER_SPRINT variables_extra "%variables_extra%&NoGodCry=True"    
+		END
+	 END ELSE BEGIN
+		OUTER_SPRINT variables_extra "%variables_extra%&NoGodCry=True"    
+	 END
      ACTION_IF debug_variable=2 BEGIN
         PRINT "variables:%variables_here%%variables_extra%"
         PRINT "spells: %spells%"
@@ -176,17 +214,9 @@ BEGIN
         LAF return_first_entry STR_VAR list="%spell_turn_list%" RET entry spell_turn_list=list END
         OUTER_SET "%entry%_SPELLTURN"=1
      END
-     LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script="%base%" location=~ssl/main~ locbase=priest rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
+     LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%" script="%base%=>%scriptname%" location=~ssl/main~ locbase=priest booleans="%spells% %booleans_extra%" END
 END
 
-DEFINE_PATCH_FUNCTION build_priest_script
-     INT_VAR level=1 level_seven_max=99 no_swift_shapeshift=0 minimum_healing_level=0
-     STR_VAR script="" kit="" race="" filename="" spells="" castertype=""  spell_turn_list=""
-BEGIN
-   INNER_ACTION BEGIN
-      LAF build_priest_script INT_VAR level level_seven_max no_swift_shapeshift STR_VAR script kit race filename spells castertype spell_turn_list END
-   END
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 /////          Find the base details for a script
@@ -202,7 +232,7 @@ DEFINE_PATCH_FUNCTION find_priest_script_base
 BEGIN
       SET warning=0
       PATCH_MATCH "%kit%" WITH
-         cleric_evil cleric_good cleric_neutral BEGIN
+         cleric_evil cleric_good cleric_neutral "%god%" BEGIN // inheriting 'god' from the ambient environment, so sue me
                 SPRINT base dw#priest
                 SPRINT priesttype standard_priest
                 SPRINT variables "%variables%&priest_melee_choice=standard_priest"
@@ -217,16 +247,17 @@ BEGIN
                 SPRINT priesttype standard_priest
                 SPRINT variables "%variables%&IsDruid=True&IsAvenger=True&priest_melee_choice=avenger"
          END
-     DEFAULT
+     DEFAULT 
                 SET warning=1
                 SPRINT base "dw#priest"
                 SPRINT priesttype standard_priest
+                SPRINT variables "%variables%&priest_melee_choice=standard_priest"
      END
      SPRINT variables "%variables%&ssl_priest_type=%priesttype%"
      PATCH_IF "%castertype%" STRING_EQUAL_CASE druid BEGIN
-         SET spell_level = $caster_level_to_spell_level("druid" "%level%")
+         SET spell_level = $sfo_spell_level_cl_to_sl("druid" "%level%")
      END ELSE BEGIN
-         SET spell_level = $caster_level_to_spell_level("cleric" "%level%")
+         SET spell_level = $sfo_spell_level_cl_to_sl("cleric" "%level%")
      END
      FOR (i=1;i<=spell_level;i+=1) BEGIN
          SPRINT variables ~%variables%&HasL%i%=True~
@@ -265,6 +296,7 @@ DEFINE_PATCH_FUNCTION allocate_priest_spells
               kit=""
               race=""
               filename=""
+			  god=""
               spell_list=""
               spell_list_defensive=""
       RET     spells
@@ -313,14 +345,15 @@ BEGIN
              END
           END
       END
-      LPF "defensive_spells_%spell_list_defensive%" INT_VAR level fighter RET spells END
-
+      LPF "defensive_spells_%spell_list_defensive%" INT_VAR level fighter STR_VAR god RET spells END
 
       // fine-tune spells
 
 
       LPF priest_spell_swap_race_preparatory STR_VAR spells race RET spells END
       LPF priest_spell_swap_specific_preparatory STR_VAR spells filename RET spells END
+     LPF priest_spell_swap_god_preparatory STR_VAR spells god filename RET spells END
+    LPF priest_spell_swap_special_preparatory STR_VAR spells RET spells END
 
       LPF individual_choices STR_VAR spells filename component=priest RET spells END
 
@@ -333,6 +366,7 @@ BEGIN
       // work out remaining spell slots and allocate spells to them
 
 
+
       LPF determine_number_of_spells INT_VAR level wisdom STR_VAR class RET av_0 av_1 av_2 av_3 av_4 av_5 av_6 END
 
       FOR (i=6;i>=0;i -= 1) BEGIN
@@ -343,7 +377,11 @@ BEGIN
       END
       SET spell_turn_max = lev_max - 2
 
-      SET level_seven_max="%av_6%"
+		PATCH_IF !VARIABLE_IS_SET hla_innate BEGIN
+			LPF check_if_hlas_are_innate RET hla_innate END
+		END
+	
+        level_seven_max=hla_innate?99:av_6
       LPF count_spell_levels STR_VAR spells prefix=~CLERIC_~ RET ct_0 ct_1 ct_2 ct_3 ct_4 ct_5 ct_6 END
       FOR (i=0;i<7;i+=1) BEGIN
         SET $av(~%i%~)=$av(~%i%~) - $ct(~%i%~)
@@ -356,7 +394,7 @@ BEGIN
            PATCH_PRINT ~Spells at level %i%=%spell_num%; number already cast is %ct_here%~
          END
          PATCH_IF spell_num < 0 BEGIN
-            LPF log_this STR_VAR file=illegal_priest_spells.txt input= ~%SOURCE_RES% at level %spell_level%~ END
+            LPF log_this STR_VAR file=illegal_priest_spells.txt input= ~%SOURCE_RES% at level %spell_level% (NB depending on install, some CURE/CAUSE spells are auto-removed)~ END
          END
          SPRINT ~spells_here~ ~~
          PATCH_IF spell_num>0 BEGIN
@@ -364,15 +402,19 @@ BEGIN
                PUSH spells_here PLACEHOLDER
             END
             SPRINT swap_in $spell_choices_priest(~%spell_list%~ ~%spell_level%~)
-            LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
+			PATCH_IF INDEX ("[A-Z]" "%swap_in%")<0 BEGIN
+				LPF warning STR_VAR warning="SFO warning: no spells defined for spell list %spell_list% at level %spell_level%" END
+				SPRINT swap_in CURE_LIGHT_WOUNDS
+			END
+			LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
             PUSH spells ~%spells_here%~
          END
       END
-
-
+		
+ 
       // fine-tune remaining spells
 
-      LPF priest_spell_swap_misc STR_VAR spells filename RET spells END
+      LPF priest_spell_swap_misc STR_VAR spells filename god spell_list RET spells END
       LPF priest_spell_swap_alignment STR_VAR spells filename RET spells END
       PATCH_IF spells_are_bg1=1 BEGIN
          LPF priest_spell_swap_bg1 STR_VAR spells RET spells END
@@ -380,10 +422,15 @@ BEGIN
       PATCH_IF iwd_divine BEGIN
          LPF priest_spell_swap_iwd STR_VAR spells RET spells END
       END
+ 
+	  // add anything from ToF kits
+	  
+	  LPF tof_kits INT_VAR level STR_VAR god RET tof_spells=spells END
+	  PUSH spells "%tof_spells%"
 
       // install the spells
 
-            SPRINT spells_add ""
+      SPRINT spells_add ""
       SPRINT spells_list ""
       WHILE ~%spells%~ STRING_COMPARE_CASE ~~ BEGIN
          LPF return_first_entry STR_VAR list= ~%spells%~ RET spells=list entry END
@@ -505,3 +552,390 @@ BEGIN
    END
 
 END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION find_cleric_kits 
+	RET_ARRAY 	cleric_kit_array
+				gods_installed
+				kit_god_map
+BEGIN
+	ACTION_IF !IS_AN_INT cleric_kits_found || !cleric_kits_found BEGIN 
+		ACTION_IF !FILE_EXISTS "%data_loc%/gods_kits.2da" BEGIN
+			LAF make_cleric_kit_2da RET_ARRAY cleric_kit_array gods_installed END		
+		END ELSE BEGIN
+			LAF 2da_read STR_VAR file="gods_kits.2da" path="%data_loc%" RET_ARRAY gods_installed=rows cleric_kit_array=array END
+		END
+		ACTION_PHP_EACH cleric_kit_array AS k=>v BEGIN
+			ACTION_IF "%v%" STR_CMP "*" BEGIN
+				OUTER_SPRINT $kit_god_map("%v%") "%k_0%"
+			END
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION make_cleric_kit_2da RET_ARRAY gods_installed cleric_kit_array BEGIN
+
+	ACTION_PHP_EACH cleric_kit_array AS k=>v BEGIN
+		OUTER_SPRINT $cleric_kit_array("%k_0%" "%k_1%") "*" 
+	END
+	ACTION_CLEAR_ARRAY gods_installed
+	ACTION_CLEAR_ARRAY cleric_kit_array
+	ACTION_CLEAR_ARRAY classes_present
+	// parse the marker file to find which gods are present
+	ACTION_BASH_FOR "%marker_loc%" "dw#.*_shared\.mrk" BEGIN
+		OUTER_PATCH "%BASH_FOR_RES%" BEGIN
+			REPLACE_EVALUATE CASE_INSENSITIVE "dw#\([a-z0-9_]+\)_SHARED" BEGIN
+				SPRINT god "%MATCH1%"
+				TO_UPPER god
+				SET $gods_installed("%god%")=1
+			END
+			""
+		END
+	END
+	// load in kitlist
+	
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_rows=rows kitlist_array=array END
+	
+	// go through
+	
+	ACTION_PHP_EACH kitlist_rows AS row=>discard BEGIN
+		OUTER_SPRINT kitname $kitlist_array("%row%" ROWNAME)
+		OUTER_SPRINT god_here ""
+		ACTION_MATCH "%kitname%" WITH
+		LATHANDER HELM TALOS BEGIN
+			ACTION_IF VARIABLE_IS_SET $gods_installed("%kitname%") BEGIN
+				OUTER_SPRINT god_here "%kitname%"
+			END
+		END
+		OHTEMPUS OHTYR BEGIN
+			OUTER_PATCH_SAVE check "%kitname%" BEGIN
+				DELETE_BYTES 0x0 2
+			END
+			ACTION_IF VARIABLE_IS_SET $gods_installed("%check%") BEGIN
+				OUTER_SPRINT god_here "%check%"
+			END
+		END
+		DEFAULT
+		// gods without '_'
+			OUTER_PATCH "%kitname%" BEGIN
+				REPLACE_EVALUATE "DW_\([^_]+\)_.*" BEGIN
+					SPRINT check "%MATCH1%"
+					TO_UPPER check
+					PATCH_IF VARIABLE_IS_SET $gods_installed("%check%") BEGIN
+						SPRINT god_here "%check%"
+					END
+				END
+				""
+			END
+			// gods like BANE_XVIM
+			OUTER_PATCH "%kitname%" BEGIN
+				REPLACE_EVALUATE "DW_\([^_]+_[^_]+\)_.*" BEGIN
+					SPRINT check "%MATCH1%"
+					TO_UPPER check
+					PATCH_IF VARIABLE_IS_SET $gods_installed("%check%") BEGIN
+						SPRINT god_here "%check%"
+					END
+				END
+				""
+			END	
+		END
+		ACTION_IF "%god_here%" STR_CMP "" BEGIN
+			OUTER_PATCH "" BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT class class $kitlist_array("%row%" CLASS)
+			END
+			OUTER_SPRINT $cleric_kit_array("%god_here%" "%class%") "%kitname%"
+			OUTER_SET $classes_present("%class%")=1
+		END
+	END
+
+	// fill blank spaces
+	
+	ACTION_PHP_EACH gods_installed AS god=>discard BEGIN
+		ACTION_PHP_EACH classes_present AS class=>discard2 BEGIN
+			ACTION_IF !VARIABLE_IS_SET $cleric_kit_array("%god%" "%class%") BEGIN
+				OUTER_SPRINT $cleric_kit_array("%god%" "%class%") "*"
+			END
+		END
+	END
+	
+	// write output
+	
+	LAF 2da_write STR_VAR type=2da array=cleric_kit_array file=gods_kits.2da path="%data_loc%" END
+
+END
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION tof_kits 
+	INT_VAR level=0
+	STR_VAR god=""
+	RET spells 
+BEGIN
+	SPRINT spells ""
+	PATCH_MATCH "%god%" WITH
+	"" BEGIN
+	END
+	AURIL BEGIN
+		resist_cold=level>=8?100:level>=4?75:50
+		WRITE_BYTE 0x5a resist_cold
+		WRITE_BYTE 0x5f resist_cold
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_ICE_STORM%" #0 innate ( (level + 1) / 6 )
+		ADD_MEMORIZED_SPELL "%spl_auril_cone_of_cold%" #0 innate ( (level - 1) / 6 )
+		PATCH_IF level>=9 BEGIN
+			ADD_MEMORIZED_SPELL "%spl_auril_conjure_elemental%" #0 innate 
+		END
+	END
+	BANE XVIM BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_CLOAK_OF_FEAR%" #0 innate ( level / 5 )	
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_GREATER_MALISON%" #0 innate ( ( level - 2) / 5 )	
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_CONTROL_UNDEAD%" #0 innate ( ( level - 4) / 5 )	
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_SYMBOL_FEAR%" #0 innate ( ( level - 7) / 5 )	
+	END
+	BHAAL BEGIN
+		ADD_MEMORIZED_SPELL "%ASSASSIN_POISON%" #0 innate ( (level+5) / 6 )		
+		ADD_MEMORIZED_SPELL "%spl_cyric_dread_blast%" #0 innate ( (level - 2) / 5 )		
+		PATCH_IF level>=10 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_INVISIBLE_STALKER%" #0 innate 	
+		END		
+		PATCH_IF level>=10 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_CLERIC_FINGER_OF_DEATH%" #0 innate 	
+		END	
+	END
+	CORELLON BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_CHROMATIC_ORB%" #0 innate ( (level + 3) / 6)	
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_FLAME_ARROW%" #0 innate ( (level - 1) / 6)	
+		PATCH_IF level>=11 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_PRISMATIC_SPRAY%" #0 innate 			
+		END
+	END
+	CYRIC BEGIN
+		ADD_MEMORIZED_SPELL "%ASSASSIN_POISON%" #0 innate ( (level+5) / 6 )		
+		ADD_MEMORIZED_SPELL "%spl_cyric_dread_blast%" #0 innate ( (level - 2) / 5 )		
+		PATCH_IF level>=10 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_INVISIBLE_STALKER%" #0 innate 	
+		END		
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_CHAOS%" #0 innate ( (level - 4) / 6)	
+	END
+	GRUUMSH BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_STRENGTH_OF_ONE%" #0 innate ( (level + 3) / 6)		
+		ADD_MEMORIZED_SPELL "%spl_gruumsh_spear%" #0 innate ( (level + 1) / 6)	
+		PATCH_IF level>=7 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_CLERIC_CHAMPIONS_STRENGTH%" #0 innate 
+		END
+	END
+	HELM BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_GLYPH_OF_WARDING%" #0 innate ((level + 2) / 5 )
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_TRUE_SIGHT%" #0 innate ( ( level - 2) / 5 )
+		ADD_MEMORIZED_SPELL "%HELM_SEEKING_SWORD%" #0 innate ( level / 5 )	
+	END
+	ILMATER BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_REMOVE_FEAR%" #0 innate ( (level + 4) / 5 )
+		PATCH_IF level>=7 BEGIN
+			ADD_MEMORIZED_SPELL "%spl_ilmater_endurance%" #0 innate 
+		END
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_HEAL%" #0 innate ( (level - 3) / 6 )
+	PATCH_FOR_EACH spell IN	CLERIC_SYMBOL_PAIN PAIN INFLICT_PAIN WIZARD_SYMBOL_PAIN NPC_SYMBOL_PAIN  BEGIN
+		PATCH_IF VARIABLE_IS_SET "%spell%" BEGIN
+			SPRINT resource EVAL "%%spell%%"
+			LPF ADD_CRE_EFFECT INT_VAR opcode=318 target=1 timing=9 STR_VAR resource END		
+		END
+	END	
+	END
+	KOSSUTH BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_COMBUST%" #0 innate ( (level + 3) / 6 )
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_FIREBALL%" #0 innate ( (level + 1) / 6 )
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_FIRE_SHIELD_RED%" #0 innate ( (level - 1) / 6 )
+		PATCH_IF level>=9 BEGIN 
+			ADD_MEMORIZED_SPELL "%spl_kossuth_conjure_elemental%" #0 innate 
+		END
+		LPF ADD_CRE_EFFECT INT_VAR opcode=30 target=2 duration=9 parameter1=25 + 2*level parameter2=1 END // fire resistance
+	END
+	LATHANDER BEGIN
+		ADD_MEMORIZED_SPELL "%LATHANDER_HOLD_UNDEAD%" #0 innate ( ( level +1) / 4 )			
+		ADD_MEMORIZED_SPELL "%LATHANDER_BOON%" #0 innate ( ( level - 3) / 4 )			
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_FALSE_DAWN%" #0 innate ( ( level - 4) / 5 )			
+	END
+	LOLTH BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_REMOVE_MAGIC%" #0 innate ( (level + 1) / 6 )
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_TRUE_SIGHT%" #0 innate ( level / 8 )
+		PATCH_IF level>=10 BEGIN
+			ADD_MEMORIZED_SPELL "%spl_lolth_domination%" #0 innate 
+		END
+	END
+	MALAR BEGIN
+		ADD_MEMORIZED_SPELL "%spl_malar_beast_claw%" #0 innate ( (level + 2) / 5 )		
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_ANIMAL_RAGE%" #0 innate ( (level - 3) / 6 )	
+		PATCH_IF level>=5 BEGIN
+			LPF struct_read RET_ARRAY m=struct END
+			LPF immunity_effect STR_VAR struct=m arguments="charm sleep" RET_ARRAY m=struct END
+			LPF struct_write STR_VAR struct=m END
+		END
+	END
+	MASK BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_SHADOW_DOOR%" #0 innate ( ( level - 3) / 6 )	
+		PATCH_IF level>=13 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_SHADES%" #0 innate		
+		END ELSE
+		PATCH_IF level>=11 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_DEMI_SHADOW_MONSTERS%" #0 innate				
+		END ELSE
+		PATCH_IF level>=7 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_SHADOW_MONSTERS%" #0 innate				
+		END	
+	END
+	MYRKUL VELSHAROON BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR opcode=323 target=2 timing=9 parameter1=2 END 
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_ANIMATE_DEAD%" #0 innate ( ( level + 2) / 5 )	
+		PATCH_IF level>=7 BEGIN
+			LPF struct_read RET_ARRAY m=struct END
+			LPF immunity_effect STR_VAR struct=m arguments=energy_drain RET_ARRAY m=struct END
+			LPF struct_write STR_VAR struct=m END
+		END
+		PATCH_IF level>=9 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_CLERIC_DOLOROUS_DECAY%" #0 innate
+		END
+		PATCH_IF level>=12 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_CLERIC_WITHER%" #0 innate
+		END
+	END
+	SELUNE BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_MOONBLADE%" #0 innate ( (level + 5) / 8)
+		ADD_MEMORIZED_SPELL "%spl_selune_free_action%" #0 innate ( (level + 1) / 6)
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_TRUE_SIGHT%" #0 innate ( (level - 3) / 6)		
+	END
+	SHAR BEGIN
+		LPF struct_read RET_ARRAY m=struct END
+		LPF immunity_effect STR_VAR struct=m arguments=blinded RET_ARRAY m=struct END
+		LPF struct_write STR_VAR struct=m END
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_BLINDNESS%" #0 innate ((level + 3) / 6)
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_CONFUSION%" #0 innate ((level - 1) / 8)
+		PATCH_IF level>=13 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_WIZARD_POWER_WORD_BLIND%" #0 innate 
+		END
+		PATCH_IF level>=6 BEGIN
+			ADD_MEMORIZED_SPELL "%spl_shar_dark_bolt%" #0 innate 		
+		END
+	END
+	TALONA BEGIN
+		LPF struct_read RET_ARRAY m=struct END
+		LPF immunity_effect STR_VAR struct=m arguments=diseased RET_ARRAY m=struct END
+		PATCH_IF level>=4 BEGIN
+			LPF immunity_effect STR_VAR struct=m arguments=poison RET_ARRAY m=struct END
+			LPF immunity_spell STR_VAR struct=m arguments="%CLERIC_CLOUD_OF_PESTILENCE% %INNATE_CLERIC_CLOUD_OF_PESTILENCE%" RET_ARRAY m=struct END		
+			LPF struct_add STR_VAR struct=m type=fx patch="s_opcode=328 s_target=1 s_timing=9 s_special=1 s_parameter2=IDS_OF_SYMBOL (splstate NAUSEA_IMMUNITY)"  RET_ARRAY m=struct END
+		END
+		LPF struct_write STR_VAR struct=m END
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_CAUSE_DISEASE%" #0 innate ( (level + 3) / 6 )
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_MOLD_TOUCH%" #0 innate ( (level + 1) / 6 )
+		ADD_MEMORIZED_SPELL "%ASSASSIN_POISON%" #0 innate ( level / 6 )		
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_CLOUD_OF_PESTILENCE%" #0 innate ( (level - 1) / 6 )
+	END	
+	TALOS BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_STORM_SHELL%" #0 innate ( (level + 1) / 4 )		
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_CALL_LIGHTNING%" #0 innate ( (level - 1) / 4)	
+		ADD_MEMORIZED_SPELL "%spl_talos_lightning%" #0 innate ( (level - 2) / 5)	
+	END
+	TEMPUS BEGIN
+		ADD_MEMORIZED_SPELL "%INNATE_WIZARD_EMOTION_COURAGE%" #0 innate ( (level - 2) / 5 )		
+		ADD_MEMORIZED_SPELL "%TEMPUS_HOLY_POWER%" #0 innate ( level / 5)	
+		ADD_MEMORIZED_SPELL "%TEMPUS_CHAOS_OF_BATTLE%" #0 innate ( (level + 2) / 5)
+	END
+	TYMORA BEGIN
+		ADD_MEMORIZED_SPELL "%spl_tymora_luck%" #0 innate ( (level - 2) / 5)
+	END
+	TYR BEGIN
+		ADD_MEMORIZED_SPELL "%TYR_DIVINE_FAVOR%" #0 innate ( (level + 5) / 6 )		
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_HOLD_PERSON%" #0 innate ( (level + 1) / 4 )		
+		ADD_MEMORIZED_SPELL "%TYR_EXALTATION%" #0 innate ( level  / 5 )		
+		PATCH_IF level>=11 BEGIN
+			ADD_MEMORIZED_SPELL "%INNATE_CLERIC_HOLY_WORD%" #0 innate 
+		END
+	END
+	UMBERLEE BEGIN
+		LPF ADD_CRE_EFFECT INT_VAR target=2 timing=9 opcode=100 parameter1=219 parameter2=5 END // water elemental immunity
+		LPF ADD_CRE_EFFECT INT_VAR target=2 timing=9 opcode=324 STR_VAR resource="%CLERIC_SMASHING_WAVE%" END
+		LPF ADD_CRE_EFFECT INT_VAR target=2 timing=9 opcode=324 STR_VAR resource="%INNATE_CLERIC_SMASHING_WAVE%" END
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_SMASHING_WAVE%" #0 innate ( level  / 6 )		
+		ADD_MEMORIZED_SPELL "%INNATE_CLERIC_STORM_SHELL%" #0 innate ( (level + 3) / 6 )		
+		PATCH_IF level>=9 BEGIN
+			ADD_MEMORIZED_SPELL "%spl_umberlee_conjure_elemental%" #0 innate
+		END
+	END
+	DEFAULT
+		LPF warning STR_VAR warning="SFO warning: god %god% is not defined" END
+	END
+
+
+
+
+END
+
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO read_extra_tof_priest_spells
+BEGIN
+	LOCAL_SET level=0
+	LOCAL_SPRINT ids ""
+	LOCAL_SPRINT resref ""
+	LOCAL_SPRINT idslower ""
+	ACTION_IF !VARIABLE_IS_SET extra_tof_priest_spells_read_in BEGIN
+		OUTER_SET extra_tof_priest_spells_read_in=1
+		ACTION_CLEAR_ARRAY sfo_temp_array
+		LAF 2da_read STR_VAR file=tof_spells.2da locbase=priest location=data RET_ARRAY sfo_temp_array=array END
+		ACTION_PHP_EACH sfo_temp_array AS ids=>level BEGIN
+			ACTION_IF "%ids%" STR_CMP "SFO_DEFAULT" BEGIN
+				OUTER_SPRINT idslower "%ids%"
+				ACTION_TO_LOWER idslower
+				OUTER_SPRINT resref EVAL "%spl_%idslower%%"
+				OUTER_SPRINT "CLERIC_%ids%" "%resref%"
+				OUTER_SET "CLERIC_%ids%_LEVEL"=level
+				OUTER_SPRINT "CLERIC_%ids%_TYPE" priest
+			END
+		END
+	END
+END
+
+/////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION read_tof_war_cries 
+	RET_ARRAY tof_war_cries
+BEGIN
+	ACTION_IF !VARIABLE_IS_SET $tof_war_cries("set") BEGIN
+		OUTER_SET $tof_war_cries("set")=1
+		LAF ini_read INT_VAR flat=1 STR_VAR file=god_calls.ini location=data locbase=priest RET_ARRAY god_array=array END
+		// temporarily add the separate evil gods
+		ACTION_IF VARIABLE_IS_SET $gods_installed(BANE_XVIM) BEGIN
+			OUTER_SET $gods_installed(BANE)=1
+			OUTER_SET $gods_installed(XVIM)=1
+		END
+		ACTION_IF VARIABLE_IS_SET $gods_installed(BHAAL_CYRIC) BEGIN
+			OUTER_SET $gods_installed(BHAAL)=1
+			OUTER_SET $gods_installed(CYRIC)=1
+		END
+		ACTION_IF VARIABLE_IS_SET $gods_installed(MYRKUL_VELSHAROON) BEGIN
+			OUTER_SET $gods_installed(MYRKUL)=1
+			OUTER_SET $gods_installed(VELSHAROON)=1
+		END
+		ACTION_PHP_EACH gods_installed AS god=>discard BEGIN
+			ACTION_IF VARIABLE_IS_SET $god_array("%god%") BEGIN
+				OUTER_SPRINT list $god_array("%god%")
+				OUTER_SET count=0
+				OUTER_WHILE "%list%" STR_CMP "" BEGIN
+					OUTER_SET ++count
+					LAF return_first_entry STR_VAR list separator="," RET entry list END
+					ACTION_TO_LOWER god
+					OUTER_SET $tof_war_cries("%god%" "%count%")=RESOLVE_STR_REF( (AT entry) )
+				END
+				OUTER_SET $tof_war_cries("%god%" count)=count
+			END ELSE BEGIN
+				ACTION_TO_LOWER god
+				OUTER_SET $tof_war_cries("%god%" count)=0			
+			END
+			OUTER_SET temp=$tof_war_cries("%god%" count)
+		END
+
+
+	END
+END
+

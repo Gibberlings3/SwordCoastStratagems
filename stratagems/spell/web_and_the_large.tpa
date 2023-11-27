@@ -1,55 +1,179 @@
 DEFINE_ACTION_FUNCTION web_and_the_large BEGIN
 
-   /// re-map the Sphere of Chaos paralyzation power, the beholder eyestalk ray, and Spell Revisions' Chromatic Orb, to 175
+	// descriptions
+	
+	spl.edit[%WIZARD_WEB%]
+	[
+		new:=@219
+		m_description:="%m_description%%WNL%%new%"
+	]
+	spl.edit[%CLERIC_ENTANGLE%]
+	[
+		new:=@220
+		m_description:="%m_description%%WNL%%new%"
+	]	
+	spl.edit[%WIZARD_GREASE%]
+	[
+		new:=@22
+		m_description:="%m_description%%WNL%%new%"
+	]	
+	
 
-   MAKE_PATCH
-      opcode=>"if opcode=109 then 175 else no_change"
-   END
-   LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell=~spwi118f spin960 SPHERE_OF_CHAOS~ editstring=~patch_effect=>patch_data~ END
 
-   /// define the animation codes that correspond to largeness
+	
+	// main content
 
-      ACTION_FOR_EACH anim_num IN 32572 32517 32518 29472 29473 29440 29456 29457
-                               29458 29459 32574 32519 32516 30980 57568 57360
-                               57585 57584 57488 59648 59664 32520 29442 30976
-                               30978 30979 30977  4352 32529  4096 32537
-                               BEGIN
-          OUTER_SPRINT $web_anim_array( ~%anim_num%~) ~~
-   END
+	ACTION_IF enhanced_edition BEGIN
 
-   // do it in hardcode, using WEIDU native functions (speedier)
-   OUTER_SPRINT largelist ~~
-   COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
-	PATCH_TRY
-        SPRINT filename ~%SOURCE_RES%~
-        LPF CRE_is_large RET value END
-        PATCH_IF value BEGIN
-            LPF ADD_CRE_EFFECT INT_VAR opcode=101 target=1 timing=9 parameter2=109 END
-            LPF ADD_CRE_EFFECT INT_VAR opcode=101 target=1 timing=9 parameter2=157 END
-            LPF ADD_CRE_EFFECT INT_VAR opcode=267 target=1 timing=9 parameter1=14102 END
-            LPF ADD_CRE_EFFECT INT_VAR opcode=206 target=1 timing=9 STR_VAR resource="%CLERIC_ENTANGLE%" END
-            PATCH_IF is_bg2 BEGIN
-               LPF ADD_CRE_EFFECT INT_VAR opcode=206 target=1 timing=9 STR_VAR resource="%BLACK_DRAGON_PLANT%" END
-            END
-        END
-	WITH DEFAULT
-			LPF regexp_warning STR_VAR parent=web_and_the_large END
+		COPY_EXISTING_REGEXP - ".*\.\(itm\|spl\)" nowhere
+			proceed=0
+			proceed_grease=0
+			skip=0
+			PATCH_IF "%SOURCE_EXT%" STR_EQ itm BEGIN
+				GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+			END ELSE BEGIN
+				GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+			END
+			PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+				GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					PATCH_IF SHORT_AT fx_off=154 || SHORT_AT fx_off=157 BEGIN
+						proceed=1
+						opcode=SHORT_AT fx_off
+					END ELSE
+					PATCH_IF SHORT_AT fx_off=158 BEGIN
+						proceed_grease=1
+						opcode_grease=SHORT_AT fx_off
+					END ELSE					PATCH_IF SHORT_AT fx_off=324 BEGIN
+						READ_LONG (fx_off+0x8) param2
+						PATCH_IF param2=13 BEGIN
+							skip=1
+						END
+					END
+				END
+			END
+			PATCH_IF proceed && !skip BEGIN
+				SET $web_entangle_list("%SOURCE_FILE%")=opcode
+			END
+			PATCH_IF proceed_grease && !skip BEGIN
+				SET $grease_list("%SOURCE_FILE%")=opcode_grease
+			END
+
+			
+		ACTION_PHP_EACH web_entangle_list AS file=>match_opcode BEGIN
+			COPY_EXISTING "%file%" override
+				// large
+				PATCH_IF !is_iwd BEGIN // already present on IWDEE
+					LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=0 parameter2=13 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				END
+				// race=slime
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race slime) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=elemental
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race elemental) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=shadow
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race shadow) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=mist
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race mist) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=wraith
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race wraith) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// splstate=FIRE_SHIELD_RED
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (splstate RED_FIRESHIELD) parameter2=110 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// splstate=FIRE_SHIELD_BLUE
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (splstate BLUE_FIRESHIELD) parameter2=110 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+		END
+		ACTION_PHP_EACH grease_list AS file=>match_opcode BEGIN
+			COPY_EXISTING "%file%" override
+				// large
+				PATCH_IF !is_iwd BEGIN // already present on IWDEE
+					LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=0 parameter2=13 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				END
+				// race=elemental
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race elemental) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=beholder
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race beholder) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=shadow
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race shadow) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=mist
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race mist) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+				// race=wraith
+				LPF CLONE_EFFECT INT_VAR match_opcode opcode=324 parameter1=IDS_OF_SYMBOL (race wraith) parameter2=104 duration=1 timing=0 STR_VAR resource="%SOURCE_RES%" insert=first END
+		END
+
+	END ELSE BEGIN
+
+
+	   /// define the animation codes that correspond to largeness/other characteristics
+
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY web_anim_array BEGIN
+			32572 => "" //DEVA_MONADIC
+			29472 => "" //ELEMENTAL_AIR
+			29473 => "" //ELEMENTAL_AIR_SMALL
+			29456 => "" //ELEMENTAL_FIRE
+			29457 => "" //ELEMENTAL_FIRE_SMALL
+			29458 => "" //ELEMENTAL_FIRE_PURPLE
+			29459 => "" //ELEMENTAL_FIRE_SMALL_PURPLE
+			32574 => "" //GIANT_FIRE
+			32519 => "" //GOLEM_CLAY
+			32516 => "" //GOLEM_IRON
+			30980 => "" //GRAY_OOZE
+			57568 => "" //CORNUGON
+			57360 => "" //ETTIN
+			57585 => "" //GLABREZU
+			57584 => "" //GOLEM_ICE
+			57488 => "" //MARILITH
+			59648 => "" //SALAMANDER_FIRE
+			32520 => "" //OTYUGH
+			29442 => "" //SHAMBLING_MOUND
+			30976 => "" //SLIME_GREEN
+			30978 => "" //SLIME_MUSTARD
+			30979 => "" //SLIME_OCHRE
+			30977 => "" //SLIME_OLIVE
+			4352 => "" //TANARRI
+			32529 => "" //UMBER_HULK
+			4096 => "" //WYVERN_BIG
+			0xEF10 => "" //WATER_WEIRD
+			0x7703 => "" //SHADOW
+		END
+
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY grease_anim_array BEGIN
+			29472 => "" //ELEMENTAL_AIR
+			29473 => "" //ELEMENTAL_AIR_SMALL
+			29456 => "" //ELEMENTAL_FIRE
+			29457 => "" //ELEMENTAL_FIRE_SMALL
+			29458 => "" //ELEMENTAL_FIRE_PURPLE
+			29459 => "" //ELEMENTAL_FIRE_SMALL_PURPLE
+			57584 => "" //GOLEM_ICE
+			59648 => "" //SALAMANDER_FIRE
+			30976 => "" //SLIME_GREEN
+			30978 => "" //SLIME_MUSTARD
+			30979 => "" //SLIME_OCHRE
+			30977 => "" //SLIME_OLIVE
+			0xEF10 => "" //WATER_WEIRD
+			0x7703 => "" //SHADOW
+			32533 => "" //BEHOLDER_SMALL
+			32514 => "" //BEHOLDER
+		END
+
+	   // do it in hardcode, using WEIDU native functions (speedier)
+	   OUTER_SPRINT largelist ~~
+	   COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+		PATCH_TRY
+			READ_LONG 0x28 anim
+			PATCH_IF VARIABLE_IS_SET $web_anim_array("%anim%") BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR opcode=83 target=1 timing=9 parameter2=63 END
+				LPF ADD_CRE_EFFECT INT_VAR opcode=83 target=1 timing=9 parameter2=259 END
+				LPF ADD_CRE_EFFECT INT_VAR opcode=83 target=1 timing=9 parameter2=242 END
+			END
+			PATCH_IF VARIABLE_IS_SET $grease_anim_array("%anim%") BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR opcode=83 target=1 timing=9 parameter2=100 END
+			END
+		WITH DEFAULT
+				LPF regexp_warning STR_VAR parent=web_and_the_large END
+		END
+	   BUT_ONLY
+
+//grease=100
+
 	END
-   BUT_ONLY
 
-
-
-END
-
-///////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION CRE_is_large
-    RET value
-BEGIN
-    LPF CRE_read_animation_code RET anim=value END
-    PATCH_IF VARIABLE_IS_SET $web_anim_array( ~%anim%~) BEGIN
-       SET value=1
-    END ELSE BEGIN
-       SET value=0
-    END
 END

@@ -1,0 +1,73 @@
+DEFINE_ACTION_FUNCTION extra_symbols BEGIN
+
+ ACTION_IF VARIABLE_IS_SET CLERIC_SYMBOL_PAIN && VARIABLE_IS_SET CLERIC_SYMBOL_HOPELESSNESS BEGIN
+
+	// make the spells
+	ACTION_FOR_EACH symbol IN CLERIC_SYMBOL_PAIN CLERIC_SYMBOL_HOPELESSNESS BEGIN
+			OUTER_PATCH_SAVE idsname "%symbol%" BEGIN
+				REPLACE_TEXTUALLY "CLERIC" "WIZARD"
+			END
+			OUTER_SPRINT spell EVAL "%%symbol%%"
+			COPY_EXISTING "%spell%.spl" "%workspace%"
+				WRITE_BYTE 0x34 8 // needed so install_spell knows its level
+			MAKE_PATCH
+				spell_type=>wizard
+				unusable_druid=>0
+				level=>8
+				enforce_school=>null
+				patch_ability_inline=>"casting_time=>8"
+				patch_effect_inline=>"power=>~if power=7 then 8 else no_change~"
+				substitute_description=>~SFO_reserved_function=>patch_symbol_desc_to_wizard~
+			END
+			LAF install_spell STR_VAR spell locabs="%workspace%" idsname edits=patch_data RET newname END
+			MAKE_PATCH
+				clone_effect_inline=>"match=>~opcode=321~ resource=>%newname%"
+			END
+			LAF edit_spell STR_VAR spell="%newname% %symbol%" edits=patch_data END
+			OUTER_SPRINT "%idsname%" "%newname%"
+	END
+	
+	// make the scrolls
+	
+	ACTION_FOR_EACH ids IN WIZARD_SYMBOL_PAIN WIZARD_SYMBOL_HOPELESSNESS BEGIN
+		LAF make_scroll_of_spell
+			INT_VAR price=5000
+			STR_VAR resref="%%ids%%"
+					name_func=cd_scroll_name
+		RET "SCROLL_%ids%"=scrollname
+		END	
+	END
+	
+	// install the scrolls
+	
+	OUTER_SPRINT shadow_pain scrlan
+	OUTER_SPRINT shadow_hopelessness scrlao
+	COPY_EXISTING_REGEXP ".*\.sto" override
+		PATCH_IF INDEX_BUFFER ("\(%shadow_pain%\|%shadow_hopelessness%\)")>=0 BEGIN
+			SPRINT $stores_to_edit("%SOURCE_RES%") ""
+		END
+	BUT_ONLY
+	MAKE_PATCH
+		clone_item_inline=>~match=>"item_resource=%shadow_pain%" item_resource=>%SCROLL_WIZARD_SYMBOL_PAIN%~
+		clone_item_inline'=>~match=>"item_resource=%shadow_hopelessness%" item_resource=>%SCROLL_WIZARD_SYMBOL_HOPELESSNESS%~
+	END
+	ACTION_PHP_EACH stores_to_edit AS store=>null BEGIN
+		LAF edit_store STR_VAR store edits=patch_data END
+	END
+	
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION patch_symbol_desc_to_wizard
+BEGIN
+	SPRINT level @38
+	REPLACE_TEXTUALLY "%level% *7" "%level% 8"
+	SPRINT sphere @37
+	REPLACE_TEXTUALLY "%sphere%.*[%WNL%%LNL%%MNL%]" ""
+	SPRINT casting_time @32
+	REPLACE_TEXTUALLY "%casting_time% *3" "%casting_time% 8"
+	SPRINT priest @30
+	SPRINT wizard @31
+	REPLACE_TEXTUALLY "%priest%" "%wizard%"
+END

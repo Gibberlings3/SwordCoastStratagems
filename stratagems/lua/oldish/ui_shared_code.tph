@@ -1,0 +1,90 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////	Add functionality to overwrite character colors
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION shared_color_changes BEGIN
+
+	// install shared functions
+	
+	LAF UI_install_function INT_VAR inline=1 STR_VAR new_function_path=".../stratagems-inline/update_colors.lua" lua_file="m_dw_shr" search_string=dwUpdateColors END
+
+	// edit ui.menu to incorporate the colors
+	
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARACTER_COLOR object_type=menu patch=add_color_update END
+END
+
+DEFINE_PATCH_FUNCTION add_color_update BEGIN
+	PATCH_IF INDEX_BUFFER ("dwUpdateColors")<0 BEGIN 
+		REPLACE_TEXTUALLY ~^\([%TAB% ]+\)Infinity_UpdateLuaStats()~ ~\1Infinity_UpdateLuaStats()%WNL%\1dwUpdateColors()~
+	END
+END
+
+<<<<<<<<.../stratagems-inline/update_colors.lua
+
+
+function dwUpdateColors()
+
+	 if currentChargenSubrace and currentChargenRace then
+	 		subcol=subraceList(dwRaces[currentChargenRace].id)[currentChargenSubrace].color
+			if subcol.hair~=-1 then
+				Infinity_SetHairColor(subcol.hair)
+			end
+			if subcol.skin~=-1 then
+				Infinity_SetSkinColor(subcol.skin)
+			end
+			if subcol.major~=-1 then
+				Infinity_SetMajorColor(subcol.major)
+			end
+			if subcol.minor~=-1 then
+				Infinity_SetMinorColor(subcol.minor)
+			end
+	end
+
+
+	 -- see if portrait has set colors (later, b/c higher priority)
+	 if chargen.portrait and dwPortraitList and dwPortraitColorsActivated then
+		if dwPortraitList[chargen.portrait] then
+			portrait_data=dwPortraitList[chargen.portrait]
+			Infinity_SetHairColor(portrait_data.hair)		
+			Infinity_SetSkinColor(portrait_data.skin)		
+			Infinity_SetMajorColor(portrait_data.major)		
+			Infinity_SetMinorColor(portrait_data.minor)		
+		end
+	 end
+	 
+
+end
+
+>>>>>>>>
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+////	Tell whether we're levelling, dualling or in chargen
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION detect_chargen_status BEGIN
+
+	ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwIsLevelling=true" BEGIN
+		COPY_EXISTING "ui.menu" override
+			LPF UI_alter_object STR_VAR object=CHARGEN_GENDER object_type=menu patch=label_chargen END 
+			LPF UI_alter_object STR_VAR object=CHARGEN_DUALCLASS object_type=menu patch=dual_on_done END 
+			LPF UI_alter_object STR_VAR object=LEVELUP_PROFICIENCIES object_type=menu patch=levelling_on_done END
+			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnLevelUpButtonClick()~ ~dwIsChargen=false;dwIsLevelling=true;dwIsDualClassing=false;characterScreen:OnLevelUpButtonClick()~
+			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnDualClassButtonClick()~ ~dwIsChargen=false;dwIsLevelling=false;dwIsDualClassing=true;characterScreen:OnDualClassButtonClick()~
+			REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:AcceptCharacter~ ~dwIsChargen=false;createCharScreen:AcceptCharacter~
+		BUT_ONLY
+	END
+END
+
+DEFINE_PATCH_FUNCTION label_chargen BEGIN
+	REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ ~onOpen\1"%WNL%dwIsChargen=true;dwIsLevelling=false;dwIsDualClassing=false%WNL%~
+END
+
+DEFINE_PATCH_FUNCTION dual_on_done BEGIN
+	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsDualClassing=false;createCharScreen:OnDoneButtonClick()~
+END
+
+DEFINE_PATCH_FUNCTION levelling_on_done BEGIN
+	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsLevelling=false;createCharScreen:OnDoneButtonClick()~
+END

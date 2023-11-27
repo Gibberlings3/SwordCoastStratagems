@@ -27,10 +27,10 @@ from 0, and with columns 'int' and 'symbol'.</li>
 /*
 document{2da_read}
 {
-Read a 2da file (or, in patch context, the current 2da file) into a 2d array, with 
-row and column keys uppercased. Also return an array of uppercased row headers and
+Read a 2da file (or, in patch context, the current 2da file) into a 2d array. Also return an array of uppercased row headers and
 column headers, in the format row_label=>row_number. ('case' controls the case of the
-row and column headers; it's uppercase by default on genuine 2das, mixed by default otherwise)
+row and column headers; it's uppercase by default on genuine 2das, mixed by default otherwise).
+The default value is also returned, as 'default'. (On non-2da files, * is returned)
 
 If you don't specify a path for the 2da file, it's assumed to be a game file.
 
@@ -39,7 +39,12 @@ whine if it doesn't exist, unless silent=1.
 
 If the file is a 2da, and 'reflect' is set, reverse rows and columns. If it's a 2da, and 'allow_incomplete_lines'
 is set, don't require that all lines are complete. If it's a 2da, and "rowname_column" is set, use that column
-(if it's present) for the row names instead of the usual entries.
+(if it's present) for the row names instead of the usual entries. In the latter case, we add a new 'ROWNUMBER' column
+containing column zero. (This is not compatible with 'reflect'.)
+
+If 'rowmap' and/or 'colmap' are set, they get applied to the row and column entries before the array is constructed.
+
+If the file contains WEIDU-style // comments, they are removed. (You can override this by setting remove_comments to 0.)
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////
@@ -48,19 +53,29 @@ DEFINE_PATCH_FUNCTION "2da_read"
 	INT_VAR silent=0//boolean
 			reflect=0//boolean
 			allow_incomplete_lines=0//boolean
+			remove_comments=1//boolean
 	STR_VAR type=""//[2da|ids|table_header|table_no_header]
 			rowmap=""//function
 			colmap=""//function
 			rowname_column=""
 			case=""//[upper|lower|mixed]
+	RET default
 	RET_ARRAY columns rows array
 BEGIN
+	SPRINT default "*"
+	PATCH_IF "%rowname_column%" STR_CMP "" && reflect BEGIN
+		PATCH_WARN "You are calling 2da_read with both reflect=1 and a nonempty rowname_column, which is not reliably supported"
+	END
 	LPF anon_check INT_VAR has_output=1 STR_VAR function="%rowmap%" RET rowmap=function END
 	LPF anon_check INT_VAR has_output=1 STR_VAR function="%colmap%" RET colmap=function END
 	// initialize
 	CLEAR_ARRAY columns
 	CLEAR_ARRAY rows
 	CLEAR_ARRAY array
+	// remove comments
+	PATCH_IF remove_comments BEGIN
+		REPLACE_TEXTUALLY "//.*" ""
+	END
 	// try to infer type
 	PATCH_IF "%type%" STR_EQ "" BEGIN
 		PATCH_IF "%rowmap%" STR_CMP "" || "%colmap%" STR_CMP "" BEGIN
@@ -89,121 +104,151 @@ BEGIN
 	"2da" BEGIN
 		// get the default
 		READ_2DA_ENTRY 1 0 1 default
+		SPRINT default "%default%"
+		// check if it's empty
+		COUNT_2DA_ROWS 1 empty_check
+		is_empty=(empty_check=3)
+		is_blank=(empty_check=2)
 		// get the col headers (& also the lookup column if appropriate)
-		lookup_col_num=0
-		COUNT_2DA_COLS colcount
-		COUNT_2DA_ROWS colcount rowcount
-		PATCH_MATCH "%colcount%" WITH
-		2 BEGIN
-			col_row=2
-			main_row=1
-		END
-		3 BEGIN
-			col_row=1
-			main_row=0
-		END
-		DEFAULT
-			col_row=0
-			main_row=0
-		END
-		READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
-		FOR (col=1;col<colcount;++col) BEGIN
-			READ_2DA_ENTRY_FORMER 2da_coldata col_row (col - 1) value
-			PATCH_MATCH "%value%" WITH 
-			"%rowname_column%" BEGIN
-				lookup_col_num=col
+		PATCH_IF !is_blank BEGIN
+			lookup_col_num=0
+			COUNT_2DA_COLS colcount
+			COUNT_2DA_ROWS colcount rowcount
+			PATCH_MATCH "%colcount%" WITH
+			2 BEGIN
+				col_row=2
+				main_row=1
+			END
+			3 BEGIN
+				col_row=1
+				main_row=0
 			END
 			DEFAULT
+				col_row=0
+				main_row=0
 			END
-			PATCH_MATCH "%case%" WITH
-			lower BEGIN
-				TO_LOWER value 
-			END
-			upper BEGIN
-				TO_UPPER value
-			END	
-			mixed BEGIN
-			END
-			DEFAULT
-				TO_UPPER value
-			END
-			PATCH_IF !reflect BEGIN
-				SET $columns("%value%")=col
-			END ELSE BEGIN
-				SET $rows("%value%")=col			
-			END
-		END
-		// get the rows
-		READ_2DA_ENTRIES_NOW 2da_data colcount
-		FOR (rownum=main_row;rownum<2da_data;++rownum) BEGIN
-			READ_2DA_ENTRY_FORMER 2da_data rownum lookup_col_num value
-			PATCH_MATCH "%case%" WITH
-			lower BEGIN
-				TO_LOWER value 
-			END
-			upper BEGIN
-				TO_UPPER value
-			END	
-			mixed BEGIN
-			END
-			DEFAULT
-				TO_UPPER value
-			END		
-			PATCH_IF !reflect BEGIN	
-				SET $rows("%value%")=rownum
-			END ELSE BEGIN
-				SET $columns("%value%")=rownum
-			END
-		END
-		// map rows and columns if needed
-		LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
-		LPF array_map STR_VAR array=rows keymap="%rowmap%" RET_ARRAY rows=array END
-		
-		PATCH_IF allow_incomplete_lines BEGIN
-			// get the data into a working array
-			READ_ASCII 0x0 data (BUFFER_LENGTH)		
-			LPF data_lines STR_VAR data RET_ARRAY lines END
-			PHP_EACH lines AS ind=>line BEGIN
-				PATCH_IF ind>=3 BEGIN
-					LPF array_values_from_string INT_VAR quick=1 STR_VAR string="%line%" RET_ARRAY temparray=array END
-					LPF array_length STR_VAR array=temparray RET length END
-					SPRINT row $temparray(0)
-					row_int=ind - 3 +main_row
-					PATCH_IF !reflect BEGIN
-						SPRINT columns_or_rows columns
-					END ELSE BEGIN
-						SPRINT columns_or_rows rows
-					END
-					PHP_EACH "%columns_or_rows%" AS col=>int BEGIN
-						PATCH_IF int<=length BEGIN
-							SPRINT $working_array("%row_int%" "%int%") $temparray("%int%")
-						END ELSE BEGIN
-							SPRINT $working_array("%row_int%" "%int%") "%default%"
-						END
-					END
-				END			
-			END
-			// get it into the final array
-			PHP_EACH rows AS row=>row_int BEGIN
-				PHP_EACH columns AS col=>col_int BEGIN
-					PATCH_IF !reflect BEGIN
-						SPRINT $array("%row%" "%col%") $working_array("%row_int%" "%col_int%")
-					END ELSE BEGIN
-						SPRINT $array("%row%" "%col%") $working_array("%col_int%" "%row_int%")				
-					END
-				END		
-			END
-		END ELSE BEGIN
-			PHP_EACH rows AS row=>row_int BEGIN
-				PHP_EACH columns AS col=>col_int BEGIN		
-					PATCH_IF !reflect BEGIN
-						READ_2DA_ENTRY_FORMER 2da_data row_int col_int entry
-					END ELSE BEGIN
-						READ_2DA_ENTRY_FORMER 2da_data col_int row_int entry
-					END
-					SPRINT $array("%row%" "%col%") "%entry%"
+			READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
+			FOR (col=1;col<colcount;++col) BEGIN
+				READ_2DA_ENTRY_FORMER 2da_coldata col_row (col - 1) value
+				PATCH_MATCH "%value%" WITH 
+				"%rowname_column%" BEGIN
+					lookup_col_num=col
 				END
-			END	
+				DEFAULT
+				END
+				PATCH_MATCH "%case%" WITH
+				lower BEGIN
+					TO_LOWER value 
+				END
+				upper BEGIN
+					TO_UPPER value
+				END	
+				mixed BEGIN
+				END
+				DEFAULT
+					TO_UPPER value
+				END
+				PATCH_IF !reflect BEGIN
+					SET $columns("%value%")=col
+				END ELSE BEGIN
+					SET $rows("%value%")=col			
+				END
+			END
+			PATCH_IF is_empty BEGIN
+				LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
+			END ELSE BEGIN
+				// get the rows
+				READ_2DA_ENTRIES_NOW 2da_data colcount
+				FOR (rownum=main_row;rownum<2da_data;++rownum) BEGIN
+					READ_2DA_ENTRY_FORMER 2da_data rownum lookup_col_num value
+					PATCH_MATCH "%case%" WITH
+					lower BEGIN
+						TO_LOWER value 
+					END
+					upper BEGIN
+						TO_UPPER value
+					END	
+					mixed BEGIN
+					END
+					DEFAULT
+						TO_UPPER value
+					END		
+					PATCH_IF !reflect BEGIN	
+						SET $rows("%value%")=rownum
+					END ELSE BEGIN
+						SET $columns("%value%")=rownum
+					END
+				END
+				// if we're using rowname_column, store the actual row labels
+				// map rows and columns if needed
+				LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
+				LPF array_map STR_VAR array=rows keymap="%rowmap%" RET_ARRAY rows=array END
+				
+				PATCH_IF allow_incomplete_lines BEGIN
+					// get the data into a working array
+					READ_ASCII 0x0 data (BUFFER_LENGTH)		
+					LPF data_lines STR_VAR data RET_ARRAY lines END
+					PHP_EACH lines AS ind=>line BEGIN
+						PATCH_IF ind>=3 BEGIN
+
+							// main read
+							LPF array_values_from_string INT_VAR quick=1 STR_VAR string="%line%" RET_ARRAY temparray=array END
+							LPF array_length STR_VAR array=temparray RET length END
+							SPRINT row $temparray(0)
+							row_int=ind - 3 +main_row
+							PATCH_IF !reflect BEGIN
+								SPRINT columns_or_rows columns
+							END ELSE BEGIN
+								SPRINT columns_or_rows rows
+							END
+							PHP_EACH "%columns_or_rows%" AS col=>int BEGIN
+								PATCH_IF int<=length BEGIN
+									SPRINT $working_array("%row_int%" "%int%") $temparray("%int%")
+								END ELSE BEGIN
+									SPRINT $working_array("%row_int%" "%int%") "%default%"
+								END
+							END
+						END			
+					END
+					// get it into the final array
+					PHP_EACH rows AS row=>row_int BEGIN
+						// get rownumbers if we're using rowname_column
+						PATCH_IF lookup_col_num>0 BEGIN
+							READ_2DA_ENTRY_FORMER 2da_data row_int 0 rownumber
+							SPRINT $array("%row%" "ROWNUMBER") "%rownumber%"	
+						END	
+						// main data				
+						PHP_EACH columns AS col=>col_int BEGIN
+							PATCH_IF !reflect BEGIN
+								SPRINT $array("%row%" "%col%") $working_array("%row_int%" "%col_int%")
+							END ELSE BEGIN
+								SPRINT $array("%row%" "%col%") $working_array("%col_int%" "%row_int%")				
+							END
+						END		
+					END
+				END ELSE BEGIN
+					PHP_EACH rows AS row=>row_int BEGIN
+						// get rownumbers if we're using rowname_column
+						PATCH_IF lookup_col_num>0 BEGIN
+							READ_2DA_ENTRY_FORMER 2da_data row_int 0 rownumber
+							PATCH_IF !reflect BEGIN
+								SPRINT $array("%row%" "ROWNUMBER") "%rownumber%"
+							END ELSE BEGIN
+								SPRINT $array("ROWNUMBER" "%row%") "%rownumber%"				
+							END
+						END	
+						// main data					
+						PHP_EACH columns AS col=>col_int BEGIN		
+							PATCH_IF !reflect BEGIN
+								READ_2DA_ENTRY_FORMER 2da_data row_int col_int entry
+							END ELSE BEGIN
+								READ_2DA_ENTRY_FORMER 2da_data col_int row_int entry
+							END
+							SPRINT $array("%row%" "%col%") "%entry%"
+						END
+					END	
+				END
+			END
 		END
 	END
 	"ids" BEGIN
@@ -296,6 +341,15 @@ DEFINE_ACTION_FUNCTION "2da_read"
 	RET value
 	RET_ARRAY columns rows array
 BEGIN
+	ACTION_IF FILE STR_EQ "" BEGIN
+		FAIL "2da_read called with empty value of 'file'"
+	END
+	ACTION_CLEAR_ARRAY columns
+	ACTION_CLEAR_ARRAY rows
+	ACTION_CLEAR_ARRAY array
+	ACTION_IF inline && INDEX ("[/\]" "%file%")<0 BEGIN
+		OUTER_SPRINT file ".../stratagems-inline/%file%" 
+	END
 	LAF sfo_path STR_VAR file path location locbase RET file_path path END
 	ACTION_IF "%path%" STR_EQ "" &&!inline BEGIN
 		ACTION_IF FILE_EXISTS_IN_GAME "%file%" BEGIN
@@ -328,7 +382,7 @@ END
 /*
 document{2da_write}
 {
-Read a 2d array into a 2da file (or, in patch context, the current 2da file). 
+Write a 2d array into a 2da file (or, in patch context, the current 2da file). 
 
 If you don't specify a path for the 2da file, it's assumed to be a game file.
 
@@ -342,13 +396,13 @@ DEFINE_PATCH_FUNCTION 2da_write
 			number_rows=0//boolean
 	STR_VAR array=""//array
 			type=""//[2da|ids|table_header|table_noheader]
-			default=""
+			default="*"
 BEGIN
 	// get cols, rows
 	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
 	// try to infer type
 	PATCH_IF "%type%" STR_EQ "" BEGIN
-		PATCH_IF "%default%" STR_CMP "" BEGIN
+		PATCH_IF "%default%" STR_CMP "*" BEGIN
 			SPRINT type "2da"
 		END ELSE BEGIN
 			PATCH_IF BUFFER_LENGTH>=3 BEGIN
@@ -406,9 +460,6 @@ BEGIN
 	PATCH_MATCH "%type%" WITH
 	"2da" BEGIN
 		// initialise
-		PATCH_IF "%default%" STR_EQ "" BEGIN
-			SPRINT default "*"
-		END
 		SPRINT data "2DA V1.0%WNL%%default%%WNL%"
 		// extract col data
 		PATCH_IF !reflect BEGIN
@@ -504,15 +555,16 @@ DEFINE_ACTION_FUNCTION "2da_write"
 	STR_VAR file="" path="" location="" locbase="" 
 		type=""//[2da|ids|table_header|table_noheader]
 		array=""//array
+		default="*"
 BEGIN
 	LAF sfo_path STR_VAR path location locbase RET path END
 	ACTION_IF "%path%" STR_EQ "" BEGIN
 		COPY_EXISTING "%file%" override
-			LPF 2da_write STR_VAR array type END
+			LPF 2da_write INT_VAR number_rows reflect STR_VAR array type default END
 		BUT_ONLY
 	END ELSE BEGIN
 		COPY ".../stratagems-inline/blank" "%path%/%file%"
-			LPF 2da_write STR_VAR array type END
+			LPF 2da_write INT_VAR number_rows reflect STR_VAR array type default END
 		BUT_ONLY	
 	END
 END
@@ -522,39 +574,76 @@ END
 document{2da_inject_array}
 {
 Given a 2d array, a column header of that array, and a k=>v array whose keys are row headers in the 2d array, 
-inject the array elements into the 2d array, as (k=>v) goes to (k,col,v)
+inject the array elements into the 2d array, as (k=>v) goes to (k,col,v).
+
+If force_uppercase=1 (default), array_in's keys are uppercased.
 }
 */
 /////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_DIMORPHIC_FUNCTION 2da_inject_array 
 	INT_VAR silent=0//boolean
+			force_uppercase=1//boolean
 	STR_VAR array=""//array
 			array_in=""//array
 			column=""
+			row=""
 	RET_ARRAY array
 BEGIN
   OUTER_PATCH "" BEGIN
 	CLEAR_ARRAY rows
 	CLEAR_ARRAY columns
-	TO_UPPER column
-	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
-	LPF array_map STR_VAR array=array_in keymap=toupper RET_ARRAY array_in=array END
-	LPF array_contains STR_VAR array=columns key="%column%" RET value END
-	PATCH_IF !value BEGIN
-		PATCH_IF !silent BEGIN
-			PATCH_WARN "2da_inject_array: column %column% is absent from 2d array %array%"
+	PATCH_IF "%row%" STR_CMP "" && "%column%" STR_CMP "" BEGIN
+		PATCH_WARN "2da_inject_array: both 'row' and 'column' were specified. Using 'row'."
+		SPRINT column ""
+	END
+	PATCH_IF "%column%" STR_CMP "" BEGIN
+		TO_UPPER column
+		LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		PATCH_IF force_uppercase BEGIN
+			LPF array_map STR_VAR array=array_in keymap=toupper RET_ARRAY array_in=array END
 		END
-	END ELSE BEGIN
-		PHP_EACH rows AS row=>discard BEGIN
+		LPF array_contains STR_VAR array=columns key="%column%" RET value END
+		PATCH_IF !value BEGIN
+			PATCH_IF !silent BEGIN
+				PATCH_WARN "2da_inject_array: column %column% is absent from 2d array %array%"
+			END
+		END ELSE BEGIN
+			PHP_EACH rows AS this_row=>discard BEGIN
+				PHP_EACH columns AS col=>discard BEGIN
+					PATCH_IF VARIABLE_IS_SET $"%array_in%"("%this_row%") && "%col%" STR_EQ "%column%" BEGIN
+						SPRINT $array("%this_row%" "%col%") $"%array_in%"("%this_row%")
+					END ELSE BEGIN
+						SPRINT $array("%this_row%" "%col%") $"%array%"("%this_row%" "%col%")
+					END
+				END 
+			END
+		END
+	END ELSE
+	PATCH_IF "%row%" STR_CMP "" BEGIN
+		TO_UPPER row
+		LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+		PATCH_IF force_uppercase BEGIN
+			LPF array_map STR_VAR array=array_in keymap=toupper RET_ARRAY array_in=array END
+		END
+		LPF array_contains STR_VAR array=rows key="%row%" RET value END
+		PATCH_IF !value BEGIN
+			PATCH_IF !silent BEGIN
+				PATCH_WARN "2da_inject_array: row %row% is absent from 2d array %array%"
+			END
+		END ELSE BEGIN
 			PHP_EACH columns AS col=>discard BEGIN
-				PATCH_IF VARIABLE_IS_SET $"%array_in%"("%row%") && "%col%" STR_EQ "%column%" BEGIN
-					SPRINT $array("%row%" "%col%") $"%array_in%"("%row%")
-				END ELSE BEGIN
-					SPRINT $array("%row%" "%col%") $"%array%"("%row%" "%col%")
-				END
-			END 
-		END
+				PHP_EACH rows AS this_row=>discard BEGIN
+					PATCH_IF VARIABLE_IS_SET $"%array_in%"("%col%") && "%this_row%" STR_EQ "%row%" BEGIN
+						SPRINT $array("%this_row%" "%col%") $"%array_in%"("%col%")
+					END ELSE BEGIN
+						SPRINT $array("%this_row%" "%col%") $"%array%"("%this_row%" "%col%")
+					END
+				END 
+			END
+		END	
+	END ELSE BEGIN
+		PATCH_WARN "2da_inject_array: neither 'row' nor 'column' was specified"
 	END
   END
 END
@@ -1226,3 +1315,76 @@ BEGIN
 	END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_process_table}
+{
+'table' should be a header table whose headers are the arguments of the action function 'function'.
+(INT_VAR arguments should be indicated with ':i'.) Each row of the table is fed to the function.
+
+Alternately, if INT_VAR 2da is set to 1, 'table' can be a 2da. It is treated the same way, except
+that each row name is fed to the function as the STR_VAR 'rowname'
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION 2da_process_table
+	INT_VAR inline=0
+			2da=0
+	STR_VAR table=""
+			path=""
+			location=""
+			locbase=""
+			function=""
+BEGIN
+	// get the data
+	ACTION_IF 2da BEGIN
+		LAF 2da_read INT_VAR inline STR_VAR file="%table%" path location locbase type=2da case=mixed RET_ARRAY rows columns array END	
+	END ELSE BEGIN
+		LAF 2da_read INT_VAR inline STR_VAR file="%table%" path location locbase type=table_header case=mixed RET_ARRAY rows columns array END
+	END
+	// get the STR and INT variables
+	ACTION_CLEAR_ARRAY ints
+	ACTION_CLEAR_ARRAY strs
+	OUTER_SPRINT int_string ""
+	OUTER_SPRINT str_string ""
+	ACTION_PHP_EACH columns AS arg=>discard BEGIN
+		OUTER_SET is_int=0
+		OUTER_PATCH_SAVE arg "%arg%" BEGIN
+			REPLACE_EVALUATE "\(.*\):i" BEGIN
+				is_int=1
+			END
+			"%MATCH1%"
+		END
+		ACTION_IF is_int BEGIN
+			OUTER_SPRINT $ints("%arg%") ""
+			OUTER_SPRINT int_string "%int_string%%arg% "
+		END ELSE BEGIN
+			OUTER_SPRINT $strs("%arg%") ""
+			OUTER_SPRINT str_string "%str_string%%arg% "
+		END
+	END
+	ACTION_IF 2da BEGIN
+		OUTER_SPRINT str_string "%str_string%rowname "
+	END
+	// make the function call
+	COPY ".../stratagems-inline/process_table_include.tpc" "%workspace%" EVALUATE_BUFFER 
+	// do the rows
+	ACTION_PHP_EACH rows AS row=>discard BEGIN
+		ACTION_PHP_EACH ints AS int=>discard2 BEGIN
+			OUTER_SET "%int%"=$array("%row%" "%int%:i")
+		END
+		ACTION_PHP_EACH strs AS str=>discard2 BEGIN
+			OUTER_SPRINT "%str%" $array("%row%" "%str%")
+		END	
+		ACTION_IF 2da BEGIN
+			OUTER_SPRINT rowname "%row%"
+		END
+		REINCLUDE "%workspace%/process_table_include.tpc"
+	END
+END	
+
+<<<<<<<<.../stratagems-inline/process_table_include.tpc
+LAF %function% INT_VAR %int_string% STR_VAR %str_string% END
+>>>>>>>>

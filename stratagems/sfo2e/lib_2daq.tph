@@ -78,6 +78,7 @@ BEGIN
 	PATCH_IF made_edits BEGIN
 		SET_2DA_ENTRIES_NOW sfo_2daq_data_out colcount
 		PRETTY_PRINT_2DA
+		REPLACE_TEXTUALLY "2DA[ %TAB%]+V1.0" "2DA V1.0"
 	END
 END
 
@@ -185,7 +186,7 @@ document{2daq_extract}
 {
 Given a column header and/or a row header, and a 2da file resref, (or, in patch context, the current 2da file), extract the column or row as k=>v array using the row or column headers, as appropriate, as keys.
 
-If both row and column are set, instead return the element (if any) at (row,column)
+If both row and column are set, instead return the element (if any) at (row,column) as 'value', as well as its row as 'rownum'.
 }
 
 */
@@ -195,9 +196,16 @@ DEFINE_PATCH_FUNCTION 2daq_extract
 			data_read=0
 	STR_VAR row=""
 			column=""
+			case=mixed//[mixed|upper|lower]
 	RET value
+		rownum
 	RET_ARRAY array
 BEGIN
+	CLEAR_ARRAY array
+	PATCH_IF "%row%%column%" STR_EQ "" BEGIN
+		PATCH_FAIL "2daq_extract failure: no row or column selected"
+	END
+	rownum="-1"
 	SPRINT value ""
 	COUNT_2DA_COLS colcount
 	PATCH_MATCH "%colcount%" WITH
@@ -217,34 +225,66 @@ BEGIN
 		READ_2DA_ENTRIES_NOW "sfo_2daq_data" colcount 
 		READ_2DA_ENTRIES_NOW "sfo_2daq_data_cols" ( colcount - 1)
 	END
-	PATCH_IF "%column%" STR_CMP "" BEGIN
-		FOR (col_number=1;col_number<colcount;++col_number) BEGIN
-			READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
-			PATCH_IF "%col_header%" STR_EQ "%column%" BEGIN
-			// then the rows
-				FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
-					READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
-					PATCH_IF "%row_header%" STR_EQ "%row%" || "%row%" STR_EQ ""BEGIN
-						READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
-						SPRINT $array("%row_header%") "%value%"
-						PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN // if we're just getting 'row'/'col', terminate
-							row_number=sfo_2daq_data
-						END
-					END 
-				END
-				col=colcount
-			END		
-		END	
+	// check if it's empty
+	COUNT_2DA_ROWS 1 empty_check
+	is_empty=(empty_check=3)
+	is_blank=(empty_check=2)
+	PATCH_IF is_empty BEGIN
+		SPRINT $array("null") discard
 	END ELSE BEGIN
-		FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
-			READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
-			PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN
-				FOR (col_number=1;col_number<colcount;++col_number) BEGIN
-					READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
-					READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
-					SPRINT $array("%col_header%") "%value%"
+		PATCH_IF "%column%" STR_CMP "" BEGIN
+			FOR (col_number=1;col_number<colcount;++col_number) BEGIN
+				READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
+				PATCH_IF "%col_header%" STR_EQ "%column%" BEGIN
+				// then the rows
+					FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
+						READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
+						PATCH_IF "%row_header%" STR_EQ "%row%" || "%row%" STR_EQ ""BEGIN
+							READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
+							PATCH_MATCH "%case%" WITH
+							upper BEGIN
+								TO_UPPER value
+								TO_UPPER row_header
+							END
+							lower BEGIN
+								TO_LOWER value
+								TO_LOWER row_header
+							END
+							DEFAULT
+							END
+							SPRINT $array("%row_header%") "%value%"
+							PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN // if we're just getting 'row'/'col', terminate
+								row_number=sfo_2daq_data
+							END
+						END 
+					END
+					col=colcount
+				END		
+			END	
+		END ELSE BEGIN
+			FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
+				READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
+				PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN
+					FOR (col_number=1;col_number<colcount;++col_number) BEGIN
+						READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
+						READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
+						PATCH_MATCH "%case%" WITH
+						upper BEGIN
+							TO_UPPER value
+							TO_UPPER col_header
+						END
+						lower BEGIN
+							TO_LOWER value
+							TO_LOWER col_header
+						END
+						DEFAULT
+						END
+
+						SPRINT $array("%col_header%") "%value%"
+						rownum=row_number
+					END
+					row_number=sfo_2daq_data
 				END
-				row_number=sfo_2daq_data
 			END
 		END
 	END
@@ -256,11 +296,12 @@ DEFINE_ACTION_FUNCTION 2daq_extract
 	STR_VAR resref=""
 			row=""
 			column=""
+			case=""
 	RET value
 	RET_ARRAY array
 BEGIN
 	COPY_EXISTING - "%resref%.2da" nowhere
-		LPF 2daq_extract INT_VAR data_read rowname_column STR_VAR row column RET value RET_ARRAY array END
+		LPF 2daq_extract INT_VAR data_read rowname_column STR_VAR row column case RET value RET_ARRAY array END
 	
 END
 
@@ -279,7 +320,7 @@ BEGIN
 	PATCH_MATCH "%insert_loc%" WITH
 	last BEGIN
 		count=0
-		REPLACE_EVALUATE "^\(.+\)" BEGIN
+		REPLACE_EVALUATE "^\([^%WNL%%LNL%%MNL%]+\)" BEGIN
 			PATCH_IF count<2 BEGIN
 				SPRINT out "%MATCH1%"
 			END ELSE
@@ -341,8 +382,8 @@ BEGIN
 		END
 	END
 	insert_point=BUFFER_LENGTH
-	INSERT_BYTES insert_point STRING_LENGTH "%data%"
-	WRITE_ASCII insert_point "%data%"
+	INSERT_BYTES insert_point STRING_LENGTH "%WNL%%data%"
+	WRITE_ASCII insert_point "%WNL%%data%"
 	PRETTY_PRINT_2DA
 END
 

@@ -1,0 +1,522 @@
+DEFINE_ACTION_FUNCTION iwdscroll BEGIN
+
+
+	// get data
+	
+	LAM data_scroll_resrefs
+	
+	LAF read_in_list STR_VAR file="common_spells.txt" location=data RET_ARRAY common_spells_temp=array END
+	ACTION_PHP_EACH common_spells_temp AS spell=>null BEGIN
+		OUTER_SPRINT ids "WIZARD_%spell%"
+		ACTION_IF VARIABLE_IS_SET "%ids%" BEGIN
+			OUTER_SET $common_spells("%ids%")=EVAL "%ids%_LEVEL"
+		END
+	END
+	PRINT "blook"
+	ACTION_PHP_EACH sfo_spell_resrefs AS ids=>null BEGIN
+		ACTION_MATCH "%ids%" WITH 
+		WIZARD_IMPRISONMENT WIZARD_FIND_FAMILAR WIZARD_MALAVONS_RAGE WIZARD_WRAITH_FORM BEGIN
+		END
+		"WIZARD_.*" BEGIN
+			ACTION_IF VARIABLE_IS_SET "%ids%_SCROLL" BEGIN
+				OUTER_SPRINT resref EVAL "%%ids%%"
+				OUTER_PATCH "%resref%" BEGIN
+					READ_ASCII 0x4 level (1)
+				END
+				OUTER_SPRINT $scroll_array("%scroll%") "%level%"
+				OUTER_SPRINT scroll EVAL "%%ids%_SCROLL%"
+				ACTION_IF VARIABLE_IS_SET $scrolls("%level%") BEGIN
+					OUTER_SPRINT temp $scrolls("%level%")
+					OUTER_SPRINT $scrolls("%level%") "%temp% %scroll%"
+					OUTER_SET $scroll_count("%level%")+=1
+				END ELSE BEGIN
+					OUTER_SPRINT $scrolls("%level%") "%scroll%"
+					OUTER_SET $scroll_count("%level%")=1
+				END
+				ACTION_IF !VARIABLE_IS_SET $common_spells("%ids%") BEGIN
+					OUTER_SET $rare_spells("%ids%")= "%ids%_LEVEL"
+				END
+			END
+		END
+		DEFAULT 
+		END
+	END
+	
+	// make random-scroll items
+	
+	OUTER_SET scroll_count=0
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		OUTER_SET scroll_count_here=$scroll_count("%level%")
+		OUTER_SET scroll_count = scroll_count_here>scroll_count? scroll_count_here : scroll_count
+	END
+	
+	COPY_EXISTING rndtres.2da override
+		COUNT_2DA_COLS colcount
+		COUNT_2DA_ROWS colcount rowcount
+	BUT_ONLY	
+	ACTION_IF colcount<scroll_count BEGIN
+			OUTER_SPRINT stars ""
+			OUTER_FOR (row=0;row<rowcount;++row) BEGIN
+				OUTER_SPRINT stars "%stars% *"
+			END
+			OUTER_FOR (col=colcount;col<=scroll_count;++col) BEGIN
+				OUTER_SPRINT column "$ $ %col% %stars%"
+				APPEND_COL rndtres.2da "%column%"
+			END
+	END
+	
+	ACTION_PHP_EACH scrolls AS level=>list BEGIN
+		OUTER_SET scroll_count_here=$scroll_count("%level%")
+		OUTER_FOR (n=scroll_count_here;n<scroll_count;++n) BEGIN
+			OUTER_SPRINT list "%list% *"
+		END	
+		APPEND "rndtres.2da" "DWRNSC%level% %list%"
+		COPY_EXISTING "rnd9400.itm" "override/DWRNSC%level%.itm"
+	END
+	COPY_EXISTING "rndtres.2da" override PRETTY_PRINT_2DA
+	
+	// replace all named scrolls with random scrolls
+	
+	COPY_EXISTING_REGEXP ".*\.are" override
+		LPF randomize_area_scroll END
+	BUT_ONLY
+	
+	COPY_EXISTING_REGEXP ".*\.are" override
+		FOR (level=1;level<9;++level) BEGIN
+			PATCH_IF INDEX_BUFFER ("DWRNSC%level%")>=0 BEGIN
+				LPF struct_read RET_ARRAY m=struct END
+				LPF struct_clone STR_VAR struct=m type=container_item RET_ARRAY m=struct END
+				LPF struct_write STR_VAR struct=m END
+			END
+		END
+	BUT_ONLY
+	
+	// erase all scrolls from our stores
+	
+	LAF erase_scrolls STR_VAR stores="edion kuork0 kieran2 ldd_nym bandoth" END
+	
+	// erase scrolls added to Orrick by script
+	
+	LAF DELETE_SCRIPT_BLOCK STR_VAR script=ar2100 match=UNIORRIK END
+
+	// common spells: Orrick gets all of them, Kieran, Edion and Bandoth get half of them
+	
+	ACTION_PHP_EACH common_spells AS spell=>level BEGIN
+		ACTION_MATCH level WITH
+		1 BEGIN
+			OUTER_SET $orrick_1("%spell%")=RANDOM (2 4)
+			OUTER_SET $edion_1("%spell%")=RANDOM (0 1)
+		END
+		2 BEGIN
+			OUTER_SET $orrick_2("%spell%")=RANDOM (2 4)
+			OUTER_SET $edion_2("%spell%")=RANDOM (0 1)
+		END
+		3 BEGIN
+			OUTER_SET $orrick_3("%spell%")=RANDOM (1 3)
+			OUTER_SET $edion_3("%spell%")=RANDOM (0 1)
+		END
+		4 BEGIN
+			OUTER_SET $orrick_4("%spell%")=RANDOM (1 3)
+			OUTER_SET $edion_4("%spell%")=RANDOM (0 1)
+		END
+		5 BEGIN
+			OUTER_SET $orrick_5("%spell%")=RANDOM (1 2)
+			OUTER_SET $edion_5("%spell%")=RANDOM (0 1)
+		END
+		6 BEGIN
+			OUTER_SET $orrick_6("%spell%")=RANDOM (1 2)
+			OUTER_SET $edion_6("%spell%")=RANDOM (0 1)
+		END
+		DEFAULT
+		END
+	END
+
+	// rare spells
+	
+	//make lists
+	
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		ACTION_CLEAR_ARRAY filtered_array
+		LAF filter_spell_list_by_level INT_VAR level STR_VAR array=rare_spells RET_ARRAY filtered_array END
+		LAF sort_array_by_function STR_VAR array=filtered_array function=random_1d100 RET_ARRAY "rare_spells_%level%"=sorted_array END
+	END
+
+	// Level 1
+	// Edion gets common spells plus 3 rare spells
+	// Orrick gets common spells plus 3 rare spells plus Find Familiar
+	// Kieran gets remaining rare spells
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_1 AS spell=>null BEGIN
+		ACTION_IF count<3 BEGIN
+			OUTER_SET $orrick_1("%spell%")=1
+		END ELSE
+		ACTION_IF count<6 BEGIN
+			OUTER_SET $edion_1("%spell%")=1
+		END ELSE BEGIN
+			OUTER_SET $kieran_1("%spell%")=1
+		END
+		OUTER_SET ++count
+	END
+	OUTER_SET $orrick_1("WIZARD_FIND_FAMILAR")=1
+
+	// Level 2
+	// Edion gets 3 rare spells
+	// Orrick gets 3 rare spells
+	// Kieran gets 4 rare spells
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_2 AS spell=>null BEGIN
+		ACTION_IF count<3 BEGIN
+			OUTER_SET $orrick_2("%spell%")=1
+		END ELSE
+		ACTION_IF count<6 BEGIN
+			OUTER_SET $edion_2("%spell%")=1
+		END ELSE 
+		ACTION_IF count<10 BEGIN
+			OUTER_SET $kieran_2("%spell%")=1
+		END
+		OUTER_SET ++count
+	END
+	
+	// Level 3
+	// Edion, Orrick, Bandoth, Kieran, Nym get c.3 rare spells each
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_3 AS spell=>null BEGIN
+		ACTION_IF count<3 BEGIN
+			OUTER_SET $orrick_3("%spell%")=1
+		END ELSE
+		ACTION_IF count<6 BEGIN
+			OUTER_SET $edion_3("%spell%")=1
+		END ELSE
+		ACTION_IF count<9 BEGIN
+			OUTER_SET $kieran_3("%spell%")=1
+		END ELSE
+		ACTION_IF count<13 BEGIN
+			OUTER_SET $bandoth_3("%spell%")=1
+		END ELSE
+		ACTION_IF count<16 BEGIN
+			OUTER_SET $nym_3("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END
+	OUTER_SET $edion_3("WIZARD_SKULL_TRAP")=1
+
+	// Level 4
+	// All get c. 4 rare spells; Bandoth gets Minor Sequencer
+
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_4 AS spell=>null BEGIN
+		ACTION_IF count<4 BEGIN
+			OUTER_SET $orrick_4("%spell%")=1
+		END ELSE
+		ACTION_IF count<7 BEGIN
+			OUTER_SET $edion_4("%spell%")=1
+		END ELSE
+		ACTION_IF count<10 BEGIN
+			OUTER_SET $kieran_4("%spell%")=1
+		END ELSE
+		ACTION_IF count<14 BEGIN
+			OUTER_SET $bandoth_4("%spell%")=1
+		END ELSE
+		ACTION_IF count<17 BEGIN
+			OUTER_SET $nym_4("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $bandoth_4("WIZARD_MINOR_SEQUENCER")=1
+	
+	// Level 5
+	// 3-4 each
+
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_5 AS spell=>null BEGIN
+		ACTION_IF count<3 BEGIN
+			OUTER_SET $orrick_5("%spell%")=1
+		END ELSE
+		ACTION_IF count<7 BEGIN
+			OUTER_SET $edion_5("%spell%")=1
+		END ELSE
+		ACTION_IF count<11 BEGIN
+			OUTER_SET $kieran_5("%spell%")=1
+		END ELSE
+		ACTION_IF count<14 BEGIN
+			OUTER_SET $bandoth_5("%spell%")=1
+		END ELSE
+		ACTION_IF count<16 BEGIN
+			OUTER_SET $nym_5("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $edion_5("WIZARD_ANIMATE_DEAD")=1
+	
+	// Level 6
+	// 3-4 each; Bandoth and Edion get Contingency
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_6 AS spell=>null BEGIN
+		ACTION_IF count<4 BEGIN
+			OUTER_SET $orrick_6("%spell%")=1
+		END ELSE
+		ACTION_IF count<7 BEGIN
+			OUTER_SET $edion_6("%spell%")=1
+		END ELSE
+		ACTION_IF count<10 BEGIN
+			OUTER_SET $kieran_6("%spell%")=1
+		END ELSE
+		ACTION_IF count<14 BEGIN
+			OUTER_SET $bandoth_6("%spell%")=1
+		END ELSE
+		ACTION_IF count<16 BEGIN
+			OUTER_SET $nym_6("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $bandoth_6("WIZARD_CONTINGENCY")=1
+	OUTER_SET $edion_6("WIZARD_DEATH_SPELL")=1
+
+
+	// Level 7
+	// All except Orrick have 4 spells. Kieran has SS
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_7 AS spell=>null BEGIN
+		ACTION_IF count<5 BEGIN
+			OUTER_SET $edion_7("%spell%")=1
+		END ELSE
+		ACTION_IF count<9 BEGIN
+			OUTER_SET $kieran_7("%spell%")=1
+		END ELSE
+		ACTION_IF count<13 BEGIN
+			OUTER_SET $bandoth_7("%spell%")=1
+		END ELSE
+		ACTION_IF count<17 BEGIN
+			OUTER_SET $nym_7("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $kieran_7("WIZARD_SPELL_SEQUENCER")=1
+
+	// level 8
+	// All except Orrick have 3-4 spells. Kieran has ST. Edion has ADHW
+
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_8 AS spell=>null BEGIN
+		ACTION_IF count<4 BEGIN
+			OUTER_SET $edion_8("%spell%")=1
+		END ELSE
+		ACTION_IF count<7 BEGIN
+			OUTER_SET $kieran_8("%spell%")=1
+		END ELSE
+		ACTION_IF count<10 BEGIN
+			OUTER_SET $bandoth_8("%spell%")=1
+		END ELSE
+		ACTION_IF count<13 BEGIN
+			OUTER_SET $nym_8("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $kieran_8("WIZARD_SPELL_TRIGGER")=1
+	OUTER_SET $edion_8("WIZARD_ABI_DALZIMS_HORRID_WILTING")=1
+	
+	// level 9
+	// all except Orrick have 1-2. Edion always has Wail of the Banshee and Energy Drain
+	
+	OUTER_SET count=0
+	ACTION_PHP_EACH rare_spells_9 AS spell=>null BEGIN
+		ACTION_IF count<2 BEGIN
+			OUTER_SET $edion_9("%spell%")=1
+		END ELSE
+		ACTION_IF count<4 BEGIN
+			OUTER_SET $kieran_9("%spell%")=1
+		END ELSE
+		ACTION_IF count<7 BEGIN
+			OUTER_SET $bandoth_9("%spell%")=1
+		END ELSE
+		ACTION_IF count<9 BEGIN
+			OUTER_SET $nym_9("%spell%")=1
+		END		
+		OUTER_SET ++count
+	END	
+	OUTER_SET $edion_9("WIZARD_WAIL_OF_THE_BANSHEE")=1
+	OUTER_SET $edion_9("WIZARD_ENERGY_DRAIN")=1
+
+	// assign to stores
+	
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		LAF assign_scrolls_to_store STR_VAR store=edion array="edion_%level%" END
+		LAF assign_scrolls_to_store STR_VAR store=ldd_nym array="nym_%level%" END
+		LAF assign_scrolls_to_store STR_VAR store=bandoth array="bandoth_%level%" END
+		LAF assign_scrolls_to_store STR_VAR store=kieran2 array="kieran_%level%" END
+	END
+	OUTER_FOR (level=1;level<=2;++level) BEGIN
+		LAF assign_scrolls_to_store STR_VAR store=kuork0 array="orrick_%level%" END
+	END
+	OUTER_FOR (level=3;level<=6;++level) BEGIN
+		LAF generate_scroll_script_add_list STR_VAR store=kuork0 array="orrick_%level%" RET "orrick_line_%level%"=list END
+	END
+	LAF extend_area_script INT_VAR inline=1 STR_VAR area=ar2100 bottom=ar2100add END
+
+END
+
+
+DEFINE_ACTION_FUNCTION filter_spell_list_by_level 
+	INT_VAR level=0
+	STR_VAR array=""
+	RET_ARRAY filtered_array
+BEGIN
+	ACTION_CLEAR_ARRAY "%filtered_array%"
+	ACTION_PHP_EACH "%array%" AS spell=>level_here BEGIN
+		ACTION_IF level_here=level BEGIN
+			OUTER_SPRINT $filtered_array("%spell%") ""
+		END
+	END
+END
+
+
+DEFINE_ACTION_FUNCTION assign_scrolls_to_store 
+	STR_VAR store="" array="" 
+BEGIN
+	OUTER_SET proceed=0
+	ACTION_PHP_EACH "%array%" AS null1=>null2 BEGIN
+		OUTER_SET proceed=1
+	END
+	ACTION_IF proceed BEGIN
+	LAF sort_array_by_function STR_VAR array function=name_of_spell RET_ARRAY sorted_array END
+	COPY_EXISTING "%store%.sto" override
+		PHP_EACH sorted_array AS spell=>number BEGIN
+			SPRINT scroll EVAL "%%spell%_SCROLL%"
+			PATCH_MATCH "%number%" WITH
+			1 BEGIN
+				ADD_STORE_ITEM "%scroll%" LAST #0 #0 #0 NONE #1
+			END
+			2 BEGIN
+				ADD_STORE_ITEM "%scroll%" LAST #0 #0 #0 NONE #2		
+			END
+			3 BEGIN
+				ADD_STORE_ITEM "%scroll%" LAST #0 #0 #0 NONE #3		
+			END
+			4 BEGIN
+				ADD_STORE_ITEM "%scroll%" LAST #0 #0 #0 NONE #4			
+			END
+			DEFAULT
+			END	
+		END	
+	BUT_ONLY	
+	END
+END
+
+DEFINE_ACTION_FUNCTION generate_scroll_script_add_list 
+	STR_VAR array="" 
+			store=""
+	RET list 
+BEGIN
+	OUTER_SPRINT list ""
+	OUTER_SET proceed=0
+	ACTION_PHP_EACH "%array%" AS null1=>null2 BEGIN
+		OUTER_SET proceed=1
+	END
+	ACTION_IF proceed BEGIN
+		LAF sort_array_by_function STR_VAR array function=name_of_spell RET_ARRAY sorted_array END
+		ACTION_PHP_EACH "%array%" AS spell=>number BEGIN
+			OUTER_SPRINT scroll EVAL "%%spell%_SCROLL%"
+			OUTER_SPRINT list ~%list% AddStoreItem("%store%","%scroll%",%number%,1)~
+		END
+	END
+END
+
+
+
+
+DEFINE_ACTION_FUNCTION random_1d100 STR_VAR arguments="" RET value BEGIN
+	OUTER_SET value=RANDOM (1 100)
+END
+
+
+DEFINE_ACTION_FUNCTION name_of_spell STR_VAR arguments="" RET value BEGIN
+	OUTER_SPRINT resref EVAL "%%arguments%%"
+	COPY_EXISTING "%resref%.spl" override
+		READ_STRREF 0x8 value
+	BUT_ONLY
+END
+
+DEFINE_ACTION_FUNCTION erase_scrolls
+	STR_VAR stores=""
+BEGIN
+
+	OUTER_WHILE "%stores%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%stores%" RET store=entry stores=list END
+		COPY_EXISTING "%store%.sto" override
+			PHP_EACH sfo_arcane_scrolls AS null=>scroll BEGIN
+				REPLACE_TEXTUALLY "%scroll%" "ERASE_ME" (8)
+			END
+			REMOVE_STORE_ITEM ERASE_ME
+		BUT_ONLY
+	END
+END
+
+
+<<<<<<<< .../stratagems-inline/ar2100add.baf
+IF
+	!Global("dw_orrick_upgrade_1","GLOBAL",1)
+	GlobalGT("Kress_Quest","GLOBAL",3) // killed Lysan, talked to Kresselack
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		SetGlobal("dw_orrick_upgrade_1","GLOBAL",1)
+		SetGlobal("UNIORRIK","AR2100",1) // third party consistency
+		%orrick_line_3%
+		%orrick_line_4%
+		AddStoreItem("KUORK0","WANDFRE",5,1)  // Wand of Freezing Death
+		AddStoreItem("KUORK0","WANDMIS",11,1)  // Pemby's Wand of Many Missiles
+		AddStoreItem("KUORK0","JASPER",4,1)  // Jasper's Ring of Shocking Grasp
+		AddStoreItem("KUORK0","ROGUE",1,1)  // Rogue's Cowl
+		AddStoreItem("KUORK0","SASH",1,1)  // Shimmering Sash
+		AddStoreItem("KUORK0","SCRCS05",1,1)  // Scroll Case
+		SetInterrupt(TRUE)
+		Continue()
+END
+
+IF
+	!Global("dw_orrick_upgrade_2","GLOBAL",1)
+	OR(2)
+		Global("AR4003_visited","GLOBAL",1) // either rescued Egenia, or reached DE level 3
+		Global("Egenia_Talked","GLOBAL",1)
+		
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		SetGlobal("dw_orrick_upgrade_2","GLOBAL",1)
+		%orrick_line_5%
+		AddStoreItem("KUORK0","MANTLEHF",16,1)  // Mantle of Hell's Furnace
+		AddStoreItem("KUORK0","OGI",1,1)  // Ogi-Luc's Great Robe
+		AddStoreItem("KUORK0","SCRCS06",1,1)  // Scroll Case
+		SetInterrupt(TRUE)
+		Continue()
+END
+
+IF	
+	!Global("dw_orrick_upgrade_3","GLOBAL",1)
+	GlobalGT("Chapter","GLOBAL",3)
+THEN
+	RESPONSE #100
+		SetInterrupt(FALSE)
+		SetGlobal("dw_orrick_upgrade_3","GLOBAL",1)
+		%orrick_line_6%
+		SetGlobal("UNIORRIK","AR2100",2) //third-party consistency
+		AddStoreItem("KUORK0","MANTLEHF",16,1)  // Mantle of Hell's Furnace
+		AddStoreItem("KUORK0","OGI",1,1)  // Ogi-Luc's Great Robe
+		AddStoreItem("KUORK0","SCRCS06",1,1)  // Scroll Case
+		SetInterrupt(TRUE)
+		Continue()
+END
+>>>>>>>>
+
+DEFINE_PATCH_FUNCTION randomize_area_scroll BEGIN
+
+	PHP_EACH scroll_array AS scroll=>level BEGIN
+		REPLACE_TEXTUALLY "%scroll%" "DWRNSC%level%" (8)
+	END
+
+END

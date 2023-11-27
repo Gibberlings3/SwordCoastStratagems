@@ -9,26 +9,26 @@ DEFINE_ACTION_FUNCTION iwd_bardsong_postproduction BEGIN
 			INCLUDE "%MOD_FOLDER%/%component_loc%/lib/obg2_bard.tpa"
 			LAF obg2_bard END
 		END
+  
+  ACTION_FOR_EACH bard_applicator IN ~fjbard~ ~cdibard~ ~rr#bdf01~ BEGIN
+  
+    ACTION_IF FILE_EXISTS_IN_GAME ~%bard_applicator%.spl~ BEGIN
+    
+      spl.edit["%bard_applicator%"]
+      [
+        m.ab_fx.alter{s_resource:=%BARD_SONG_BALLAD%}
+      ]
+    
+    END
 
-
-   //  change FJBARD/CDIBARD to point at the Ballad of Three Heroes
-	ACTION_IF FILE_EXISTS_IN_GAME "fjbard.spl" BEGIN
-		OUTER_SPRINT bard_applicator fjbard
-	END ELSE BEGIN
-		OUTER_SPRINT bard_applicator cdibard
-	END
-	
-	spl.edit["%bard_applicator%"]
-	[
-		m.ab_fx.alter{s_resource:=%BARD_SONG_BALLAD%}
-	]
+  END    
 
    // add the new powers in the CLAB; update regular bard description
 
 	class.edit[bard|edit_strrefs_in_place:i=0]
 	[
 		k.kit_grant_powers{#BARD1 1,#BARD2 3,#BARD3 5,#BARD4 7,#BARD5 9,#BARD6 11}	
-		INNER_PATCH_SAVE k_desc "%k_desc%" BEGIN
+		INNER_PATCH_SAVE k_desc "%k_clastext_descstr%" BEGIN
 			LPF bard_desc_helper END
 		END
 	]
@@ -37,13 +37,13 @@ DEFINE_ACTION_FUNCTION iwd_bardsong_postproduction BEGIN
 	
 	kit.edit_all[bard|edit_strrefs_in_place:i=0 skip_trueclass:i=1]
 	[
-		INNER_PATCH_SAVE k_desc "%k_desc%" BEGIN
+		INNER_PATCH_SAVE k_desc "%k_clastext_descstr%" BEGIN
 			LPF bard_kit_desc_helper END
 		END	
 	]
 
-	// sort out Enhanced Bard Song HLA
-	
+	// sort out Enhanced Bard Song HLA; deprecated, see below
+/*	
 	ACTION_IF FILE_EXISTS_IN_GAME "spcl920.spl" BEGIN
 		WITH_SCOPE BEGIN
 			LAF struct_read STR_VAR file=spcl920.spl RET_ARRAY m0=struct END
@@ -67,6 +67,172 @@ DEFINE_ACTION_FUNCTION iwd_bardsong_postproduction BEGIN
 			REPLACE_TEXTUALLY "AP_SPCL920" "GA_DW-920"
 
 	END
+*/  
+  
+  // updates kit descriptions for non-EE; sorts out EBS HLA
+  ACTION_IF !GAME_IS ~bgee~ BEGIN
+    
+    // get list of clabs, &c. for bard kits
+    ACTION_DEFINE_ASSOCIATIVE_ARRAY cd_bard_clabs BEGIN 9562, clabba01, BARD => 1 END // add default bard
+    COPY_EXISTING ~kitlist.2da~ ~override~
+      COUNT_2DA_ROWS 9 rows
+      FOR (index = 2 ; index < rows ; ++index) BEGIN // skip reserve row
+        READ_2DA_ENTRY index 8 9 class
+        PATCH_IF class = 5 BEGIN // bard
+          READ_2DA_ENTRY index 1 9 kitid
+          READ_2DA_ENTRY index 4 9 desc
+          READ_2DA_ENTRY index 5 9 clab
+          DEFINE_ASSOCIATIVE_ARRAY cd_bard_clabs BEGIN "%desc%", "%clab%", "%kitid%" => 0 END
+        END  
+      END
+      BUT_ONLY
+      
+    // if rogue rebalancing installed,   
+      
+    
+    // sorting out the enhanced bard song HLA
+    
+    // in the past, we just removed this HLA from bards that got the new songs. Now, if they select the
+    // HLA they'll get EBS as another innate for selecting the song like the others. Basically, when they
+    // receive the first song via fjbard/cdibard, it makes them immune to #bard7a. Selecting the HLA will
+    // apply the #bard7a and #bard7b spells, in order. #bard7a just makes you immune to #bard7b--so anyone 
+    // who doesn't get the new songs will *not* get the effects of #bard7b--which in turn grants the #bard7 
+    // ability to select the EBS at will. 
+    
+    // we could have simply added an immunity to #bard7b for non-song kits an skipped the #bard7a shenanigans
+    // altogether, but, eh, this way means we're only messing with kits that get the spells. 
+    //
+    // also covers RR compatibility by updating its own enhanced HLA instead
+    ACTION_IF !GAME_IS ~soa tutu tutu_totsc~ BEGIN // skip non-HLA games
+    
+      OUTER_SPRINT ebs ~~
+      COPY_EXISTING ~spcl920.spl~  ~override~ // default EBS
+                    ~rr#bdf03.spl~ ~override~ // EBS for trueclass bards from RR; do this second so that it preferentially uses RR's version
+        READ_LONG  0x08 ebs_name
+        READ_LONG  0x50 ebs_descript
+        READ_ASCII 0x3a ebs_icon      
+        READ_LONG  0x64 abil_off
+        READ_SHORT 0x68 abil_num
+        READ_LONG  0x6a fx_off
+        FOR (index = 0 ; index < abil_num ; ++index) BEGIN
+          READ_SHORT (abil_off + 0x1e + (0x28 * index)) abil_fx_num
+          READ_SHORT (abil_off + 0x20 + (0x28 * index)) abil_fx_idx
+          FOR (index2 = 0 ; index2 < abil_fx_num ; ++index2) BEGIN
+            READ_SHORT (fx_off + 0x00 + (0x30 * (abil_fx_idx + index2))) opcode
+            PATCH_IF (opcode = 251) BEGIN
+              READ_ASCII (fx_off + 0x14 + (0x30 * (abil_fx_idx + index2))) ebs
+            END  
+          END
+        END
+        BUT_ONLY IF_EXISTS
+        
+      ACTION_IF (~%ebs%~ STRING_COMPARE_CASE ~~) BEGIN // sanity check: if no 251 was detected in HLA, stop
+      
+        COPY_EXISTING ~%ebs%.spl~ ~override~ // assign a name to the actual EBS in case it doesn't have one
+          READ_LONG 0x08 name
+          PATCH_IF name < 0 BEGIN
+            WRITE_LONG 0x08 ebs_name
+          END
+          BUT_ONLY  
+        
+        COPY_EXISTING ~cdibard.spl~  ~override~ // non-fixpacked bg2
+                      ~fjbard.spl~   ~override~ // fixpack/ee
+                      ~rr#bdf01.spl~ ~override~ // rogue reblancing
+          LPF CLONE_EFFECT INT_VAR match_opcode = 251 opcode = 206 STR_VAR resource = ~#bard7a~ END // immune to #bard7a
+          IF_EXISTS
+          
+        // copy order matters here; last one copied lives - cdibard should only be present if no fjbard; use RR's version if installed
+        COPY_EXISTING ~cdibard.spl~  ~override/#bard7a.spl~ // non-fixpacked bg2
+                      ~fjbard.spl~   ~override/#bard7a.spl~ // fixpack/ee
+                      ~rr#bdf01.spl~ ~override/#bard7a.spl~ // rogue reblancing
+          LPF DELETE_EFFECT INT_VAR match_opcode = 251 END
+          LPF ALTER_EFFECT INT_VAR match_opcode = 206 STR_VAR resource = ~#bard7b~ END // immune to #bard7a
+          IF_EXISTS
+
+        COPY_EXISTING ~#bard7a.spl~ ~override/#bard7b.spl~ // use for bards who don't get songs
+          LPF ALTER_EFFECT INT_VAR match_opcode = 206 opcode = 171 STR_VAR resource = ~#bard7~ END // immune to #bard7a
+      
+        COPY_EXISTING ~#bard1.spl~ ~override/#bard7.spl~ // create innate for selecting EBS
+          WRITE_LONG   0x08 ebs_name
+          WRITE_LONG   0x50 ebs_descript
+          WRITE_ASCIIE 0x3a ~%ebs_icon%~
+          LPF ALTER_SPELL_HEADER STR_VAR icon = EVAL ~%ebs_icon%~ END
+          LPF ALTER_EFFECT INT_VAR check_headers = 0 STR_VAR match_resource = ~#bard1~ resource = ~#bard7~ END // covers the remove/give innate
+          LPF ALTER_EFFECT INT_VAR check_globals = 0 match_opcode = 251 STR_VAR resource = EVAL ~%ebs%~ END // changes bard song to actual spcl920 target
+      
+        COPY_EXISTING ~spcl920.spl~  ~override~ // default EBS
+                      ~rr#bdf03.spl~ ~override~ // EBS for trueclass bards from RR
+          LPF CLONE_EFFECT INT_VAR match_opcode = 251 opcode = 146 STR_VAR resource = ~#bard7a~ END
+          LPF CLONE_EFFECT INT_VAR match_opcode = 251 opcode = 146 STR_VAR resource = ~#bard7b~ END
+          IF_EXISTS
+          
+          
+      END    
+      
+    END  
+        
+    ACTION_IF !enhanced_edition BEGIN // update descriptions for non-EE
+    
+      ACTION_PHP_EACH cd_bard_clabs AS params => update BEGIN
+
+        OUTER_SET gets_songs = 0         
+        ACTION_IF ((RESOURCE_CONTAINS ~%params_1%.2da~ ~[ %TAB%]AP_FJBARD[ %TAB%]~) OR  // fixpack
+                   (RESOURCE_CONTAINS ~%params_1%.2da~ ~[ %TAB%]AP_CDIBARD[ %TAB%]~) OR // iwdification
+                   (update = 1)) BEGIN // forced for mainline descript
+          OUTER_SET gets_songs = 1   
+        END 
+      
+        ACTION_GET_STRREF params_0 desc
+        
+        ACTION_IF gets_songs BEGIN
+          OUTER_SET modified = 0      
+          OUTER_INNER_PATCH_SAVE desc ~%desc%~ BEGIN  
+            SPRINT old @201
+            REPLACE_EVALUATE "\(.*\)%old%.*" BEGIN
+              SET modified = 1 
+            END "%MATCH1%DW_PLACEHOLDER"  
+            PATCH_FOR_EACH tra_ref IN 202 203 204 BEGIN
+              SPRINT old (AT tra_ref)
+              REPLACE_TEXTUALLY "[%WNL%%LNL%%MNL%].*%old%" ""
+            END
+            PATCH_IF modified BEGIN
+              PATCH_FOR_EACH tra_ref IN 216 215 214 213 212 211 210 BEGIN
+                SPRINT new (AT tra_ref)
+                REPLACE_TEXTUALLY "\(.*\)DW_PLACEHOLDER.*\([%WNL%%LNL%%MNL%]\)" "\1DW_PLACEHOLDER\2\1%new%\2"		
+              END
+              REPLACE_TEXTUALLY "\(.*\)DW_PLACEHOLDER.*\([%WNL%%LNL%%MNL%]\)" ""	
+            END
+          END
+          
+          ACTION_IF !modified BEGIN
+            OUTER_SPRINT desc ~%desc%
+~ // add line break
+            ACTION_FOR_EACH tra_ref IN 210 211 212 213 214 215 216 BEGIN
+              OUTER_SPRINT new (AT tra_ref)
+              OUTER_SPRINT desc ~%desc% 
+%new%~
+            END
+          END
+
+        END ELSE BEGIN // doesn't get songs
+        
+          OUTER_INNER_PATCH_SAVE desc ~%desc%~ BEGIN  
+            SPRINT discard @221
+            SPRINT disadvantages @222
+            SPRINT newline @220
+            REPLACE_TEXTUALLY "%disadvantages%\(.*[%WNL%%MNL%%LNL%][^a-zA-Z0-9]*\)\([a-zA-Z0-9].*\)" "%disadvantages%\1%newline%\1\2"
+            REPLACE_TEXTUALLY "[%WNL%%MNL%%LNL%][^a-zA-z]*%discard%.*" ""
+          END  
+        
+        END
+        
+        STRING_SET_EVALUATE params_0 ~%desc%~
+        
+      END  
+
+    END
+    
+  END  
 
 END
 

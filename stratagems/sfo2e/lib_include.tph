@@ -1,16 +1,44 @@
-DEFINE_DIMORPHIC_FUNCTION include INT_VAR inline=0 STR_VAR file="" location="" locbase="" path="" BEGIN
+/*
+document{incude}
+{
+'file' (synonym: 'files') is a list of tpa files (leave off the suffix), located at the location specified by 'location', 'locbase', and 'path'. (If none are set, assume location is component_loc.) Each is INCLUDEd. Unless literal is set to 1,
+the SFO syntactic-sugar changes are applied.
 
-	ACTION_IF "%location%%locbase%%path%" STR_EQ "" BEGIN
-		OUTER_SPRINT file_path "%MOD_FOLDER%/%component_loc%/%file%"
-	END ELSE BEGIN
-		LAF sfo_path STR_VAR file location locbase path RET file_path END
+}
+*/
+
+
+DEFINE_DIMORPHIC_FUNCTION include 
+	INT_VAR inline=0//boolean
+			literal=0//boolean
+	STR_VAR file="" 
+			files="" 
+			location="" 
+			locbase="" 
+			path="" 
+BEGIN
+
+	OUTER_SPRINT file "%file%%files%"
+	ACTION_IF "%file%" STR_CMP "" BEGIN
+	
+		LAF return_first_entry STR_VAR list="%file%" RET file_here=entry file=list END
+		ACTION_IF "%location%%locbase%%path%" STR_EQ "" BEGIN
+			OUTER_SPRINT file_path "%MOD_FOLDER%/%component_loc%/%file_here%"
+		END ELSE BEGIN
+			LAF sfo_path STR_VAR file="%file_here%" location locbase path RET file_path END
+		END
+		COPY + "%file_path%" "%workspace%"
+			PATCH_IF !literal BEGIN
+				LPF sugar_apply END
+			END
+			SPRINT file_name "%DEST_FILE%" // file_here might include subdirectories
+		REINCLUDE "%workspace%/%file_name%"
+		
+		// recurse
+		
+		LAF include INT_VAR inline STR_VAR file location locbase path END
+		
 	END
-	COPY + "%file_path%" "%workspace%"
-		LPF sugar_apply END
-		
-	REINCLUDE "%workspace%/%file%"
-		
-
 
 
 END
@@ -20,15 +48,17 @@ document{run}
 {
 'file' (synonym: 'files') is a list of tpa files (leave off the suffix), located at the location specified by 'location', 'locbase', and 'path'. (If none are set, assume location is component_loc.) Each is loaded, and then each file's name is run
 as an action function, with the STR_VAR argument 'version' fed to it, and with the tra file 'tra' (english and local-language versions) loaded. (So each tpa should conform to the SFO
-convention of containing an action function of its own name.
+convention of containing an action function of its own name.Unless literal=1, SFO syntactic sugar is applied.
 
 When used outside an extant 'run' instruction (in the intended setup, this should be from your tp2 as the only instruction in the component,
 though I can't enforce that), it sets 'component_loc' to 'location', defaults to using 'location' as the name of the tra file, and sets a marker file with 
-name '%marker_prefix%%file%'. 'marker_prefix' defaults to 'sfo_marker_prefix', which in normal usage should have been set in your 'always' file.
+name '%marker_prefix%%file%'. 'marker_prefix' defaults to 'sfo_marker_prefix', which in normal usage should have been set in your 'always' file. If INT_VAR marker is set to 0, this marker is not placed.
 }
 */
 
 DEFINE_DIMORPHIC_FUNCTION run 
+	INT_VAR	marker=1//boolean
+			literal=0//boolean
 	STR_VAR file="" 
 			files=""
 			location="" 
@@ -46,7 +76,7 @@ BEGIN
 			LAF append INT_VAR no_log=1 STR_VAR file="%MOD_FOLDER%.bat" path="%batch_loc%" arguments=" %COMPONENT_NUMBER%" END
 		END ELSE BEGIN
 			OUTER_SET SFO_reserved_outer_run=1
-			ACTION_IF VARIABLE_IS_SET sfo_marker_prefix BEGIN
+			ACTION_IF marker && VARIABLE_IS_SET sfo_marker_prefix BEGIN
 				LAF make_label STR_VAR label="%sfo_marker_prefix%%file%" END
 			END
 			OUTER_SPRINT component_loc "%location%"
@@ -67,7 +97,7 @@ BEGIN
 				PRINT "Including and running function(s) %file%"
 				OUTER_WHILE "%file%" STR_CMP "" BEGIN
 					LAF return_first_entry STR_VAR list="%file%" RET entry file=list END
-					LAF include STR_VAR file="%entry%.tpa" location locbase path END
+					LAF include INT_VAR literal STR_VAR file="%entry%.tpa" location locbase path END
 					ACTION_TIME "%entry%_timer" BEGIN
 						ACTION_IF "%version%" STR_EQ "" BEGIN
 							LAF "%entry%" END

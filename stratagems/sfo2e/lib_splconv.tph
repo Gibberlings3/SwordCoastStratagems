@@ -1,0 +1,510 @@
+/*
+describe-library{Tools to convert wizard spells to priest spells or make innate versions of either. This library should have no dependencies.
+
+Conventions:
+- wizard spells have CT <=level
+- innate spells have CT=1
+ - wizard version of priest spell SPPRxyz has name DWPWxyz
+ - priest version of wizard spell SPWIxyz has name DWWPxyz
+ - innate version of wizard spell SPWIxyz has name DWWIxyz
+ - innate version of priest spell SPPRxyz has name DWPIxyz
+}
+
+
+*/
+
+/*
+document{splconv}
+{
+Input a wizard/priest spell 'spell' in the SPWI/SPPR range (either a resref, or an ids name (from normal or extended namespace), or an abbreviated ids name) and a spell type 'new_type' (innate/priest/wizard).
+Convert the spell, unless old and new types match. Return the resref of the new spell. Delete any headers where min_level>50, to remove scroll-making code & the like.</p>
+
+<p>If 'tra_path' and 'tra' are set ('tra' does not include the .tra extension) then the function attempts to load strings @100-@105 from it and then to update the description
+to include new casting time, remove reference to spheres, and add a note saying that this is an innate version of a spell normally available to wizards (or whatever). See
+lua/lang/english/sfo_lua.tra in the sfo-lua template for the format.
+
+<p>'splconv_array' is a 2D array reporting all spells/items that reference SPPR/SPWI spells (other than themselves) via 206/318/321/324. We output it to avoid
+having to regenerate it each time.
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION splconv
+	STR_VAR spell=""
+			new_type=""
+			tra_path="%MOD_FOLDER%/%lua_loc%/lang"
+			tra="sfo_lua"
+			new_resref=""
+	RET new_resref
+	RET_ARRAY splconv_array
+BEGIN
+	// load spells in the extended namespace
+	ACTION_IF !VARIABLE_IS_SET data_loc_shared BEGIN
+		OUTER_SPRINT data_loc_shared "weidu_external/data/dw_shared"
+	END
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/dw_ext_spell.ids" BEGIN
+		COPY - "%data_loc_shared%/dw_ext_spell.ids" nowhere
+			READ_2DA_ENTRIES_NOW ext_spell_data 2
+			FOR (row=0;row<ext_spell_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER ext_spell_data row 0 resref
+				READ_2DA_ENTRY_FORMER ext_spell_data row 1 id
+				SPRINT $ext_spells("%id%") "%resref%"
+			END
+	END
+	//workaround for a couple of awkward cases
+	ACTION_MATCH "%spell%" WITH
+	".*SYMBOL_PAIN" ".*SYMBOL_HOPELESSNESS" BEGIN
+		ACTION_IF !RESOURCE_CONTAINS "spell.ids" "%spell%" BEGIN
+			OUTER_PATCH_SAVE spell "%spell%" BEGIN
+				REPLACE_TEXTUALLY "SYMBOL" "SYMBOL_OF"
+			END
+		END
+	END
+	DEFAULT 
+	END
+	// identify the spell
+	ACTION_IF IDS_OF_SYMBOL (spell "%spell%")>=0 BEGIN
+		LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="%spell%" RET resref=spell_res END
+	END ELSE
+	ACTION_IF VARIABLE_IS_SET $ext_spells("%spell%") BEGIN
+		OUTER_SPRINT resref $ext_spells("%spell%")
+	END ELSE
+	ACTION_IF IDS_OF_SYMBOL (spell "WIZARD_%spell%")>=0 BEGIN
+		LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="WIZARD_%spell%" RET resref=spell_res END	
+	END ELSE 
+	ACTION_IF VARIABLE_IS_SET $ext_spells("WIZARD_%spell%") BEGIN
+		OUTER_SPRINT resref $ext_spells("WIZARD_%spell%")
+	END ELSE
+	ACTION_IF IDS_OF_SYMBOL (spell "CLERIC_%spell%")>=0 BEGIN
+		LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="CLERIC_%spell%" RET resref=spell_res END
+	END ELSE
+	ACTION_IF VARIABLE_IS_SET $ext_spells("CLERIC_%spell%") BEGIN
+		OUTER_SPRINT resref $ext_spells("CLERIC_%spell%")
+	END ELSE BEGIN
+		OUTER_SPRINT resref "%spell%"
+	END
+	// get the old type
+	ACTION_MATCH "%resref%" WITH
+	"SPWI.*" BEGIN
+		OUTER_SPRINT old_type wizard
+	END
+	"SPPR.*" BEGIN
+		OUTER_SPRINT old_type priest
+	END
+	DEFAULT
+		COPY_EXISTING - "%resref%.spl" nowhere
+			READ_SHORT 0x1c type_num
+			PATCH_MATCH "%type_num%" WITH
+			1 BEGIN
+				SPRINT old_type wizard
+			END
+			2 BEGIN
+				SPRINT old_type priest
+			END
+			DEFAULT
+				PATCH_FAIL "splconv can only handle wizard/priest spells; cannot handle spell %resref%"
+			END
+	END
+	ACTION_IF "%old_type%" STR_EQ "%new_type%" BEGIN
+		OUTER_SPRINT new_resref "%resref%"
+	END ELSE BEGIN
+		// assign new resref
+		ACTION_IF "%new_resref%" STR_EQ "" BEGIN
+			ACTION_MATCH "%resref%" WITH
+			"SPPR.*" "SPWI.*" BEGIN
+			END
+			DEFAULT
+				FAIL "splconv cannot autogenerate new names for spells outside the SPPR/SPWI namespace"
+			END
+			OUTER_PATCH_SAVE new_resref "%resref%" BEGIN				
+				PATCH_MATCH "%old_type%-%new_type%" WITH
+				wizard-priest BEGIN
+					REPLACE_TEXTUALLY SPWI DWWP
+				END
+				priest-wizard BEGIN
+					REPLACE_TEXTUALLY SPPR DWPW
+				END		
+				wizard-innate BEGIN
+					REPLACE_TEXTUALLY SPWI DWWI
+				END
+				priest-innate BEGIN
+					REPLACE_TEXTUALLY SPPR DWPI
+				END		
+				DEFAULT
+					PATCH_FAIL "conversion type %old_type%-%new_type% is illegal"
+				END
+			END
+		END
+		// if not done already, do it
+		ACTION_IF !FILE_EXISTS_IN_GAME "%new_resref%.spl" BEGIN
+			LAF splconv_array_load RET_ARRAY splconv_array END
+			COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl" 
+				// wipe usability flags
+				WRITE_LONG 0x1e 0
+				// sort out type
+				PATCH_MATCH "%new_type%" WITH
+				wizard BEGIN
+					levels_to_delete=0
+					new_ct="-1"
+					WRITE_SHORT 0x1c 1
+					WRITE_LONG 0x1e 0
+					READ_LONG 0x34 level
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+					PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+						READ_SHORT (0x10+ab_off) min_level
+						PATCH_IF min_level>50 BEGIN
+							WRITE_SHORT (0x10+ab_off) 99
+							levels_to_delete=1
+						END
+						READ_SHORT (0x12+ab_off) ct
+						PATCH_IF ct>level BEGIN
+							new_ct=level
+							WRITE_SHORT (0x12+ab_off) new_ct
+						END
+					END	
+					PATCH_IF levels_to_delete BEGIN
+						LPF DELETE_SPELL_HEADER INT_VAR header_type="-1" min_level=99 END
+					END
+					PATCH_IF "%tra%" STR_CMP "" BEGIN
+						READ_STRREF 0x50 old_desc
+						LPF splconv_update_desc INT_VAR new_ct STR_VAR tra tra_path old_desc old_type new_type=wizard RET new_desc END
+						SAY 0x50 "%new_desc%"
+					END
+				END
+				priest BEGIN
+					levels_to_delete=0
+					new_ct="-1"
+					WRITE_SHORT 0x1c 2	
+					WRITE_LONG 0x1e 0
+					WRITE_LONG 0x34 (THIS>7)?7:THIS // cap level at 7
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+					PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+						READ_SHORT (0x10+ab_off) min_level
+						PATCH_IF min_level>50 BEGIN
+							WRITE_SHORT (0x10+ab_off) 99
+							levels_to_delete=1
+						END
+					END	
+					PATCH_IF levels_to_delete BEGIN
+						LPF DELETE_SPELL_HEADER INT_VAR header_type="-1" min_level=99 END
+					END
+					PATCH_IF "%tra%" STR_CMP "" BEGIN
+						READ_STRREF 0x50 old_desc
+						LPF splconv_update_desc INT_VAR new_ct STR_VAR tra tra_path old_desc old_type new_type=priest RET new_desc END
+						SAY 0x50 "%new_desc%"
+					END
+				END
+				innate BEGIN
+					WRITE_SHORT 0x1c 4
+					WRITE_LONG 0x1e 0
+					levels_to_delete=0
+					new_ct="-1"
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+					PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+						WRITE_SHORT (0x2+ab_off) 4
+						READ_SHORT (0x10+ab_off) min_level
+						PATCH_IF min_level>50 BEGIN
+							WRITE_SHORT (0x10+ab_off) 99
+							levels_to_delete=1
+						END
+						READ_SHORT (0x12+ab_off) ct
+						PATCH_IF ct>1 BEGIN
+							new_ct=1
+							WRITE_SHORT (0x12+ab_off) new_ct
+						END
+					END	
+					PATCH_IF levels_to_delete BEGIN
+						LPF DELETE_SPELL_HEADER INT_VAR header_type="-1" min_level=99 END
+					END
+					PATCH_IF "%tra%" STR_CMP "" BEGIN
+						READ_STRREF 0x50 old_desc
+						LPF splconv_update_desc INT_VAR new_ct STR_VAR tra tra_path old_desc old_type new_type=innate RET new_desc END
+						SAY 0x50 "%new_desc%"
+					END
+				END
+				DEFAULT
+					PATCH_FAIL "shouldn't happen"
+				END
+				
+			// LPF splconv_clone_or_cast STR_VAR resref new_resref END // alas, not an option
+			// now we need to handle other spells that reference it
+			PHP_EACH splconv_array AS k=>discard BEGIN
+				PATCH_IF "%k_1%" STR_EQ "%resref%" BEGIN
+					INNER_ACTION BEGIN
+						COPY_EXISTING "%k_0%" override
+							LPF CLONE_EFFECT STR_VAR match_resource="%resref%" resource="%new_resref%" END
+						BUT_ONLY
+					END
+				
+				END
+			
+			END
+			
+			// finally, process the spell for self-reference and for additions to splconv_array
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+			PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+				GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					READ_SHORT fx_off opcode
+					PATCH_MATCH "%opcode%" WITH
+					206 318 321 324 BEGIN
+						READ_ASCII 0x14+fx_off resource
+						PATCH_MATCH "%resource%" WITH
+						"%resref%" BEGIN 
+							WRITE_ASCII 0x14+fx_off "%new_resref%"
+						END
+						"%new_resref%" BEGIN 
+						
+						END
+						"SP\(WI\|PR\).*" BEGIN
+							TO_UPPER resource
+							SPRINT $splconv_array("%new_resref%.spl" "%resource%") ""
+							SPRINT $splconv_array_new("%new_resref%.spl" "%resource%") ""
+						END
+						DEFAULT
+						END
+					END
+					DEFAULT
+					END
+				
+				
+				END
+			END
+			SPRINT output ""
+			PHP_EACH splconv_array_new AS k=>discard BEGIN
+				SPRINT output "%output%%k_0%%TAB%%k_1%%WNL%"
+			END
+			PATCH_IF "%output%" STR_CMP "" BEGIN
+				INNER_ACTION BEGIN
+					APPEND_OUTER "%data_loc_shared%/splconv.txt" "%output%" KEEP_CRLF
+				END
+			END
+		END
+	END
+
+END
+
+/*
+At this point we have a clone of the spell. *But* a clone isn't ideal, because clones aren't picked up by immunity items.
+Ideally we'd *cast* the spell, but there is a serious issue with caster level when you're swapping between spell types. For spells
+where we can use 146 to cast (i.e. anything that doesn't have 'cast at point' as its target) we can use parameter2, but it doesn't 
+work for 148. There we'll clone, and then do a trawl for 206s and reset the evasion setup if needs be.
+
+UPDATE 6/5/22: the problem with casting, even on single target, is that you get two copies of the spell name. So - annoyingly - I think
+we need to clone always.
+
+*/
+
+DEFINE_PATCH_FUNCTION splconv_clone_or_cast
+	STR_VAR resref=""
+			new_resref=""
+BEGIN
+	// find the target type
+	READ_LONG 0x64 ab_off
+	READ_BYTE (ab_off+0xc) abil_target
+	READ_SHORT 0x68 ab_count
+	// how many headers are there? If only one, clone and be done
+	PATCH_IF ab_count=1 && 0 BEGIN // deactivate for now
+		LPF DELETE_EFFECT END
+		PATCH_IF abil_target=4 BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=148 target=1 timing=1 parameter2=1 STR_VAR resource="%resref%" END
+		END ELSE BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=2 timing=1 parameter2=1 STR_VAR resource="%resref%" END
+		END
+	END ELSE BEGIN
+		// if it's single-target, cast it at level.
+		PATCH_IF !(abil_target=4) && 0 BEGIN //deactivate for now
+			// remove all spell effects
+			LPF DELETE_EFFECT END
+			// alter headers so as to use no projectile
+			LPF ALTER_SPELL_HEADER INT_VAR projectile=1 END
+			// add the spell-casting opcode
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=2 timing=1 parameter2=2 STR_VAR resource="%resref%" END
+			// set the level on those opcodes
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+			PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+				READ_SHORT (0x10+ab_off) level
+				GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN // should only be one, in fact
+					WRITE_LONG (0x4+fx_off) level
+				END
+			END
+		END ELSE BEGIN
+			// if it's multiple-target, we need to tolerate the clone. If it has an associated projectile, go through everything else cloning occurrences
+			READ_SHORT (ab_off+0x26) abil_proj
+			PATCH_IF abil_proj>1 BEGIN
+				INNER_ACTION BEGIN
+					COPY_EXISTING_REGEXP ".*\.\(itm\|spl\)" override
+						PATCH_IF INDEX_BUFFER ("%resref%")>=0 BEGIN
+							PATCH_FOR_EACH match_opcode IN 206 318 321 324 BEGIN
+								LPF CLONE_EFFECT INT_VAR silent=1 match_opcode STR_VAR match_resource="%resref%" resource="%new_resref%" END
+							END
+						END
+					BUT_ONLY
+				END
+			END
+		END
+	END
+
+END
+
+DEFINE_DIMORPHIC_FUNCTION splconv_get_name
+	STR_VAR new_type=""
+			type=""
+			resref=""
+			spell=""
+	RET
+			new_resref
+BEGIN
+	ACTION_IF "%spell%" STR_CMP "" BEGIN
+		OUTER_SPRINT resref "%spell%"
+	END
+	ACTION_IF "%type%" STR_CMP "" BEGIN
+		OUTER_SPRINT new_type "%type%"
+	END
+	OUTER_PATCH_SAVE new_resref "%resref%" BEGIN
+		PATCH_MATCH "%new_type%" WITH
+		wizard BEGIN
+			REPLACE_TEXTUALLY SPPR DWPW
+		END
+		priest BEGIN
+			REPLACE_TEXTUALLY SPWI DWWP
+		END
+		innate BEGIN
+			REPLACE_TEXTUALLY SPWI DWWI
+			REPLACE_TEXTUALLY SPPR DWPI
+		END
+		DEFAULT
+			PATCH_FAIL "type %new_type% is illegal for splconv_get_name"
+		END
+	END
+
+END
+
+
+DEFINE_PATCH_FUNCTION splconv_update_desc
+	INT_VAR new_ct=0
+	STR_VAR tra=""
+			tra_path=""
+			old_type=""
+			new_type=""
+			old_desc=""
+	RET new_desc
+BEGIN
+	PATCH_WITH_TRA "%tra_path%/english/%tra%.tra" "%tra_path%/%LANGUAGE%/%tra%.tra" BEGIN
+		SPRINT ct_string @100
+		SPRINT sphere_string @101
+		SPRINT w_to_p_string @102
+		SPRINT p_to_w_string @103
+		SPRINT p_to_i_string @104
+		SPRINT w_to_i_string @105
+	END
+
+	PATCH_MATCH "%new_type%" WITH
+	innate BEGIN
+		INNER_PATCH_SAVE new_desc "%old_desc%" BEGIN
+			REPLACE_TEXTUALLY "^%sphere_string%.*" ""
+			PATCH_IF new_ct>=0 BEGIN
+				REPLACE_TEXTUALLY "^%ct_string%[^%WNL%%LNL%%MNL%]*" "%ct_string% %new_ct%"
+			END
+		END
+		PATCH_IF "%old_type%" STR_EQ "wizard" BEGIN 
+			SPRINT add "%w_to_i_string%"
+		END ELSE BEGIN
+			SPRINT add "%p_to_i_string%"	
+		END
+		SPRINT new_desc "%new_desc%%WNL%%WNL%%add%"
+	END
+	priest BEGIN
+		SPRINT new_desc "%old_desc%%WNL%%WNL%%w_to_p_string%"
+	END
+	wizard BEGIN
+		INNER_PATCH_SAVE new_desc "%old_desc%" BEGIN
+			REPLACE_TEXTUALLY "^%sphere_string%[^%WNL%%LNL%%MNL%]*[%WNL%%MNL%%LNL%]" ""
+			PATCH_IF new_ct>=0 BEGIN
+				REPLACE_TEXTUALLY "^%ct_string%[^%WNL%%LNL%%MNL%]*" "%ct_string% %new_ct%"
+			END
+		END
+		SPRINT new_desc "%new_desc%%WNL%%WNL%%p_to_w_string%"
+
+	END
+	DEFAULT
+		PATCH_FAIL "splconv_update_desc: %new_type% is an illegal value for new_type"
+	END
+END
+
+DEFINE_DIMORPHIC_FUNCTION splconv_array_load
+	RET_ARRAY splconv_array
+BEGIN
+	// generate splconv_array
+	ACTION_IF !VARIABLE_IS_SET $splconv_array("array_created") BEGIN
+		OUTER_SPRINT $splconv_array("array_created") ""
+		ACTION_IF FILE_EXISTS "%data_loc_shared%/splconv.txt" BEGIN
+			COPY - "%data_loc_shared%/splconv.txt" nowhere
+				READ_2DA_ENTRIES_NOW splconv_data 2
+				FOR (row=0;row<splconv_data;++row) BEGIN
+					READ_2DA_ENTRY_FORMER splconv_data row 0 source
+					READ_2DA_ENTRY_FORMER splconv_data row 1 ref
+					SPRINT $splconv_array("%source%" "%ref%") ""
+				END
+		
+		
+		
+		END ELSE BEGIN
+			COPY_EXISTING_REGEXP - ".*\.\(itm\|spl\)" nowhere
+				SPRINT this_file "%SOURCE_FILE%"
+				TO_UPPER this_file
+				PATCH_IF "%SOURCE_EXT%" STR_EQ "itm" BEGIN
+					GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						READ_SHORT fx_off opcode
+						PATCH_MATCH "%opcode%" WITH
+						206 318 321 324 BEGIN
+							READ_ASCII 0x14+fx_off resource
+							PATCH_MATCH "%resource%" WITH
+							"%SOURCE_RES%" BEGIN END
+							DEFAULT
+								TO_UPPER resource
+								SPRINT $splconv_array("%this_file%" "%resource%") ""
+							END
+						END
+						DEFAULT
+						END
+					END
+					GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+				END ELSE BEGIN
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+				END
+				PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+					GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						READ_SHORT fx_off opcode
+						PATCH_MATCH "%opcode%" WITH
+						206 318 321 324 BEGIN
+							READ_ASCII 0x14+fx_off resource
+							PATCH_MATCH "%resource%" WITH
+							"%SOURCE_RES%" BEGIN END
+							"SP\(WI\|PR\).*" BEGIN
+								TO_UPPER resource
+								SPRINT $splconv_array("%this_file%" "%resource%") ""
+							END
+							DEFAULT
+							END
+						END
+						DEFAULT
+						END
+					END
+
+				END
+			OUTER_SPRINT output ""
+			ACTION_PHP_EACH splconv_array AS k=>v BEGIN
+				OUTER_SPRINT output "%output%%k_0%%TAB%%k_1%%WNL%"
+			END
+			LAF new_file STR_VAR file=splconv.txt path="%data_loc_shared%" arguments="%output%" END
+		END
+	END
+
+
+
+
+END

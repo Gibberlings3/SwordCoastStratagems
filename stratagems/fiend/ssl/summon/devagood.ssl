@@ -1,5 +1,9 @@
-INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/fiend_definitions_summoned.ssl)
-INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/initial.ssl)
+VARIABLE(IsSummoned=True)
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/summon/shared_summons.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///	death effects
+//////////////////////////////////////////////////////////////////////////////////////////
 
 IF
 	Die()
@@ -19,12 +23,124 @@ THEN
 		DestroySelf()
 END
 
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Deva combat script
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/fiend_definitions_summoned.ssl)
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/initial.ssl)  // rest-and-recover, mill in confusion, etc.
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Emergency healing for me
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
 IF TRIGGER
-	HPPercentLT(Myself,40)
-	!GlobalTimerNotExpired("freeheal","LOCALS")
+	HPPercentLT(Myself,70)
 THEN DO
-	Action(SpellNoDecRESMyself,"devaheal")
-	SetGlobalTimer("freeheal","LOCALS",1000)
+    Action(SpellMyself,CLERIC_HEAL)
+END
+
+IF TRIGGER
+    StateCheck(Myself,STATE_BLIND)
+	!CheckSpellState(Myself,DO_NOT_CURE_BLINDNESS)
+THEN DO
+	   Action(SpellMyself,CLERIC_NEUTRALIZE_POISON)
+       Action(SpellMyself,CLERIC_HEAL)
+END
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+///	Healing for allies
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+// start with disabled-and-injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+	OR(2)
+            StateCheck(scstarget,STATE_BLIND)
+            StateCheck(scstarget,STATE_FEEBLEMINDED)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+	HPPercentLT(scstarget,75)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+// then disabled-but-not-injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+        StateCheck(scstarget,STATE_FEEBLEMINDED)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Combine()
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+IF TRIGGER
+        IgnoreBlock(Demivrgvs)
+	TargetBlock(HumanoidVillains)
+	StateCheck(scstarget,STATE_BLIND)
+	!CheckSpellState(scstarget,DO_NOT_CURE_BLINDNESS)
+       CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+       Action(Spell,CLERIC_NEUTRALIZE_POISON)
+       Action(Spell,CLERIC_HEAL)
+       SetGlobalTimer("DMWWCuringBlindness","GLOBAL",18)
+END
+
+// then just injured
+
+IF TRIGGER
+	TargetBlock(HumanoidVillains)
+	HPPercentLT(scstarget,50)
+        CheckStatGT(scstarget,15,LEVEL)
+	Allegiance(scstarget,ENEMY)
+THEN DO
+	Action(Spell,CLERIC_HEAL|100|50)
+	Action(Spell,CLERIC_CURE_CRITICAL_WOUNDS|100|50)
+END
+
+////////////////////////////////////////
+/// Remove conditions from my team
+//////////////////////////////////////////
+
+IF
+	HaveSpell(CLERIC_LESSER_RESTORATION)  // SPPR417.SPL (Lesser Restoration)
+	Allegiance(Myself,GOODCUTOFF)
+	See([PC])
+	CheckStatGT(LastSeenBy(Myself),0,LEVELDRAIN)
+THEN
+	RESPONSE #100
+		Spell(LastSeenBy(Myself),CLERIC_LESSER_RESTORATION)  // SPPR417.SPL (Lesser Restoration)
+END
+
+IF
+	HaveSpell(CLERIC_NEUTRALIZE_POISON)  // SPPR404.SPL (Neutralize Poison)
+	Allegiance(Myself,GOODCUTOFF)
+	See([PC])
+	StateCheck(LastSeenBy(Myself),STATE_POISONED)
+THEN
+	RESPONSE #100
+		Spell(LastSeenBy(Myself),CLERIC_NEUTRALIZE_POISON)  // SPPR404.SPL (Neutralize Poison)
+END
+
+IF TRIGGER
+	TargetBlock(PCsInOrder)
+	Allegiance(Myself,GOODCUTOFF)
+	StateCheck(scstarget,STATE_PANIC)
+THEN DO
+	Action(Spell,CLERIC_REMOVE_FEAR)
 END
 
 IF TRIGGER
@@ -38,72 +154,71 @@ END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	!Allegiance(Myself,ENEMY)
-	CheckStatGT(scstarget,14,Level)
-	StateCheck(scstarget,STATE_PANIC)
+	Allegiance(Myself,GOODCUTOFF)
+	StateCheck(scstarget,STATE_POISONED)
 THEN DO
-	Action(Spell,CLERIC_REMOVE_FEAR)
+	Action(Spell,CLERIC_NEUTRALIZE_POISON)
 END
 
-
 IF TRIGGER
-        TriggerBlock(ILackBladeBarrier)
-	Range(NearestEnemyOf(Myself),5)
-THEN DO	
-	Action(SpellMyself,CLERIC_GLOBE_OF_BLADES)
-END
-
-
-IF TRIGGER
-	TargetBlock(HumanoidVillains)
+	TargetBlock(VillainsInOrder)
 	TriggerBlock(Enemy)
-	Target(Myself)
-	CheckStatGT(scstarget,12,Level)
-	HPPercentLT(scstarget,50)
-	Range(scstarget,15)
-	Allegiance(scstarget,ENEMY)
+	CheckStatGT(scstarget,14,Level)
+	StateCheck(scstarget,STATE_POISONED)
 THEN DO
-	Action(Spell,CLERIC_CURE_CRITICAL_WOUNDS|100|50)
+	Action(Spell,CLERIC_NEUTRALIZE_POISON)
 END
 
 IF TRIGGER
 	TargetBlock(PCsInOrder)
-	!Allegiance(Myself,ENEMY)
-	Target(Myself)
-	CheckStatGT(scstarget,12,Level)
-	HPPercentLT(scstarget,50)
-	Range(scstarget,15)
-	Allegiance(scstarget,ENEMY)
+	Allegiance(Myself,GOODCUTOFF)
+	CheckStatGT(scstarget,0,LEVELDRAIN)
 THEN DO
-	Action(Spell,CLERIC_CURE_CRITICAL_WOUNDS|100|50)
-END
-
-
-//////////////////////
-////	Chaos
-/////////////////////////////////
-
-IF TRIGGER
-        IgnoreBlock(Demivrgvs)
-	TargetBlock(EnemiesInOrder)
-	TriggerBlock(MR|Confused|SIEnchantment|Helpless)
-THEN DO
-	Action(Spell,WIZARD_CHAOS|100|100)
+	Action(Spell,CLERIC_LESSER_RESTORATION)
 END
 
 IF TRIGGER
-        RequireBlock(Demivrgvs)
-	TargetBlock(EnemiesInOrder)
-	TriggerBlock(MR|Confused|SIEnchantment|Helpless)
+	TargetBlock(VillainsInOrder)
+	TriggerBlock(Enemy)
+	CheckStatGT(scstarget,14,Level)
+	CheckStatGT(scstarget,0,LEVELDRAIN)
 THEN DO
-	Action(SpellReplace,WIZARD_CONFUSION,WIZARD_CHAOS|100|100)
+	Action(Spell,CLERIC_LESSER_RESTORATION)
 END
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider moving to a more interesting location in the battle
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/jump.ssl)
+
+//////////////////////////////////////////////////////////////////////////////////////
+///	Consider a Dispel Magic
+//////////////////////////////////////////////////////////////////////////////////////
+
+INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/dispel.ssl)
+
+
+//////////////////////////////////////////////////////////////////////////////
+////	Core melee block
+///////////////////////////////////////////////////////////////////////////////
+
+IF TRIGGER
+  !Allegiance(Myself,ENEMY)
+  TargetBlock(EnemiesInOrderShort)
+  TriggerBlock(Plus3Safe)
+THEN DO
+   Action(Literal)
+   AttackOneRound(scstarget)
+END
+
 
 BEGIN LOOP(MyWeaponStrength||3)
-BEGIN LOOP(MyWeaponDamageType||Crushing)
+BEGIN LOOP(MyWeaponDamageType||Slashing)
+INCLUDE FILE(%MOD_FOLDER%/genai/ssl/easy_melee.ssl)
 INCLUDE FILE(%MOD_FOLDER%/genai/ssl/dw#wtacor.ssl)
 INCLUDE FILE(%MOD_FOLDER%/genai/ssl/move.ssl)
-INCLUDE FILE(%MOD_FOLDER%/fiend/ssl/chase.ssl)
 END LOOP
 END LOOP
 

@@ -1,0 +1,735 @@
+DEFINE_ACTION_FUNCTION externalize_hlas BEGIN
+
+  LAF check_label STR_VAR label=dw-hlas-externalized RET value END
+  ACTION_IF !value BEGIN
+    LAF make_label STR_VAR label=dw-hlas-externalized END
+	
+	// make hla files unique
+
+	LAF run STR_VAR file=baseline_lua END
+
+	
+	// on IWD/BG, set up a UI and blank the luas
+	
+	ACTION_IF is_iwd BEGIN
+		LAF run STR_VAR file=iwd_hla_menu locbase=lua END
+		LAF blank_luas END
+	END ELSE
+	ACTION_IF !is_bg2 BEGIN
+		LAF run STR_VAR file=bg_hla_menu locbase=lua END
+		LAF blank_luas END
+	END
+
+	
+	
+	// install class/kit detection
+	
+	LAF run STR_VAR file=ui_detect_class_kit locbase=lua END
+		
+	// get the 'Level' string
+	
+	COPY_EXISTING "enginest.2da" "%workspace%"
+		REPLACE_EVALUATE "STRREF_GUI_MIXED_LEVEL[ %TAB][^0-9]*\([0-9]+\)" BEGIN
+			GET_STRREF "%MATCH1%" levelstring
+			INNER_PATCH_SAVE levelstring "%levelstring%" BEGIN
+				REPLACE_TEXTUALLY "[ %TAB%]<LEVEL>.*" ""
+			END
+		END
+		""
+	BUT_ONLY
+
+	// install functions and data file
+	
+	ACTION_IF is_iwd BEGIN
+		OUTER_SPRINT iwd_only_line "Infinity_PopMenu()"
+	END ELSE BEGIN
+		OUTER_SPRINT iwd_only_line ""
+	END
+	
+	COPY ".../stratagems-inline/m_dw_hlf.lua" override EVALUATE_BUFFER
+	COPY ".../stratagems-inline/m_dw_hld.lua" override EVALUATE_BUFFER
+
+	// set up to allow hidden HLAs
+
+	LAF hide_hla_setup END
+	
+	// add the dummy HLA used for discarding
+	
+	LAF make_discard_hla END
+
+	// mark up the UI to record the 'right' number of HLAs
+	
+	LAF record_hla_count END
+	
+	// alter CHARGEN_PROFICIENCIES to autoskip the Abilities page if you don't need it
+	
+	LAF skip_hla_menu END
+
+	// allow the HLA name/description to be overridden
+	
+	LAF override_hla_name_description_setup END
+	
+	// collect HLA threshold data and externalize
+	
+	COPY_EXISTING "lunumab.2da" override
+		READ_2DA_ENTRIES_NOW lunumab_data 5
+		FOR (row=0;row<lunumab_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER lunumab_data row 0 label
+			READ_2DA_ENTRY_FORMER lunumab_data row 1 threshold
+			SET_2DA_ENTRY_LATER lunumab_data_new row 1 2 // first level causes CHARGEN problems in HoW
+			TO_LOWER label
+			SET $lunumab_data("%label%")=threshold
+		END
+		SET_2DA_ENTRIES_NOW lunumab_data_new 5
+		PRETTY_PRINT_2DA
+	BUT_ONLY
+	
+	// write the data to LUA
+
+	ACTION_CLEAR_ARRAY hla_threshold
+	ACTION_FOR_EACH class IN
+	fighter mage thief cleric druid ranger paladin sorcerer monk bard shaman
+	BEGIN
+		ACTION_TO_LOWER class
+		OUTER_SET class_num=IDS_OF_SYMBOL (class "%class%")
+		OUTER_SET thr=$lunumab_data("%class%") - 1
+		OUTER_SPRINT line "['single']=%thr%, "
+		ACTION_IF VARIABLE_IS_SET $lunumab_data("multi2%class%") BEGIN
+			OUTER_SET thr=$lunumab_data("multi2%class%") - 1
+			OUTER_SPRINT line "%line%['double']=%thr%, "
+			ACTION_IF VARIABLE_IS_SET $lunumab_data("multi3%class%") BEGIN
+				OUTER_SET thr=$lunumab_data("multi3%class%") - 1
+				OUTER_SPRINT line "%line%['triple']=%thr%, "
+			END
+		END
+		OUTER_SPRINT $hla_threshold("%class_num%") "%TAB%[%class_num%]={%line%},%WNL%"
+	END
+	ACTION_SORT_ARRAY_INDICES hla_threshold NUMERICALLY
+	OUTER_SPRINT data ""
+	ACTION_PHP_EACH hla_threshold AS k=>v BEGIN
+		OUTER_SPRINT data "%data%%v%"
+	END
+	APPEND "m_dw_hld.lua" "dwHLAThreshold={%WNL%%data%}%WNL%%WNL%"
+
+	// work out the low-level progression
+	
+	LAF set_basic_hla_progression END
+	
+  END
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION record_hla_count BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		REPLACE_TEXTUALLY EXACT_MATCH "characterScreen:OnLevelUpButtonClick()" "dwHLANumberOld=dwNumberHLAs(false);characterScreen:OnLevelUpButtonClick()"
+	BUT_ONLY
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_discard_hla BEGIN
+
+	LAF make_spell STR_VAR spell=dw-null END
+	LAF hide_hla STR_VAR resref=dw-null END
+	COPY_EXISTING "luabbr.2da" "%workspace%"
+		READ_2DA_ENTRIES_NOW luabbr_data 2
+		FOR (row=0;row<luabbr_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER luabbr_data row 1 file 
+			PATCH_IF FILE_EXISTS_IN_GAME "lu%file%.2da" BEGIN
+				PATCH_IF !RESOURCE_CONTAINS "lu%file%.2da" "dw-null" BEGIN
+					INNER_ACTION BEGIN
+						LAF lightweight_hla_adder STR_VAR lu_file="lu%file%" resref=dw-null END
+					END
+				END
+			END
+		END
+	BUT_ONLY
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION skip_hla_menu BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		PATCH_IF is_iwd BEGIN
+			SPRINT object LEVELUP_PROFICIENCIES
+		END ELSE BEGIN
+			SPRINT object CHARGEN_PROFICIENCIES
+		END
+		LPF UI_alter_object STR_VAR object object_type=menu patch=skip_hla_patch END
+	BUT_ONLY
+
+END
+
+DEFINE_PATCH_FUNCTION skip_hla_patch BEGIN
+
+	REPLACE_TEXTUALLY EXACT_MATCH 
+		~createCharScreen:IsHighLevelAbilitiesButtonClickable()~
+		~(createCharScreen:IsHighLevelAbilitiesButtonClickable() and dwNumberHLAs(true)>dwHLANumberOld)~
+	REPLACE_TEXTUALLY EXACT_MATCH
+		~createCharScreen:IsDoneButtonClickable()~
+		~(createCharScreen:IsDoneButtonClickable() or (createCharScreen:IsHighLevelAbilitiesButtonClickable() and dwNumberHLAs(true)==dwHLANumberOld))~
+	REPLACE_TEXTUALLY 
+		~createCharScreen:OnDoneButtonClick()~
+		~dwHLAClickDoneButton()~
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION hide_hla_setup BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES object_type=menu patch=hide_hla_patch END
+		LPF UI_alter_function STR_VAR function=chargenHLAdescription patch=hide_hla_patch END
+	BUT_ONLY
+
+
+END
+
+DEFINE_PATCH_FUNCTION hide_hla_patch BEGIN
+
+	REPLACE_TEXTUALLY ~OnOpen\([^"]*\)"~ ~OnOpen\1"%WNL%%TAB%dwHLATable=dwBuildHLATable()%WNL%~
+	REPLACE_TEXTUALLY ~chargen\.HLAs\[\([^]]+\)\]~ ~chargen.HLAs[dwHLATable[\1].index]~
+	REPLACE_TEXTUALLY ~chargenHLAPlusMinusFrame(\([^,]*\), +\([^ )]+\))~ ~chargenHLAPlusMinusFrame(\1,dwHLATable[\2].index)~
+	REPLACE_TEXTUALLY EXACT_MATCH ~table "chargen.HLAs"~ ~table "dwHLATable"~
+	REPLACE_TEXTUALLY ~createCharScreen:OnHLAButtonClick(currentHLASelection~ ~createCharScreen:OnHLAButtonClick(dwHLATable[currentHLASelection].index~
+END
+
+
+DEFINE_ACTION_FUNCTION hide_hla STR_VAR resref="" BEGIN
+
+	ACTION_TO_UPPER resref
+	APPEND "m_dw_hld.lua" "dwHideHLA['%resref%']=true%WNL%"
+
+
+END
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION override_hla_name_description_setup BEGIN
+
+	OUTER_SET default_description_string=RESOLVE_STR_REF (@500)
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES object_type=menu patch=override_name_patch END
+		LPF UI_replace_function INT_VAR inline=1 STR_VAR function=chargenHLADescription new_function_path=".../stratagems-inline/description_function.lua" END
+	BUT_ONLY
+
+END
+
+DEFINE_PATCH_FUNCTION override_name_patch BEGIN
+	REPLACE_TEXTUALLY ~Infinity_FetchString(\([^)]+\)\.name)~ ~Infinity_FetchString(dwHLAName(\1))~
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION override_hla_description INT_VAR strref=0 STR_VAR resref="" BEGIN
+
+	ACTION_TO_UPPER resref
+	APPEND "m_dw_hld.lua" "dwHLADescriptionOverride['%resref%']=%strref%" KEEP_CRLF
+
+END
+
+
+DEFINE_ACTION_FUNCTION override_hla_name INT_VAR strref=0 STR_VAR resref="" BEGIN
+
+	ACTION_TO_UPPER resref
+	APPEND "m_dw_hld.lua" "dwHLANameOverride['%resref%']=%strref%" KEEP_CRLF
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION set_basic_hla_progression BEGIN
+
+	OUTER_SET level_max=50 
+
+	LAF check_ini STR_VAR ini=hla_level_min RET min=value END
+	LAF check_ini STR_VAR ini=hla_level_step RET step=value END
+	OUTER_SPRINT data ""
+	OUTER_FOR (level=1;level<=50;++level) BEGIN
+		OUTER_SET number = (level<min)? 0 : (1 + ( level - min ) / step )
+		OUTER_SPRINT data "%data%%TAB%[%level%]=%number%,%WNL%"
+	END
+	OUTER_SPRINT data "dwHLABasicProgression={%WNL%%data%}%WNL%%WNL%"
+	APPEND "m_dw_hld.lua" "%data%" KEEP_CRLF
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+DEFINE_ACTION_FUNCTION lightweight_hla_adder
+	INT_VAR min_level=1
+			max_level=99
+			num_allowed=99
+			apply=1
+	STR_VAR resref=""
+			lu_file=""
+BEGIN	
+	COPY_EXISTING "%lu_file%.2da" override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW lu_data colcount
+		// find an empty row
+		empty_row="-1"
+		FOR (row=0;row<lu_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER lu_data row 1 ability
+			PATCH_IF "%ability%" STRING_EQUAL "*" BEGIN
+				empty_row=row
+				row=lu_data
+			END
+		END
+		// if there isn't one, add one
+		PATCH_IF empty_row<0 BEGIN
+			SPRINT line "%lu_data%"
+			FOR (col=1;col<colcount;++col) BEGIN
+				SPRINT line "%line% *"
+			END
+			insert_point=BUFFER_LENGTH
+			INSERT_BYTES insert_point (STRING_LENGTH "%line%")
+			WRITE_ASCIIE insert_point "%line%"
+			empty_row=lu_data
+		END
+		// add the new power
+		TO_UPPER resref
+		PATCH_IF apply BEGIN
+			SPRINT power "AP_%resref%"
+		END ELSE BEGIN
+			SPRINT power "GA_%resref%"		
+		END
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 1 "%power%"
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 2 "*"
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 3 "*"
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 4 "%min_level%"
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 5 "%max_level%"
+		SET_2DA_ENTRY_LATER lu_data_new empty_row 6 "%num_allowed%"
+		FOR (col=7;col<colcount;++col) BEGIN
+			SET_2DA_ENTRY_LATER lu_data_new empty_row col "*"		
+		END	
+		SET_2DA_ENTRIES_NOW lu_data_new colcount
+		// tidy up
+		PRETTY_PRINT_2DA
+	BUT_ONLY
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION baseline_lua BEGIN
+
+// allocate the unused slots/files
+
+MAKE_PATCH
+ABJURER                         => Ma1
+CONJURER                        => Ma2
+DIVINER                         => Ma3
+ENCHANTER                       => Ma4
+ILLUSIONIST                     => Ma5
+INVOKER                         => Ma6
+NECROMANCER                     => Ma7
+TRANSMUTER                      => Ma8
+BERSERKER                       => Fi1
+WIZARD_SLAYER                   => Fi2
+KENSAI                          => Fi3
+CAVALIER                        => Pa1
+INQUISITOR                      => Pa2
+UNDEAD_HUNTER                   => Pa3
+FERALAN                         => Ra1
+STALKER                         => Ra2
+BEASTMASTER                     => Ra3
+ASSASIN                         => Th2
+BOUNTY_HUNTER                   => Th3
+BLADE                           => Ba1
+JESTER                          => Ba2
+SKALD                           => Ba3
+TOTEMIC_DRUID                   => Dr1
+SHAPESHIFTER                    => Dr2
+BEAST_FRIEND                    => Dr3
+TALOS                           => Cl1
+HELM                            => Cl2
+LATHANDER                       => Cl3
+FIGHTER_MAGE_THIEF				=> FMT
+FIGHTER_MAGE_CLERIC				=> FMC
+END
+
+	COPY_EXISTING "luabbr.2da" override
+		REPLACE_EVALUATE"\([^ %TAB%%WNL%%LNL%%MNL%]+\)\([ %TAB%]+\)\([A-Za-z][A-Za-z]0\)" BEGIN
+			SPRINT kit "%MATCH1%"
+			PATCH_IF VARIABLE_IS_SET $patch_data("%kit%") BEGIN
+				SPRINT lua $patch_data("%kit%")
+				INNER_ACTION BEGIN
+					COPY_EXISTING "LU%MATCH3%.2da" "override/LU%lua%.2da"
+				END
+			END ELSE BEGIN
+				SPRINT lua "%MATCH3%"
+			END
+		END		
+		"%kit%%MATCH2%%lua%"
+		// a few latecomers don't have anything allocated
+		LPF find_next_unused_lua INT_VAR clone=1 STR_VAR parent_class=FIGHTER RET lua_short END
+		REPLACE_TEXTUALLY "BARBARIAN\([ %TAB%]+\)Fi0" "BARBARIAN\1%lua_short%"
+		LPF find_next_unused_lua INT_VAR clone=1 STR_VAR parent_class=CLERIC RET lua_short END
+		REPLACE_TEXTUALLY "OHTEMPUS\([ %TAB%]+\).*" "OHTEMPUS\1%lua_short%"
+		LPF find_next_unused_lua INT_VAR clone=1 STR_VAR parent_class=CLERIC RET lua_short END
+		REPLACE_TEXTUALLY "OHTYR\([ %TAB%]+\).*" "OHTYR\1%lua_short%"
+		LPF find_next_unused_lua INT_VAR clone=1 STR_VAR parent_class=MAGE RET lua_short END
+		REPLACE_TEXTUALLY "WILDMAGE\([ %TAB%]+\).*" "WILDMAGE\1%lua_short%"
+
+	BUT_ONLY
+	
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION blank_luas BEGIN
+
+	COPY_EXISTING "luabbr.2da" override
+		READ_2DA_ENTRIES_NOW luabbr_data 2
+		FOR (row=0;row<luabbr_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER luabbr_data row 1 file
+			PATCH_IF FILE_EXISTS_IN_GAME "lu%file%.2da" BEGIN
+				INNER_ACTION BEGIN
+					COPY ".../stratagems-inline/lua_template.2da" "override/lu%file%.2da"
+				END
+			END
+		END
+	BUT_ONLY
+
+
+
+END
+
+
+<<<<<<<< .../stratagems-inline/lua_template.2da
+       2DA V1.0
+*
+        ABILITY       ICON        STRREF    MIN_LEV   MAX_LEVEL  NUM_ALLOWED  PREREQUISITE EXCLUDED_BY   ALIGNMENT_RESTRICT
+>>>>>>>>
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+<<<<<<<< .../stratagems-inline/m_dw_hld.lua
+dwHideHLA={}
+dwHLAClassLevel={}
+dwHLANameOverride={}
+dwHLADescriptionOverride={}
+dwHLAExcludeByClass={}
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/m_dw_hlf.lua
+
+function dwIsHLAAllowed(resref,level_array,kit)
+
+	-- check the hidden list
+	if dwHideHLA[resref] then
+		return false
+	end	
+	-- check if there's a 'dwHLAClassLevel' entry; if not, we're good
+	if not dwHLAClassLevel[resref] then
+		return true
+	end
+	-- check if there's a class exclusion
+	if dwHLAExcludeByClass[resref] then
+		if dwHLAClassLevel[resref][dwHLAExcludeByClass[resref]] then
+			return false
+		end
+	end
+	-- check if there's a kit override
+	if dwHLAClassLevel[resref].kit[kit] then
+		allow_array=dwHLAClassLevel[resref].kit[kit]
+	else
+		allow_array=dwHLAClassLevel[resref]
+	end
+	-- go through the allow_array seeing if we have a permitted class
+	for class,level in pairs (level_array) do
+		if allow_array[class] and allow_array[class]<=level then
+			return true
+		end
+	end
+	-- if we get this far, it's blocked
+	return false
+
+end
+
+
+function dwBuildHLATable()
+
+	level_array=dwClassLevelArray()
+	_,kit=dwFindClassKit()
+	mytable={}
+	row=1
+	for k,v in pairs (chargen.HLAs) do
+		if dwIsHLAAllowed(v.resref,level_array,kit) then
+			mytable[row]={}
+			mytable[row].index=k
+			mytable[row].name=Infinity_FetchString(dwHLAName(v))
+			row=row+1
+		end	
+		if v.resref=="DW-NULL" then
+			discard_row=k
+		end
+	end
+	
+	table.sort(mytable,function(a,b) return a.name<b.name end)
+	
+	needed = dwNumberHLAs(true) - dwHLANumberOld
+	delta = chargen.numHLAs - needed
+	while (delta>0) do
+		createCharScreen:OnHLAButtonClick(discard_row, 1)
+		delta = delta - 1
+	end
+	if needed==0 then
+		createCharScreen:OnDoneButtonClick()
+		%iwd_only_line%
+		createCharScreen:OnDoneButtonClick()
+	end
+	return mytable
+end
+
+
+function dwHLAClickDoneButton()
+
+	if createCharScreen:IsHighLevelAbilitiesButtonClickable() then
+		createCharScreen:OnHighLevelAbilitiesButtonClick()
+	else
+		createCharScreen:OnDoneButtonClick()
+	end
+end
+
+function dwClassLevelOld()
+
+	data=characters[currentID].classlevel
+	_,_,class,level=string.find(data.first.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
+	c1=dwParentClassByName(class)
+	if data.second then
+		_,_,class2,level2=string.find(data.second.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
+		c2=dwParentClassByName(class2)
+	else
+		return c1,tonumber(level)
+	end
+	if data.third then
+		_,_,class3,level3=string.find(data.second.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
+		c3=dwParentClassByName(class3)
+		return c1,tonumber(level),c2,tonumber(level2),c3,tonumber(level3)
+	else
+		return c1,tonumber(level),c2,tonumber(level2)
+	end
+end
+
+
+function dwDisplayClassLevelOld()
+	
+	c1,l1,c2,l2,c3,l3=dwClassLevelOld()
+	
+	string=c1..": "..l1.."\n"
+	if c2 then
+		string=string..c2..": "..l2.."\n"
+	end
+	if c3 then
+		string=string..c3..": "..l3.."\n"
+	end
+	return string
+
+end
+
+function dwClassLevelNew()
+
+	data=chargen.charInfo
+	start,stop,class,level=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)")
+	c1=dwParentClassByName(class)
+	start,stop,class2,level2=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)",stop)
+	if start then
+		c2=dwParentClassByName(class2)
+		start,stop,class3,level3=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)",stop)
+		if class3 then
+			c3=dwParentClassByName(class3)
+		end
+	end
+	level=tonumber(level)
+	if level2 then level2=tonumber(level2) end
+	if level3 then level3=tonumber(level3) end
+	return c1,level,c2,level2,c3,level3
+
+end
+
+function dwClassLevelArray()
+
+	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	array={[c1]=l1}
+	if c2 then
+		array[c2]=l2
+	end
+	if c3 then
+		array[c3]=l3
+	end
+	return array
+end
+
+function dwDisplayClassLevelNew()
+	
+	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	
+	string=c1..": "..l1.."\n"
+	if c2 then
+		string=string..c2..": "..l2.."\n"
+	end
+	if c3 then
+		string=string..c3..": "..l3.."\n"
+	end
+	return string
+
+end
+
+function dwNumberHLAs(is_new)
+
+	if is_new then
+		c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	else
+		c1,l1,c2,l2,c3,l3=dwClassLevelOld()	
+	end
+
+	-- determine the type
+	
+	if c3 then
+		classtype="triple"
+	elseif c2 then
+		if characters[currentID].classlevel.second.active then
+			classtype="double"
+		else
+			classtype="dual"
+		end
+	else
+		classtype="single"
+	end
+
+	
+	if classtype=='single' then
+	
+		thr=dwHLAThreshold[c1].single
+		if l1>thr then
+			number=dwHLABasicProgression[thr]+ (l1-thr)
+		else
+			number=dwHLABasicProgression[l1]
+		end
+	end
+	
+	
+	if classtype=='double' then
+	
+		thr1=dwHLAThreshold[c1].double
+		thr2=dwHLAThreshold[c2].double
+		high=0
+		if l1>thr1 then
+			high=high + (l1 - thr1)
+			l1=thr1
+		end
+		if l2>thr2 then
+			high=high + (l2 - thr2)
+			l2=thr2
+		end
+		if l1>l2 then
+			lmax=l1
+		else
+			lmax=l2
+		end
+		number=high+dwHLABasicProgression[lmax]
+		
+	end
+	
+	if classtype=='triple' then
+	
+		thr1=dwHLAThreshold[c1].triple
+		thr2=dwHLAThreshold[c2].triple
+		thr3=dwHLAThreshold[c3].triple
+		high=0
+		if l1>thr1 then
+			high=high + (l1 - thr1)
+			l1=thr1
+		end
+		if l2>thr2 then
+			high=high + (l2 - thr2)
+			l2=thr2
+		end
+		if l3>thr3 then
+			high=high + (l3 - thr3)
+			l3=thr3
+		end
+		if l1>l2 then
+			lmax=l1
+		else
+			lmax=l2
+		end
+		if l3>lmax then
+			lmax=l3
+		end
+		number=high+dwHLABasicProgression[lmax]
+		
+	end
+	
+	if classtype=='dual' then
+		thr1=dwHLAThreshold[c1].single
+		thr2=dwHLAThreshold[c2].single
+		high=0
+		if l1>thr1 then
+			high=high+(l1-thr1)
+			l1=thr1
+		end
+		if l2>thr2 then
+			high=high+(l2-thr2)
+			l2=thr2
+		end	
+		if l1>l2 then
+			lmax=l1
+		else
+			lmax=l2
+		end
+		number=high+dwHLABasicProgression[lmax]
+	
+	end
+	
+	return number
+
+
+
+end
+
+function dwParentClassByName(name)
+
+	if dwKitByName[name] then
+		return dwClassByName[dwKitParentName[dwKitByName[name]]]
+	end
+	if dwClassByName[name] then
+		return dwClassByName[name]
+	end
+	return 0 -- fail gracefully
+	
+end
+
+function dwHLAName(hla)
+
+	if dwHLANameOverride[hla.resref] then
+		return dwHLANameOverride[hla.resref]
+	else
+		return hla.name
+	end
+
+
+end
+
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/description_function.lua
+function chargenHLADescription()
+	if currentHLASelection == nil then
+		return %default_description_string%
+	else
+		hla=chargen.HLAs[dwHLATable[currentHLASelection].index]
+		if dwHLADescriptionOverride[hla.resref] then
+			return dwHLADescriptionOverride[hla.resref]
+		else
+			return hla.description
+		end
+	end
+end
+>>>>>>>>

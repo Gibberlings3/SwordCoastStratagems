@@ -15,11 +15,22 @@ replaced with new strrefs (use this with caution).
 
 DEFINE_ACTION_FUNCTION kit_edit
 	INT_VAR edit_strrefs_in_place=0//boolean
-			debug=1//boolean
+			debug=0//boolean
+			clab_only=0
 	STR_VAR kit=""
 			edits=""
 			struct="k"
-BEGIN
+BEGIN	
+	// initial step: deal with lower- or mixed-case Blackguard
+	LAF check_label STR_VAR label=dw-lower_case_blackguard RET value END
+	ACTION_IF !value BEGIN
+		ACTION_FOR_EACH resref IN 25stweap kitlist luabbr numwslot BEGIN
+			COPY_EXISTING "%resref%.2da" override
+				REPLACE_TEXTUALLY CASE_SENSITIVE "Blackguard" "BLACKGUARD"
+			BUT_ONLY
+			IF_EXISTS
+		END
+	END
 	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
 		LAF return_first_entry STR_VAR list="%kit%" RET this_kit=entry kit=list END
 		ACTION_PHP_EACH sfo_vtable_kit_clastext_remap AS k=>v BEGIN
@@ -35,8 +46,8 @@ BEGIN
 			LAF anon_define 
 				STR_VAR 
 					function="%edits%" 
-					prepend="LPF kit_read STR_VAR kit=~%this_kit%~ RET_ARRAY %struct%=struct END" 
-					append="LPF kit_write INT_VAR edit_strrefs_in_place STR_VAR kit=~%this_kit%~ struct=%struct% END"
+					prepend="LPF kit_read INT_VAR clab_only STR_VAR kit=~%this_kit%~ RET_ARRAY %struct%=struct END" 
+					append="LPF kit_write INT_VAR clab_only edit_strrefs_in_place STR_VAR kit=~%this_kit%~ struct=%struct% END"
 				RET 
 					function 
 					SFO_anon_func_count 
@@ -63,14 +74,25 @@ include the parent class itself. If 'filter' is set, apply 'filter' as an SFO fu
 DEFINE_ACTION_FUNCTION kit_edit_all
 	INT_VAR edit_strrefs_in_place=0//boolean
 			skip_trueclass=0//boolean
+			clab_only=0//boolean
 	STR_VAR parent_class=""
 			edits=""
 			filter=""
 			struct=k
 BEGIN
+	// initial step: deal with lower- or mixed-case Blackguard
+	LAF check_label STR_VAR label=dw-lower_case_blackguard RET value END
+	ACTION_IF !value BEGIN
+		ACTION_FOR_EACH resref IN 25stweap kitlist luabbr numwslot BEGIN
+			COPY_EXISTING "%resref%.2da" override
+				REPLACE_TEXTUALLY CASE_SENSITIVE "Blackguard" "BLACKGUARD"
+			BUT_ONLY
+			IF_EXISTS
+		END
+	END
 	LAF trim_string STR_VAR string="%parent_class%" RET parent_class=string END
 	ACTION_IF "%filter%" STR_CMP "" BEGIN
-		LAF anon_define INT_VAR has_output=1 STR_VAR function="%filter%" RET filter=function SFO_anon_func_count END
+		LAF anon_check INT_VAR has_output=1 STR_VAR function="%filter%" RET filter=function SFO_anon_func_count END
 	END
 	OUTER_SET class_num=IDS_OF_SYMBOL (class "%parent_class%")
 	ACTION_CLEAR_ARRAY kit_array
@@ -94,8 +116,8 @@ BEGIN
 			END
 		END
 		ACTION_IF proceed BEGIN
-			LAF kit_edit INT_VAR edit_strrefs_in_place STR_VAR kit edits struct END
-		END
+			LAF kit_edit INT_VAR clab_only edit_strrefs_in_place STR_VAR kit edits struct END
+		END 
 	END
 	
 
@@ -108,14 +130,16 @@ document{kit_copy}
 Given kit="old=>new", copy kit 'old' onto kit 'new'. 'old' can be a class instead of a kit, and can be a rowname entry from kitlist or a row label from clastext. 
 This assumes 'new' is a new kit, and doesn't officially support overwriting, i.e. when kit 'new' already exists. (It might work fine but no guarantees.)</p>
 
-<p>'edits' is executed as an anonymous function, which first reads old kit into struct 'k' and then writes that struct onto the new kit.
+<p>'edits' is executed as an anonymous function, which first reads old kit into struct 'struct' (default 'k') and then writes that struct onto the new kit.
 
 }
 */
 
 DEFINE_ACTION_FUNCTION kit_copy
+	INT_VAR debug=1//boolean
 	STR_VAR kit=""
 			edits=""
+			struct=k
 BEGIN
 	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
 		LAF return_first_pair STR_VAR list="%kit%" RET old_kit=key new_kit=value kit=list END
@@ -125,11 +149,14 @@ BEGIN
 			END
 		END
 		PRINT "Copying kit %old_kit% to kit %new_kit%..."
+		ACTION_IF debug BEGIN
+			LAF vtable_debug STR_VAR vtable=kit struct function="%edits%" END
+		END
 		LAF anon_define 
 			STR_VAR 
 				function="%edits%" 
-				prepend="LPF kit_read STR_VAR kit=~%old_kit%~ RET_ARRAY k=struct END"  
-				append="LPF kit_write STR_VAR kit=~%new_kit%~ struct=k END"
+				prepend=~LPF kit_read STR_VAR kit="%old_kit%" RET_ARRAY "%struct%"=struct END~
+				append=~LPF kit_write STR_VAR kit="%new_kit%" struct="%struct%" END~
 			RET 
 				function 
 				SFO_anon_func_count 
@@ -149,10 +176,35 @@ Read the contents of a kit (or the kit part of a class, if 'kit' is a class) int
 */
 
 DEFINE_DIMORPHIC_FUNCTION kit_read
+	INT_VAR clab_only=0
 	STR_VAR kit=""
 	RET_ARRAY struct
 BEGIN
-	LAF vtable_read STR_VAR vtable=kit row="%kit%" RET_ARRAY struct END
+	
+	ACTION_IF !clab_only BEGIN
+		LAF vtable_read STR_VAR vtable=kit row="%kit%" RET_ARRAY struct END
+		// if weapprof is externalized, read the weapprof data from the external weapprof
+		
+		ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+			COPY - "%data_loc_shared%/weapprof.2da" nowhere
+				LPF 2da_read RET_ARRAY weap_rows=rows weap_array=array END
+				PHP_EACH weap_rows AS row=>discard BEGIN
+					SPRINT key "prof_%row%"
+					TO_LOWER key
+					SET $struct("%key%")=$weap_array("%row%" "%kit%")
+				END
+			BUT_ONLY
+		END
+	END ELSE BEGIN
+		ACTION_CLEAR_ARRAY "%struct%"
+		// all we need is kitlist
+		LAF 2daq_extract INT_VAR rowname_column=1 STR_VAR resref=kitlist row="%kit%" RET_ARRAY kitlist_array=array END
+		ACTION_PHP_EACH kitlist_array AS col=>value BEGIN
+			ACTION_TO_LOWER col
+			OUTER_SPRINT $struct("kitlist" "%col%") "%value%"
+			
+		END
+	END
 	// set up the CLAB data
 	OUTER_FOR (n=1;n<=50;++n) BEGIN
 		OUTER_SET $struct("extra_data" "powers" "%n%" count)=0
@@ -163,7 +215,7 @@ END
 /*
 document{kit_write}
 {
-Write the contents of a struct into (new or existing) kit 'kit'. This includes setting the clab file and the race tables (which are controlled by the 'any_race' and 'human'/'dwarf' (etc) struct variables.
+Write the contents of a struct into (new or existing) kit 'kit'. This includes setting the clab file and the race tables (which are controlled by the 'any_race' and 'human'/'dwarf' (etc) struct variables).
 If 'edit_strrefs_in_place' is set to 1, any strrefs have their values updated, rather than being
 replaced with new strrefs (use this with caution). ('is_dummy' just creates a dummy kit; this is used internally).
 }
@@ -171,12 +223,15 @@ replaced with new strrefs (use this with caution). ('is_dummy' just creates a du
 
 DEFINE_DIMORPHIC_FUNCTION kit_write
 	INT_VAR is_dummy=0//boolean
+			clab_only=0
 			edit_strrefs_in_place=0//boolean
 	STR_VAR kit=""
 			struct=""
 BEGIN
 	// initialize clabs
 	LAF kit_clab_initialize END
+	// make sure all kits have unique LUAs
+	LAF kit_baseline_lua END
 	
 	SILENT
 	// sanity check
@@ -184,9 +239,13 @@ BEGIN
 		WARN "You can't use kit_write to write a class. Use class_write instead."
 	END 
 	// is this a new kit? 	
+	ACTION_IF clab_only BEGIN
+		OUTER_SET is_new=0
+	END ELSE BEGIN
 	COPY_EXISTING - "kitlist.2da" nowhere
 		LPF 2daq_has_row INT_VAR rowname_column=1 STR_VAR row="%kit%" RET value END
 		is_new=!value
+	END
 	VERBOSE
 	ACTION_IF is_new BEGIN
 		// are we copying a kit, or a class?
@@ -199,11 +258,24 @@ BEGIN
 		END ELSE BEGIN
 		// here we'll need to add extras if we're not copying a kit
 			OUTER_SPRINT parent_class EVAL "%%struct%_extra_data_row_id%"
-			OUTER_SET $"%struct%"("kitlist_class") = IDS_OF_SYMBOL (class "%parent_class%")
-			OUTER_SPRINT $"%struct%"("kitlist_unusable") " 0x00004000"
-			OUTER_SET $"%struct%"("kitlist_mixed")="-1"
-			OUTER_SET $"%struct%"("kitlist_lower")="-1"
-			OUTER_SET $"%struct%"("kitlist_help")="-1"
+			ACTION_IF !VARIABLE_IS_SET $"%struct%"("kitlist_class") BEGIN
+				OUTER_SET $"%struct%"("kitlist_class") = IDS_OF_SYMBOL (class "%parent_class%")
+			END
+			ACTION_IF !VARIABLE_IS_SET $"%struct%"("kitlist_unusable") BEGIN
+				OUTER_SPRINT $"%struct%"("kitlist_unusable") " 0x00004000"
+			END
+			ACTION_IF !VARIABLE_IS_SET $"%struct%"("kitlist_help") BEGIN
+				OUTER_SET $"%struct%"("kitlist_help")="-1"
+				OUTER_SET $"%struct%"("kitlist_help_o")="-1"
+			END
+			ACTION_IF !VARIABLE_IS_SET $"%struct%"("kitlist_mixed") BEGIN
+				OUTER_SET $"%struct%"("kitlist_mixed")="-1"
+				OUTER_SET $"%struct%"("kitlist_mixed_o")="-1"
+			END
+			ACTION_IF !VARIABLE_IS_SET $"%struct%"("kitlist_lower") BEGIN
+				OUTER_SET $"%struct%"("kitlist_lower")="-1"
+				OUTER_SET $"%struct%"("kitlist_lower_o")="-1"
+			END
 			LAF kit_find_class_clab_prefix STR_VAR class="%parent_class%" RET clab END
 			OUTER_SPRINT $"%struct%"("kitlist_abilities") "%clab%"
 		END
@@ -217,6 +289,20 @@ BEGIN
 			OUTER_SPRINT $"%struct%"("kitlist_abilities") "%clab%"
 		END ELSE BEGIN
 			OUTER_SPRINT $"%struct%"("kitlist_abilities") "clabnull"
+		END
+		
+		// find and clone the lua
+		ACTION_IF !is_dummy BEGIN
+			OUTER_SPRINT lua_old EVAL "%%struct%_hla_abbrev%"
+			LAF 2daq_extract STR_VAR resref=luabbr row="%parent_class%" column=ABBREV RET root=value END
+			OUTER_PATCH_SAVE root "%root%" BEGIN
+				REPLACE_TEXTUALLY "0" ""
+			END
+			LAF kit_find_next_unused_lua INT_VAR clone=0 STR_VAR root RET lua_short END
+			OUTER_SPRINT $"%struct%"("hla_abbrev") "%lua_short%"
+			COPY_EXISTING "lu%lua_old%.2da" "override/lu%lua_short%.2da"		
+		END ELSE BEGIN
+			OUTER_SPRINT $"%struct%"("hla_abbrev") "FI0"	
 		END
 		
 		//find the ids entry
@@ -233,6 +319,7 @@ BEGIN
 					LAF kit_write INT_VAR is_dummy=1 STR_VAR kit="DW_DUMMY_%idsnum%" struct=kk END
 				END
 				OUTER_SET idsnum +=1
+				LAF ensure_hex STR_VAR in="%idsnum%" RET idsnum=out END
 			END
 			DEFAULT END
 		END
@@ -262,12 +349,15 @@ BEGIN
 			OUTER_SET idsnum=IDS_OF_SYMBOL (kit "%kit%") // this isn't fully reliable for a few original-game kits (GODLATHANDER, etc) on non-EE, but at present we only use idsnum here for EE installs (for multiclass abilities) so I don't at present care
 		END
 	END
-	// set race tables
-	LAF kit_set_race_tables INT_VAR force=is_new STR_VAR kit struct END
 	
+	// set race tables
+	ACTION_IF !clab_only BEGIN
+		LAF kit_set_race_tables INT_VAR force=is_new STR_VAR kit struct END
+	END
 	// set the main clab
 	
 	ACTION_IF "%struct%_extra_data_clab_altered" BEGIN
+		SILENT
 		ACTION_IF INDEX ("_" "%parent_class%")>=0 BEGIN
 			FAIL "You can't add powers to a multiclass kit without specifying the class explicitly, and you can't remove powers from a multiclass kit at all (not in lib_kit, at any rate)."
 		END
@@ -279,7 +369,7 @@ BEGIN
 		END
 		OUTER_SPRINT delete_powers $"%struct%"("extra_data" "delete_powers")
 		LAF kit_edit_clab STR_VAR power_array delete_powers clab=EVAL "%%struct%_kitlist_abilities%" END
-	
+		VERBOSE
 	END
 	
 	// set any MC clabs
@@ -290,9 +380,27 @@ BEGIN
 			LAF kit_add_clab_mc INT_VAR kit_ids_entry=idsnum STR_VAR parent_class primary_class="%class%" commands END
 		END
 	END
-	// write the data
+	// if weapprof is externalized, write the weapprof data to the external weapprof
+	ACTION_IF !clab_only BEGIN
+		ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+			COPY "%data_loc_shared%/weapprof.2da" "%data_loc_shared%"
+				LPF 2da_read RET_ARRAY weap_rows=rows weap_array=array END
+				PHP_EACH weap_rows AS row=>discard BEGIN
+					SPRINT key "prof_%row%"
+					TO_LOWER key
+					SET $weap_array("%row%" "%kit%")=$"%struct%"("%key%")
+				END
+				LPF 2da_write STR_VAR array=weap_array default="0" END
+			BUT_ONLY
+		
+		
+		END
+	END
 	
-	LAF vtable_write INT_VAR edit_strrefs_in_place STR_VAR row="%kit%" vtable=kit struct END
+	// write the data
+	ACTION_IF !clab_only BEGIN
+		LAF vtable_write INT_VAR edit_strrefs_in_place STR_VAR row="%kit%" vtable=kit struct END
+	END
 	
 END
 
@@ -481,7 +589,8 @@ DEFINE_ACTION_FUNCTION kit_find_next_ids
     RET idsnum
 BEGIN
     LAF ensure_hex STR_VAR in="%to_start%" RET out END
-    ACTION_IF !FILE_CONTAINS_EVALUATED ("kit.ids" "%out%[ %TAB%]") BEGIN
+	OUTER_SET out2=to_start+0 // it's not required for ids files to be in either hex or dec; check both
+    ACTION_IF !FILE_CONTAINS_EVALUATED ("kit.ids" "%out%[ %TAB%]") && !FILE_CONTAINS_EVALUATED ("kit.ids" "%out2%[ %TAB%]") BEGIN
          OUTER_SPRINT idsnum "%out%"
     END ELSE BEGIN
          LAF kit_find_next_ids INT_VAR to_start = to_start + 1 RET idsnum END
@@ -809,6 +918,7 @@ DEFINE_ACTION_FUNCTION kit_add_clab_mc
 			commands=""
 			
 BEGIN
+	SILENT
 	// sanity check
 	ACTION_IF !enhanced_edition BEGIN
 		FAIL "lib_kit error: multiclass kit powers can only be added for Enhanced-Edition games."
@@ -883,7 +993,7 @@ BEGIN
 				STR_VAR spl="%delete_file%"
 						edits="m.ab.add{};;m.ab_fx.add{s_opcode=318;;s_target=2;;s_duration=1;;s_parameter1=stat_ind_primary;;s_parameter2=111;;s_resource:=%delete_file%}"
 			END
-			
+			SILENT
 			ACTION_TO_LOWER other_class
 			OUTER_SPRINT other_prefix $clab_mc_map("%other_class%")
 			COPY_EXISTING "%other_prefix%01.spl" override
@@ -894,7 +1004,7 @@ BEGIN
 			OUTER_SPRINT $temp_array(1) "AP_%delete_file%"
 			LAF kit_find_class_clab_prefix STR_VAR class="%other_class%" RET clab END
 			LAF kit_edit_clab STR_VAR clab power_array=temp_array END
-
+			SILENT
 		END	
 	END
 	
@@ -973,6 +1083,7 @@ BEGIN
 		END
 	
 	END
+	VERBOSE
 END
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1075,7 +1186,329 @@ DEFINE_ACTION_FUNCTION kit_clab_mc_initialize BEGIN
 			END
 			LAF kit_edit_clab STR_VAR clab power_array END
 		END
-	END
+		
+		LAF kit_label_original_classes END
+	END 
 END
 
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_set_alignment}
+{
+Struct function. 'arguments' is a space-separated list of alignments in format 'cg', 'nn', etc. Those and only those alignments are permitted.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_set_alignment
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_FOR_EACH alignment IN lg ng cg ln nn cn le ne ce BEGIN
+			SET $align_array("%alignment%")=0
+		END
+		WHILE "%arguments%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+			TO_LOWER entry
+			PATCH_MATCH "%entry%" WITH
+			"[lcn][gne]" BEGIN
+				SET $align_array("%entry%")=1
+			END
+			DEFAULT
+				PATCH_WARN "kit_set_alignment:%entry% is not a legal argument"
+			END
+		END
+		SPRINT string ""
+		PATCH_FOR_EACH alignment IN lg ng cg ln nn cn le ne ce BEGIN
+			SET val=$align_array("%alignment%")
+			PATCH_IF "%string%" STR_EQ "" BEGIN
+				SPRINT string "%val%"
+			END ELSE BEGIN
+				SPRINT string "%string%,%val%"
+			END
+		END
+		SPRINT $struct("alignment") "%string%"
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_copy_from}
+{
+Struct function. 'arguments' is a space-separated list of kit-defining 2das. 'source' is another kit, identified via rowname. The values used by
+that kit are copied over.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_copy_from
+	STR_VAR struct=""
+			arguments=""
+			source=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_TO_UPPER source
+	OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+		ACTION_TO_LOWER entry
+		ACTION_IF !IS_AN_INT $sfo_vtable_kit_reflects("%entry%") BEGIN
+			FAIL "kit_copy_from fail: %entry% is not a valid kit .2da"
+		END ELSE BEGIN
+			OUTER_SET reflect=$sfo_vtable_kit_reflects("%entry%")
+		END
+		ACTION_IF reflect BEGIN
+			LAF 2daq_extract STR_VAR resref="%entry%" column="%source%" RET_ARRAY source_array=array END
+		END ELSE BEGIN
+			LAF 2daq_extract STR_VAR resref="%entry%" row="%source%" RET_ARRAY source_array=array END
+		END
+		OUTER_SPRINT alias $sfo_vtable_kit_alias("%entry%")
+		ACTION_PHP_EACH source_array AS k=>v BEGIN
+			ACTION_TO_LOWER k
+			ACTION_IF "%alias%" STR_EQ "*" BEGIN
+				OUTER_SPRINT key "%k%"
+			END ELSE BEGIN
+				OUTER_SPRINT key "%alias%_%k%"
+			END
+			OUTER_SPRINT $struct("%key%") "%v%"
+		END
+	
+	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_match_usability}
+{
+Struct function. 'arguments' is a kit; the current kit's 'unusable' flag is set to match it
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION kit_match_usability
+	STR_VAR struct=""
+			arguments=""
+	RET_ARRAY struct
+BEGIN
+	ACTION_TO_UPPER arguments
+	LAF 2daq_extract INT_VAR rowname_column=1 STR_VAR resref=kitlist row="%arguments%" column=unusable RET value END
+	OUTER_SPRINT $struct("kitlist_unusable") "%value%"
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_baseline_lua}
+{
+Make sure every kit is using a unique LUA entry. (Idempotent.)
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_baseline_lua BEGIN
+
+LAF check_label STR_VAR label=dw#baseline_lua RET value END
+ACTION_IF !value BEGIN
+	LAF make_label STR_VAR label=dw#baseline_lua END
+	
+	ACTION_CLEAR_ARRAY class_abbrev
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY class_abbrev BEGIN
+		FIGHTER=>FI0
+		MAGE=>MA0
+		SORCERER=>SO0
+		THIEF=>TH0
+		CLERIC=>CL0
+		RANGER=>RA0
+		PALADIN=>PA0
+		DRUID=>DR0
+		BARD=>BA0
+		SHAMAN=>SH0
+		MONK=>MO0
+		FIGHTER_MAGE=>FM0
+		FIGHTER_CLERIC=>FC0
+		FIGHTER_THIEF=>FT0
+		CLERIC_MAGE=>CM0
+		CLERIC_THIEF=>CT0
+		MAGE_THIEF=>MT0
+		CLERIC_RANGER=>CR0
+		FIGHTER_DRUID=>FT0
+		FIGHTER_MAGE_CLERIC=>FMC
+		FIGHTER_MAGE_THIEF=>FMT
+	END
+
+	// this defines the unused files already present, at least on bg2
+	ACTION_CLEAR_ARRAY kit_abbrev
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY kit_abbrev BEGIN
+		ABJURER                         => Ma1
+		CONJURER                        => Ma2
+		DIVINER                         => Ma3
+		ENCHANTER                       => Ma4
+		ILLUSIONIST                     => Ma5
+		INVOKER                         => Ma6
+		NECROMANCER                     => Ma7
+		TRANSMUTER                      => Ma8
+		BERSERKER                       => Fi1
+		WIZARD_SLAYER                   => Fi2
+		KENSAI                          => Fi3
+		CAVALIER                        => Pa1
+		INQUISITOR                      => Pa2
+		UNDEAD_HUNTER                   => Pa3
+		FERALAN                         => Ra1
+		STALKER                         => Ra2
+		BEASTMASTER                     => Ra3
+		ASSASIN                         => Th2
+		BOUNTY_HUNTER                   => Th3
+		BLADE                           => Ba1
+		JESTER                          => Ba2
+		SKALD                           => Ba3
+		TOTEMIC_DRUID                   => Dr1
+		SHAPESHIFTER                    => Dr2
+		BEAST_FRIEND                    => Dr3
+		TALOS                           => Cl1
+		HELM                            => Cl2
+		LATHANDER                       => Cl3
+	END
+	
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_array=array END
+	
+
+	COPY_EXISTING "luabbr.2da" override
+		LPF 2da_read RET_ARRAY lua_array=array lua_rows=rows END
+		// first pass: set defaults
+		PHP_EACH lua_rows AS row=>discard BEGIN
+			PATCH_IF VARIABLE_IS_SET $class_abbrev("%row%") BEGIN
+				SPRINT $lua_array("%row%" "ABBREV") $class_abbrev("%row%")
+			END ELSE 
+			PATCH_IF VARIABLE_IS_SET $kit_abbrev("%row%") BEGIN
+				SPRINT lua_new $kit_abbrev("%row%")
+				SPRINT lua_old $lua_array("%row%" "ABBREV")
+				PATCH_IF "%lua_new%" STR_CMP "%lua_old%" BEGIN
+					INNER_ACTION BEGIN
+						COPY_EXISTING "LU%lua_old%.2da" "override/LU%lua_new%.2da"
+					END
+				END
+				SPRINT $lua_array("%row%" "ABBREV") "%lua_new%"			
+			END
+		END
+
+		// main pass: allocate if nonexistent or default
+		PHP_EACH lua_rows AS row=>discard BEGIN
+			PATCH_IF !VARIABLE_IS_SET $class_abbrev("%row%") && IS_AN_INT $kitlist_array("%row%" "CLASS") BEGIN
+				parent_class_num=$kitlist_array("%row%" "CLASS")
+				LOOKUP_IDS_SYMBOL_OF_INT parent_class class parent_class_num
+				SPRINT root $class_abbrev("%parent_class%")
+				SPRINT current_lua $lua_array("%row%" "ABBREV")
+				PATCH_IF "%root%" STR_EQ "%current_lua%" BEGIN
+					INNER_PATCH_SAVE root "%root%" BEGIN
+						REPLACE_TEXTUALLY "0" ""
+					END
+					LPF kit_find_next_unused_lua STR_VAR root RET lua_short END
+					SPRINT $lua_array("%row%" "ABBREV") "%lua_short%"
+					SPRINT current_lua "%lua_short%"
+				END
+				PATCH_IF !FILE_EXISTS_IN_GAME "LU%current_lua%.2da"  BEGIN
+					INNER_ACTION BEGIN
+						COPY_EXISTING "lu%root%.2da" "override/lu%current_lua%.2da"
+					END
+				END
+			END
+		END
+		LPF 2da_write STR_VAR array=lua_array END
+	
+
+	END
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{kit_find_next_unused_lua}
+{
+Given 'root', find the first unused lua of the form 'LU[root][0-9]', starting from try_next (by default, 0). If clone=1 (default) copy the default
+version over to the new one. The returned string, 'lua_short', does not include the 'lu'.
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION kit_find_next_unused_lua INT_VAR clone=1 try_next=0 STR_VAR root="" RET lua_short BEGIN
+	ACTION_IF FILE_EXISTS_IN_GAME "LU%root%%try_next%.2da" BEGIN
+		OUTER_SET ++try_next
+		LAF kit_find_next_unused_lua INT_VAR clone try_next STR_VAR root RET lua_short END
+	END ELSE BEGIN
+		OUTER_SPRINT lua_short "%root%%try_next%"
+		ACTION_IF clone BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "lu%root%0.2da" BEGIN
+				OUTER_SPRINT lua_old "lu%root%0"			
+			END ELSE BEGIN
+				OUTER_SPRINT lua_old "lu%root%"
+			END
+			COPY_EXISTING "%lua_old%.2da" "override/lu%lua_short%.2da"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// class labels need to be wrapped in a subspell to prevent the dual-class setup from inactivating them
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION kit_label_original_classes
+BEGIN
+	ACTION_IF !VARIABLE_IS_SET blocking_opcode BEGIN
+		OUTER_SET blocking_opcode=318
+	END
+	LAF check_label STR_VAR label=dw#original_classes_labelled RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label=dw#original_classes_labelled END
+		LAF resolve_splprot_entry INT_VAR stat=0x10d value="-1" STR_VAR relation=equal RET splprot_num=value END
+
+		ACTION_CLEAR_ARRAY original_class_map
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY original_class_map BEGIN
+			FIGHTER=>"dw#l2ocf"
+			CLERIC=>"dw#l2occ"
+			MAGE=>"dw#l2ocm"
+			DRUID=>"dw#lbocd"
+			RANGER=>"dw#lbocr"
+			THIEF=>"dw#lboct"
+		END
+		ACTION_PHP_EACH original_class_map AS class=>spl BEGIN
+			OUTER_SET id = IDS_OF_SYMBOL (class "%class%")
+			LAF ds_resolve_stat STR_VAR id="ORIGINAL_CLASS_%class%" RET stat_ind END
+			LAF spl_make
+				STR_VAR spl
+						edits="m.ab.add{};;m.ab_fx.add{s_opcode=328 s_target=2 s_special=1 s_timing=9 s_parameter2=stat_ind};;m.ab_fx.add{s_opcode=326 s_target=2 s_timing=9 s_resource:=dw#l2oco}"
+			END
+			LAF kit_edit_all INT_VAR clab_only=1 STR_VAR parent_class="%class%" edits="sfo_internal_struct.kit_apply_powers{dw#lboco 1}" struct=sfo_internal_struct END
+		END
+		LAF ds_resolve_stat STR_VAR id="MULTI_CLASS" RET stat_ind END
+		
+		LAF spl_make
+			STR_VAR spl="dw#l2oc2" 
+					edits="m.ab.add{};;m.ab_fx.add{s_opcode=328 s_target=2 s_special=1 s_timing=9 s_parameter2=stat_ind};;m.ab_fx.add{s_opcode=326 s_target=2 s_timing=9 s_resource:=dw#l2oco}"
+		END
+		
+		LAF spl_make
+			STR_VAR spl="dw#l2oco"
+					edits="m.ab.add{}"
+		END
+		COPY_EXISTING "dw#l2oco.spl" override
+			PATCH_FOR_EACH resource IN dw#l2oc2 dw#l2ocf dw#l2occ dw#l2ocm dw#l2ocd dw#l2ocr dw#l2oct BEGIN 
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=blocking_opcode target=2 timing=9 STR_VAR resource END
+			END
+
+		LAF spl_make 
+			STR_VAR spl="dw#lboco"
+					edits="m.ab.add{}"
+		END
+		COPY_EXISTING "dw#lboco.spl" override
+			PHP_EACH original_class_map AS class=>spell BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=IDS_OF_SYMBOL (class "%class%") parameter2=splprot_num STR_VAR resource="%spell%" END 
+			END
+			PATCH_FOR_EACH multiclass IN FIGHTER_CLERIC FIGHTER_MAGE FIGHTER_THIEF CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=IDS_OF_SYMBOL (class "%multiclass%") parameter2=splprot_num STR_VAR resource="dw#l2oc2" END 	
+			END
+		BUT_ONLY
+   END
+END

@@ -157,6 +157,7 @@ BEGIN
 						LAF log_this INT_VAR repeat=0 STR_VAR path="%resource_loc%" file="%prefix%_proj.txt" input="%resref% %int%" END
 						ACTION_IF !VARIABLE_IS_SET $do_not_copy("%resource%") BEGIN
 							COPY_EXISTING "%resource%" "%resource_loc%/%spell%"
+								LPF strref_apply STR_VAR function=log_strref END
 						END
 					END
 				END
@@ -178,41 +179,44 @@ BEGIN
     END
 	
 	// process icons
-	
-	MKDIR "%resource_loc%/icons"
-	LAF 2da_read STR_VAR file="icons_used.txt" path="%data_loc%" RET_ARRAY icons_used_rows=rows icons_used=array END
-	LAF 2da_read STR_VAR file=statdesc.2da RET_ARRAY statdesc=array END
-	LAF 2da_read STR_VAR file=iwd_icons.2da location=data RET_ARRAY statdesc_extra=array END
-	LAF array_join STR_VAR array1=statdesc array2=statdesc_extra RET_ARRAY statdesc=array END
-	ACTION_CLEAR_ARRAY icon_add
-	OUTER_SET count=0
-	ACTION_PHP_EACH icons_used_rows AS row=>discard BEGIN
-		OUTER_SPRINT $icon_add("%count%" resource) $icons_used("%row%" resource) 
-		OUTER_SPRINT id $icons_used("%row%" spell_id)
-		ACTION_IF VARIABLE_IS_SET $ids_remaps("%id%") BEGIN
-			OUTER_SPRINT id $ids_remaps("%id%")
-		END
-		OUTER_SPRINT $icon_add("%count%" spell_id) "%id%"
-		OUTER_SET icon=$icons_used("%row%" icon)
-		OUTER_SET $icon_add("%count%" old_id)=icon
-		OUTER_SET strref=$statdesc("%icon%" DESCRIPTION)
-		LAF log_strref STR_VAR arguments="%strref%" END
-		OUTER_SET $icon_add("%count%" desc)=strref
-		OUTER_SPRINT bam_file $statdesc("%icon%" BAM_FILE)
-		ACTION_IF FILE_EXISTS_IN_GAME "%bam_file%.bam" BEGIN
-			COPY_EXISTING "%bam_file%.bam" "%resource_loc%/icons"
-		END ELSE
-		ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" BEGIN
-			COPY "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" "%resource_loc%/icons"
-		END ELSE BEGIN
-			LAF warning STR_VAR warning="Cannot find bam file %bam_file%.bam, associated to icon %icon%" END
-		END
-		OUTER_SPRINT $icon_add("%count%" bam) "%bam_file%"
-		OUTER_SET ++count	
-	END
-	ACTION_IF count>0 BEGIN
-		LAF 2da_write STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" array=icon_add END
-	END
+	ACTION_IF enhanced_edition BEGIN
+  
+    MKDIR "%resource_loc%/icons"
+    LAF 2da_read STR_VAR file="icons_used.txt" path="%data_loc%" RET_ARRAY icons_used_rows=rows icons_used=array END
+    LAF 2da_read STR_VAR file=statdesc.2da RET_ARRAY statdesc=array END
+    LAF 2da_read STR_VAR file=iwd_icons.2da location=data RET_ARRAY statdesc_extra=array END
+    LAF array_join STR_VAR array1=statdesc array2=statdesc_extra RET_ARRAY statdesc=array END
+    ACTION_CLEAR_ARRAY icon_add
+    OUTER_SET count=0
+    ACTION_PHP_EACH icons_used_rows AS row=>discard BEGIN
+      OUTER_SPRINT $icon_add("%count%" resource) $icons_used("%row%" resource) 
+      OUTER_SPRINT id $icons_used("%row%" spell_id)
+      ACTION_IF VARIABLE_IS_SET $ids_remaps("%id%") BEGIN
+        OUTER_SPRINT id $ids_remaps("%id%")
+      END
+      OUTER_SPRINT $icon_add("%count%" spell_id) "%id%"
+      OUTER_SET icon=$icons_used("%row%" icon)
+      OUTER_SET $icon_add("%count%" old_id)=icon
+      OUTER_SET strref=$statdesc("%icon%" DESCRIPTION)
+      LAF log_strref STR_VAR arguments="%strref%" END
+      OUTER_SET $icon_add("%count%" desc)=strref
+      OUTER_SPRINT bam_file $statdesc("%icon%" BAM_FILE)
+      ACTION_IF FILE_EXISTS_IN_GAME "%bam_file%.bam" BEGIN
+        COPY_EXISTING "%bam_file%.bam" "%resource_loc%/icons"
+      END ELSE
+      ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" BEGIN
+        COPY "%MOD_FOLDER%/%component_loc%/resource/icons/%bam_file%.bam" "%resource_loc%/icons"
+      END ELSE BEGIN
+        LAF warning STR_VAR warning="Cannot find bam file %bam_file%.bam, associated to icon %icon%" END
+      END
+      OUTER_SPRINT $icon_add("%count%" bam) "%bam_file%"
+      OUTER_SET ++count	
+    END
+    ACTION_IF count>0 BEGIN
+      LAF 2da_write STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" array=icon_add END
+    END
+    
+  END  
 
 	
 	
@@ -475,7 +479,7 @@ BEGIN
 			OUTER_SET skip=1
 			OUTER_WHILE "%condition%" STR_CMP "" BEGIN
 				LAF return_first_entry STR_VAR list="%condition%" separator="|" RET var=entry condition=list END
-				ACTION_IF EVAL "%%var%%" STR_EQ 1 BEGIN
+				ACTION_IF (EVAL "%%var%%" STR_EQ "0" = 0) BEGIN
 					OUTER_SET skip=0
 				END
 			END
@@ -649,43 +653,47 @@ BEGIN
 	END
 	
 	//do icons
-	ACTION_IF FILE_EXISTS "%resource_loc%/%prefix%_icons.2da" BEGIN
-		LAM data_spell_resrefs
-		LAF 2da_read STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" case=mixed RET_ARRAY icon_array=array icon_rows=rows END
-		ACTION_PHP_EACH icon_rows AS row=>discard BEGIN
-			// get data
-			OUTER_SPRINT resource $icon_array("%row%" resource)
-			OUTER_SPRINT id $icon_array("%row%" spell_id)
-			OUTER_SPRINT bam_name auto
-			OUTER_SET proceed=1
-			ACTION_IF "%id%" STR_CMP "*" BEGIN
-				ACTION_IF VARIABLE_IS_SET "%id%" BEGIN
-					OUTER_SPRINT resref_core EVAL "%%id%%"
-					ACTION_IF !FILE_EXISTS_IN_GAME "%resref_core%D" BEGIN
-						OUTER_SPRINT bam_name "%resref_core%D"
-					END 
-					OUTER_PATCH_SAVE resource "%resource%" BEGIN
-						REPLACE_TEXTUALLY CASE_INSENSITIVE "SP\(PR\|WI\|IN\|CL\)[0-9][0-9][0-9]" "%resref_core%"
-					END
-				END ELSE BEGIN
-					OUTER_SET proceed=0
-				END
-			END
-			ACTION_IF proceed BEGIN
-				OUTER_SET old_id=$icon_array("%row%" old_id)
-				OUTER_SPRINT bam $icon_array("%row%" bam)
-				OUTER_SET desc=$icon_array("%row%" desc)
-				LAF swap_spell_strrefs STR_VAR arguments="%desc%" RET desc=value END
-				// resolve statdesc
-				LAF resolve_statdesc INT_VAR strref=desc /*check_first=old_id*/ STR_VAR bam bam_name path="%resource_loc%/icons" RET new_id=stat_num END
-				// update resource
-				COPY_EXISTING "%resource%" override
-					LPF ALTER_EFFECT INT_VAR silent=1 match_parameter2=old_id parameter2=new_id STR_VAR match_function="READ_SHORT 0x0 opcode;; value=(opcode=142 || opcode=169 || opcode=240)" END
-				BUT_ONLY
-			END
-			
-		END
-	END
+	ACTION_IF enhanced_edition BEGIN
+    
+    ACTION_IF FILE_EXISTS "%resource_loc%/%prefix%_icons.2da" BEGIN
+      LAM data_spell_resrefs
+      LAF 2da_read STR_VAR file="%prefix%_icons.2da" path="%resource_loc%" case=mixed RET_ARRAY icon_array=array icon_rows=rows END
+      ACTION_PHP_EACH icon_rows AS row=>discard BEGIN
+        // get data
+        OUTER_SPRINT resource $icon_array("%row%" resource)
+        OUTER_SPRINT id $icon_array("%row%" spell_id)
+        OUTER_SPRINT bam_name auto
+        OUTER_SET proceed=1
+        ACTION_IF "%id%" STR_CMP "*" BEGIN
+          ACTION_IF VARIABLE_IS_SET "%id%" BEGIN
+            OUTER_SPRINT resref_core EVAL "%%id%%"
+            ACTION_IF !FILE_EXISTS_IN_GAME "%resref_core%D" BEGIN
+              OUTER_SPRINT bam_name "%resref_core%D"
+            END 
+            OUTER_PATCH_SAVE resource "%resource%" BEGIN
+              REPLACE_TEXTUALLY CASE_INSENSITIVE "SP\(PR\|WI\|IN\|CL\)[0-9][0-9][0-9]" "%resref_core%"
+            END
+          END ELSE BEGIN
+            OUTER_SET proceed=0
+          END
+        END
+        ACTION_IF proceed BEGIN
+          OUTER_SET old_id=$icon_array("%row%" old_id)
+          OUTER_SPRINT bam $icon_array("%row%" bam)
+          OUTER_SET desc=$icon_array("%row%" desc)
+          LAF swap_spell_strrefs STR_VAR arguments="%desc%" RET desc=value END
+          // resolve statdesc
+          LAF resolve_statdesc INT_VAR strref=desc /*check_first=old_id*/ STR_VAR bam bam_name path="%resource_loc%/icons" RET new_id=stat_num END
+          // update resource
+          COPY_EXISTING "%resource%" override
+            LPF ALTER_EFFECT INT_VAR silent=1 match_parameter2=old_id parameter2=new_id STR_VAR match_function="READ_SHORT 0x0 opcode;; value=(opcode=142 || opcode=169 || opcode=240)" END
+          BUT_ONLY
+        END
+        
+      END
+    END
+    
+  END  
 	
 	// do the shadow map
 	COPY_EXISTING_REGEXP ".*\.sto" override
@@ -719,14 +727,19 @@ BEGIN
 
 	ACTION_IF "%afterwards%" STR_CMP "" BEGIN
 		// because IWDspells assumes UTF-8 encoding, whereas e.g. SCS assumes localized encoding, we need special attention to the tra file, and can't just load it from sfo_tra_loc
-		WITH_SCOPE BEGIN
+		WITH_SCOPE BEGIN // needed so we don't permanently redefine sfo_tra_loc
 			ACTION_IF !VARIABLE_IS_SET sfo_iwdspells_extern_loaded || !sfo_iwdspells_extern_loaded BEGIN
-				OUTER_SPRINT ext_lang_loc "%workspace%/temp_lang"
-				LAF sfo_handle_charsets 
-					INT_VAR sfo_from_utf8=1
-					STR_VAR sfo_tra_path="%component_loc%/lang"
-							sfo_iconv_path
-					RET sfo_tra_loc
+				ACTION_IF !enhanced_edition BEGIN
+					LAF HANDLE_CHARSETS
+						INT_VAR from_utf8=1 
+								infer_charsets=1
+						STR_VAR tra_path="%MOD_FOLDER%/%component_loc%/lang"
+								iconv_path="%MOD_FOLDER%/%sfo_iconv_path%"
+								out_path="%workspace%/temp_lang"
+					END
+					OUTER_SPRINT sfo_tra_loc "%workspace%/temp_lang"
+				END ELSE BEGIN
+					OUTER_SPRINT sfo_tra_loc "%MOD_FOLDER%/%component_loc%/lang"
 				END
 			END
 			LAF run STR_VAR file="%afterwards%" location=lib tra="%afterwards_tra%" END		
@@ -937,12 +950,14 @@ BEGIN
 
 	LAF array_read STR_VAR file path location locbase RET_ARRAY array END
 	ACTION_PHP_EACH array AS spell_name=>discard BEGIN
-	    LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name RET resref=spell_res END
-		ACTION_FOR_EACH letter IN A B C BEGIN
-			ACTION_IF FILE_EXISTS "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" BEGIN
-				COPY "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" "override/%resref%%letter%.bam"
-            END
-        END
+	    LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name RET resref=spell_res success END
+		ACTION_IF success BEGIN
+			ACTION_FOR_EACH letter IN A B C BEGIN
+				ACTION_IF FILE_EXISTS "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" BEGIN
+					COPY "%resource_loc%/bam/%spell_name%_ANIMATION_%letter%.bam" "override/%resref%%letter%.bam"
+				END
+			END
+		END
     END
 END
 
@@ -1019,6 +1034,9 @@ BEGIN
 										ACTION_MATCH "%source%" WITH
 										"SP\(IN\|WI\|PR\|CL\)[0-9]+" BEGIN
 											LAF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%source%" RET source=spell_name END
+											ACTION_IF VARIABLE_IS_SET $ids_remaps("%source%") BEGIN
+												OUTER_SPRINT source $ids_remaps("%source%")
+											END
 										END
 										"SP\(IN\|WI\|PR\)[0-9]+[A-Z]" BEGIN
 											OUTER_PATCH "%source%" BEGIN
@@ -1029,6 +1047,9 @@ BEGIN
 												""
 											END
 											LAF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%base%" RET source=spell_name END
+											ACTION_IF VARIABLE_IS_SET $ids_remaps("%source%") BEGIN
+												OUTER_SPRINT source $ids_remaps("%source%")
+											END
 											OUTER_SPRINT source "%source%-%letter%"
 										END
 										DEFAULT

@@ -3,13 +3,14 @@ DEFINE_ACTION_FUNCTION mage_spell_choices BEGIN
     LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=not_equal RET splprot_num=value END
     LAF resolve_splprot_entry INT_VAR stat=268 value="-1" STR_VAR relation=equal RET splprot_num_race=value END
     LAF resolve_splprot_entry INT_VAR stat=269 value="-1" STR_VAR relation=equal RET splprot_num_class=value END
-    LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_GRANT_MAGE_SPELLS RET stat_ind END
+    LAF ds_resolve_stat STR_VAR id=MARKED_FOR_AUTOLEVEL RET stat_ind END
 
     // trueclass mage
     LAF mage_spell_core STR_VAR kit=mage prefix=dwals0 END
 
     // mage kits
-    MAKE_PATCH
+   array.new[patch_data]
+   [
        abjurer=>dwals1
        conjurer=>dwals2
        diviner=>dwals3
@@ -19,7 +20,7 @@ DEFINE_ACTION_FUNCTION mage_spell_choices BEGIN
        necromancer=>dwals7
        transmuter=>dwals8
        wildmage=>dwals9
-    END
+	]
     ACTION_PHP_EACH patch_data AS kit=>prefix BEGIN
        LAF mage_spell_core STR_VAR kit prefix END
     END
@@ -28,10 +29,6 @@ DEFINE_ACTION_FUNCTION mage_spell_choices BEGIN
     LAF mage_spell_core INT_VAR all_kits=1 STR_VAR kit=bard prefix=dwalsb END
 
 END
-
-
-
-
 
 DEFINE_ACTION_FUNCTION mage_spell_core
 INT_VAR all_kits=0
@@ -47,23 +44,22 @@ BEGIN
            LAF find_spellchoice_file STR_VAR folder=vanilla kit RET file END
         END
      END
-     OUTER_SPRINT editstring ""
-     COPY "%file%" "%workspace%"
-       COUNT_2DA_ROWS 2 rowcount
-       FOR (i=0;i<rowcount;i+=1) BEGIN
-          READ_2DA_ENTRY i 0 2 number
-          READ_2DA_ENTRY i 1 2 list
-          SPRINT spell "%prefix%%number%"
-          SPRINT editstring "%editstring% apply_power=>~%spell% %number%~"
-          INNER_ACTION BEGIN
-             LAF make_spellchoice_spell INT_VAR level=number STR_VAR kit list spell END
-          END
-       END
+     OUTER_SPRINT editlist ""
+     COPY - "%file%" nowhere
+		READ_2DA_ENTRIES_NOW spell_data 2
+		FOR (row=0;row<spell_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER spell_data row 0 number
+			READ_2DA_ENTRY_FORMER spell_data row 1 list
+			SPRINT spell "%prefix%%number%"
+			SPRINT editlist "%editlist%%spell% %number%,"
+			LPF make_spellchoice_spell INT_VAR level=number STR_VAR kit list spell END
+		END
      BUT_ONLY
+	 OUTER_SPRINT edits "k.kit_apply_powers{%editlist%}"
      ACTION_IF all_kits BEGIN
-        LAF edit_all_kits STR_VAR parent_class="%kit%" editstring END
+        LAF kit_edit_all INT_VAR clab_only=1 STR_VAR parent_class="%kit%" edits END
      END ELSE BEGIN
-        LAF edit_kit STR_VAR kit editstring END
+        LAF kit_edit INT_VAR clab_only=1 STR_VAR kit edits END
      END
 END
 
@@ -72,7 +68,7 @@ DEFINE_ACTION_FUNCTION find_spellchoice_file
            kit=""
    RET file
 BEGIN
-   OUTER_SPRINT file "%MOD_FOLDER%/%component_loc%/spellchoices/%folder%/%kit%.2da"
+   OUTER_SPRINT file "%MOD_FOLDER%/%component_loc%/data/spellchoices/%folder%/%kit%.2da"
    ACTION_IF !FILE_EXISTS "%file%" BEGIN
        ACTION_MATCH "%folder%" WITH
         vanilla BEGIN
@@ -90,18 +86,18 @@ BEGIN
    END
 END
 
-DEFINE_ACTION_FUNCTION make_spellchoice_spell 
+DEFINE_DIMORPHIC_FUNCTION make_spellchoice_spell 
    INT_VAR level=0
    STR_VAR kit=""
            list=""
            spell=""
 BEGIN
-   MAKE_PATCH
-      add_basic_ability=>null
-      add_effect_inline=>"opcode=>318 target=>2 timing=>0 duration=>1 parameter1=>stat_ind parameter2=>splprot_num resource=>%spell%"
-   END
-   LAF make_spell STR_VAR spell edits=patch_data END
-   ACTION_IF "%kit%" STRING_EQUAL_CASE wildmage BEGIN
+	spl.make[%spell%]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=318 s_target=2 s_timing=0 s_duration=1 s_parameter1=stat_ind s_parameter2=splprot_num s_resource:=%spell%}
+	]
+	ACTION_IF "%kit%" STRING_EQUAL_CASE wildmage BEGIN
       ACTION_MATCH "%level%" WITH
       1 BEGIN
           OUTER_SPRINT list "%list%-ALARM"
@@ -114,21 +110,14 @@ BEGIN
       END
       DEFAULT
       END
-   END
-   COPY_EXISTING "%spell%.spl" override
+    END
+    COPY_EXISTING "%spell%.spl" override
       WHILE "%list%" STRING_COMPARE "" BEGIN
          LPF return_first_entry STR_VAR list separator="-" RET entry list END
          SPRINT resource_ids "WIZARD_%entry%"
          PATCH_IF VARIABLE_IS_SET "%resource_ids%" BEGIN
-           SPRINT resource EVAL "%%resource_ids%%"
-           INNER_ACTION BEGIN
-               LAF spell_is_unusable STR_VAR resref="%resource%" kit RET value END
-           END
-           PATCH_IF !value BEGIN
-              LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=2 timing=1 STR_VAR resource END
-           END ELSE BEGIN
-                LPF warning STR_VAR warning="spell %resource_ids% (resref is %resource%) is in leveller spell choices for kit %kit% but appears unusable by that kit" END
-           END
+            SPRINT resource EVAL "%%resource_ids%%"
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=2 timing=1 STR_VAR resource END
          END ELSE BEGIN
             LPF warning STR_VAR warning="unidentified spell %resource_ids% in leveller spell choices for kit %kit%" END
          END

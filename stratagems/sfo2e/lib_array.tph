@@ -31,7 +31,7 @@ BEGIN
 			OUTER_PATCH "" BEGIN
 				LPF "%map%" STR_VAR arguments="%v%" RET value END
 			END
-			OUTER_SPRINT $array("%k%") "%value%"
+			OUTER_SPRINT $"%array%"("%k%") "%value%"
 		END
 	END
 	//keymap
@@ -166,32 +166,34 @@ BEGIN
 		colcount=2
 	END
 	empty=1
-	READ_2DA_ENTRIES_NOW SFO_data colcount
-	FOR (row=firstrow;row<SFO_data;++row) BEGIN
-		empty=0
-		READ_2DA_ENTRY_FORMER SFO_data row 0 k
-		PATCH_IF colcount=2 BEGIN
-			READ_2DA_ENTRY_FORMER SFO_data row 1 v
-		END ELSE BEGIN
-			SPRINT v ""
-		END
-		PATCH_MATCH "%case%" WITH
-		upper BEGIN
-			TO_UPPER v
-			TO_UPPER k
-		END
-		lower BEGIN
-			TO_LOWER v
-			TO_LOWER k
-		END
-		DEFAULT
-		END
-		PATCH_IF !("%k%" STR_EQ "2DA" && "%v%" STR_EQ "1.0") BEGIN
-			PATCH_IF !backwards BEGIN
-				SPRINT $array("%k%") "%v%"
+	PATCH_IF colcount>0 BEGIN
+		READ_2DA_ENTRIES_NOW SFO_data colcount
+		FOR (row=firstrow;row<SFO_data;++row) BEGIN
+			empty=0
+			READ_2DA_ENTRY_FORMER SFO_data row 0 k
+			PATCH_IF colcount=2 BEGIN
+				READ_2DA_ENTRY_FORMER SFO_data row 1 v
 			END ELSE BEGIN
-				SPRINT $array("%v%") "%k%"
-			
+				SPRINT v ""
+			END
+			PATCH_MATCH "%case%" WITH
+			upper BEGIN
+				TO_UPPER v
+				TO_UPPER k
+			END
+			lower BEGIN
+				TO_LOWER v
+				TO_LOWER k
+			END
+			DEFAULT
+			END
+			PATCH_IF !("%k%" STR_EQ "2DA" && "%v%" STR_EQ "1.0") BEGIN
+				PATCH_IF !backwards BEGIN
+					SPRINT $array("%k%") "%v%"
+				END ELSE BEGIN
+					SPRINT $array("%v%") "%k%"
+				
+				END
 			END
 		END
 	END
@@ -204,13 +206,14 @@ DEFINE_ACTION_FUNCTION array_read
 	INT_VAR firstrow=0
 			silent=0
 			backwards=0//boolean
+			inline=0//boolean
 	STR_VAR file="" path="" location="" locbase=""
 			case=mixed//[upper|lower|mixed]
 	RET value
 	RET_ARRAY array
 BEGIN
 	LAF sfo_path STR_VAR file path location locbase RET file_path END
-	ACTION_IF FILE_EXISTS "%file_path%" BEGIN
+	ACTION_IF FILE_EXISTS "%file_path%" || inline BEGIN
 		COPY "%file_path%" "%workspace%"
 			LPF array_read INT_VAR firstrow backwards STR_VAR case RET_ARRAY array END
 		BUT_ONLY
@@ -218,6 +221,7 @@ BEGIN
 	END ELSE BEGIN
 		OUTER_SET value=0
 		ACTION_IF !silent BEGIN
+			ACTION_CLEAR_ARRAY array
 			WARN "array_read: file %file_path% does not exist"
 		END
 	END
@@ -231,19 +235,20 @@ otherwise returns one k=>v per line.}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
+
 DEFINE_DIMORPHIC_FUNCTION array_echo
 	INT_VAR single_line=0//debug
 	STR_VAR array=""//array
 BEGIN
     OUTER_SPRINT report ""
-	ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+	ACTION_PHP_EACH "%array%" AS sfo_reserved_array_echo_k=>v BEGIN
 			OUTER_SPRINT key ""
 			OUTER_SET ind=0
-			OUTER_WHILE VARIABLE_IS_SET "k_%ind%" BEGIN
+			OUTER_WHILE VARIABLE_IS_SET "sfo_reserved_array_echo_k_%ind%" BEGIN
 				OUTER_SET ++ind
 			END
 			OUTER_FOR (i=0;i<ind;++i) BEGIN
-				OUTER_SPRINT temp EVAL "%k_%i%%"
+				OUTER_SPRINT temp EVAL "%sfo_reserved_array_echo_k_%i%%"
 				ACTION_IF !("%key%" STR_EQ "") BEGIN
 					OUTER_SPRINT key "%key%,"
 				END
@@ -332,7 +337,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////
 /*
 document{array_2d_to_list} 
-{Take a 2d array (k1,k2)->v. Return a 1d array with the k1 as keys and a list of the k2 as values, separated by 'separator'. Optionally, require that v=require_value. 
+{Take a 2d array (k1,k2)->v. Return a 1d array with the k1 as keys and a list of the k2 as values. Optionally, require that v=require_value. 
 If sort=1, sort entries lexicographically.
 }
 
@@ -375,7 +380,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////
 /*
 document{array_keys_from_string} 
-{Take a string of strings separated by 'separator'. Read them in as the keys of an array. (Values are blank.)}
+{Take a string of strings separated by 'separator' (a character). Read them in as the keys of an array. (Values are blank.)}
 
 */
 //////////////////////////////////////////////////////////////////////////////////
@@ -387,7 +392,7 @@ DEFINE_DIMORPHIC_FUNCTION array_keys_from_string
 BEGIN
 	ACTION_CLEAR_ARRAY array
 	OUTER_WHILE "%string%" STR_CMP "" BEGIN
-		LAF return_first_entry STR_VAR list="%string%" RET entry string=list END
+		LAF return_first_entry STR_VAR list="%string%" separator RET entry string=list END
 		OUTER_SPRINT $array("%entry%") ""
 	END
 
@@ -398,7 +403,7 @@ END
 document{array_values_from_string}
 {
 Given a string of strings separated by 'separator' (a character), return an [int]=>v array of those strings, labelled by sequential integers. If 'quick' is set, 
-assume no entries are quoted. 'quick' only works for a ' ' separator. 'quick' also allows for tab separators
+assume no entries are quoted. 'quick' only works for a ' ' or tab separator. 
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -406,6 +411,7 @@ DEFINE_DIMORPHIC_FUNCTION array_values_from_string
 	INT_VAR quick=0
 	STR_VAR string=""
 			separator=" "
+	RET array_length
 	RET_ARRAY array
 BEGIN
 	OUTER_SET count=0
@@ -431,6 +437,7 @@ BEGIN
 			OUTER_SET ++count
 		END
 	END
+	OUTER_SET array_length=count
 END
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -469,22 +476,22 @@ DEFINE_DIMORPHIC_FUNCTION array_copy
 	RET_ARRAY array
 BEGIN
 	ACTION_IF "%array%" STR_CMP "array" BEGIN
-	ACTION_CLEAR_ARRAY array
-		ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
-			ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
-					OUTER_SPRINT $array("%k_0%") $"%array%"("%k_0%")
+		ACTION_CLEAR_ARRAY array
+		ACTION_PHP_EACH "%array%" AS sfo_reserved_array_copy_k=>discard BEGIN
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_copy_k_1 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_copy_k_0%") $"%array%"("%sfo_reserved_array_copy_k_0%")
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%") $"%array%"("%k_0%" "%k_1%")
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_copy_k_2 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%") $"%array%"("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%")
 			END ELSE		
-			ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") $"%array%"("%k_0%" "%k_1%" "%k_2%")
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_copy_k_3 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%") $"%array%"("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%")
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") $"%array%"("%k_0%" "%k_1%" "%k_2%" "%k_3%")
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_copy_k_4 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%" "%sfo_reserved_array_copy_k_3%") $"%array%"("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%" "%sfo_reserved_array_copy_k_3%")
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") $"%array%"("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%")
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_copy_k_5 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%" "%sfo_reserved_array_copy_k_3%" "%sfo_reserved_array_copy_k_4%") $"%array%"("%sfo_reserved_array_copy_k_0%" "%sfo_reserved_array_copy_k_1%" "%sfo_reserved_array_copy_k_2%" "%sfo_reserved_array_copy_k_3%" "%sfo_reserved_array_copy_k_4%")
 			END ELSE BEGIN		
 				WARN "array_copy can't handle arrays more than 5 levels deep"
 			END
@@ -496,8 +503,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////
 /*
 document{array_fill} 
-{Given an array of keys, for each key which also keys the struct, set the corresponding
-array value to the struct value.}
+{Given an array of keys, set each to the value 'fill'.}
 
 */
 //////////////////////////////////////////////////////////////////////////////////
@@ -507,21 +513,22 @@ DEFINE_DIMORPHIC_FUNCTION array_fill
 			fill="*"  
 	RET_ARRAY array
 BEGIN
-	ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
-		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
-				OUTER_SPRINT $array("%k_0%") "%fill%"
+	ACTION_CLEAR_ARRAY array
+	ACTION_PHP_EACH "%array%" AS sfo_reserved_array_fill_k=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_fill_k_1 BEGIN
+				OUTER_SPRINT $array("%sfo_reserved_array_fill_k_0%") "%fill%"
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
-				OUTER_SPRINT $array("%k_0%" "%k_1%") "%fill%"
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_fill_k_2 BEGIN
+				OUTER_SPRINT $array("%sfo_reserved_array_fill_k_0%" "%sfo_reserved_array_fill_k_1%") "%fill%"
 		END ELSE		
-		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
-				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") "%fill%" 
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_fill_k_3 BEGIN
+				OUTER_SPRINT $array("%sfo_reserved_array_fill_k_0%" "%sfo_reserved_array_fill_k_1%" "%sfo_reserved_array_fill_k_2%") "%fill%" 
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
-				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") "%fill%"
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_fill_k_4 BEGIN
+				OUTER_SPRINT $array("%sfo_reserved_array_fill_k_0%" "%sfo_reserved_array_fill_k_1%" "%sfo_reserved_array_fill_k_2%" "%sfo_reserved_array_fill_k_3%") "%fill%"
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
-				OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") "%fill%"
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_fill_k_5 BEGIN
+				OUTER_SPRINT $array("%sfo_reserved_array_fill_k_0%" "%sfo_reserved_array_fill_k_1%" "%sfo_reserved_array_fill_k_2%" "%sfo_reserved_array_fill_k_3%" "%sfo_reserved_array_fill_k_4%") "%fill%"
 		END ELSE BEGIN		
 			WARN "array_fill can't handle arrays more than 5 levels deep"
 		END
@@ -545,21 +552,23 @@ DEFINE_DIMORPHIC_FUNCTION array_join
 BEGIN
 	ACTION_CLEAR_ARRAY array
 	ACTION_FOR_EACH oldarray IN "%array1%" "%array2%" BEGIN
-		ACTION_PHP_EACH "%oldarray%" AS k=>v BEGIN
-			ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
-					OUTER_SPRINT $array("%k_0%") "%v%"
+		ACTION_PHP_EACH "%oldarray%" AS sfo_reserved_array_join_k=>v BEGIN
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_join_k_1 BEGIN
+					ACTION_IF "%sfo_reserved_array_join_k_0%-%v%" STR_CMP "null-discard" BEGIN
+						OUTER_SPRINT $array("%sfo_reserved_array_join_k_0%") "%v%"
+					END
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%") "%v%"
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_join_k_2 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_join_k_0%" "%sfo_reserved_array_join_k_1%") "%v%"
 			END ELSE		
-			ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%") "%v%" 
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_join_k_3 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_join_k_0%" "%sfo_reserved_array_join_k_1%" "%sfo_reserved_array_join_k_2%") "%v%" 
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%") "%v%"
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_join_k_4 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_join_k_0%" "%sfo_reserved_array_join_k_1%" "%sfo_reserved_array_join_k_2%" "%sfo_reserved_array_join_k_3%") "%v%"
 			END ELSE
-			ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
-					OUTER_SPRINT $array("%k_0%" "%k_1%" "%k_2%" "%k_3%" "%k_4%") "%v%"
+			ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_join_k_5 BEGIN
+					OUTER_SPRINT $array("%sfo_reserved_array_join_k_0%" "%sfo_reserved_array_join_k_1%" "%sfo_reserved_array_join_k_2%" "%sfo_reserved_array_join_k_3%" "%sfo_reserved_array_join_k_4%") "%v%"
 			END ELSE BEGIN		
 				WARN "array_join can't handle arrays more than 5 levels deep"
 			END
@@ -585,31 +594,31 @@ BEGIN
 	ACTION_FOR_EACH keys IN keys1 keys2 keys3 keys4 keys5 BEGIN
 		ACTION_CLEAR_ARRAY "%keys%"
 	END
-	ACTION_PHP_EACH "%array%" AS k=>discard BEGIN
-		ACTION_IF !VARIABLE_IS_SET k_1 BEGIN
-				OUTER_SPRINT $keys1("%k_0%") ""
+	ACTION_PHP_EACH "%array%" AS sfo_reserved_array_keys_k=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_1 BEGIN
+				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_2 BEGIN
-				OUTER_SPRINT $keys1("%k_0%") ""
-				OUTER_SPRINT $keys2("%k_1%") ""
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_2 BEGIN
+				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
+				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
 		END ELSE		
-		ACTION_IF !VARIABLE_IS_SET k_3 BEGIN
-				OUTER_SPRINT $keys1("%k_0%") ""
-				OUTER_SPRINT $keys2("%k_1%") ""
-				OUTER_SPRINT $keys3("%k_2%") ""
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_3 BEGIN
+				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
+				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
+				OUTER_SPRINT $keys3("%sfo_reserved_array_keys_k_2%") ""
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_4 BEGIN
-				OUTER_SPRINT $keys1("%k_0%") ""
-				OUTER_SPRINT $keys2("%k_1%") ""
-				OUTER_SPRINT $keys3("%k_2%") ""
-				OUTER_SPRINT $keys4("%k_3%") ""
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_4 BEGIN
+				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
+				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
+				OUTER_SPRINT $keys3("%sfo_reserved_array_keys_k_2%") ""
+				OUTER_SPRINT $keys4("%sfo_reserved_array_keys_k_3%") ""
 		END ELSE
-		ACTION_IF !VARIABLE_IS_SET k_5 BEGIN
-				OUTER_SPRINT $keys1("%k_0%") ""
-				OUTER_SPRINT $keys2("%k_1%") ""
-				OUTER_SPRINT $keys3("%k_2%") ""
-				OUTER_SPRINT $keys4("%k_3%") ""
-				OUTER_SPRINT $keys5("%k_4%") ""
+		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_5 BEGIN
+				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
+				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
+				OUTER_SPRINT $keys3("%sfo_reserved_array_keys_k_2%") ""
+				OUTER_SPRINT $keys4("%sfo_reserved_array_keys_k_3%") ""
+				OUTER_SPRINT $keys5("%sfo_reserved_array_keys_k_4%") ""
 		END 
 	END
 END

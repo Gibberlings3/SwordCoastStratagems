@@ -1,0 +1,882 @@
+DEFINE_ACTION_FUNCTION make_shapeshift_wrap_spell
+	INT_VAR grant_persistent_powers=0
+			duration=0
+			name="-1"
+			description="-1"
+			duration_base=0
+			duration_mult=0
+	STR_VAR spell=""
+			shapeshift_list=""
+			copy_spell=""
+			icon=""
+			restore_name=""
+BEGIN
+	ACTION_IF  duration>0 BEGIN
+		OUTER_SET duration_base=duration
+	END
+	// parametrise
+	ACTION_IF is_iwd BEGIN
+		OUTER_SET level_max=30
+	END ELSE BEGIN
+		OUTER_SET  level_max=20
+	END
+	////////////////////////
+	// make the base spell
+	////////////////////////
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+		COPY_EXISTING "%copy_spell%.spl" "override/%spell%.spl"
+	END
+	////////////////////////////
+	// name spell; apply icon
+	////////////////////////////
+	COPY_EXISTING "%spell%.spl" override
+		PATCH_IF name>=0 BEGIN
+			SAY 0x8 (AT name)
+		END
+		PATCH_IF description>=0 BEGIN
+			SAY 0x50 (AT description)
+		END
+		PATCH_IF "%ability_icon%" STRING_COMPARE "" BEGIN
+			LPF ALTER_SPELL_HEADER STR_VAR icon END
+		END
+	BUT_ONLY
+	
+	////////////////////////////
+	// make restoration spell
+	///////////////////////////
+	ACTION_IF "%restore_name%" STRING_EQUAL "" BEGIN
+		OUTER_SET found_restore_name=0
+		OUTER_SET number=1
+		OUTER_WHILE !found_restore_name BEGIN
+			ACTION_IF number=100 BEGIN
+				FAIL "too many restoration spells for make_shapeshift_wrap_spell to cope"
+			END
+			ACTION_IF !FILE_EXISTS_IN_GAME "dwssrs%number%.spl" BEGIN
+				OUTER_SET found_restore_name=1
+				OUTER_SPRINT restore_name "dwssrs%number%"
+				ACTION_IF grant_persistent_powers BEGIN
+					OUTER_SET number +=1
+					OUTER_SPRINT restore_name_final "dwssrs%number%"
+				END ELSE BEGIN
+					OUTER_SPRINT restore_name_final "%restore_name%"
+				END
+			END ELSE BEGIN
+				OUTER_SET number +=1
+			END
+		END
+		COPY_EXISTING "spin122.spl" "override/%restore_name%.spl"
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%restore_name%" END
+			PATCH_IF grant_persistent_powers BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=1 timing=1 STR_VAR resource="%restore_name%" END
+			END
+		BUT_ONLY
+		ACTION_IF grant_persistent_powers BEGIN
+			COPY_EXISTING "spin122.spl" "override/%restore_name_final%.spl" 
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%restore_name%" END
+			BUT_ONLY
+		END
+		
+	END
+
+
+
+	spl.edit[%spell%]
+	[
+	/////////////////////////////////////
+	// sort out basic structure of spell
+	/////////////////////////////////////
+
+	// wipe existing payload
+	
+		m.ab.delete{s_level>1}
+		m.ab_fx.delete{}
+
+		INNER_ACTION BEGIN
+			// add missing levels to the shapeshift_list array, if necessay
+			ACTION_CLEAR_ARRAY shapeshift_list_full
+			OUTER_SPRINT starting_data ""
+			ACTION_PHP_EACH "%shapeshift_list%" AS level=>data BEGIN
+				ACTION_IF "%starting_data%" STRING_EQUAL "" BEGIN
+					OUTER_SPRINT starting_data "%data%"
+				END
+			END
+			OUTER_SPRINT $"%shapeshift_list%"("1") "%starting_data%"
+			OUTER_SET copy_level=1
+			ACTION_IF duration_mult>0 BEGIN
+			  OUTER_FOR (level=1;level<=level_max;++level) BEGIN
+				ACTION_IF VARIABLE_IS_SET $"%shapeshift_list%"("%level%") BEGIN
+					OUTER_SET copy_level=level
+				END
+				OUTER_SPRINT data $"%shapeshift_list%"("%copy_level%")
+				OUTER_SPRINT $shapeshift_list_full("%level%") EVAL "%data%"
+			  END
+			END ELSE BEGIN
+				ACTION_PHP_EACH "%shapeshift_list%" AS level=>data BEGIN
+					OUTER_SPRINT $shapeshift_list_full("%level%") "%data%"
+				END
+			END
+		END
+		// add ability blocks
+		PATCH_IF duration_mult>0 BEGIN
+			n=level_max - 1
+			m.ab.clone{s_level=entry_index+2|match="s_level=1" number:i=n}
+
+		END ELSE BEGIN
+			count=0
+			SPRINT level_list ""
+			FOR (level=2;level<=level_max;++level) BEGIN
+					PATCH_IF VARIABLE_IS_SET $shapeshift_list_full("%level%") BEGIN
+					count+=1 
+					SPRINT level_list "%level_list% %level%"
+				END
+			END
+			PATCH_IF count>0 BEGIN
+				LPF array_values_from_string STR_VAR string="%level_list%" RET_ARRAY array END
+				m.ab.clone{
+					s_level=$array("%entry_index%")
+					|match="s_level=1" number:i=count
+				}
+			END
+		END
+
+		/////////////////////////////////////
+		// grant the restore-natural-form power
+		////////////////////////////////////////
+
+		m.ab_fx.add{s_opcode=172 s_target=1 s_timing=1 s_resource:="%restore_name%"}
+		m.ab_fx.add{s_opcode=171 s_target=1 s_timing=1 s_resource:="%restore_name%"}
+
+		/////////////////////////////////////
+		// auto-remove shapeshifts
+		////////////////////////////////////////
+
+		m.ab_fx.add{s_opcode=172 s_target=1 s_timing=4 s_duration=p_level*duration_mult+duration_base+1 s_resource:="%restore_name%"}
+		m.ab_fx.add{s_opcode=146 s_target=1 s_timing=4 s_parameter2=1 s_duration=p_level*duration_mult+duration_base+1 s_resource:="%restore_name_final%"}
+	
+		///////////////////////////////////////////////////////////////
+		// if we're granting persistent powers, grant 'em and do other relevant things
+		///////////////////////////////////////////////////////////////
+	
+		PATCH_IF grant_persistent_powers BEGIN
+			PHP_EACH shapeshift_list_full AS level=>data BEGIN
+				// remove the powers, add the granted powers
+				LPF array_values_from_string STR_VAR string="%data%" RET array_length RET_ARRAY array END
+				m.ab_fx.add{s_opcode=172 s_target=1 s_timing=4 s_duration=p_level*duration_mult+duration_base s_resource:=$array("%entry_index%")|number:i=array_length match_parent="p_level=level"}
+				m.ab_fx.add{s_opcode=171 s_target=1 s_timing=1 s_duration=0 s_resource:=$array("%entry_index%")|number:i=array_length match_parent="p_level=level"}
+			END
+		END
+		
+		INNER_ACTION BEGIN
+			///////////////////////////////
+			// make the insta-grant powers
+			///////////////////////////////
+			ACTION_PHP_EACH "%shapeshift_list%" AS level=>data BEGIN
+				// put 'data' into an array; count its size
+				ACTION_CLEAR_ARRAY shapeshift_instant_list
+				ACTION_CLEAR_ARRAY shapeshift_2da_list
+				OUTER_SPRINT list "%data%"
+				OUTER_SET power_count=0
+				OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+					LAF return_first_entry STR_VAR list RET entry list END
+					OUTER_SET power_count+=1
+					ACTION_TO_UPPER entry
+					OUTER_SPRINT $shapeshift_instant_list("%entry%") ""
+				END
+				ACTION_IF power_count=1 BEGIN
+					OUTER_SPRINT $shapeshift_2da_list("%data%") "instant:%entry%"
+				END ELSE BEGIN
+					OUTER_SET found_2da_name=0
+					OUTER_SET number=0
+					OUTER_WHILE !found_2da_name BEGIN
+						ACTION_IF number=100 BEGIN
+							FAIL "too many 2das for make_shapeshift_wrap_spell to cope"
+						END
+						ACTION_IF !FILE_EXISTS_IN_GAME "dwsstb%number%.2da" BEGIN
+							OUTER_SET found_2da_name=1
+							OUTER_SPRINT 2da_name "dwsstb%number%"
+						END ELSE BEGIN
+							OUTER_SET number+=1
+						END
+					END
+					OUTER_SPRINT $shapeshift_2da_list("%data%") "%2da_name%"
+					OUTER_SPRINT 2da_data "2DA V1.0%WNL%****%WNL%ResRef%TAB%Type%WNL%"
+					ACTION_PHP_EACH shapeshift_instant_list AS entry=>discard BEGIN
+						OUTER_SPRINT 2da_data "%2da_data%name%TAB%%entry%%TAB%3%WNL%"
+					END
+					COPY ".../stratagems-inline/blank" "override/%2da_name%.2da"
+						INSERT_BYTES 0x0 STRING_LENGTH "%2da_data%"
+						WRITE_ASCIIE 0x0 "%2da_data%"
+				END
+			END
+		END
+		PHP_EACH shapeshift_list_full AS level=>data BEGIN
+			SPRINT resource $shapeshift_2da_list("%data%")
+			single_spell=0
+			INNER_PATCH "%resource%" BEGIN
+				REPLACE_EVALUATE "instant:\(.*\)" BEGIN
+					SPRINT instant_spell "%MATCH1%"
+					SET single_spell=1
+				END
+				""
+			END
+			PATCH_IF single_spell BEGIN
+				// directly apply spell
+				m.ab_fx.add{s_opcode=146 s_target=1 s_timing=1 s_parameter2=1 s_resource:="%instant_spell%"|match_parent="p_level=level"}
+			END ELSE BEGIN
+				// display 'you have been granted powers'
+				m.ab_fx.add{s_opcode=139 s_target=1 s_duration=1 s_parameter1=is_iwd?36577:(is_bg2?8160:26464)|match_parent="p_level=level"}
+				// trigger select-spell
+				m.ab_fx.add{s_opcode=214 s_target=1 s_timing=1 s_resource:="%resource%"|match_parent="p_level=level"}			
+			END
+		END
+	]
+
+END
+
+DEFINE_ACTION_FUNCTION shapeshift_wrap_helper INT_VAR level=0 STR_VAR shapeshift_list="" RET list BEGIN
+	ACTION_PHP_EACH "%shapeshift_list%" AS level_here=>list_here BEGIN
+		ACTION_IF level_here<=level BEGIN
+			OUTER_SPRINT list "%list_here%"
+		END
+	END
+END
+
+
+
+// build the primary shapeshift-granting spell
+
+DEFINE_ACTION_FUNCTION make_shapeshift_spell
+	INT_VAR
+		// overall parameters
+		name="-1"
+		description="-1"
+		duration=0
+		timing=0
+		use_template=0
+		wipe_weapon_effects=0
+		block_spellcasting=1
+		block_talking=1
+		block_item_use=1
+		auto_renew=0
+		visual_effects=1
+		healing=0
+		force_copy=0
+		// CRE-file parameters
+		apr=0
+		ac=999
+		ac_crushing=0
+		ac_slashing=0
+		ac_piercing=0
+		ac_missile=0
+		str=0
+		str_ex=0
+		dex=0
+		resistfire=0
+		resistcold=0
+		resistelectricity=0
+		resistacid=0
+		resistpoison=0
+		resistslashing=0
+		resistpiercing=0
+		resistcrushing=0
+		resistmissile=0
+		resistmagic=0
+		// weapon parameters
+		dicesize=999
+		dicenumber=999
+		enchantment=0
+		thac0=999
+		thac0_bonus=999
+		damage_bonus=999
+		anim_code=0
+		speed=999
+		range=999
+		animation_overhand=0
+		animation_backhand=0
+		animation_thrust=0
+		droppable=0
+		casting_time=999
+		grant_natural_form_spell=0
+	STR_VAR
+		weapon=""
+		copy_weapon=""
+		weapon_icon=""
+		spell=""
+		copy_spell="spcl611"
+		damagetype=""
+		cre=""
+		anim=""
+		grant_spells=""
+		apply_spells=""
+		icon=""
+		ability_icon=""
+		icon_path=""
+		play_sound=""
+		
+BEGIN
+	// if weapon isn't specified, check the spell
+	ACTION_IF "%weapon%" STRING_EQUAL "" BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+			OUTER_SPRINT spell_to_check "%spell%"		
+		END ELSE BEGIN
+			OUTER_SPRINT spell_to_check "%copy_spell%"
+		END
+		COPY_EXISTING "%spell_to_check%.spl" "%workspace%"
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+			GET_OFFSET_ARRAY2 fx_arr ab_arr_0 SPL_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				PATCH_IF SHORT_AT fx_off=111 BEGIN
+					READ_ASCII (fx_off+0x14) weapon
+				END
+			END
+		BUT_ONLY
+	END
+	// make the spell if it doesn't exist already
+	ACTION_IF !FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+		COPY_EXISTING "%copy_spell%.spl" "override/%spell%.spl"
+			LPF DELETE_EFFECT END
+	END	
+	// make the weapon if it doesn't exist already
+	ACTION_IF !FILE_EXISTS_IN_GAME "%weapon%.itm" || force_copy BEGIN
+		ACTION_IF "%copy_weapon%" STRING_EQUAL "" BEGIN
+			LAF find_shapeshift_weapon_template STR_VAR spell RET copy_weapon END
+		END
+		COPY_EXISTING "%copy_weapon%.itm" "override/%weapon%.itm"
+	END
+	// warning (to avoid 318 clashes)
+	ACTION_IF "%weapon%" STRING_EQUAL_CASE "%spell%" BEGIN
+		WARN "weapon and spell have same resref (%spell%) in shapeshift; may cause unintended side effects."
+	END
+	// sort out the cre template
+	ACTION_IF "%cre%" STRING_EQUAL "" BEGIN
+		LAF find_shapeshift_cre_template INT_VAR anim_code STR_VAR anim spell weapon RET cre END
+	END
+	// sort out the spell
+	COPY_EXISTING "%spell%.spl" override
+		//nomenclature
+		PATCH_IF name>=0 BEGIN
+			SAY 0x8 (AT name)
+		END
+		PATCH_IF description>=0 BEGIN
+			SAY 0x50 (AT description)
+		END
+		// casting time
+		PATCH_IF casting_time<999 BEGIN
+			LPF ALTER_SPELL_HEADER INT_VAR speed=casting_time END
+		END
+		// remove existing versions
+		PATCH_FOR_EACH match_opcode IN 12 139 171 172 144 145 135 111 321 BEGIN
+			LPF DELETE_EFFECT INT_VAR match_opcode END
+		END
+		// remove polymorph-granted powers
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=1 timing=1 parameter2=1 STR_VAR resource="%spl_shapeshift_remove_abilities%" END
+		// payload
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=111 target=1 duration timing STR_VAR resource="%weapon%" END
+		// auto-renew
+		PATCH_IF auto_renew BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%spell%" END		
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=1 timing=1 STR_VAR resource="%spell%" END
+		END
+		// healing
+		PATCH_IF healing BEGIN
+			INNER_ACTION BEGIN
+				LAF make_shapeshift_healing_spell END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=1 timing=1 parameter2=1 STR_VAR resource="%spl_shapeshift_healing%" END
+		END
+		// visuals
+		PATCH_IF visual_effects BEGIN
+			PATCH_FOR_EACH match_opcode IN 61 174 215 BEGIN
+				LPF DELETE_EFFECT INT_VAR match_opcode END
+			END
+			PATCH_IF is_iwd BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=174 target=1 timing=1 STR_VAR resource="#eff_m08" END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=215 target=1 timing=1 STR_VAR resource=alterh END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=61 target=1 timing=0 parameter1=0xa0d24b00 parameter2=30 END	
+			END ELSE BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=215 target=1 timing=0 parameter2=1 duration=3 STR_VAR resource=sppolymp END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=215 target=1 timing=0 parameter2=1 duration=3 STR_VAR resource=polyback END
+			END
+		END
+		// extra sound (used in a couple of IWD druid shapeshifts)
+		PATCH_IF FILE_EXISTS_IN_GAME "%play_sound%.wav" BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=174 target=1 timing=1 STR_VAR resource="%play_sound%" END
+		END
+
+		// granted spells
+		count=1
+		WHILE FILE_EXISTS_IN_GAME "dwssgs%count%.spl" BEGIN
+			count+=1
+		END
+		SPRINT spell_granter "dwssgs%count%"
+		INNER_ACTION BEGIN
+			spl.make[%spell_granter%][m.ab.add{}]
+		END
+		spells_are_granted=0
+		PATCH_IF grant_natural_form_spell BEGIN
+			SPRINT grant_spells "%grant_spells% spin122"
+		END
+
+		WHILE "%grant_spells%" STRING_COMPARE "" BEGIN
+			spells_are_granted=1
+			LPF return_first_entry STR_VAR list="%grant_spells%" RET entry grant_spells=list END
+			TO_LOWER entry
+			LPF log_this INT_VAR repeat=0 STR_VAR file=shapeshift_granted_powers.txt path="%data_loc_shared%" input="%entry%" END
+			INNER_PATCH_SAVE entry "%entry%" BEGIN
+				SET number=1
+				REPLACE_EVALUATE "(\([0-9]+\))" BEGIN
+					SET number="%MATCH1%"
+				END
+				""
+			END
+			FOR (n=0;n<number;++n) BEGIN
+				INNER_ACTION BEGIN
+					COPY_EXISTING "%spell_granter%.spl" override
+						LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%entry%" END // duration=4 to skip the removal spell
+						LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=1 timing=4 duration=0 STR_VAR resource="%entry%" END // duration=4 to skip the removal spell
+					BUT_ONLY
+				END
+			END
+		END
+		PATCH_IF spells_are_granted BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=1 timing=1 parameter2=1 STR_VAR resource="%spell_granter%" END
+		END
+		
+		//applied spells
+		
+		WHILE "%apply_spells%" STRING_COMPARE "" BEGIN
+			LPF return_first_entry STR_VAR list="%apply_spells%" RET entry apply_spells=list END
+			TO_LOWER entry
+			LPF log_this INT_VAR repeat=0 STR_VAR file=shapeshift_applied_powers.txt path="%data_loc_shared%" input="%entry%" END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=1 timing=1 STR_VAR resource="%entry%" END
+		END
+		
+		// icons
+		PATCH_IF "%icon%" STRING_COMPARE "" BEGIN
+			WRITE_ASCIIE 0x3a "%icon%"
+			PATCH_IF FILE_EXISTS "%icon_path%/%icon%.bam" && !FILE_EXISTS_IN_GAME "%icon%.bam" BEGIN
+				INNER_ACTION BEGIN
+					COPY "%icon_path%/%icon%.bam" override
+				END
+			END
+		END
+		PATCH_IF "%ability_icon%" STRING_COMPARE "" BEGIN
+			LPF ALTER_SPELL_HEADER STR_VAR icon="%ability_icon%" END
+			PATCH_IF FILE_EXISTS "%icon_path%/%ability_icon%.bam" && !FILE_EXISTS_IN_GAME "%ability_icon%.bam" BEGIN
+				INNER_ACTION BEGIN
+					COPY "%icon_path%/%ability_icon%.bam" override
+				END
+			END
+		END
+		
+		// human-form spell 
+		
+		PATCH_IF grant_natural_form_spell BEGIN
+			PATCH_IF !FILE_EXISTS_IN_GAME "%spl_shapeshift_natural_form_wrap%.spl" BEGIN
+				INNER_ACTION BEGIN
+					CREATE spl "%spl_shapeshift_natural_form_wrap%"
+						LPF add_basic_spell_ability END
+						LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=1 timing=1 STR_VAR resource=spin122 END
+				END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=1 timing=1 STR_VAR resource="%spl_shapeshift_natural_form_wrap%" END
+		END
+		
+	BUT_ONLY
+	// if there's a template, get its parameters
+	ACTION_IF use_template BEGIN
+		COPY_EXISTING "%cre%.cre" override
+			READ_SHORT 0x48 ac
+			READ_SHORT 0x4a ac_crushing
+			READ_SHORT 0x4c ac_missile
+			READ_SHORT 0x4e ac_piercing
+			READ_SHORT 0x50 ac_slashing
+			READ_BYTE 0x59 resistfire
+			READ_BYTE 0x5a resistcold
+			READ_BYTE 0x5b resistelectricity
+			READ_BYTE 0x5c resistacid
+			READ_BYTE 0x5d resistmagic
+			READ_BYTE 0x60 resistslashing
+			READ_BYTE 0x61 resistcrushing
+			READ_BYTE 0x62 resistpiercing
+			READ_BYTE 0x63 resistmissile
+			READ_BYTE 0x238 str
+			READ_BYTE 0x239 str_ex
+			READ_BYTE 0x23c dex
+			READ_BYTE 0x53 apr
+			READ_LONG 0x28 anim_code
+		BUT_ONLY
+	END
+	
+	// edits to weapon
+	COPY_EXISTING "%weapon%.itm" override
+		PATCH_IF wipe_weapon_effects BEGIN
+			LPF DELETE_EFFECT END
+		END
+		// icon
+		PATCH_IF "%weapon_icon%" STRING_COMPARE "" BEGIN
+			LPF ALTER_ITEM_HEADER INT_VAR flag_break=0 STR_VAR icon="%weapon_icon%" END
+			PATCH_IF FILE_EXISTS "%icon_path%/%weapon_icon%.bam" && !FILE_EXISTS_IN_GAME "%weapon_icon%.bam" BEGIN
+				INNER_ACTION BEGIN
+					COPY "%icon_path%/%weapon_icon%.bam" override
+				END
+			END
+		END
+		// make undroppable (helps other components)
+		WRITE_BYTE 0x18 ((BYTE_AT 0x18) BAND 0b11111011)
+		
+		// set as no proficiency
+		WRITE_BYTE 0x31 0
+		PATCH_FOR_EACH var IN speed thac0_bonus damage_bonus dicesize dicenumber range BEGIN
+			SET val=EVAL "%var%"
+			PATCH_IF !(val=999) BEGIN
+				LPF ALTER_ITEM_HEADER INT_VAR "%var%"=val END
+			END
+		END
+		PATCH_IF !(animation_overhand=0 && animation_backhand=0 && animation_thrust=0) BEGIN
+			LPF ALTER_ITEM_HEADER INT_VAR animation_backhand animation_overhand animation_thrust END
+		END
+		// block speech/items
+		LPF DELETE_EFFECT INT_VAR match_opcode=144 END
+		LPF DELETE_EFFECT INT_VAR match_opcode=145 END
+		PATCH_IF block_item_use BEGIN
+		  PATCH_FOR_EACH parameter2 IN 9 11 12 BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=144 target=1 timing=2 parameter2 END		  
+		  END
+		END
+		PATCH_IF block_talking BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=144 target=1 timing=2 parameter2=7 END		  		
+		END
+		
+		PATCH_CLEAR_ARRAY ss_arr 
+		DEFINE_ASSOCIATIVE_ARRAY ss_arr BEGIN
+			resistacid=>27
+			resistcold=>28
+			resistelectricity=>29
+			resistfire=>30
+			resistmagic=>166
+			resistslashing=>86
+			resistcrushing=>87
+			resistpiercing=>88
+			resistmissile=>89
+			str=>44
+			dex=>15
+			str_ex=>97
+			apr=>1		
+		END
+		PHP_EACH ss_arr AS var=>opcode BEGIN
+			LPF DELETE_EFFECT INT_VAR match_opcode=opcode END
+			SET val=EVAL "%var%"
+			PATCH_IF !val=0 BEGIN
+				LPF ADD_ITEM_EQEFFECT INT_VAR opcode target=1 timing=2 parameter1=val parameter2=1 END
+			END
+		END
+		LPF DELETE_EFFECT INT_VAR match_opcode=0 END
+		PATCH_IF !ac=999 BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=0 target=1 timing=2 parameter1=ac parameter2=16 END
+		END
+		LPF DELETE_EFFECT INT_VAR match_opcode=54 END
+		PATCH_IF !thac0=999 BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR opcode=0 target=1 timing=2 parameter1=thac0 parameter2=1 END		
+		END
+		PATCH_IF !enchantment=0 BEGIN
+			WRITE_LONG 0x60 enchantment
+		END
+		PATCH_CLEAR_ARRAY ss_arr
+		DEFINE_ASSOCIATIVE_ARRAY ss_arr BEGIN
+			ac_crushing=>1
+			ac_missile=>2
+			ac_piercing=>4
+			ac_slashing=>8
+		END
+		PHP_EACH ss_arr AS var=>parameter2 BEGIN
+			SET val=EVAL "%var%"
+			PATCH_IF !val=0 BEGIN
+				LPF ADD_ITEM_EQEFFECT INT_VAR opcode=0 target=1 timing=2 parameter1=val parameter2 END
+			END
+		END
+		DEFINE_ASSOCIATIVE_ARRAY ss_arr BEGIN
+			slashing=>3
+			crushing=>2
+			missile=>4
+			piercing=>1
+			piercing_crushing=>6
+			piercing_slashing=>7
+			crushing_slashing=>8
+		END
+		PATCH_IF "%damagetype%" STRING_COMPARE "" BEGIN
+			TO_LOWER damagetype
+			SET damagetype_code=$ss_arr("%damagetype%")
+			LPF ALTER_ITEM_HEADER INT_VAR damage_type=damagetype_code END
+		END
+		// add the actual polymorph effect
+		LPF DELETE_EFFECT INT_VAR match_opcode=135 END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=135 target=1 timing=2 parameter2=1 STR_VAR resource="%cre%" END
+		// block spellcasting 
+		PATCH_IF block_spellcasting BEGIN
+		  PATCH_FOR_EACH parameter2 IN 2 3 4 5 BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR insert_point="-1" opcode=144 target=1 timing=2 parameter2 END
+		  END
+		  PATCH_FOR_EACH parameter2 IN 0 1 BEGIN
+			LPF ADD_ITEM_EQEFFECT INT_VAR insert_point="-1" opcode=145 target=1 timing=2 parameter2 END
+		  END
+		END
+
+		
+		
+		// droppable? (mostly for testing)
+		PATCH_IF droppable BEGIN
+			WRITE_BYTE 0x18 ((BYTE_AT 0x18) BOR 0b00000100)
+			WRITE_SHORT 0x1c 20
+		END
+	BUT_ONLY
+	
+
+
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION find_shapeshift_weapon_template STR_VAR spell="" RET copy_weapon BEGIN
+
+	OUTER_SPRINT copy_weapon "brbrp" // default
+	COPY_EXISTING "%spell%.spl" override
+		GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				PATCH_IF SHORT_AT fx_off=111 BEGIN
+					READ_ASCII fx_off+0x14 copy_weapon
+				END
+			END
+		END	
+	BUT_ONLY
+
+END
+
+DEFINE_ACTION_FUNCTION find_shapeshift_cre_template INT_VAR anim_code=0 STR_VAR spell="" weapon="" anim="" RET cre BEGIN
+	
+	OUTER_SPRINT cre ""
+	// if anim or anim_code is specified, build a template direct
+	// get the anim code if we're given the amin IDS entry
+	ACTION_IF "%anim%" STRING_COMPARE "" BEGIN
+		OUTER_SET anim_code=IDS_OF_SYMBOL ("animate" "%anim%")
+	END
+	ACTION_IF anim_code>0 BEGIN
+		OUTER_SET found_cre=0
+		OUTER_SET number=1
+		OUTER_WHILE !found_cre BEGIN
+			OUTER_SPRINT cre "dwsst%number%"
+			ACTION_IF !FILE_EXISTS_IN_GAME "%cre%.cre" BEGIN
+				OUTER_SET found_cre=1
+			END ELSE BEGIN
+				OUTER_SET number +=1
+			END
+			ACTION_IF number>999 BEGIN
+				FAIL "make_shapeshift_spell can't handle more than 1000 autogenerated shapeshift templates"
+			END
+		END
+		COPY_EXISTING "charbase.cre" "override/%cre%.cre"
+			WRITE_LONG 0x28 anim_code
+	END ELSE BEGIN
+	
+	// check spell for polymorph effects
+	COPY_EXISTING "%spell%.spl" override
+		GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+			GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				PATCH_IF SHORT_AT fx_off=135 BEGIN
+					READ_ASCII fx_off+0x14 cre
+				END
+			END
+		END	
+	BUT_ONLY
+	// failing that, check weapon for polymorph effects
+	ACTION_IF "%cre%" STRING_EQUAL "" BEGIN
+		COPY_EXISTING "%weapon%.itm" override
+			GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				PATCH_IF SHORT_AT fx_off=135 BEGIN
+					READ_ASCII fx_off+0x14 cre
+				END
+			END
+		BUT_ONLY
+	END
+	
+	END
+	
+	ACTION_IF "%cre%" STRING_EQUAL "" BEGIN
+		FAIL "Unable to create or find a .cre template for shapeshift spell %spell%"
+	END
+	
+END
+
+// rebuild the externalised spell that strips granted and applied abilities
+
+
+DEFINE_ACTION_FUNCTION build_shapeshift_ability_remover RET_ARRAY shapeshift_powers BEGIN
+
+	ACTION_CLEAR_ARRAY shapeshift_granted_powers
+	ACTION_CLEAR_ARRAY shapeshift_applied_powers
+	ACTION_CLEAR_ARRAY shapeshift_applied_powers_secondary
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/shapeshift_granted_powers.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc_shared%/shapeshift_granted_powers.txt"
+	END
+	COPY "%data_loc_shared%/shapeshift_granted_powers.txt" "%data_loc_shared%"
+		COUNT_2DA_ROWS 1 rowcount
+		FOR (row=0;row<rowcount;++row) BEGIN
+			READ_2DA_ENTRY row 0 1 entry
+			SPRINT $shapeshift_granted_powers("%entry%") ""
+			PATCH_IF FILE_EXISTS_IN_GAME "%entry%.spl" BEGIN
+			  INNER_ACTION BEGIN
+				COPY_EXISTING "%entry%.spl" "%workspace%"
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+					GET_OFFSET_ARRAY2 fx_arr ab_arr_0 SPL_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						PATCH_IF (SHORT_AT fx_off=326 || SHORT_AT fx_off=171) BEGIN
+							READ_ASCII fx_off+0x14 resource
+							SPRINT $shapeshift_applied_powers("%resource%") ""
+						END
+					END
+				BUT_ONLY
+			  END
+			END
+		END
+	BUT_ONLY
+
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/shapeshift_applied_powers.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc_shared%/shapeshift_applied_powers.txt"
+	END
+	COPY "%data_loc_shared%/shapeshift_applied_powers.txt" "%data_loc_shared%"
+		COUNT_2DA_ROWS 1 rowcount
+		FOR (row=0;row<rowcount;++row) BEGIN
+			READ_2DA_ENTRY row 0 1 entry
+			SPRINT $shapeshift_applied_powers("%entry%") ""
+			PATCH_IF FILE_EXISTS_IN_GAME "%entry%.spl" BEGIN
+			  INNER_ACTION BEGIN
+				COPY_EXISTING "%entry%.spl" "%workspace%"
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+					GET_OFFSET_ARRAY2 fx_arr ab_arr_0 SPL_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						PATCH_IF (SHORT_AT fx_off=326 || SHORT_AT fx_off=171) BEGIN
+							READ_ASCII fx_off+0x14 resource
+							SPRINT $shapeshift_applied_powers_secondary("%resource%") ""
+						END
+					END
+				BUT_ONLY
+			  END
+			END
+
+		END
+	BUT_ONLY
+	
+	COPY_EXISTING "spin122.spl" "override/%spl_shapeshift_remove_abilities%.spl"
+		WRITE_LONG 0x8 "-1"
+		WRITE_LONG 0xc "-1"
+		LPF DELETE_EFFECT END
+		PHP_EACH shapeshift_granted_powers AS resource=>discard BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource END
+		END
+		PHP_EACH shapeshift_applied_powers AS resource=>discard BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=1 timing=1 STR_VAR resource END
+		END
+		PHP_EACH shapeshift_applied_powers_secondary AS resource=>discard BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=1 timing=1 STR_VAR resource END
+		END
+	BUT_ONLY
+
+END
+
+
+/// convert 'shapeshift:natural form' spells to use externalised list of powers to restore; externalise healing
+
+DEFINE_ACTION_FUNCTION initialise_shapeshift BEGIN
+
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/shapeshift_granted_powers.txt" BEGIN
+
+	 ACTION_FOR_EACH natural_form_spell IN 
+		DRUID_SHAPESHIFT_NATURAL_FORM
+		AVENGER_SHAPESHIFT_NATURAL_FORM
+		DRUID_HUMAN_FORM
+		SHAPESHIFTER_SHAPESHIFT_NATURAL_FORM
+		SHAPESHIFT_NATURAL_FORM_1
+		spinhum
+		WIZARD_POLYMORPH_NATURAL_FORM
+	 // spin151 // hard strip of all shapeshift abilities- used by Raise Dead, shapeshift duration end, etc
+	 // spwi489 // terminates Polymorph Self. In IWD version, it strips the polymorph powers; in BG2 version, no need
+	 // spwi491 // item reversal, used by Cloak of the Sewers; strips everything
+	 BEGIN
+		ACTION_IF VARIABLE_IS_SET "%natural_form_spell%" BEGIN
+			OUTER_SPRINT natural_form_spell EVAL "%%natural_form_spell%%"
+		END
+		ACTION_IF FILE_EXISTS_IN_GAME "%natural_form_spell%.spl" BEGIN
+			LAF log_this INT_VAR repeat=0 STR_VAR file=shapeshift_granted_powers.txt path="%data_loc_shared%" input="%natural_form_spell%" END
+			COPY_EXISTING "%natural_form_spell%.spl" override
+				LPF ALTER_EFFECT INT_VAR match_opcode=172 STR_VAR function=initialise_shapeshift_helper END
+				LPF DELETE_EFFECT INT_VAR match_opcode=172 END
+				LPF natural_spell_helper END
+			BUT_ONLY
+		END	
+	 END
+	 
+	 ACTION_FOR_EACH extra_to_log IN spin151 spwi489 spwi491 BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%extra_to_log%.spl" BEGIN
+			LAF log_this INT_VAR repeat=0 STR_VAR file=shapeshift_granted_powers.txt path="%data_loc_shared%" input="%extra_to_log%" END
+		END	 
+	 END
+	 
+	 
+	 
+LAF build_shapeshift_ability_remover RET_ARRAY shapeshift_powers END
+	 
+	 ACTION_FOR_EACH spell IN
+		spin151 spwi489 spwi491 BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				COPY_EXISTING "%spell%.spl" override
+					PHP_EACH shapeshift_powers AS power => discard BEGIN
+						LPF DELETE_EFFECT INT_VAR match_opcode=172 STR_VAR match_resource="%power%" END
+					END
+					LPF natural_spell_helper END
+				BUT_ONLY
+			END
+		
+		END
+	 
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION initialise_shapeshift_helper 
+STR_VAR arguments=""
+BEGIN
+	READ_ASCII 0x14 resource
+	LPF log_this INT_VAR repeat=0 STR_VAR file=shapeshift_granted_powers.txt path="%data_loc_shared%" input="%resource%" END
+END
+
+DEFINE_PATCH_FUNCTION natural_spell_helper
+BEGIN
+	LPF DELETE_EFFECT INT_VAR match_opcode=112 END
+	LPF DELETE_EFFECT INT_VAR match_opcode=111 END
+	LPF DELETE_EFFECT INT_VAR match_opcode=279 END
+	LPF ADD_SPELL_EFFECT INT_VAR opcode=279 target=1 parameter2=7 timing=1 END
+	LPF ADD_SPELL_EFFECT INT_VAR opcode=112 target=2 timing=1 STR_VAR resource=b1-6 END
+	LPF CLONE_EFFECT INT_VAR match_opcode=112 opcode=111 END
+	LPF ADD_SPELL_EFFECT INT_VAR opcode=146 target=1 parameter2=1 timing=1 STR_VAR resource="%spl_shapeshift_remove_abilities%" END
+END
+
+DEFINE_ACTION_FUNCTION make_shapeshift_healing_spell INT_VAR healing_level=12 BEGIN
+
+  ACTION_IF !FILE_EXISTS_IN_GAME "%spl_shapeshift_healing%.spl" BEGIN
+	spl.make[%spl_shapeshift_healing%]
+	[	
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=17 s_target=1 s_timing=1 s_parameter1=healing_level}
+		m.ab_fx.add{s_opcode=139 s_target=1 s_timing=1 s_parameter1=14022}
+		m.ab_fx.add{s_opcode=206 s_target=1 s_duration=300 s_resource:="%sfo_filename%"}
+	]
+  END
+
+END

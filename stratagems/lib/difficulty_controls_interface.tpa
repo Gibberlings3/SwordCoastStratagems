@@ -1,0 +1,182 @@
+DEFINE_ACTION_FUNCTION difficulty_controls_interface BEGIN
+
+
+	// set some language strings
+	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY lang_array BEGIN
+		DW_DIFFICULTY_FINETUNE_TITLE=>3100
+		DW_DIFFICULTY_FINETUNE_SUBTITLE=>3101
+	END
+	LAF UI_add_string_array STR_VAR array=lang_array END
+
+	// get the difficulty grid into a lua
+	
+	OUTER_SPRINT data ""
+	OUTER_SPRINT data_entries ""
+	LAF 2da_read STR_VAR file=difficulty_controls.2da location=data case=mixed RET_ARRAY diff_array=array diff_rows=rows END
+	OUTER_SET number=0
+	OUTER_SET default_strref=RESOLVE_STR_REF(@1106)
+	ACTION_PHP_EACH diff_rows AS row=>discard BEGIN
+		OUTER_SET ++number
+		OUTER_SPRINT code "%row%"
+		OUTER_SPRINT var $diff_array("%row%" variable)
+		OUTER_SET tra=$diff_array("%row%" string)
+		OUTER_SET tra_short=tra + 1000
+		OUTER_SPRINT desc (AT tra)
+		OUTER_PATCH_SAVE desc "%desc%" BEGIN
+		// remove trailing period
+			READ_ASCII (BUFFER_LENGTH - 1) last_char (1)
+			PATCH_IF "%last_char%" STR_EQ "." BEGIN
+				DELETE_BYTES (BUFFER_LENGTH - 1) 1
+			END			
+		END
+		OUTER_SET desc_strref=RESOLVE_STR_REF( "%desc%" )
+
+		OUTER_SET desc_strref_short=RESOLVE_STR_REF( (AT tra_short) )
+		OUTER_SPRINT entry "%WNL%%TAB%{desc=%default_strref%,value=0},%WNL%"
+		OUTER_SET index=1
+		OUTER_SET value=0
+		ACTION_FOR_EACH ind IN diff_1 diff_2 diff_3 diff_4 diff_5 diff_6 diff_7 BEGIN
+			OUTER_SET ++value
+			OUTER_SET tra_lookup=$diff_array("%row%" "%ind%")
+			ACTION_IF tra_lookup>=0 BEGIN
+				OUTER_SET ++index
+				OUTER_SET tra=RESOLVE_STR_REF ((AT tra_lookup))
+				OUTER_SPRINT entry "%entry%%TAB%{desc=%tra%,value=%value%},%WNL%"
+			END
+			
+		END
+		OUTER_SPRINT data "%data%dw_difficulty[%number%]={code='%code%',desc=%desc_strref%,short=%desc_strref_short%, value=0,variable='%var%'}%WNL%"
+		OUTER_SPRINT data_entries "%data_entries%dw_difficulty_entries[%number%]={%entry%}%WNL%"
+	END
+	
+	// get the names for each category
+	OUTER_SPRINT data_labels ""
+	OUTER_FOR (number=0;number<=6;++number) BEGIN
+		OUTER_SET tra_lookup=3000+number
+		OUTER_SET tra=RESOLVE_STR_REF((AT tra_lookup))
+		OUTER_SPRINT data_labels "%data_labels%%TAB%[%number%]=%tra%,%WNL%"
+	END
+	OUTER_SET tra_lookup=is_iwd?3008:3007
+	OUTER_SET tra=RESOLVE_STR_REF((AT tra_lookup))
+	OUTER_SPRINT data_labels "%data_labels%%TAB%[7]=%tra%%WNL%"
+	
+	// input the data
+	COPY ".../stratagems-inline/m_dw_did.lua" override EVALUATE_BUFFER
+
+	// add functions
+	COPY ".../stratagems-inline/m_dw_dif.lua" override 
+
+	// get the GUI parameters for the new menu
+	LAF ini_read STR_VAR file=diff_menu_parameters.ini location=data section=default RET_ARRAY menu_array=array END
+
+	ACTION_PHP_EACH menu_array AS key=>entry BEGIN
+		OUTER_SPRINT "%key%" "%entry%"
+	END
+
+	ACTION_IF is_sod BEGIN // Siege of Dragonspear
+		OUTER_SPRINT section sod
+	END ELSE
+	ACTION_IF is_iwd BEGIN // IWDEE
+		OUTER_SPRINT section iwdee
+	END ELSE
+	ACTION_IF is_bg2 BEGIN // BG2EE (or EET) - default
+		OUTER_SPRINT section ""	
+	END ELSE BEGIN // BGEE
+		OUTER_SPRINT section bgee
+	END
+	ACTION_IF "%section%" STR_CMP "" BEGIN
+		LAF ini_read STR_VAR file=diff_menu_parameters.ini location=data section RET_ARRAY menu_array_extra=array END
+		ACTION_PHP_EACH menu_array_extra AS key=>entry BEGIN
+			OUTER_SPRINT "%key%" "%entry%"
+		END
+	END
+	
+	// add the new menu
+	COPY_EXISTING ui.menu override
+		APPEND_FILE "%MOD_FOLDER%/%component_loc%/resource/diff_menu.txt" EVALUATE_BUFFER
+
+
+
+END
+
+
+
+<<<<<<<<.../stratagems-inline/m_dw_did.lua
+dw_difficulty_labels={
+%data_labels%
+}
+dw_difficulty={}
+%data%
+
+
+dw_difficulty_entries={}
+%data_entries%
+>>>>>>>>
+
+
+<<<<<<<<.../stratagems-inline/m_dw_dif.lua
+
+function dwDisplayDifficulty()
+	if(key and dw_difficulty_entries[dwDifficultyLookup[diffCategory]] and dw_difficulty_entries[dwDifficultyLookup[diffCategory]][key]) then 
+		return Infinity_FetchString(dw_difficulty_entries[dwDifficultyLookup[diffCategory]][key].desc) 
+	else
+		return ''
+	end	
+end
+
+function dwDifficultyToggleFrame()
+	if dw_difficulty_entries[dwDifficultyLookup[diffCategory]][rowNumber].value==diffValue then
+		return 2
+	else
+		return 0
+	end
+
+end
+
+function dwDifficultyOnClick()
+	if cellNumber == 2 and dw_difficulty_entries[dwDifficultyLookup[diffCategory]][key]~=diffValue then
+		Infinity_PlaySound('GAM_09')
+		diffValue=dw_difficulty_entries[dwDifficultyLookup[diffCategory]][key].value
+		var=dw_difficulty[dwDifficultyLookup[diffCategory]].variable
+		Infinity_RemoveINIEntry('Script',var)
+		if diffValue>0 then
+			Infinity_SetINIValue('Script',var,diffValue)
+		end
+	end	
+end
+
+function dwDifficultyRevert()
+	for k,v in pairs (dw_difficulty) do
+		Infinity_RemoveINIEntry('Script',v.variable)
+	end
+
+
+end
+
+
+function dwDifficultyHelp()
+
+	if diffCategory>0 then 
+		val=dw_difficulty[dwDifficultyLookup[diffCategory]].desc
+	else	
+		val=0
+	end
+	return val
+end
+
+function build_dwDifficultyLookup()
+
+	workingTable={}
+	new_ind=0
+	for k,v in pairs (dw_difficulty) do
+		if v.active then
+			new_ind=new_ind+1
+			workingTable[new_ind]=k
+		end
+	end
+	return workingTable
+
+end
+
+>>>>>>>>

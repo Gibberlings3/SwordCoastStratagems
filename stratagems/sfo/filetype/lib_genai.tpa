@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////////////
-///      Read in item data (the thought is that doing this once and for all may save time)
+///      Read in item data (the thought is that doing this once and all may save time)
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_MACRO read_in_genai_item_data BEGIN
@@ -8,19 +8,21 @@ DEFINE_ACTION_MACRO read_in_genai_item_data BEGIN
        PRINT ~Reading in initial data about weapons~
        SILENT
        ACTION_TRY
-         COPY_EXISTING_REGEXP GLOB ~%tutu_var%.*\.itm~ ~override~
+         COPY_EXISTING_REGEXP ~.*\.itm~ ~override~
              SPRINT filename ~%SOURCE_RES%~
-             LPF identify_weapon_patch RET twohanded type proftype enchantment damagetype END
+             LPF identify_weapon_patch RET twohanded type proftype enchantment enchantment_ranged damagetype END
              TO_UPPER filename
              SET $genai_twohanded(~%filename%~)=twohanded
              SET $genai_type(~%filename%~)=type
              SET $genai_proftype(~%filename%~)=proftype
              SET $genai_enchantment(~%filename%~)=enchantment
+             SET $genai_enchantment_ranged(~%filename%~)=enchantment_ranged
              SPRINT $genai_damagetype(~%filename%~) ~%damagetype%~
          BUT_ONLY
          WITH DEFAULT
             LAF warning STR_VAR warning="Item file %filename% appears malformed" END
        END
+	   VERBOSE
    END
 END
 
@@ -30,12 +32,15 @@ END
 
 DEFINE_PATCH_FUNCTION CRE_enforce_proficiencies
 BEGIN
-   LPF CRE_read_kit RET kit=value END
-   LPF CRE_read_class RET class=value END
-   LPF identify_weapon_preferences STR_VAR filename RET has_ranged skip_me onhandprof offhandprof rangedprof style END
-   PATCH_IF !skip_me BEGIN
-        LPF allocate_proficiencies INT_VAR onhandprof offhandprof rangedprof style level STR_VAR class kit END
-   END
+	level=BYTE_AT 0x234
+	level=(BYTE_AT 0x235)>level?BYTE_AT 0x235:level
+	level=(BYTE_AT 0x236)>level?BYTE_AT 0x236:level
+	LOOKUP_IDS_SYMBOL_OF_INT class class BYTE_AT 0x273
+	LOOKUP_IDS_SYMBOL_OF_INT kit kit LONG_AT 0x244		
+	LPF identify_weapon_preferences STR_VAR filename RET has_ranged skip_me onhandprof offhandprof rangedprof style END
+	PATCH_IF !skip_me BEGIN
+        LPF allocate_proficiencies INT_VAR level onhandprof offhandprof rangedprof style STR_VAR class kit END
+	END
 END
 
 
@@ -53,74 +58,105 @@ END
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION allocate_proficiencies
-   INT_VAR onhandprof=0
-           offhandprof=0
-           rangedprof=0
-           style=0
-           level=0
-   STR_VAR class=""
-           kit=""
+   INT_VAR level="-1"
+		   onhandprof=0
+		   offhandprof=0
+		   rangedprof=0
+		   style=0
+	STR_VAR class=""
+			kit=""
 BEGIN
-           SET rangedprofnum=0
-           SET offhandprofnum=0
-           SET onhandprofnum=0
-           SET stylenum=0
-           SET onhandprof = onhandprof=rangedprof? 0 :onhandprof         // allow for duplications (e.g. two swords, or battleaxe/throwing axe)
-           SET offhandprof = offhandprof=rangedprof? 0 : offhandprof
-           SET offhandprof = offhandprof=onhandprof? 0 : offhandprof
-           LPF get_num_profs INT_VAR level STR_VAR class RET num_profs=num_profs END
-           PATCH_FOR_EACH profname IN onhandprof offhandprof rangedprof style BEGIN
-              SET proficiency= ~%profname%~
-              LPF get_max_profs INT_VAR proficiency level STR_VAR class kit RET  ~max_%profname%~=max END
-           END
-           WHILE num_profs>0 BEGIN
-              // decrease proficiency counter
-              SET num_profs=num_profs - 1
-              PATCH_IF (rangedprof>0 & rangedprofnum=0) BEGIN   // get basically proficient in one's weapons
-                    SET rangedprofnum=1
-              END ELSE
-              PATCH_IF (onhandprof>0 & onhandprofnum=0 & max_onhandprof>0) BEGIN
-                    SET onhandprofnum=1
-              END ELSE
-              PATCH_IF (offhandprof>0 & offhandprofnum=0 & max_offhandprof>0) BEGIN
-                    SET offhandprofnum=1
-              END ELSE
-              PATCH_IF (style=STAT_VALUE_PROFICIENCY2WEAPON & stylenum<max_style) BEGIN   // max out two-weapon fighting
-                    SET stylenum=stylenum+1
-              END ELSE
-              PATCH_IF (rangedprof>0 & rangedprofnum<max_rangedprof) BEGIN // max out ranged weapon (if any)
-                    SET rangedprofnum=rangedprofnum+1
-              END ELSE
-              PATCH_IF (onhandprof>0 & onhandprofnum<max_onhandprof) BEGIN // max out onhand weapon
-                    SET onhandprofnum=onhandprofnum+1
-              END ELSE
-              PATCH_IF (offhandprof>0 & offhandprofnum<max_offhandprof) BEGIN // max out offhand weapon (if any)
-                    SET offhandprofnum=offhandprofnum+1
-              END ELSE
-              PATCH_IF (style>0 & stylenum<max_style) BEGIN // max out style
-                    SET stylenum=stylenum+1
-              END ELSE BEGIN
-                 SET num_profs=0 // terminate loop if there are no legal choices
-              END
-           END
-           // actually do the allocations
-           LPF CRE_wipe_proficiencies END
-           PATCH_FOR_EACH profname IN onhandprof offhandprof rangedprof style BEGIN   SET profcode= ~%profname%~
-                 SET value= ~%profname%num~
-                 PATCH_IF value>0 BEGIN
-                    SET_BG2_PROFICIENCY "%profname%" value
-                 END
-
-          /*    SET profcode= ~%profname%~
-              PATCH_IF profcode>0 BEGIN
-                 SET value= ~%profname%num~
-                 PATCH_IF value>0 BEGIN
-                    LPF add_entry_inline STR_VAR arguments=~opcode=>233 parameter1=>%value% parameter2=>%profcode% target=>0~ type=effect file_ext=CRE END
-                 END
-              END
-              
-           */
-           END
+	PATCH_IF !IS_AN_INT proficiencies_read_in || !proficiencies_read_in BEGIN
+		//LPF data_proficiencies RET_ARRAY weapprof profs profsmax END
+		//proficiencies_read_in=1
+		PATCH_FAIL "get_max_profs requires the data_proficiencies function to have been run"
+	END 
+	PATCH_IF level<0 BEGIN
+		level=BYTE_AT 0x234
+		level=(BYTE_AT 0x235)>level?BYTE_AT 0x235:level
+		level=(BYTE_AT 0x236)>level?BYTE_AT 0x236:level
+	END
+	PATCH_IF "%class%" STR_EQ "" BEGIN
+		LOOKUP_IDS_SYMBOL_OF_INT class class BYTE_AT 0x273
+	END
+	PATCH_IF "%kit%" STR_EQ "" BEGIN
+		LOOKUP_IDS_SYMBOL_OF_INT kit kit LONG_AT 0x244		
+	END
+	onhandprof=(onhandprof=rangedprof)?0:onhandprof  // allow for duplications (e.g. two swords, or battleaxe/throwing axe)
+	offhandprof=(offhandprof=rangedprof)?0:( (offhandprof=onhandprof)?0:offhandprof )
+	LPF get_num_profs INT_VAR level STR_VAR class RET num_profs END
+	PATCH_FOR_EACH profname IN onhandprof offhandprof rangedprof style BEGIN
+		LPF get_max_profs INT_VAR level proficiency="%profname%" STR_VAR class kit RET "max_%profname%"=max END
+	END
+	// if we're on the ToF system, hand out basic competence
+	PATCH_IF tof_prof BEGIN
+		onhandprofnum=(onhandprof>0)
+		offhandprofnum=(offhandprof>0)
+		rangedprofnum=(rangedprof>0)
+		stylenum=0
+	END ELSE BEGIN
+		onhandprofnum=0
+		offhandprofnum=0
+		rangedprofnum=0
+		stylenum=0	
+	END
+	WHILE num_profs>0 BEGIN
+		// decrease proficiency counter
+		num_profs=num_profs - 1
+		PATCH_IF (rangedprof>0 && rangedprofnum=0) BEGIN   // get basically proficient in one's weapons
+			rangedprofnum=1
+		END ELSE
+		PATCH_IF (onhandprof>0  && onhandprofnum=0 && max_onhandprof>0) BEGIN
+			onhandprofnum=1
+		END ELSE
+		PATCH_IF (offhandprof>0  && offhandprofnum=0 && max_offhandprof>0) BEGIN
+			offhandprofnum=1
+		END ELSE
+		PATCH_IF (style=114 && stylenum<max_style) BEGIN   // max out two-weapon fighting
+			++stylenum
+		END ELSE
+		PATCH_IF (rangedprof>0 && rangedprofnum<max_rangedprof) BEGIN // max out ranged weapon (if any)
+			++rangedprofnum
+		END ELSE
+		PATCH_IF (onhandprof>0 && onhandprofnum<max_onhandprof) BEGIN // max out onhand weapon
+			++onhandprofnum
+		END ELSE
+		PATCH_IF (offhandprof>0 && offhandprofnum<max_offhandprof) BEGIN // max out offhand weapon (if any)
+			++offhandprofnum
+		END ELSE
+		PATCH_IF (style>0 && stylenum<max_style) BEGIN // max out style
+			++stylenum
+		END ELSE BEGIN
+			num_profs=0 // terminate loop if there are no legal choices
+		END
+	END
+    // actually do the allocations
+	////	placeholders:
+	////	990=all melee
+	////	995=all missile
+	WRITE_LONG 0x6e 0
+	WRITE_LONG 0x72 0
+	LPF DELETE_EFFECT INT_VAR match_opcode=233 END
+	PATCH_FOR_EACH profname IN rangedprof offhandprof onhandprof style BEGIN 
+		value= ~%profname%num~
+		this_prof="%profname%"
+		PATCH_IF value>0 BEGIN
+			PATCH_MATCH this_prof WITH
+			990 BEGIN
+				PATCH_FOR_EACH prof_here IN BASTARDSWORD LONGSWORD SHORTSWORD AXE TWOHANDEDSWORD KATANA SCIMITARWAKISASHININJATO DAGGER WARHAMMER CLUB SPEAR HALBERD FLAILMORNINGSTAR MACE QUARTERSTAFF BEGIN
+					SET_BG2_PROFICIENCY "PROFICIENCY%prof_here%" value
+				END			
+			END
+			995 BEGIN
+				PATCH_FOR_EACH prof_here IN CROSSBOW LONGBOW SHORTBOW SLING DAGGER DART BEGIN
+					SET_BG2_PROFICIENCY "PROFICIENCY%prof_here%" value
+				END			
+			END
+			DEFAULT
+				SET_BG2_PROFICIENCY "%this_prof%" value
+			END
+		END
+	END
 END
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -129,22 +165,22 @@ END
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION get_num_profs
-          INT_VAR level=0
-          STR_VAR class=""
-          RET num_profs
+	INT_VAR level=0
+	STR_VAR class=""
+	RET num_profs
 BEGIN     
-            INNER_ACTION BEGIN
-             LAUNCH_ACTION_MACRO read_in_proficiency_progression
-            END
-            TO_UPPER class
-            PATCH_IF VARIABLE_IS_SET $PROFICIENCY_FIRST_LEVEL( ~%class%~) BEGIN
-              SET base=$PROFICIENCY_FIRST_LEVEL( ~%class%~)
-              SET rate=$PROFICIENCY_RATE( ~%class%~)
-            END ELSE BEGIN
-             SET base=3
-             SET rate=4
-            END
-            SET num_profs=base+level/rate
+		PATCH_IF !IS_AN_INT proficiencies_read_in || !proficiencies_read_in BEGIN
+			LPF data_proficiencies RET_ARRAY weapprof profs profsmax END
+		END 
+        TO_UPPER class
+		PATCH_IF VARIABLE_IS_SET $profs(~%class%~ FIRST_LEVEL) BEGIN
+			base=$profs(~%class%~ FIRST_LEVEL)
+			rate=$profs(~%class%~ RATE)
+		END ELSE BEGIN
+			base= (IS_AN_INT tof_prof && tof_prof)? 0 : 3
+			rate=4
+		END
+		num_profs=base+level/rate
 END
 
 
@@ -154,55 +190,58 @@ END
 ///////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION get_max_profs
-          INT_VAR proficiency=0
-                  level=0
-          STR_VAR class=""
-                  kit=""
-          RET max
+	INT_VAR level=0
+			proficiency=0
+	STR_VAR class=""
+			kit=""
+	RET max
 BEGIN
-          PATCH_IF proficiency=0 BEGIN
-           SET max=0
-          END ELSE BEGIN
-           INNER_ACTION BEGIN
-              LAUNCH_ACTION_MACRO read_in_proficiencies
-              LAUNCH_ACTION_MACRO read_in_proficiency_progression
-           END
-           TO_UPPER kit
-           TO_UPPER class
-           PATCH_IF VARIABLE_IS_SET $PROFICIENCY(~%proficiency%~ ~%kit%~) BEGIN
-              SET max=$PROFICIENCY(~%proficiency%~ ~%kit%~)
-           END ELSE BEGIN
-              PATCH_IF VARIABLE_IS_SET $PROFICIENCY(~%proficiency%~ ~%class%~) BEGIN
-                 SET max=$PROFICIENCY(~%proficiency%~ ~%class%~)
-              END ELSE BEGIN
-                 SET max=5
-              END
-           END
-           PATCH_IF VARIABLE_IS_SET $PROFICIENCY_FIRST_LEVEL_MAX("%class%") BEGIN
-               SET lev1max=$PROFICIENCY_FIRST_LEVEL_MAX("%class%")
-           END ELSE BEGIN
-               SET lev1max=1 // monsters - so monsters, having lev1max=1 and rate=4, get 2 profs at L5, 3 at L9, 4 at L13, 5 at L17 - which sounds ok
-           END
-           PATCH_IF VARIABLE_IS_SET $PROFICIENCY_OTHER_LEVEL_MAX("%class%") BEGIN
-               SET levothermax=$PROFICIENCY_OTHER_LEVEL_MAX("%class%")
-           END ELSE BEGIN
-               SET levothermax=5
-           END
-           PATCH_IF VARIABLE_IS_SET $PROFICIENCY_RATE(~%class%~) BEGIN
-             SET rate=$PROFICIENCY_RATE(~%class%~)
-           END ELSE BEGIN
-             SET rate=4
-           END
-           SET levmax = lev1max + (level / rate)
-           SET levmax = levmax>levothermax? levothermax : levmax
-           SET max = max>levmax? levmax: max
+	PATCH_IF proficiency=0 BEGIN
+		max=0
+	END ELSE BEGIN
+		PATCH_IF !IS_AN_INT proficiencies_read_in || !proficiencies_read_in BEGIN
+			//LPF data_proficiencies RET_ARRAY weapprof profs profsmax END
+			PATCH_FAIL "get_max_profs requires the data_proficiencies function to have been run"
+		END
+		TO_UPPER kit
+		TO_UPPER class
+		PATCH_IF VARIABLE_IS_SET $weapprof(~%proficiency%~ ~%kit%~) BEGIN
+			max=$weapprof(~%proficiency%~ ~%kit%~)
+		END ELSE
+		PATCH_IF VARIABLE_IS_SET $weapprof(~%proficiency%~ ~%class%~) BEGIN
+				max=$weapprof(~%proficiency%~ ~%class%~)
+		END ELSE BEGIN
+			max=5
+		END
+		PATCH_IF VARIABLE_IS_SET $profsmax("%class%" FIRST_LEVEL) BEGIN
+			lev1max=$profsmax("%class%" FIRST_LEVEL)
+		END ELSE BEGIN
+			lev1max=1 // monsters - so monsters, having lev1max=1 and rate=4, get 2 profs at L5, 3 at L9, 4 at L13, 5 at L17 - which sounds ok
+		END
+		PATCH_IF VARIABLE_IS_SET $profsmax("%class%" OTHER_LEVELS) BEGIN
+		   levothermax=$profsmax("%class%" OTHER_LEVELS)
+		END ELSE BEGIN
+		   levothermax=5
+		END
+		PATCH_IF VARIABLE_IS_SET $profs(~%class%~ RATE) BEGIN
+			rate=$profs(~%class%~ RATE)
+		END ELSE BEGIN
+			rate=4
+		END
+		levmax = lev1max + (level / rate)
+		levmax = levmax>levothermax? levothermax : levmax
+		max = max>levmax? levmax: max
 
-         END
+    END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////    For this item, record its proficiency, whether it's ranged, whether it's two-handed
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////
+////	placeholders:
+////	990=all melee
+////	995=all missile
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 DEFINE_PATCH_FUNCTION identify_weapon // note that if called on a shield, it returns type 0
@@ -211,63 +250,116 @@ DEFINE_PATCH_FUNCTION identify_weapon // note that if called on a shield, it ret
             type
             proftype
             enchantment
+			enchantment_ranged
             damagetype
 BEGIN
+
+	DEFINE_ASSOCIATIVE_ARRAY identify_weapon_random_map BEGIN
+		CDRDSW2H=>SW2H01
+		CDRDAXE=>AX1H01
+		CDRDSTAF=>STAF01
+		CDRDCBTH=>XBOW04
+		CDRDCLBW=>BOW01
+		CDRDSBTH=>BOW05
+		CDRDCBHV=>XBOW01
+		CDRDGAXE=>AX1H01
+		CDRDXVRT=>SW1H07
+		CDRDCBLT=>XBOW04
+		CDRDSBOW=>SW1H04
+		CDRDCB5=>BOW03
+		CDRDCS1=>SW1H04
+		RNDTRE58=>ULBOW4A
+		RNDTRE77=>STAF01
+		RNDTRE87=>XBOW01
+		RNDTRE88=>XBOW04
+	END
      TO_UPPER weaponfile
+	 PATCH_IF VARIABLE_IS_SET $identify_weapon_random_map("%weaponfile%") BEGIN
+		SPRINT weaponfile $identify_weapon_random_map("%weaponfile%") 
+	 END
      PATCH_IF !VARIABLE_IS_SET $genai_twohanded(~%weaponfile%~) BEGIN
        SET type=0
        SET proftype=0
        SET twohanded=0
+	   SET enchantment_ranged=0
        INNER_ACTION BEGIN
         ACTION_MATCH "%weaponfile%" WITH
-         // IWDEE random weapons
+         // IWDEE/IWDification random weapons
          rndtre11 BEGIN
             OUTER_SET twohanded=1
-            OUTER_SET proftype="-1"
+            OUTER_SET proftype=990
             OUTER_SET enchantment=0
             OUTER_SPRINT damagetype slashing
             OUTER_SET type=1
          END
          rndtre03 rndtre04 rndtre05 rndtre40 rndtre49 rndtre50 rndtre80 BEGIN // random melee weapons
             OUTER_SET twohanded=0
-            OUTER_SET proftype="-1"
+            OUTER_SET proftype=990
             OUTER_SET enchantment=0
-            OUTER_SPRINT damagetype none
+            OUTER_SPRINT damagetype unknown
             OUTER_SET type=1
          END
-         rndtre41 rndtre42 BEGIN // random bow
+         rndtre41 rndtre42 cdrdlbw BEGIN // random bow/crossbow
             OUTER_SET twohanded=0
-            OUTER_SET proftype="-1"
+            OUTER_SET proftype=995
             OUTER_SET enchantment=0
-            OUTER_SPRINT damagetype none
+            OUTER_SPRINT damagetype unknown
             OUTER_SET type=2
          END
-         rndtre58 BEGIN  // IWDEE random magic longbow
-           OUTER_INNER_PATCH "" BEGIN
-            LPF identify_weapon STR_VAR weaponfile=ulbow4a RET twohanded type proftype enchantment damagetype END
-           END
-         END
-         rndtre77 BEGIN  // IWDEE random staff
-           OUTER_INNER_PATCH "" BEGIN
-            LPF identify_weapon STR_VAR weaponfile=staf01 RET twohanded type proftype enchantment damagetype END
-           END
-         END
-         rndtre87 BEGIN  // IWDEE random crossbow
-           OUTER_INNER_PATCH "" BEGIN
-            LPF identify_weapon STR_VAR weaponfile=xbow01 RET twohanded type proftype enchantment damagetype END
-           END
-         END
-         rndtre88 BEGIN  // IWDEE random crossbow
-           OUTER_INNER_PATCH "" BEGIN
-            LPF identify_weapon STR_VAR weaponfile=xbow04 RET twohanded type proftype enchantment damagetype END
-           END
-         END
+		cdrdgnl // random gnoll - halberd or sword
+		cdrdsah // random sahuagin - spear or staff
+		cdrdlman // not sure, but mix of halberd and staff
+		cdrd2hm // random 2h melee
+		BEGIN
+			OUTER_SET twohanded=1
+			OUTER_SET proftype=990
+			OUTER_SET enchantment=0
+			OUTER_SPRINT damagetype unknown
+			OUTER_SET type=1
+		END
+		cdrdgnl // random half ogre - various swords
+		cdrdyuan // random yuan-ti - mix of slashing weapons
+		cdrd1hms // random slashing
+		cdrdhobm // hobgoblins
+		BEGIN
+			OUTER_SET twohanded=0
+			OUTER_SET proftype=990
+			OUTER_SET enchantment=0
+			OUTER_SPRINT damagetype slashing
+			OUTER_SET type=1
+		END
+		cdrd1hmb// random blunt
+		BEGIN
+			OUTER_SET twohanded=0
+			OUTER_SET proftype=990
+			OUTER_SET enchantment=0
+			OUTER_SPRINT damagetype crushing
+			OUTER_SET type=1
+		END
+		cdrdth1m // random mixture of melee
+		cdrdkob	// kobolds
+		BEGIN
+			OUTER_SET twohanded=0
+			OUTER_SET proftype=990
+			OUTER_SET enchantment=0
+			OUTER_SPRINT damagetype unknown
+			OUTER_SET type=1
+		END
+		cdrd1hth// random thrown
+		BEGIN
+			OUTER_SET twohanded=0
+			OUTER_SET proftype=995
+			OUTER_SET enchantment=0
+			OUTER_SET enchantment_ranged=0
+			OUTER_SPRINT damagetype unknown
+			OUTER_SET type=2
+		END
          DEFAULT
 
 
          ACTION_IF FILE_EXISTS_IN_GAME ~%weaponfile%.itm~ BEGIN
           COPY_EXISTING ~%weaponfile%.itm~ ~override~
-              LPF identify_weapon_patch RET twohanded type proftype enchantment damagetype END
+              LPF identify_weapon_patch RET twohanded type proftype enchantment enchantment_ranged damagetype END
           BUT_ONLY
          END ELSE BEGIN
              LAF warning STR_VAR arguments= ~Tried to identify nonexistent weapon %weaponfile%.itm~ END
@@ -280,6 +372,7 @@ BEGIN
         SET twohanded=$genai_twohanded(~%weaponfile%~)
         SPRINT damagetype $genai_damagetype(~%weaponfile%~)
         SET enchantment=$genai_enchantment(~%weaponfile%~)
+        SET enchantment_ranged=$genai_enchantment(~%weaponfile%~)
      END
 END
 
@@ -288,39 +381,38 @@ DEFINE_PATCH_FUNCTION identify_weapon_patch
             type
             proftype
             enchantment
+			enchantment_ranged
             damagetype
 BEGIN
-           SPRINT damagetype none
-           SET twohanded=0
-           SET type=0
-           SET proftype=0
-           SET enchantment=0
-           LPF ITM_read_twohanded RET twohanded=value END
-           LPF ITM_read_proficiency_code RET proftype=value END
-           SPRINT entry_type ability
-           SPRINT file_ext ITM
-           LAUNCH_PATCH_MACRO get_offset_array
-           PHP_EACH offset_array AS int=>offset_base BEGIN
-                  LPF ITM_read_ability_type RET ab_type=value END
-                  PATCH_IF ab_type=1 && type=0 BEGIN
-                     LPF ITM_read_enchantment RET enchantment=value END
-                     SET type=1
-                     LPF ITM_read_damage_type RET damage_code=value END
-                     PATCH_MATCH damage_code WITH
-                     1 BEGIN
-                        SPRINT damagetype piercing
-                     END
-                     2 BEGIN
-                        SPRINT damagetype crushing
-                     END
-                     DEFAULT
-                        SPRINT damagetype slashing
-                     END
-                  END
-                  PATCH_IF (ab_type=2 || ab_type=4) && type=0 BEGIN
-                     SET type=2
-                  END
-           END
+	SPRINT damagetype none
+	type=0
+	twohanded=BYTE_AT 0x18 BAND BIT1
+	proftype=BYTE_AT 0x31
+	enchantment=0
+	enchantment_ranged=0
+	GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+	PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+		ab_type=BYTE_AT ab_off
+		PATCH_IF ab_type=1 && type=0 BEGIN
+			enchantment=LONG_AT 0x60
+			type=1
+			damage_code=SHORT_AT (0x1c+ab_off)
+			PATCH_MATCH damage_code WITH
+			1 BEGIN
+				SPRINT damagetype piercing
+			END
+			2 BEGIN
+				SPRINT damagetype crushing
+			END
+			DEFAULT
+				SPRINT damagetype slashing
+			END
+		END ELSE
+		PATCH_IF (ab_type=2 || ab_type=4) && type=0 BEGIN
+			type=2
+			enchantment_ranged=LONG_AT 0x60
+		END
+	END
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -342,110 +434,108 @@ DEFINE_PATCH_FUNCTION identify_weapon_preferences    // goes through all carried
             enchantment
             no_weapon
 BEGIN
-       SPRINT damagetype unknown
-       SET enchantment=0
-       PATCH_FOR_EACH var IN has_twohanded onhandprof offhandprof rangedprof has_ranged has_melee BEGIN
-          SET ~%var%~ = 0
-       END
-       SET style=STAT_VALUE_PROFICIENCYSINGLEWEAPON
-       SET no_weapon=1
-       SET skip_me=0
-       SPRINT ~to_delete~ ~~
-       // get the item assigned to each slot
-       PATCH_FOR_EACH arguments IN weapon1 weapon2 weapon3 weapon4 BEGIN
-          LPF CRE_read_item_in_slot STR_VAR arguments RET weaponfile=value END
-          PATCH_IF ~%weaponfile%~ STRING_COMPARE_CASE ~~ BEGIN
-                PATCH_IF no_weapon BEGIN
-                   SET no_weapon=0
-                   SET skip_me=1
-                END
-                LPF identify_weapon STR_VAR weaponfile RET this_twohanded=twohanded type=type proftype=proftype damagetype_here=damagetype ench_here=enchantment END
-                PATCH_IF !(proftype=0) BEGIN
-                   SET skip_me=0
-                END
-                PATCH_IF type=1 BEGIN
-                   SET onhandprof=proftype
-                   SET has_twohanded= this_twohanded=1? 1 : has_twohanded
-                   PATCH_IF this_twohanded=1 BEGIN
-                      SET style=STAT_VALUE_PROFICIENCY2HANDED
-                   END
-                   SET has_melee=1
-                END
-                PATCH_IF type=2 BEGIN
-                   SET rangedprof=proftype
-                   SET has_ranged=1
-                   SET has_twohanded= this_twohanded=1? 1 : has_twohanded
-                END
-                SET enchantment = enchantment>ench_here? enchantment : ench_here
-                PATCH_IF ~%damagetype_here%~ STRING_COMPARE none BEGIN
-                  PATCH_IF ~%damagetype%~ STRING_EQUAL unknown BEGIN
-                     SPRINT damagetype ~%damagetype_here%~
-                  END ELSE
-                  PATCH_IF ~%damagetype%~ STRING_COMPARE ~%damagetype_here%~ BEGIN
-                     SPRINT damagetype mixed
-                  END
-                END
-          END
-       END
-	  LPF CRE_read_item_in_slot STR_VAR arguments=shield RET weaponfile=value END
-       PATCH_IF ~%weaponfile%~ STRING_COMPARE_CASE ~~ BEGIN
-                    LPF identify_weapon STR_VAR weaponfile RET type=type proftype=proftype ench_here=enchantment damagetype_here=damagetype END
-                    PATCH_IF type=0 BEGIN
-                       SET style=STAT_VALUE_PROFICIENCYSWORDANDSHIELD
-                    END ELSE BEGIN
-                       SET style=STAT_VALUE_PROFICIENCY2WEAPON
-                       SET offhandprof=proftype
-                    END
-                    PATCH_IF has_twohanded=1  BEGIN
-                       SPRINT ~to_delete~ ~%weaponfile%~
-                    END
-                    SET enchantment = enchantment>ench_here? enchantment : ench_here
-                    PATCH_IF ~%damagetype_here%~ STRING_COMPARE none BEGIN
-                        PATCH_IF ~%damagetype%~ STRING_EQUAL unknown BEGIN
-                           SPRINT damagetype ~%damagetype_here%~
-                        END ELSE
-                        PATCH_IF ~%damagetype%~ STRING_COMPARE ~%damagetype_here%~ BEGIN
-                                    SPRINT damagetype mixed
-                        END
-                    END
-       END
-       PATCH_FOR_EACH arguments IN quiver1 quiver2 quiver3 quiver4 BEGIN
-              LPF CRE_read_item_in_slot STR_VAR arguments RET weaponfile=value END
-              PATCH_IF ~%weaponfile%~ STRING_COMPARE_CASE ~~ BEGIN
-                 LPF identify_ammo STR_VAR weaponfile RET ench_here=enchantment END
-                 SET enchantment = enchantment>ench_here? enchantment : ench_here
-              END
-       END
-       PATCH_IF (~%to_delete%~ STRING_COMPARE_CASE ~~) BEGIN
-		  LPF CRE_remove_items STR_VAR arguments= ~%to_delete%~ END
-          PATCH_WITH_SCOPE BEGIN
+	SPRINT damagetype unknown
+	enchantment=0
+	has_ranged=0
+	has_melee=0
+	has_twohanded=0
+	no_weapon=1
+	skip_me=1
+	onhandprof=0
+	offhandprof=0
+	rangedprof=0
+	style = 113 // PROFICIENCYSINGLEWEAPON
+	SPRINT to_delete ""
+	// get the item assigned to each slot
+	GET_OFFSET_ARRAY itm_arr CRE_V10_ITEMS
+	READ_LONG 0x2b8 item_slot_off
+	slot_count=8
+	PATCH_FOR_EACH arguments IN weapon1 weapon2 weapon3 weapon4 BEGIN
+		++slot_count
+		READ_SHORT (slot_count*2+item_slot_off) slot_num
+		PATCH_IF VARIABLE_IS_SET $itm_arr("%slot_num%") BEGIN
+			itm_off=$itm_arr("%slot_num%")
+			READ_ASCII itm_off weaponfile
+			PATCH_IF no_weapon BEGIN
+				no_weapon=0
+			END
+			LPF identify_weapon STR_VAR weaponfile RET this_twohanded=twohanded type proftype damagetype_here=damagetype ench_here=enchantment END
+			PATCH_IF !(proftype=0) BEGIN
+			   skip_me=0
+			END
+			PATCH_IF type=1 BEGIN
+			   onhandprof=proftype
+			   has_twohanded= this_twohanded=1? 1 : has_twohanded
+			   PATCH_IF this_twohanded BEGIN
+				  style=111 // PROFICIENCY2HANDED
+			   END
+			   has_melee=1
+			END
+			PATCH_IF type=2 BEGIN
+			   rangedprof=proftype
+			   has_ranged=1
+			   has_twohanded= this_twohanded=1? 1 : has_twohanded
+			END
+			enchantment = enchantment>ench_here? enchantment : ench_here
+			PATCH_IF ~%damagetype_here%~ STR_CMP none BEGIN
+				PATCH_IF ~%damagetype%~ STR_EQ unknown BEGIN
+					SPRINT damagetype ~%damagetype_here%~
+				END ELSE
+				PATCH_IF ~%damagetype%~ STR_CMP ~%damagetype_here%~ BEGIN
+					SPRINT damagetype mixed
+				END
+			END
+		END
+	END
+	READ_SHORT (2*2+item_slot_off) shield_slot
+	PATCH_IF VARIABLE_IS_SET $itm_arr("%shield_slot") BEGIN
+		itm_off=$itm_arr("%slot_num%")
+		READ_ASCII itm_off weaponfile
+		LPF identify_weapon STR_VAR weaponfile RET type proftype ench_here=enchantment damagetype_here=damagetype END
+		PATCH_IF type=0 BEGIN
+		   style=112 // PROFICIENCYSWORDANDSHIELD
+		END ELSE BEGIN
+		   style=114 // PROFICIENCY2WEAPON
+		   offhandprof=proftype
+		END
+		PATCH_IF has_twohanded  BEGIN
+		   SPRINT ~to_delete~ ~%weaponfile%~
+		END
+		enchantment = enchantment>ench_here? enchantment : ench_here
+		PATCH_IF ~%damagetype_here%~ STR_CMP none BEGIN
+			PATCH_IF ~%damagetype%~ STR_EQ unknown BEGIN
+				SPRINT damagetype ~%damagetype_here%~
+			END ELSE
+			PATCH_IF ~%damagetype%~ STR_CMP ~%damagetype_here%~ BEGIN
+				SPRINT damagetype mixed
+			END
+		END
+    END
+	slot_count=12
+    PATCH_FOR_EACH arguments IN quiver1 quiver2 quiver3 quiver4 BEGIN
+		++slot_count
+		READ_SHORT (slot_count*2+item_slot_off) slot_num
+		PATCH_IF VARIABLE_IS_SET $itm_arr("%slot_num%") BEGIN
+			itm_off=$itm_arr("%slot_num%")
+			READ_ASCII itm_off weaponfile
+			TO_UPPER weaponfile
+			LPF identify_weapon STR_VAR weaponfile RET ench_here=enchantment_ranged END
+			PATCH_IF VARIABLE_IS_SET $genai_enchantment_ranged("%weaponfile%") BEGIN
+				enchantment = enchantment>ench_here? enchantment : ench_here
+			END
+		END
+	END
+	PATCH_IF (~%to_delete%~ STR_CMP ~~) BEGIN
+		REMOVE_CRE_ITEM "%to_delete%"
+		PATCH_WITH_SCOPE BEGIN
 			SPRINT file_ext CRE
 			LPF log_resource_name STR_VAR arguments=illegal_offhand END
-		  END
-       END
-       PATCH_IF (has_ranged && !has_melee) BEGIN
-          LPF warning STR_VAR warning="%filename% has ranged but not melee weapon" END
-       END
+		END
+	END
+	PATCH_IF (has_ranged && !has_melee) BEGIN
+		LPF warning STR_VAR warning="%filename% has ranged but not melee weapon" END
+	END
 
-END
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////    Get the enchantment level for ammo
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION identify_ammo
-       STR_VAR weaponfile=""
-       RET enchantment
-BEGIN
-   INNER_ACTION BEGIN
-     ACTION_IF FILE_EXISTS_IN_GAME ~%weaponfile%.itm~ BEGIN
-      COPY_EXISTING ~%weaponfile%.itm~ ~override~
-           LPF ITM_read_enchantment RET enchantment=value END
-      BUT_ONLY
-     END ELSE BEGIN
-             LAF warning STR_VAR warning=~Tried to identify nonexistent ammo %weaponfile%.itm~ END
-     END
-   END
 END
 
 

@@ -1,0 +1,330 @@
+DEFINE_ACTION_FUNCTION handle_thieves BEGIN
+
+	LAF make_label STR_VAR label=dw#thief_ui_tweak END
+	LAF modify_thief_skill_ui END
+	LAF make_thief_skill_spells END
+
+END
+
+
+DEFINE_ACTION_FUNCTION make_thief_skill_spells BEGIN
+
+	// find variables
+	
+	LAF resolve_splprot_entry INT_VAR stat=IDS_OF_SYMBOL (stats XP) val="-1" STR_VAR relation=equal description="XP!=n" RET stat_ind=value END
+
+	// the delivery spells
+	
+	LAF 2daq_extract STR_VAR resref=XPLEVEL row=THIEF column=2 RET thief_level_2_xp=value END
+	
+	OUTER_FOR (number=0;number<=6;++number) BEGIN
+	
+		// primary delivery
+		spl.make[dwlvts%number%]
+		[
+			m.ab.add{}
+			m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class THIEF) s_parameter2=105 s_resource:=dwlvts%number%1}
+			PATCH_FOR_EACH class IN FIGHTER_THIEF MAGE_THIEF CLERIC_THIEF BEGIN
+				m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class %class%) s_parameter2=105 s_resource:=dwlvts%number%2}
+			END
+			m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class FIGHTER_MAGE_THIEF) s_parameter2=105 s_resource:=dwlvts%number%3}
+		]
+
+		// the secondary spells, which gate on XP to apply only to the target creature
+
+		ACTION_FOR_EACH num_classes IN 1 2 3 BEGIN
+		spl.make[dwlvts%number%%num_classes%]
+		[
+			m.ab.add{}
+			m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=thief_level_2_xp*num_classes s_parameter2=stat_ind s_resource:=dwlvts%number%p}
+		]
+
+		END
+
+	END
+
+    // the payload spells (numbers match LUA id)
+
+    // hide in shadows
+	spl.make[dwlvts4p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=275 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	]
+    // move silently
+	spl.make[dwlvts3p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=59 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	]
+    // detect illusion
+	spl.make[dwlvts5p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=276 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	] 
+    // set traps
+	spl.make[dwlvts6p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=277 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	] 
+    // find traps
+	spl.make[dwlvts2p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=277 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	] 
+    // open locks
+	spl.make[dwlvts1p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=90 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	] 
+	// pick pockets
+	spl.make[dwlvts0p]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=92 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
+	]
+	
+	
+	OUTER_FOR (number=0;number<=6;++number) BEGIN
+		COPY_EXISTING "dwlvts%number%p.spl" override
+			// block if already past XP=0
+			LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=318 target=2 timing=0 parameter1=0 parameter2=stat_ind duration=1 STR_VAR resource="%SOURCE_RES%" END
+	END
+	
+
+
+END
+
+DEFINE_ACTION_FUNCTION modify_thief_skill_ui BEGIN
+
+	// make class/kit detectable
+	
+	LAF ui_detect_class_kit END
+
+	// make needed data, and enforce multiples 
+	COPY_EXISTING "thiefskl.2da" override
+		LPF 2da_read RET_ARRAY thiefskl_array=array thiefskl_rows=rows END 
+		change=0
+		PATCH_FOR_EACH col IN START_POINTS LEVEL_POINTS BEGIN
+			PHP_EACH thiefskl_rows AS row=>discard BEGIN
+				val=$thiefskl_array("%row%" "%col%")
+				rem=val MODULO 5
+				PATCH_IF rem>0 BEGIN
+					change=1
+					SET $thiefskl_array("%row%" "%col%")= ((val / 5) * 5) + ((rem>=3)? 5 : 0)
+				END
+			END
+		END
+		PATCH_IF change BEGIN
+			LPF 2da_write STR_VAR array=thiefskl_array default="0" END
+		END
+	BUT_ONLY
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kit_array=array END
+
+	OUTER_SPRINT data_class ""
+	OUTER_SPRINT data_kit ""
+	ACTION_PHP_EACH thiefskl_rows AS class_kit=>discard BEGIN
+		OUTER_SET value=$thiefskl_array("%class_kit%" START_POINTS)
+		ACTION_IF value>0 BEGIN
+			ACTION_IF VARIABLE_IS_SET $kit_array("%class_kit%" ROWNUMBER) BEGIN
+				OUTER_SET number=$kit_array("%class_kit%" ROWNUMBER)
+				OUTER_SPRINT data_kit "%data_kit%%TAB%dw_starting_thief_skills_kit[%number%]=%value%%WNL%"
+			END ELSE BEGIN
+				OUTER_SET number=IDS_OF_SYMBOL (class "%class_kit%")
+				OUTER_SPRINT data_class "%data_class%%TAB%dw_starting_thief_skills_class[%number%]=%value%%WNL%"
+			END
+		END
+	END
+	
+	COPY ".../stratagems-inline/m_dw_tsd.lua" override EVALUATE_BUFFER
+
+	// install functions
+	
+	COPY ".../stratagems-inline/m_dw_tsf.lua" override
+
+	// edit functions into menu
+	
+	COPY_EXISTING "ui.menu" override
+		LPF UI_alter_object STR_VAR object=CHARGEN_PROFICIENCIES object_type=menu patch=thief_sub END
+
+END
+
+DEFINE_PATCH_FUNCTION thief_sub BEGIN
+
+		REPLACE_TEXTUALLY ~\(onOpen[^"]*\)"~ ~\1"dw_thiefskill_initialize(); ~
+		REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:IsThiefSkillPlusMinusButtonClickable()~ ~dw_can_press_thief_button()~
+		REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)~ ~dw_thiefskill_add(currentChargenThiefSkill)~
+		REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)~ ~dw_thiefskill_subtract(currentChargenThiefSkill)~
+		REPLACE_TEXTUALLY EXACT_MATCH ~text lua "chargen.thief_skill[rowNumber].value"~ ~text lua "dw_thiefskill_value(rowNumber)"~
+		REPLACE_TEXTUALLY EXACT_MATCH ~text lua "chargen.extraSkillPoints"~ ~text lua "dw_thiefskill_extra_points()"~
+		REPLACE_TEXTUALLY EXACT_MATCH ~clickable lua "createCharScreen:IsDoneButtonClickable()"~ ~clickable lua "dw_thief_skills_finished()"~
+		REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:OnDoneButtonClick()~ ~dw_thief_skills_implement()~
+END
+
+
+
+<<<<<<<<.../stratagems-inline/m_dw_tsd.lua
+dw_thief_spells={}
+dw_thief_spells[0]=dwlvts0
+dw_thief_spells[1]=dwlvts1
+dw_thief_spells[2]=dwlvts2
+dw_thief_spells[3]=dwlvts3
+dw_thief_spells[4]=dwlvts4
+dw_thief_spells[5]=dwlvts5
+dw_thief_spells[6]=dwlvts6
+
+dw_starting_thief_skills_class={}
+%data_class%
+dw_starting_thief_skills_kit={}
+%data_kit%
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/m_dw_tsf.lua
+
+
+
+
+-- setup
+
+function dw_thiefskill_initialize()
+
+	xp=characters[currentID].classlevel.first.xp
+	dw_thief_skill={}
+	if not dw_thief_extra then
+		if (dwIsChargen or dwIsDualclassing or (xp>0)) then
+			true_start=0
+		else
+			class,kit=dwFindClassKit()
+			if dw_starting_thief_skills_kit[kit] then
+				true_start=dw_starting_thief_skills_kit[kit] 
+			elseif dw_starting_thief_skills_class[class] then
+				true_start=dw_starting_thief_skills_class[class]
+			else
+				true_start=0
+			end
+		end
+		if true_start > chargen.extraSkillPoints then
+			dw_thief_extra = true_start - chargen.extraSkillPoints
+		else
+			dw_thief_extra = 0
+		end
+	end
+
+end
+
+
+-- spoof the value of the skill
+function dw_thiefskill_value(rowNumber)
+
+	if not dw_thief_skill[rowNumber] then
+		return chargen.thief_skill[rowNumber].value
+	end
+	return chargen.thief_skill[rowNumber].value + dw_thief_skill[rowNumber]
+
+
+end
+
+-- add to a thief skill
+
+function dw_thiefskill_add()
+
+	if (dw_thief_extra==0) then
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, true)
+	else 
+		if not dw_thief_skill[currentChargenThiefSkill] then
+				dw_thief_skill[currentChargenThiefSkill]=5
+		else
+				dw_thief_skill[currentChargenThiefSkill]=dw_thief_skill[currentChargenThiefSkill]+5
+		end
+		dw_thief_extra = dw_thief_extra - 5
+	end
+
+
+end
+
+-- subtract from a thief skill
+
+function dw_thiefskill_subtract()
+
+	if not dw_thief_skill[currentChargenThiefSkill] then
+		dw_thief_skill[currentChargenThiefSkill]=0
+	end
+	if dw_thief_skill[currentChargenThiefSkill]>0 then
+		dw_thief_skill[currentChargenThiefSkill] = dw_thief_skill[currentChargenThiefSkill] - 5
+		dw_thief_extra = dw_thief_extra + 5
+	else
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)
+		createCharScreen:OnThiefSkillPlusMinusButtonClick(chargen.thief_skill[currentChargenThiefSkill].id, false)	
+	end
+
+
+end
+
+-- check if button is pressable
+
+
+function dw_can_press_thief_button()
+
+	return (createCharScreen:IsThiefSkillPlusMinusButtonClickable() or (dw_thief_extra and dw_thief_extra>0)) 
+
+
+end
+
+-- find total number of points
+
+function dw_thiefskill_extra_points()
+
+	if not dw_thief_extra then
+		return chargen.extraSkillPoints
+	else
+		return chargen.extraSkillPoints + dw_thief_extra
+	end
+
+
+
+end
+
+-- see if we're done
+
+function dw_thief_skills_finished()
+
+	return (dw_thief_extra==0 and createCharScreen:IsDoneButtonClickable())
+
+
+end
+
+-- implement extra skills
+
+function dw_thief_skills_implement()
+	
+	for k,v in pairs (chargen.thief_skill) do
+		id=v.id
+		extra=dw_thief_skill[k]
+		while (extra and (extra > 0)) do
+			extra = extra - 5
+			eval='ReallyForceSpellRES("dwlvts'..id..'",Player1)'
+			C:Eval(eval)
+		end
+	end
+	dw_thief_extra=nil
+	createCharScreen:OnDoneButtonClick()
+
+
+
+
+end
+
+
+
+>>>>>>>>

@@ -15,49 +15,86 @@ Load the various variables in resource_id, checking for duplicates and prebuildi
 */
 
 DEFINE_ACTION_MACRO indirect_load BEGIN
-
 	LOCAL_SPRINT rowcount ""
 	LOCAL_SPRINT name ""
 	LOCAL_SPRINT resref ""
 	LOCAL_SPRINT oldval ""
 	LOCAL_SPRINT array_id ""
+	ACTION_IF !VARIABLE_IS_SET sfo_indirect_load_make_dialogs BEGIN
+		OUTER_SET sfo_indirect_load_make_dialogs=1
+	END
+	SILENT
 	ACTION_IF !VARIABLE_IS_SET sfo_indirect_load_done BEGIN
 		OUTER_SET sfo_indirect_load_done=1
 		PRINT "Loading indirect-reference variables..."
-		ACTION_BASH_FOR "%MOD_FOLDER%/lib/resource_id" ".*\.2da" BEGIN
-			COPY - "%BASH_FOR_FILESPEC%" nowhere
-				REPLACE_TEXTUALLY "//.*" ""
-				COUNT_2DA_ROWS 2 rowcount
-				FOR (i=1;i<rowcount;i+=1) BEGIN
-					READ_2DA_ENTRY i 0 2 name
-					READ_2DA_ENTRY i 1 2 resref
-					SPRINT array_id "%BASH_FOR_RES%_id"
-					SPRINT $%array_id%("%name%") "%resref%"
-					PATCH_IF VARIABLE_IS_SET "%name%" BEGIN
-						SPRINT oldval EVAL "%%name%%"
-						PATCH_WARN "Duplicate variable %name% is already set to %oldval%"
-					END
-					PATCH_IF VARIABLE_IS_SET $has_been_used("%BASH_FOR_RES%" "%resref%") && !("%resref%" STRING_MATCHES_REGEXP ".*[a-z].*") BEGIN
-						PATCH_WARN "resref %resref% is used more than once in file %BASH_FOR_FILESPEC%"
-					END ELSE BEGIN
-						SPRINT $has_been_used("%BASH_FOR_RES%" "%resref%") ""
-					END
-					SPRINT "%name%" "%resref%"    
-					// specifically for dialogs, build them
-					PATCH_MATCH "%BASH_FOR_RES%" WITH
-					dialogs BEGIN
-						PATCH_IF !FILE_EXISTS_IN_GAME "%resref%.dlg" BEGIN
-							INNER_ACTION BEGIN
-								LAF dlg_make STR_VAR dlg="%resref%" END
+		GET_DIRECTORY_ARRAY dir_array "%MOD_FOLDER%/lib/resource_id" "[a-z0-9].*"
+		ACTION_PHP_EACH dir_array AS dir_number=>dir BEGIN
+			ACTION_BASH_FOR "%dir%" ".*\.2da" BEGIN
+				COPY - "%BASH_FOR_FILESPEC%" nowhere
+					REPLACE_TEXTUALLY "//.*" ""
+					READ_2DA_ENTRIES_NOW indirect_data 2
+					FOR (i=1;i<indirect_data;i+=1) BEGIN
+						READ_2DA_ENTRY_FORMER indirect_data i 0  name
+						READ_2DA_ENTRY_FORMER indirect_data i 1  resref
+						SPRINT array_id "%BASH_FOR_RES%_id"
+						SPRINT $%array_id%("%name%") "%resref%"
+						PATCH_IF VARIABLE_IS_SET "%name%" BEGIN
+							SPRINT oldval EVAL "%%name%%"
+							PATCH_WARN "Duplicate variable %name% is already set to %oldval%"
+						END
+						PATCH_IF VARIABLE_IS_SET $has_been_used("%BASH_FOR_RES%" "%resref%") && !("%resref%" STRING_MATCHES_REGEXP ".*[a-z].*") BEGIN
+							PATCH_WARN "resref %resref% is used more than once in file %BASH_FOR_FILESPEC%"
+						END ELSE BEGIN
+							SPRINT $has_been_used("%BASH_FOR_RES%" "%resref%") ""
+						END
+						SPRINT "%name%" "%resref%"    
+						// specifically for dialogs, build them
+						PATCH_MATCH "%BASH_FOR_RES%" WITH
+						dialogs BEGIN
+							PATCH_IF !FILE_EXISTS_IN_GAME "%resref%.dlg" && sfo_indirect_load_make_dialogs BEGIN
+								INNER_ACTION BEGIN
+									LAF dlg_make STR_VAR dlg="%resref%" END
+								END
 							END
 						END
+						DEFAULT
+						END
 					END
-					DEFAULT
-					END
-				END
-			BUT_ONLY
+				BUT_ONLY
+			END
 		END
 		PRINT "...done"
 	END
-		
+	VERBOSE	
 END
+
+DEFINE_ACTION_FUNCTION install_script
+	INT_VAR inline=0
+	STR_VAR script=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	ACTION_IF "%script%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%script%" RET script_here=entry script_rest=list END
+		ACTION_IF !VARIABLE_IS_SET "%script_here%" BEGIN
+			WARN "install_script:  variable %script_here% is not set"
+		END
+		ACTION_IF inline BEGIN
+			OUTER_SPRINT path ".../stratagems-inline"
+			OUTER_SPRINT file_path "%path%/%script_here%"
+		END ELSE BEGIN
+			LAF sfo_path STR_VAR path location locbase file="%script_here%" RET path file_path END
+		END
+		ACTION_IF FILE_EXISTS "%file_path%.baf" || inline BEGIN
+			OUTER_SPRINT script_out EVAL "%%script_here%%"
+			COPY "%file_path%.baf" "override/%script_out%.bcs"
+				EVALUATE_BUFFER
+				COMPILE_BAF_TO_BCS
+		END ELSE BEGIN
+			WARN "install_script: file %script_here%.baf not found at %path%"
+		END
+		LAF install_script STR_VAR script="%script_rest%" location locbase path END
+	END
+END
+

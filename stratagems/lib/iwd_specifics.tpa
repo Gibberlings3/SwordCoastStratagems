@@ -7,7 +7,8 @@ DEFINE_ACTION_FUNCTION iwd_specifics BEGIN
          REPLACE_TEXTUALLY "%entry%" "DMWW_UNUSED_FOR_DELETION"
       END
    BUT_ONLY
-   LAF sort_ids STR_VAR ids=specific END  // sort here to remove redundant entries
+	COPY_EXISTING "specific.ids" override
+		REPLACE_TEXTUALLY ".*DMWW_UNUSED_FOR_DELETION.*\(%WNL%\|%MNL%\|%LNL%\)" ""
 
    APPEND "specific.ids" "103 LIZARD_GABBER_1" UNLESS "103 +LIZARD_GABBER_1"
    APPEND "specific.ids" "104 LIZARD_GABBER_2" UNLESS "103 +LIZARD_GABBER_2"
@@ -18,28 +19,28 @@ DEFINE_ACTION_FUNCTION iwd_specifics BEGIN
    // main allocation loop
    COPY_EXISTING_REGEXP GLOB ".*\.cre" override
        // water specifics
-       LPF CRE_read_specifics RET specific_old=value END
+	   specific_old=BYTE_AT 0x274
        PATCH_IF specific_old=150 BEGIN
           LPF ADD_CRE_EFFECT INT_VAR opcode=328 target=2 timing=1 parameter2=stat_ind special=1 END
-          LPF CRE_specifics STR_VAR arguments=0 END
+          WRITE_BYTE 0x274 0 
        END
        // main allocation
-       LPF CRE_read_race RET race=value END
-       LPF CRE_read_class RET class=value END
-       LPF CRE_read_general RET general=value END
-       LPF CRE_read_gender RET gender=value END
-       LPF CRE_read_animation RET animation=value END
-       LPF CRE_read_allegiance RET allegiance=value END
+	   LOOKUP_IDS_SYMBOL_OF_INT race race (BYTE_AT 0x272)
+	   LOOKUP_IDS_SYMBOL_OF_INT class class (BYTE_AT 0x273)
+	   LOOKUP_IDS_SYMBOL_OF_INT general general (BYTE_AT 0x271)
+	   LOOKUP_IDS_SYMBOL_OF_INT gender gender (BYTE_AT 0x275)
+	   LOOKUP_IDS_SYMBOL_OF_INT animation animate (LONG_AT 0x28)
+	   LOOKUP_IDS_SYMBOL_OF_INT allegiance ea (BYTE_AT 0x270)
        LPF determine_genai_specifics STR_VAR race class general gender animation allegiance filename="%SOURCE_RES%" RET specific END
        PATCH_IF "%specific%" STRING_COMPARE_CASE NONE BEGIN
-            LPF get_or_add_to_IDS INT_VAR minimum=50 STR_VAR to_add="%specific%" idsfile=SPECIFIC RET arguments=idsnum END
-            LPF CRE_specifics STR_VAR arguments END
+			LPF ids_resolve INT_VAR min=50 STR_VAR ids="%specific%" idsfile=SPECIFIC RET value END
+			WRITE_BYTE 0x274 value 
        END
    BUT_ONLY
    
    // tidy up
    
-   LAF sort_ids STR_VAR ids=specific END
+   LAF ids_sort STR_VAR idsfile=specific END
 
 END
 
@@ -53,10 +54,11 @@ DEFINE_ACTION_FUNCTION reroute_water_specifics RET stat_ind BEGIN
 
            LAF ds_resolve_stat STR_VAR id=WATER_CREATURE RET stat_ind END
            LAF resolve_splprot_entry INT_VAR stat=274 value="-1" STR_VAR relation=equal RET splprot=value END
-           MAKE_PATCH
-              patch_effect_inline=>"match=>opcode=177 opcode=>326 parameter1=>%stat_ind% parameter2=>%splprot%"
-           END
-           LAF edit_spell STR_VAR spell="%WIZARD_ABI_DALZIMS_HORRID_WILTING% SPWISH32" edits=patch_data END
+		   ACTION_FOR_EACH spell IN "%WIZARD_ABI_DALZIMS_HORRID_WILTING%" "SPWISH32" BEGIN
+			COPY_EXISTING "%spell%.spl" override
+				LPF ALTER_EFFECT INT_VAR match_opcode=177 opcode=326 parameter1=stat_ind parameter2=splprot END
+			IF_EXISTS
+		   END
 
 END
 
@@ -239,7 +241,7 @@ BEGIN
              SPRINT specific "%animation%"
           END
           DEFAULT
-             LPF log_this STR_VAR file=residual_specifics.txt input="%filename%: %general%-%race%-%class%" repeat=no END
+             LPF log_this INT_VAR repeat=0 STR_VAR file=residual_specifics.txt input="%filename%: %general%-%race%-%class%" END
              SPRINT specific NONE
           END // end of animation DEFAULT
        END // end of race DEFAULT

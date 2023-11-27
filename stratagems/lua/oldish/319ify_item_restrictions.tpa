@@ -1,0 +1,299 @@
+DEFINE_ACTION_FUNCTION 319ify_item_restrictions BEGIN
+
+/*
+
+A reminder of the point:
+(1) we are 319-ifying armor restrictions so that we can create mage kits which can use armor, and so that we can restrict druid/ranger armor without restricting cleric/ranger armor
+(2) we are 319-ifying weapon restrictions so that we can create mage kits which can use weapons, and so that cleric and druid multiclasses can have different weapon restrictions even if the latter are kits of the former
+
+Because of (2), only cleric/ranger, cleric/mage and cleric/thief unusability needs to be unset.
+In addition, any weapon unusable by a cleric and a druid can just use the ordinary settings for the multiclass
+This holds in particular for weapons unusable by clerics and druids but usable by shamans (i.e. with a 319-style setting for druid usability)
+
+There is a potential clash at cleric/mage, but it's not actual: cleric/mages *can* use armor, and aren't bound by mage usage rules, so we don't need the mage restrictions - only the cleric ones. So the cleric spell should block the mage one.
+
+A reminder of why this is in /lua:
+
+- we need to edit the UI to properly display unusability, since 319 isn't detected properly by the system
+
+*/
+
+
+
+  ACTION_IF !FILE_EXISTS_IN_GAME "%spl_cleric_unusability_flag%.spl" BEGIN
+
+    // get needed specifics
+	LAF get_or_add_to_IDS INT_VAR minimum=150 STR_VAR to_add=CLERIC_UNUSABLE idsfile=SPECIFIC RET specifics_cleric=idsnum END // start at 150 because I don't trust other people not to overwrite the namespace
+    LAF get_or_add_to_IDS INT_VAR minimum=150 STR_VAR to_add=DRUID_UNUSABLE idsfile=SPECIFIC RET specifics_druid=idsnum END 
+    LAF get_or_add_to_IDS INT_VAR minimum=150 STR_VAR to_add=SHAMAN_UNUSABLE idsfile=SPECIFIC RET specifics_shaman=idsnum END 
+    LAF get_or_add_to_IDS INT_VAR minimum=150 STR_VAR to_add=MAGE_UNUSABLE idsfile=SPECIFIC RET specifics_mage=idsnum END 
+	
+	// set up LUA for description edits
+	LAF edit_descriptions_setup END
+	ACTION_FOR_EACH class IN cleric_mage cleric_ranger cleric_thief druid shaman mage BEGIN
+		LAF read_table_entry STR_VAR file=clastext row="%class%" column=mixed RET value END
+		OUTER_SET "%class%_strref"=value
+		APPEND "m_dw_itd.lua" "dwUnusable[%value%]={}" 
+	END
+
+
+	
+	// build the effects that set the specifics, and apply them to CLABs
+	LAF	319ify_clerics END
+	LAF 319ify_druids_shamans END
+	LAF 319ify_mages END
+	
+	// actually edit the items
+	COPY_EXISTING_REGEXP ".*\.itm" override
+		LPF 319ify_item END
+	BUT_ONLY
+
+  END
+
+END
+
+
+DEFINE_ACTION_FUNCTION 319ify_clerics BEGIN
+
+// clerics have no armor restrictions. They have quite strict weapon restrictions which also bind multiclass clerics.
+
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>72 timing=>9 parameter1=>%specifics_cleric% parameter2=>4 target=>1"
+   END
+   LAF make_spell STR_VAR spell="%spl_cleric_unusability_flag%" edits=patch_data END
+
+	LAF edit_all_kits STR_VAR parent_class=cleric editstring="apply_power=>~%spl_cleric_unusability_flag% 1~" END
+
+END
+
+DEFINE_ACTION_FUNCTION 319ify_druids_shamans BEGIN
+
+// druids have some armor restrictions that by default don't bind F/D but which we're going to say ought to, and some weapon restrictions that do
+// shamans are simple: no MC
+
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>72 timing=>9 parameter1=>%specifics_druid% parameter2=>4 target=>1"
+   END
+   LAF make_spell STR_VAR spell="%spl_druid_unusability_flag%" edits=patch_data END
+
+   LAF edit_all_kits STR_VAR parent_class=druid editstring="apply_power=>~%spl_druid_unusability_flag% 1~" END
+
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>72 timing=>9 parameter1=>%specifics_shaman% parameter2=>4 target=>1"
+   END
+   LAF make_spell STR_VAR spell="%spl_shaman_unusability_flag%" edits=patch_data END
+
+	LAF edit_all_kits STR_VAR parent_class=shaman editstring="apply_power=>~%spl_shaman_unusability_flag% 1~" END
+
+END
+
+DEFINE_ACTION_FUNCTION 319ify_mages BEGIN
+
+// mage weapon/armor restrictions apply *only* to trueclass mages. 
+
+   MAKE_PATCH
+      add_basic_ability=>null
+      add_effect_inline=>"opcode=>72 timing=>9 parameter1=>%specifics_mage% parameter2=>4 target=>1"
+	  add_effect_inline'0=>"number_to_add=>5 opcode=>318 target=>2 timing=>0 duration=>1 parameter2=>105 parameter1=>~entry_index from [7 10 13 14 17]~ resource=>filename"
+   END
+   LAF make_spell STR_VAR spell="%spl_mage_unusability_flag%" edits=patch_data END
+
+	LAF edit_all_kits STR_VAR parent_class=mage editstring="apply_power=>~%spl_mage_unusability_flag% 1~" END
+	LAF edit_all_kits INT_VAR skip_trueclass=1 STR_VAR parent_class=sorcerer editstring="apply_power=>~%spl_mage_unusability_flag% 1~" END
+
+
+END
+
+DEFINE_PATCH_FUNCTION 319ify_item BEGIN
+		LPF is_weapon RET is_weapon=value END
+		LPF is_armor RET is_armor=value END
+		PATCH_IF is_weapon || is_armor BEGIN
+			LPF get_item_usability RET unusable_cleric unusable_druid unusable_shaman unusable_mage END
+			// cleric weapons
+			PATCH_IF (is_weapon && unusable_cleric && !unusable_druid) BEGIN
+				LPF set_unusable_cleric END
+			END
+			// others
+			PATCH_FOR_EACH class IN druid shaman mage BEGIN
+				PATCH_IF EVAL "unusable_%class%" BEGIN
+					LPF "set_unusable_%class%" END
+				END
+			END
+		END
+END
+
+
+DEFINE_PATCH_FUNCTION is_weapon RET value BEGIN
+	READ_SHORT 0x1c category
+	PATCH_MATCH "%category%" WITH
+		5 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 57 69 
+	BEGIN
+		value=1
+	END
+	DEFAULT
+		value=0
+	END
+END
+
+DEFINE_PATCH_FUNCTION is_armor RET value BEGIN
+	READ_SHORT 0x1c category
+	PATCH_MATCH "%category%" WITH
+		2 12 
+	BEGIN
+		value=1
+	END
+	DEFAULT
+		value=0
+	END
+END
+
+DEFINE_PATCH_FUNCTION get_item_usability 
+	RET unusable_cleric unusable_druid unusable_shaman unusable_mage
+BEGIN
+	unusable_cleric=0
+	unusable_druid=0
+	unusable_shaman=0
+	unusable_mage=0
+	PATCH_IF ((BYTE_AT 0x20) BAND 0b000000100) = 0b00000100 BEGIN
+			unusable_mage=1
+		END	
+	PATCH_IF ((BYTE_AT 0x1e) BAND 0b10000000) = 0b10000000 BEGIN
+		unusable_cleric=1
+	END
+	PATCH_IF ((BYTE_AT 0x21) BAND 0b01000000) = 0b01000000 BEGIN
+		unusable_druid=1
+		unusable_shaman=1
+	END
+	PATCH_IF !unusable_druid BEGIN // check 319s
+		GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+		PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+			PATCH_IF SHORT_AT fx_off=319 BEGIN
+				READ_LONG (fx_off+0x4) param1
+				READ_LONG (fx_off+0x8) param2
+				PATCH_IF (param1=11 && param2=5) BEGIN
+					unusable_druid=1
+				END
+				PATCH_IF (param1=21 && param2=5) BEGIN
+					unusable_shaman=1
+				END
+			END
+		END	
+	END
+
+
+END
+
+DEFINE_PATCH_FUNCTION set_unusable_cleric BEGIN
+	// specifically, we're marking as unusable by multiclass cleric/ranger, cleric/mage, cleric/thief - the ones that collide with druids
+	WRITE_BYTE 0x1f ((BYTE_AT 0x1f) BAND 0b11111000)
+	LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 parameter1=specifics_cleric parameter2=6 END
+	INNER_ACTION BEGIN
+		OUTER_SPRINT resref "%SOURCE_RES%"
+		ACTION_TO_UPPER resref
+		OUTER_SPRINT add ""
+		ACTION_FOR_EACH class IN cleric_mage cleric_ranger cleric_thief BEGIN
+			OUTER_SET strref= EVAL "%%class%_strref%"
+			OUTER_SPRINT add "%add%dwUnusable[%strref%]['%resref%']=true%WNL%"
+		END
+		APPEND "m_dw_itd.lua" "%add%" KEEP_CRLF
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION set_unusable_druid BEGIN
+	// specifically, we're marking as unusable by single-class druids. Fighter/druids aren't a problem.
+	WRITE_BYTE 0x21 ((BYTE_AT 0x21) BAND 0b10111111)
+	LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter1=11 match_parameter2=5 END
+	LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 parameter1=specifics_druid parameter2=6 END
+	INNER_ACTION BEGIN
+		OUTER_SPRINT resref "%SOURCE_RES%"
+		ACTION_TO_UPPER resref
+		OUTER_SPRINT add "dwUnusable[%druid_strref%]['%resref%']=true%WNL%"
+		APPEND "m_dw_itd.lua" "%add%" KEEP_CRLF
+	END
+END
+
+DEFINE_PATCH_FUNCTION set_unusable_shaman BEGIN
+	WRITE_BYTE 0x21 ((BYTE_AT 0x21) BAND 0b10111111)
+	LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter1=21 match_parameter2=5 END
+	LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 parameter1=specifics_shaman parameter2=6 END
+	INNER_ACTION BEGIN
+		OUTER_SPRINT resref "%SOURCE_RES%"
+		ACTION_TO_UPPER resref
+		OUTER_SPRINT add "dwUnusable[%shaman_strref%]['%resref%']=true%WNL%"
+		APPEND "m_dw_itd.lua" "%add%" KEEP_CRLF
+	END
+END
+
+DEFINE_PATCH_FUNCTION set_unusable_mage BEGIN
+	READ_BYTE 0x20 unusable_1
+	WRITE_BYTE 0x20 (unusable_1 BAND 0b11111011)
+	LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 parameter1=specifics_mage parameter2=6 END
+	INNER_ACTION BEGIN
+		OUTER_SPRINT resref "%SOURCE_RES%"
+		ACTION_TO_UPPER resref
+		OUTER_SPRINT add ""
+		OUTER_SPRINT add "%add%dwUnusable[%mage_strref%]['%resref%']=true%WNL%"
+
+		APPEND "m_dw_itd.lua" "%add%" KEEP_CRLF
+
+
+	END
+END
+
+DEFINE_ACTION_FUNCTION edit_descriptions_setup BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_itf.lua" BEGIN
+	
+		COPY ".../stratagems-inline/m_dw_itf.lua" override
+		COPY ".../stratagems-inline/m_dw_itd.lua" override
+	
+		// make needed menu change
+		COPY_EXISTING "ui.menu" override
+			REPLACE_TEXTUALLY EXACT_MATCH "itemDesc.item.description" "dwItemDescription(itemDesc.item)"
+		BUT_ONLY
+	
+	END
+END
+
+<<<<<<<< .../stratagems-inline/m_dw_itf.lua
+
+function dwItemDescription(item)
+	desc=item.description
+	resref=item.res
+	ks={}
+	for k,_ in pairs(dwUnusable) do
+		table.insert(ks,k)
+	end
+	table.sort(ks,dwItemDescriptionSort)
+	for _,k in ipairs(ks) do
+		itemlist=dwUnusable[k]
+		if itemlist[resref] then
+			desc=desc.."\n".. Infinity_FetchString(k)
+		end	
+	end
+	return desc
+end
+
+function dwItemDescriptionSort(a,b)
+
+	n_a=Infinity_FetchString(a)
+	n_b=Infinity_FetchString(b)
+	if string.find(n_a,'/') and not string.find(n_b,'/') then
+		return false
+	end
+	if not string.find(n_a,'/') and string.find(n_b,'/') then
+		return true
+	end
+	return n_a<n_b
+
+end
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/m_dw_itd.lua
+dwUnusable={}
+
+>>>>>>>>

@@ -19,7 +19,7 @@ BEGIN
    ACTION_IF "%scriptname%" STRING_EQUAL_CASE "" BEGIN
       OUTER_SPRINT scriptname "%script%"
    END
-   OUTER_SPRINT variables "%variables%&MyWeaponDamageType=MultipleDamageType&MyWeaponStrength=Unknown&666=89&777=189&groupcheck=InMyGroup(LastHeardBy(Myself))"
+   OUTER_SPRINT variables "%variables%&MyWeaponDamageType=MultipleDamageType&MyWeaponStrength=Unknown&666=89&777=189&groupcheck=InMyGroup(LastHeardBy(Myself))!CheckSpellState(Myself,DW_HELP_GROUP)"
    ACTION_IF (!FILE_EXISTS_IN_GAME ~%scriptname%.bcs~ || force_build=1) BEGIN
       OUTER_SET warning=0
       OUTER_INNER_PATCH ~~ BEGIN
@@ -121,7 +121,7 @@ BEGIN
               END
       END
       ACTION_IF warning=0 BEGIN
-         LAF ssl_to_bcs STR_VAR script= ~%base%~ variables location=~genai/ssl~ rename_to= ~%scriptname%~ END
+         LAF ssl_to_bcs STR_VAR script= ~%base%=>%scriptname%~ variables location=~ssl~ END
       END ELSE BEGIN
          LAF warning STR_VAR warning= ~Cannot parse genai script %script%~ END
       END
@@ -133,11 +133,13 @@ DEFINE_PATCH_FUNCTION assign_genai_style
            filename=""
            race=""
            kit=""
-   RET style
+   RET style potion
 BEGIN
    TO_UPPER filename
+   potion=0
    PATCH_IF "%class%" STRING_EQUAL_CASE "thief" BEGIN
       SPRINT style th
+	  potion=1
    END ELSE BEGIN
       PATCH_MATCH "%race%" WITH
       bear beetle cat chicken dog golem rabbit shrieker
@@ -155,19 +157,32 @@ BEGIN
             SPRINT style ho // holder
          END
       END
-      beholder dragon elf ettercap fairy genie goblin 
-      gnome halfling half_elf kobold lich mephit mind_flayer
-      myconid rakshasa svirfneblin vampire yuanti hobgoblin
+      beholder dragon ettercap fairy genie goblin 
+      gnome kobold lich mephit mind_flayer
+      myconid rakshasa svirfneblin vampire 
       BEGIN
           SPRINT style sm // smart
       END
-      dwarf elemental minotaur orc lizardman umberhulk BEGIN
+	  elf halfling half_elf mind_flayer yuanti hobgoblin 
+	  BEGIN
+		SPRINT style sm // smart
+		potion=1
+	  END
+	  dwarf BEGIN
+		SPRINT style br // brave
+		potion=1
+	  END
+      elemental minotaur orc lizardman umberhulk BEGIN
           SPRINT style br // brave
       END
       ettin gnoll lycanthrope ogre shambling_mound salamander troll wyvern harpy BEGIN
           SPRINT style sv // savage
       END
-      demonic sahuagin spectral_undead BEGIN
+	  sahuagin BEGIN
+		SPRINT style ss
+		potion=1
+	  END
+      demonic spectral_undead BEGIN
          SPRINT style ss // savage/smart
       END
       spider BEGIN
@@ -225,6 +240,7 @@ BEGIN
          END
          DEFAULT
             SPRINT style sm
+			potion=1
          END
       END
       DEFAULT
@@ -331,7 +347,10 @@ BEGIN
     LPF CRE_read_class RET class=value END
     LPF CRE_read_kit RET kit=value END
     LPF assign_genai_combat_type INT_VAR has_ranged STR_VAR race RET combat_type END
-    LPF assign_genai_style STR_VAR filename race class kit RET style END
+    LPF assign_genai_style STR_VAR filename race class kit RET style potion END
+	PATCH_IF potion BEGIN
+		LPF log_this INT_VAR repeat=0 STR_VAR file=creatures_with_potions.txt arguments="%SOURCE_RES%" END
+	END
     LPF assign_genai_kit STR_VAR filename class kit RET kit_entry END
     SPRINT script "dw%combat_type%%style%%kit_entry%"
 END
@@ -366,7 +385,7 @@ BEGIN
     END
     PATCH_IF match BEGIN
           INNER_ACTION BEGIN
-             COPY_EXISTING "%filename%.cre" "%workspace%"
+             COPY_EXISTING - "%filename%.cre" nowhere
                 LPF identify_weapon_preferences STR_VAR filename RET has_ranged END    
                 LPF assign_genai_script INT_VAR has_ranged STR_VAR filename RET script_base=script END
              BUT_ONLY
@@ -374,7 +393,6 @@ BEGIN
           PATCH_IF VARIABLE_IS_SET $combat_guard_list("%script_old%") BEGIN
              SPRINT combat_guard $combat_guard_list("%script_old%")
              SPRINT scriptname combat_guard_temp
-             PATCH_PRINT "%script_old% %combat_guard%"
           END ELSE BEGIN
              SPRINT combat_guard ""
              SPRINT scriptname "%script_base%"
@@ -395,7 +413,7 @@ BEGIN
                     INNER_ACTION BEGIN
                        COPY "%data_loc%/genai_scripts_built.txt" "%workspace%"
                             REPLACE_EVALUATE 
-                            "%script_old%-%script_base%---\(.*\)"
+                            "%script_old%-%script_base%---\([^%WNL%%MNL%%LNL%]*\)"
                             BEGIN
                               SPRINT script "%MATCH1%"
                             END
@@ -416,14 +434,14 @@ BEGIN
                      LAF extend STR_VAR script top="%script_old%" location="iwd/top" END
                   END ELSE BEGIN
                      ACTION_IF FILE_EXISTS "%workspace%/iwd_scripts/top/%script_old%" BEGIN
-                         LAF extend STR_VAR script top="%script_old%" locabs="%workspace%/iwd_scripts/top" END
+                         LAF extend STR_VAR script top="%script_old%" path="%workspace%/iwd_scripts/top" END
                      END
                   END
                   ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%component_loc%/iwd/bottom/%script_old%" BEGIN
                      LAF extend STR_VAR script bottom="%script_old%" location="iwd/bottom" END
                   END ELSE BEGIN
                      ACTION_IF FILE_EXISTS "%workspace%/iwd_scripts/bottom/%script_old%" BEGIN
-                         LAF extend STR_VAR script top="%script_old%" locabs="%workspace%/iwd_scripts/bottom" END
+                         LAF extend STR_VAR script top="%script_old%" path="%workspace%/iwd_scripts/bottom" END
                      END
                   END
                  END
@@ -448,9 +466,16 @@ DEFINE_ACTION_MACRO read_in_iwd_genai_scripts BEGIN
 
      ACTION_IF !VARIABLE_IS_SET iwd_genai_scripts_read_in BEGIN
            OUTER_SPRINT iwd_genai_scripts_read_in ""
-           LAF read_in_list STR_VAR file=genai_scripts_impure.txt force_case=lower locabs="%data_loc%" RET_ARRAY genai_scripts_impure=array END
-           LAF read_in_list STR_VAR file=genai_scripts_pure.txt force_case=lower locabs="%data_loc%" RET_ARRAY genai_scripts_pure=array END
-           LAF read_in_assoc_array STR_VAR file=combat_guard_list.txt force_case=lower location=iwd RET_ARRAY combat_guard_list=array END
+           LAF check_ini STR_VAR ini=assume_unmodified_iwd_scripts RET value END
+		   ACTION_IF value BEGIN
+			   LAF read_in_list STR_VAR file=genai_scripts_impure.txt force_case=lower location=iwd RET_ARRAY genai_scripts_impure=array END
+			   LAF read_in_list STR_VAR file=genai_scripts_pure.txt force_case=lower location=iwd RET_ARRAY genai_scripts_pure=array END
+           END ELSE BEGIN
+			   LAF read_in_list STR_VAR file=genai_scripts_impure.txt force_case=lower locabs="%data_loc%" RET_ARRAY genai_scripts_impure=array END
+			   LAF read_in_list STR_VAR file=genai_scripts_pure.txt force_case=lower locabs="%data_loc%" RET_ARRAY genai_scripts_pure=array END
+		   
+		   END
+		   LAF read_in_assoc_array STR_VAR file=combat_guard_list.txt force_case=lower location=iwd RET_ARRAY combat_guard_list=array END
            
            LAF read_in_list STR_VAR file=genai_scripts_pure_extra.txt force_case=lower location=iwd RET_ARRAY genai_scripts_pure_extra=array END
            ACTION_PHP_EACH genai_scripts_pure_extra AS key=>value BEGIN

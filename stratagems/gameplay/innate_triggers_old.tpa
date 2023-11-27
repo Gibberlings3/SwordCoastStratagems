@@ -1,0 +1,230 @@
+LAF include STR_VAR locbase=caster_shared file=caster_shared.tph END
+DEFINE_ACTION_FUNCTION innate_triggers BEGIN
+
+   // for Contingency, make a shell spell that casts the original 
+   // (this keeps the original as a Wizard spell, which avoids screwyness for its caster
+   // level with MC/DC characters)
+   
+   // We need to name the shell, and remove the name on the original
+
+   MAKE_PATCH
+      delete_ability=>"ability_min_level>1"
+      delete_effect=>null
+      patch_ability_inline=>"casting_time=>0"
+      add_effect_inline=>"opcode=>146 target=>2 parameter2=>0 timing=>1 resource=>%WIZARD_CONTINGENCY%"
+   END
+   LAF clone_spell STR_VAR spell="%WIZARD_CONTINGENCY%=>dw#cnss" edits=patch_data END
+   LAF edit_spell STR_VAR spell="%WIZARD_CONTINGENCY%" editstring="name1_string=>~-1~" END
+
+   ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_trigger_array BEGIN
+      CONTINGENCY=>null
+      CHAIN_CONTINGENCY=>null
+      MINOR_SEQUENCER=>dw#msicb
+      SPELL_SEQUENCER=>dw#ssicb
+      SPELL_TRIGGER=>dw#sticb
+   END
+
+   // rename sequencers
+
+   OUTER_SPRINT prepare_string @1004
+   ACTION_FOR_EACH spell IN SPELL_SEQUENCER SPELL_TRIGGER MINOR_SEQUENCER BEGIN
+       OUTER_SPRINT spell "WIZARD_%spell%"
+       COPY_EXISTING "%%spell%%.spl" override
+           LPF patch_text_entry INT_VAR loc=0x8 STR_VAR function=prepend_string arguments="%prepare_string%" END
+       BUT_ONLY
+   END
+   
+   // main spell edit; also build strings for kit edit
+
+   LAM read_in_spells_per_level
+   OUTER_SPRINT kit_edit_mage ""
+   OUTER_SPRINT kit_edit_bard ""
+   OUTER_SPRINT scroll_list ""
+   OUTER_SET desc_ind=0
+   ACTION_PHP_EACH spell_trigger_array AS spell=>icon BEGIN
+      OUTER_SPRINT spell "WIZARD_%spell%"
+      OUTER_SPRINT resref EVAL "%%spell%%"
+      OUTER_SET level=EVAL "%%spell%_LEVEL%"  + 1 // because of how we code level, 0-8
+     
+      // remove it from sorcerer and wizard spell lists
+      ACTION_IF enhanced_edition BEGIN
+          APPEND "hidespl.2da" "%resref% 1 0 0"
+      END ELSE BEGIN
+          APPEND "hidespl.2da" "%resref% ****"
+      END
+      ACTION_IF "%spell%" STRING_EQUAL_CASE WIZARD_CONTINGENCY BEGIN
+         OUTER_SPRINT spell dw#cnss
+         OUTER_SPRINT resref dw#cnss
+      END
+      // for sequencers, add the modified icons
+      ACTION_IF "%icon%" STRING_COMPARE_CASE null BEGIN
+         LAF install STR_VAR file="%icon%.bam" location=resource END
+         OUTER_SPRINT icon_patch "ability_icon=>%icon%"
+      END ELSE BEGIN
+         OUTER_SPRINT icon_patch ""
+      END
+      // make the spell itself innate
+      LAF edit_spell STR_VAR spell editstring="spell_type_num=>4 not_in_combat=>1 patch_ability_inline=>~ability_icon_loc=>4 %icon_patch%~" END
+
+      // make a spell to grant it and record getting it // we have to do it this way, because memorised spells in the SPWI spellspace seem to get stripped away in the character-creation process.
+      OUTER_SET desc_ind +=1
+      OUTER_SPRINT desc_spell "dwsqds%desc_ind%"
+      COPY_EXISTING "%resref%.spl" override
+          READ_STRREF 0x8 name
+      BUT_ONLY
+      OUTER_SPRINT gain_abil_string @1005
+      OUTER_SET strref=RESOLVE_STR_REF ("%gain_abil_string%: %name%")
+      MAKE_PATCH
+         add_basic_ability=>null
+         add_effect_inline=>"opcode=>139 target=>2 timing=>1 parameter1=>%strref%"
+         add_effect_inline'=>"opcode=>171 target=>2 timing=>4 duration=>1 resource=>%resref%"
+      END
+      LAF make_spell STR_VAR spell="%desc_spell%" edits=patch_data END
+
+/*
+      // purely for aesthetic reasons...
+
+      ACTION_MATCH "%spell%" WITH
+      WIZARD_SPELL_SEQUENCER WIZARD_SPELL_TRIGGER BEGIN 
+         MAKE_PATCH
+            add_effect_inline=>"opcode=>172 target=>2 timing=>4 duration=>1 resource=>%WIZARD_CONTINGENCY%"
+            add_effect_inline'=>"opcode=>171 target=>2 timing=>4 duration=>1 resource=>%WIZARD_CONTINGENCY% at_end=>1"
+         END
+         LAF edit_spell STR_VAR spell="%desc_spell%" edits=patch_data END
+      END
+      DEFAULT END
+*/
+      // work out what level to apply it
+      OUTER_SET clev = $spell_level_to_caster_level("mage" "%level%")
+   OUTER_SPRINT kit_edit_mage "%kit_edit_mage% apply_power=>~%desc_spell% %clev%~"
+      ACTION_IF VARIABLE_IS_SET $spell_level_to_caster_level("bard" "%level%") BEGIN
+         OUTER_SET clev = $spell_level_to_caster_level("bard" "%level%")
+         OUTER_SPRINT kit_edit_bard "%kit_edit_bard% apply_power=>~%desc_spell% %clev%~"
+      END
+   END
+
+	// tidy up
+	
+	COPY_EXISTING "hidespl.2da" override PRETTY_PRINT_2DA BUT_ONLY
+
+
+   // patch innates into kits and update the class text to describe the new innate powers
+
+  // mages
+   OUTER_SPRINT seq_desc_string @1000
+   LAF edit_all_kits STR_VAR parent_class=mage editstring="%kit_edit_mage% patch_description_strref=>seq_desc" END
+   ACTION_IF enhanced_edition BEGIN
+      LAF edit_kit STR_VAR kit=dragon_disciple editstring="%kit_edit_mage% patch_description_strref=>seq_desc" END
+   END
+
+  // bards
+
+  OUTER_SPRINT seq_desc_string @1001
+  ACTION_IF VARIABLE_IS_SET $spell_level_to_caster_level("bard" "7") BEGIN
+     OUTER_SPRINT temp @1002
+     OUTER_SPRINT seq_desc_string "%seq_desc_string%%temp%"
+  END
+  ACTION_IF VARIABLE_IS_SET $spell_level_to_caster_level("bard" "8") BEGIN
+     OUTER_SPRINT temp @1003
+     OUTER_SPRINT seq_desc_string "%seq_desc_string%%temp%"
+  END
+   LAF edit_all_kits STR_VAR parent_class=bard editstring="%kit_edit_bard% patch_description_strref=>seq_desc" END
+
+   // get rid of all store copies
+
+   COPY_EXISTING_REGEXP ".*\.sto" override
+	PATCH_TRY
+       PHP_EACH spell_trigger_array AS spell=>discard BEGIN
+            SPRINT spell "WIZARD_%spell%"
+            SPRINT scroll EVAL "%%spell%_SCROLL%"
+            REMOVE_STORE_ITEM "%scroll%"
+       END
+	WITH DEFAULT
+			LPF regexp_warning STR_VAR parent=innate_triggers END
+	END
+   BUT_ONLY
+
+  // get rid of all other copies on my install
+
+  ACTION_IF is_bg2 BEGIN
+     LAF edit_area STR_VAR area=ar1202 editstring="delete_item=>~item_resource=scrl6p~" END
+     ACTION_IF enhanced_edition BEGIN
+        LAF edit_creature STR_VAR creature=ohbjoker editstring="remove_items=>~scrl8l scrl9d~" END
+        LAF edit_area STR_VAR area=oh6500 editstring="delete_item=>~item_resource=scrl9d~" END
+     END
+     LAF edit_area STR_VAR area="ar0705 ar1103" editstring="delete_item=>~item_resource=scrl7u~" END
+     LAF edit_creature STR_VAR creature=vvshad1 editstring="remove_items=>scrl7u" END
+
+     COPY_EXISTING "rndscrol.2da" override
+          REPLACE_TEXTUALLY "scrl8l" "scrl8g" // sequencer->ruby ray
+          REPLACE_TEXTUALLY "scrl9d" "scrl9a" // trigger->pierce shield
+     BUT_ONLY
+  END
+  ACTION_IF is_bg1 BEGIN
+     LAF edit_creature INT_VAR tv=1 STR_VAR creature=alai editstring="remove_items=>scrl6p" END
+     ACTION_IF FILE_EXISTS_IN_GAME "bd0130.are" BEGIN
+        LAF edit_area STR_VAR area=bd0130 editstring="delete_item=>~item_resource=scrl6p~" END
+     END
+  END
+  
+  // copy some other scroll over the sequencer ones, in case a mod adds them
+  
+  ACTION_DEFINE_ASSOCIATIVE_ARRAY spell_scroll_swap BEGIN
+      CONTINGENCY=>PROTECTION_FROM_MAGIC_WEAPONS
+      CHAIN_CONTINGENCY=>SPELL_STRIKE
+      SPELL_SEQUENCER=>RUBY_RAY_OF_REVERSAL
+      SPELL_TRIGGER=>IMPROVED_MANTLE
+      MINOR_SEQUENCER=>SECRET_WORD
+  END
+  ACTION_PHP_EACH spell_scroll_swap AS old=>new BEGIN
+     OUTER_SPRINT old_ids "WIZARD_%old%"
+     OUTER_SPRINT old_scroll EVAL "%%old_ids%_SCROLL%"
+     OUTER_SPRINT new_ids "WIZARD_%new%"
+     OUTER_SPRINT new_scroll EVAL "%%new_ids%_SCROLL%"
+     ACTION_IF FILE_EXISTS "%new_scroll%.itm" BEGIN
+          COPY_EXISTING "%new_scroll%.itm" "override/%old_scroll%.itm"
+     END
+  END
+  
+  // handle IU compatibility (CamDawg fix)
+  
+  LAF cd_item_upgrade_compat END
+
+
+END
+
+// this microfunction violates encapsulation, as it reaches out to pick up seq_desc_string
+
+  DEFINE_ACTION_FUNCTION seq_desc
+     STR_VAR input=""
+     RET output
+  BEGIN
+     ACTION_IF INDEX ("%seq_desc_string%" "%input%")>=0 BEGIN
+        OUTER_SPRINT output "%input%"
+     END ELSE BEGIN
+        OUTER_SPRINT output "%input%%seq_desc_string%"
+     END
+  END
+  
+ // There is no real reason for this to be a function, but there is a principle at stake - DW
+ 
+DEFINE_ACTION_FUNCTION cd_item_upgrade_compat BEGIN
+
+// this violates every ethos of David's being: straight tp2 code
+// I'm sure it will be rewritten to pass through 18 sfo functions across 6 different libraries
+// love ya David :)
+ACTION_IF (((MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~0~) OR    // soa item upgrades, wes-style
+            (MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~1~) OR    // tob item upgrades, wes-style
+            (MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~10~) OR   // soa item upgrades, bg2-style
+            (MOD_IS_INSTALLED ~itemupgrade/itemupgrade.tp2~ ~11~)) AND // tob item upgrades, bg2-style
+            (FILE_EXISTS ~itemupgrade/bcs/scs_compat.baf~)) THEN BEGIN  // sanity check in case they downloaded an old IU 
+
+  ACTION_FOR_EACH area IN ar0334 ar4500 BEGIN
+    ACTION_IF FILE_EXISTS_IN_GAME ~%area%.are~ BEGIN
+      EXTEND_BOTTOM ~%area%.bcs~ ~itemupgrade/bcs/scs_compat.baf~ // adds an area var for crom and cespy to check in-game (crom has no script)
+    END
+  END
+
+END // end of ACTION_IF
+
+END // end of function

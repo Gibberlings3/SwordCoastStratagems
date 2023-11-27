@@ -41,7 +41,7 @@ in both cases. (If k is missing, we whine unless allow_missing=1.) The function 
 do, the spl will be read into the struct 'm' beforehand and written back afterward.</p>
 <p>Alternately, spl can be a list of strings k..., in which case k.spl is copied to k.spl as above.</p>
 <p>If the dest file is an ids entry (determined heuristically unless is_ids is set) then we add it to spell.ids, use it as a resref, 
-add icons in the standard format (unless standard_icons=1) and (unless create_scroll=0) build a scroll. In this case, we use icon_path, icon_location, icon_locbase (if set)
+add icons in the standard format (unless standard_icons=0) and (unless create_scroll=0) build a scroll. In this case, we use icon_path, icon_location, icon_locbase (if set)
 to determine where the spell icons are, and copy them over if they're in the format <icon_base_name>[ABC].bam. (If icon_base_name is unset, we use the ids name.)</p>
 <p>If tv=1, we prepend "_" onto each k and v on BGTUTU installs. </p>
 <p>If debug=1, we try to debug the anonymous function to detect any nonexistent field writes.</p>
@@ -51,12 +51,15 @@ to determine where the spell icons are, and copy them over if they're in the for
 */
 
 DEFINE_ACTION_FUNCTION spl_copy
-	INT_VAR tv=0
+	INT_VAR tv=0//boolean
 			allow_missing=0//boolean
 			debug=1//boolean
 			is_ids="-1"//boolean
 			standard_icons=1//boolean
 			create_scroll=1//boolean
+			overwrite=0//boolean
+			overwrite_on_mismatch=0//boolean
+			force_extended=0//boolean
 	STR_VAR spl=""
 			path=""
 			location=""
@@ -75,7 +78,6 @@ DEFINE_ACTION_FUNCTION spl_copy
 		scroll_resref
 BEGIN
 	OUTER_WHILE "%spl%" STR_CMP "" BEGIN
-		PRINT "%spl%"
 		OUTER_SET is_ids_here=is_ids
 		ACTION_IF INDEX ("=>" "%spl%")>=0 BEGIN
 			LAF return_first_pair STR_VAR list="%spl%" RET key value spl=list END
@@ -93,35 +95,75 @@ BEGIN
 				LPF struct_get STR_VAR arguments=level RET level=value END
 				LPF struct_get STR_VAR arguments=type RET type=value END
 			BUT_ONLY
-			LAF spl_resolve_ids INT_VAR level STR_VAR type ids RET spell_resref=resref END
-			LAF sfo_path STR_VAR path location locbase RET path END
-			ACTION_IF "%path%" STR_EQ "" BEGIN
-				OUTER_SPRINT path override
+			LAF spl_resolve_ids INT_VAR level force_extended STR_VAR type ids RET spell_resref=resref mismatch already_present lua_line_needed END
+			OUTER_SET proceed=1
+			ACTION_IF already_present BEGIN
+				ACTION_IF overwrite BEGIN
+					LAF warning STR_VAR warning="%spl% is already present; overwriting." END
+				END ELSE
+				ACTION_IF mismatch BEGIN
+					ACTION_IF overwrite_on_mismatch BEGIN
+						LAF spl_resolve_ids INT_VAR level force_extended replace_on_mismatch=1 STR_VAR type ids RET spell_resref=resref END
+						LAF warning STR_VAR warning="%spl% is already present, but at the wrong level/the wrong type; overwriting." END
+					END ELSE BEGIN
+						LAF warning STR_VAR warning="%spl% is already present, although at at the wrong level/the wrong type; aborting spl_copy." END	
+						OUTER_SET proceed=0
+					END				
+				END ELSE BEGIN
+					LAF warning STR_VAR warning="%spl% is already present; aborting spl_copy." END
+					OUTER_SET proceed=0
+				END
 			END
-			COPY "%workspace%/sfo_temp_spl.spl" "%path%/%spell_resref%.spl"
-				PATCH_IF standard_icons BEGIN
-					LPF struct_read RET_ARRAY m=struct END
-					SPRINT m_icon "%spell_resref%C"
-					LPF struct_alter STR_VAR type=ab struct=m patch="s_icon:=%spell_resref%B" RET_ARRAY m=struct END
-					LPF struct_write STR_VAR struct=m END
+			ACTION_IF proceed BEGIN
+				LAF sfo_path STR_VAR path location locbase RET path END
+				ACTION_IF "%path%" STR_EQ "" BEGIN
+					OUTER_SPRINT path override
 				END
-				REPLACE_TEXTUALLY "DW_THIS" "%spell_resref%" (7)
-			// end of copy
-			// get icons if they're there
-			ACTION_IF "%icon_path%%icon_location%%icon_locbase%" STR_CMP "" BEGIN
-				ACTION_IF "%icon_base_name%" STR_EQ "" BEGIN
-					OUTER_SPRINT icon_base_name "%ids%"
-				END
-				LAF sfo_path STR_VAR path="%icon_path%" location="%icon_location%" locbase="%icon_locbase%" RET icon_path=path END
-				ACTION_FOR_EACH letter IN a b c BEGIN
-					ACTION_IF FILE_EXISTS "%icon_path%/%icon_base_name%%letter%.bam" BEGIN
-						COPY "%icon_path%/%icon_base_name%%letter%.bam" "override/%spell_resref%%letter%.bam"
+				COPY "%workspace%/sfo_temp_spl.spl" "%path%/%spell_resref%.spl"
+					PATCH_IF standard_icons BEGIN
+						LPF struct_read RET_ARRAY m=struct END
+						SPRINT m_icon "%spell_resref%C"
+						LPF struct_alter STR_VAR type=ab struct=m patch="s_icon:=%spell_resref%B" RET_ARRAY m=struct END
+						LPF struct_write STR_VAR struct=m END
 					END
+					REPLACE_TEXTUALLY "DW-THIS" "%spell_resref%" (7)
+					PATCH_IF lua_line_needed BEGIN
+						LPF make_extended_spell_line INT_VAR add_to_clab=1 STR_VAR resref="%spell_resref%" RET line lua_array END
+						INNER_ACTION BEGIN
+							APPEND "m_dw_sxd.lua" "%lua_array%[%level%].%spell_resref%=%line%%WNL%" KEEP_CRLF
+						END
+					END
+				// end of copy
+				// get icons if they're there
+				ACTION_IF "%icon_path%%icon_location%%icon_locbase%" STR_CMP "" BEGIN
+					ACTION_IF "%icon_base_name%" STR_EQ "" BEGIN
+						OUTER_SPRINT icon_base_name "%ids%"
+					END
+					LAF sfo_path STR_VAR path="%icon_path%" location="%icon_location%" locbase="%icon_locbase%" RET icon_path=path END
+					ACTION_FOR_EACH letter IN a b c BEGIN
+						ACTION_IF FILE_EXISTS "%icon_path%/%icon_base_name%%letter%.bam" BEGIN
+							COPY "%icon_path%/%icon_base_name%%letter%.bam" "override/%spell_resref%%letter%.bam"
+						END
+					END
+				END ELSE
+				ACTION_IF "%icon_base_name%" STR_CMP "" BEGIN
+					WARN "spl_copy WARNING (%spl%): you have specified icon_base_name but have not told sfo where to find the icon"
 				END
+			END ELSE BEGIN
+				OUTER_SPRINT spell_resref ""
+				OUTER_SPRINT scroll_resref ""
+				OUTER_SPRINT value ""
+				OUTER_SPRINT scroll ""				
 			END
 			
 			// make scroll
-			LAF spl_make_scroll STR_VAR spell_resref RET scroll_resref END
+			ACTION_MATCH "%spell_resref%" WITH
+			"SPPR.*" "SPWI.*" BEGIN
+				LAF spl_make_scroll STR_VAR spell_resref RET scroll_resref END
+			END
+			DEFAULT
+				OUTER_SPRINT scroll_resref ""
+			END
 			// set outputs
 			OUTER_SPRINT value "%spell_resref%"
 			OUTER_SPRINT scroll "%scroll_resref%"
@@ -144,6 +186,10 @@ do, the spl will be read into the struct 'm' beforehand and written back afterwa
 <p>If spl is an ids entry (determined heuristically unless is_ids is set) then we add it to spell.ids, use it as a resref, 
 add icons in the standard format (unless standard_icons=1) and (unless create_scroll=0) build a scroll.</p>
 <p>If debug=1, we try to debug the anonymous function to detect any nonexistent field writes.</p>
+<p>If force_extended=1, we add the spell to the extended namespace even if there's space in standard namespace.</p>
+<p>If overwrite=1, we install the spell if it's already present, overwriting any previous copy (or giving that previous copy a new
+placeholder IDS if it's at the wrong level/of the wrong type). If overwrite=0 and overwrite_on_mismatch=1, we overwrite only if there's a 
+level or type mismatch. If overwrite_always=0 and overwrite_on_mismatch=0, we never overwrite. 
 <p>Returns the resref of the spell, and its scroll if any.}
 
 */
@@ -154,6 +200,9 @@ DEFINE_DIMORPHIC_FUNCTION spl_make
 			is_ids="-1"//boolean
 			standard_icons=1//boolean
 			create_scroll=1//boolean
+			force_extended=0//boolean
+			overwrite=0//boolean
+			overwrite_on_mismatch=0//boolean
 	STR_VAR spl=""
 			edits=""//function
 			location=""
@@ -172,6 +221,9 @@ BEGIN
 		ACTION_IF VARIABLE_IS_SET "%spl%" BEGIN
 			OUTER_SPRINT spl EVAL "%%spl%%"
 		END
+		ACTION_IF INDEX ("%" "%spl%")>=0 BEGIN
+			LAF warning STR_VAR warning="make_spl called to create spell %spl%; probably an unresolved string" END
+		END
 		ACTION_IF is_ids<0 BEGIN
 			OUTER_SET is_ids=(STRING_LENGTH "%spl%")>8
 			OUTER_SET len=STRING_LENGTH "%spl%"
@@ -182,37 +234,72 @@ BEGIN
 				LPF struct_get STR_VAR arguments=level RET level=value END
 				LPF struct_get STR_VAR arguments=type RET type=value END
 			BUT_ONLY
-			LAF spl_resolve_ids INT_VAR level STR_VAR type ids="%spl%" RET spell_resref=resref END
-			LAF sfo_path STR_VAR path location locbase RET path END
-			ACTION_IF "%path%" STR_EQ "" BEGIN
-				OUTER_SPRINT path override
+			LAF spl_resolve_ids INT_VAR level force_extended STR_VAR type ids="%spl%" RET spell_resref=resref mismatch already_present lua_line_needed END
+			OUTER_SET proceed=1
+			ACTION_IF already_present BEGIN
+				ACTION_IF overwrite BEGIN
+					LAF warning STR_VAR warning="%spl% is already present; overwriting." END
+				END ELSE
+				ACTION_IF mismatch BEGIN
+					ACTION_IF overwrite_on_mismatch BEGIN
+						LAF spl_resolve_ids INT_VAR level force_extended replace_on_mismatch=1 STR_VAR type ids="%spl%" RET spell_resref=resref END
+						LAF warning STR_VAR warning="%spl% is already present, but at the wrong level/the wrong type; overwriting." END
+					END ELSE BEGIN
+						LAF warning STR_VAR warning="%spl% is already present, although at at the wrong level/the wrong type; aborting spl_make." END	
+						OUTER_SET proceed=0
+					END				
+				END ELSE BEGIN
+					LAF warning STR_VAR warning="%spl% is already present; aborting spl_make." END
+					OUTER_SET proceed=0
+				END
 			END
-			COPY "%workspace%/sfo_temp_spl.spl" "%path%/%spell_resref%.spl"
-				PATCH_IF standard_icons BEGIN
-					LPF struct_read RET_ARRAY m=struct END
-					SPRINT m_icon "%spell_resref%C"
-					LPF struct_alter STR_VAR type=ab struct=m patch="s_icon:=%spell_resref%B" RET_ARRAY m=struct END
-					LPF struct_write STR_VAR struct=m END
+			ACTION_IF proceed BEGIN
+				LAF sfo_path STR_VAR path location locbase RET path END
+				ACTION_IF "%path%" STR_EQ "" BEGIN
+					OUTER_SPRINT path override
 				END
-				REPLACE_TEXTUALLY "DW_THIS" "%spell_resref%" (7)
-			// end of copy
-			// get icons if they're there
-			ACTION_IF "%icon_path%%icon_location%%icon_locbase%" STR_CMP "" BEGIN
-				ACTION_IF "%icon_base_name%" STR_EQ "" BEGIN
-					OUTER_SPRINT icon_base_name "%ids%"
-				END
-				LAF sfo_path STR_VAR path="%icon_path%" location="%icon_location%" locbase="%icon_locbase%" RET icon_path=path END
-				ACTION_FOR_EACH letter IN a b c BEGIN
-					ACTION_IF FILE_EXISTS "%icon_path%/%icon_base_name%%letter%.bam" BEGIN
-						COPY "%icon_path%/%icon_base_name%%letter%.bam" "override/%spell_resref%%letter%.bam"
+				COPY "%workspace%/sfo_temp_spl.spl" "%path%/%spell_resref%.spl"
+					PATCH_IF standard_icons BEGIN
+						LPF struct_read RET_ARRAY m=struct END
+						SPRINT m_icon "%spell_resref%C"
+						LPF struct_alter STR_VAR type=ab struct=m patch="s_icon:=%spell_resref%B" RET_ARRAY m=struct END
+						LPF struct_write STR_VAR struct=m END
+					END
+					REPLACE_TEXTUALLY "DW-THIS" "%spell_resref%" (7)
+					PATCH_IF lua_line_needed BEGIN
+						LPF make_extended_spell_line INT_VAR add_to_clab=1 STR_VAR resref="%spell_resref%" RET line lua_array END
+						INNER_ACTION BEGIN
+							APPEND "m_dw_sxd.lua" "%lua_array%[%level%].%spell_resref%=%line%%WNL%" KEEP_CRLF
+						END
+					END
+				// end of copy
+				// get icons if they're there
+				ACTION_IF "%icon_path%%icon_location%%icon_locbase%" STR_CMP "" BEGIN
+					ACTION_IF "%icon_base_name%" STR_EQ "" BEGIN
+						OUTER_SPRINT icon_base_name "%ids%"
+					END
+					LAF sfo_path STR_VAR path="%icon_path%" location="%icon_location%" locbase="%icon_locbase%" RET icon_path=path END
+					ACTION_FOR_EACH letter IN a b c BEGIN
+						ACTION_IF FILE_EXISTS "%icon_path%/%icon_base_name%%letter%.bam" BEGIN
+							COPY "%icon_path%/%icon_base_name%%letter%.bam" "override/%spell_resref%%letter%.bam"
+						END
 					END
 				END
+				ACTION_MATCH "%spell_resref%" WITH
+				"SPPR.*" "SPWI.*" BEGIN
+					LAF spl_make_scroll STR_VAR spell_resref RET scroll_resref END
+				END
+				DEFAULT
+					OUTER_SPRINT scroll_resref ""
+				END
+				OUTER_SPRINT value "%spell_resref%"
+				OUTER_SPRINT scroll "%scroll_resref%"
+			END ELSE BEGIN
+				OUTER_SPRINT spell_resref ""
+				OUTER_SPRINT scroll_resref ""
+				OUTER_SPRINT value ""
+				OUTER_SPRINT scroll ""
 			END
-			LAF spl_make_scroll STR_VAR spell_resref RET scroll_resref END
-			OUTER_SPRINT value "%spell_resref%"
-			OUTER_SPRINT scroll "%scroll_resref%"
-			
-		
 		END ELSE BEGIN
 			LAF struct_make INT_VAR debug STR_VAR ext=spl file="%spl%" edits path location locbase END
 			OUTER_SPRINT spell_resref "%spl%"
@@ -226,59 +313,200 @@ END
 
 document{spl_resolve_ids}
 {
-Given an ids entry (WIZARD_THIS_SPELL, etc) find its id number, if necessary adding it to spell.ids. Need to supply the spell type and the level.
+Given an ids entry (WIZARD_THIS_SPELL, etc) find its id resref (or dw_ext_spell resref), if necessary adding it to spell.ids. Need to supply the spell type and the level.</p>
+
+<p>On EE, if full, or if force_extended=1, add it to the extended namespace instead.</p>
+
+<p>If it's already present, return already_present=1. Check if its level and type match the requested level and type. If not, return 'mismatch=1' (otherwise, return 0). If 'replace_on_mismatch' is set to 1,
+instead replace the old id with a placeholder and add the new id in the correct place (and return mismatch=0, already_present=0).
 }
 
 */
 
 DEFINE_DIMORPHIC_FUNCTION spl_resolve_ids
-	INT_VAR level=""
+	INT_VAR level=0
+			force_extended=0//boolean
+			replace_on_mismatch=0//boolean
 	STR_VAR ids=""
-			type=""//[wizard|priest|innate|class|1|2|3|4]
+			type=""//[wizard|priest|innate|class|1|2|3|4|5]
 	RET resref
+		mismatch
+		already_present
+		lua_line_needed
 BEGIN
 	// see if it's already in spell.ids
+	CLEAR_IDS_MAP
 	OUTER_SET ids_int=IDS_OF_SYMBOL ("spell" "%ids%")
 	ACTION_IF ids_int<0 BEGIN
-		ACTION_MATCH "%type%" WITH
-		wizard 1 BEGIN
-			OUTER_SET base=2000
-			OUTER_SET delta=49
+		ACTION_IF FILE_EXISTS "%data_loc_shared%/dw_ext_spell.ids" BEGIN
+			LAF array_read STR_VAR file=dw_ext_spell.ids path="%data_loc_shared%" RET_ARRAY ext_spell_array=array END
+			LAF array_read INT_VAR backwards=1 STR_VAR file=dw_ext_spell.ids path="%data_loc_shared%" RET_ARRAY ext_spell_array_backwards=array END
+			LAF array_contains STR_VAR array=ext_spell_array_backwards key="%ids%" RET in_ext=value END
+		END ELSE BEGIN
+			OUTER_SET in_ext=0
 		END
-		priest 2 BEGIN
-			OUTER_SET base=1000
-			OUTER_SET delta=49
-		END
-		innate 3 4 BEGIN
-			OUTER_SET base=3000
-			OUTER_SET delta=999
-		END
-		class BEGIN
-			OUTER_SET base=4000
-			OUTER_SET delta=999
-		END
-		DEFAULT
-			WARN "type undeclared in spl_resolve_ids; assuming WIZARD"
-			OUTER_SET base=2000
-		END
-		OUTER_SET min=base+level*100+1
-		OUTER_SET max=min+delta
-		OUTER_SET ids_int=min
-		LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
-		OUTER_WHILE RESOURCE_CONTAINS "spell.ids" "%ids_int%" || FILE_EXISTS_IN_GAME "%spell_res%.spl" BEGIN
-			OUTER_SET ids_int +=1
-			LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
-		END
-		APPEND spell.ids "%ids_int%%TAB%%ids%" KEEP_CRLF
-		ACTION_IF ids_int>max BEGIN
-			LAF warning STR_VAR warning="ids entry %ids_int% for %ids% may be outside permitted range" END
-		END
-		ACTION_IF ids_int>=0 BEGIN
-			LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET resref=spell_res END
-			LAF ids_sort STR_VAR idsfile=spell END
+		ACTION_IF !in_ext BEGIN
+			OUTER_SET mismatch=0
+			OUTER_SET already_present=0
+			ACTION_IF !force_extended BEGIN
+				// main adder to spell.ids
+				ACTION_MATCH "%type%" WITH
+				wizard 1 BEGIN
+					OUTER_SET base=2000
+					OUTER_SET delta=enhanced_edition?98:48
+				END
+				priest 2 BEGIN
+					OUTER_SET base=1000
+					OUTER_SET delta=enhanced_edition?98:48
+				END
+				innate 3 4 BEGIN
+					OUTER_SET base=3000
+					OUTER_SET delta=898
+					OUTER_SET level=1
+				END
+				class BEGIN
+					OUTER_SET base=4000
+					OUTER_SET delta=898
+					OUTER_SET level=1
+				END
+				DEFAULT
+					WARN "type undeclared in spl_resolve_ids; assuming WIZARD"
+					OUTER_SET base=2000
+					OUTER_SET delta=enhanced_edition?98:48
+				END
+				OUTER_SET min=base+level*100+1
+				OUTER_SET max=min+delta
+				OUTER_SET ids_int=min
+				LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
+				OUTER_WHILE RESOURCE_CONTAINS "spell.ids" "%ids_int%" || FILE_EXISTS_IN_GAME "%spell_res%.spl" BEGIN
+					OUTER_SET ids_int +=1
+					LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
+				END
+				ACTION_IF ids_int<=max BEGIN
+					APPEND spell.ids "%ids_int%%TAB%%ids%" KEEP_CRLF
+					LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET resref=spell_res END
+					LAF ids_sort STR_VAR idsfile=spell END
+				END ELSE BEGIN
+					ACTION_IF enhanced_edition BEGIN
+						LAF spl_resolve_ids INT_VAR level force_extended=1 STR_VAR ids type RET resref END
+					END ELSE BEGIN
+						WARN "There is no space to add %ids% to spell.ids, and ui_extended_spell requires the Enhanced Edition, so we can't add it to the extended namespace; aborting."
+						OUTER_SPRINT resref "null"					
+					END			
+				END
+			END ELSE BEGIN
+				ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_sxf.lua" BEGIN
+					ACTION_TRY
+						LAF spell_system_extension_setup END
+					WITH DEFAULT
+						PRINT "lib_spl: Failed to set up the extended spell system (are all needed libraries loaded?)"
+						ACTION_RERAISE
+					END	
+				END
+				ACTION_IF !FILE_EXISTS "%data_loc_shared%/dw_ext_spell.ids" BEGIN
+					COPY ".../stratagems-inline/blank" "%data_loc_shared%/dw_ext_spell.ids"
+				END
+				// main adder to dw_ext_spell.ids
+				ACTION_MATCH "%type%" WITH
+				wizard 1 BEGIN
+					OUTER_SPRINT prefix "SPWI%level%"
+				END
+				priest 2 BEGIN
+					OUTER_SPRINT prefix "SPPR%level%"				
+				END
+				innate 3 4 5 BEGIN
+					OUTER_SPRINT prefix "SPIN%level%"				
+				END
+				class BEGIN
+					OUTER_SPRINT prefix "SPCL%level%"				
+				END
+				DEFAULT
+					WARN "type undeclared in spl_resolve_ids; assuming WIZARD"
+					OUTER_SPRINT prefix "%SPWI%level%"
+				END		
+				OUTER_SET done=0				
+				ACTION_FOR_EACH digit2 IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+					ACTION_FOR_EACH digit3 IN 0 1 2 3 4 5 6 7 8 9 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+						ACTION_IF !done BEGIN
+							OUTER_SPRINT resref "%prefix%%digit2%%digit3%"
+							ACTION_IF !VARIABLE_IS_SET $ext_spell_array("%resref%") BEGIN
+								OUTER_SET done=1
+							END
+						END
+					END
+				END
+				APPEND_OUTER "%data_loc_shared%/dw_ext_spell.ids" "%resref%%TAB%%ids%" KEEP_CRLF		
+			END
+		END ELSE BEGIN // it's already in dw_ext_spell
+			OUTER_SET already_present=1
+			OUTER_SPRINT resref $ext_spell_array_backwards("%ids%")
+			LAF spl_check_resolve_mismatch INT_VAR level STR_VAR resref type RET mismatch END
+			ACTION_IF mismatch && replace_on_mismatch BEGIN
+				COPY "%data_loc_shared%/dw_ext_spell.ids" "%data_loc_shared%"
+					REPLACE_TEXTUALLY "^%resref%[ %TAB%]+[^ %TAB%%WNL%%LNL%%MNL%]*" "%resref%%TAB%%resref%_OLD"
+				LAF spl_resolve_ids INT_VAR level force_extended STR_VAR ids type RET resref mismatch already_present END
+			END
 		END
 	END ELSE BEGIN
+		OUTER_SET already_present=1
 		LAF RES_NUM_OF_SPELL_NAME STR_VAR spell_name="%ids%" RET resref=spell_res END
+		LAF spl_check_resolve_mismatch INT_VAR level STR_VAR resref type RET mismatch END
+		ACTION_IF mismatch && replace_on_mismatch BEGIN
+			LAF NAME_NUM_OF_SPELL_RES STR_VAR spell_res="%resref%" RET spell_num END
+			COPY_EXISTING "spell.ids" override
+				REPLACE_TEXTUALLY "%spell_num%\([ %TAB%]+\)[^ %TAB%%WNL%%LNL%%MNL%]*" "%spell_num%\1%resref%_OLD"
+			CLEAR_IDS_MAP
+			LAF spl_resolve_ids INT_VAR level force_extended STR_VAR ids type RET resref mismatch already_present END			
+		END
+	END
+	// for safety, we'll just check direct at the end whether it needs a lua entry
+	OUTER_PATCH_SAVE end_digits "%resref%" BEGIN
+		DELETE_BYTES 0x0 5
+	END
+	ACTION_MATCH "%type%" WITH
+	wizard priest 1 2 BEGIN
+		OUTER_SET lua_line_needed=(!IS_AN_INT end_digits || end_digits>=50)
+	END
+	DEFAULT
+		OUTER_SET lua_line_needed=! IS_AN_INT end_digits
+	END
+	ACTION_IF lua_line_needed && !FILE_EXISTS_IN_GAME "m_dw_sxf.lua" BEGIN
+		ACTION_TRY
+			LAF spell_system_extension_setup END
+		WITH DEFAULT
+			PRINT "lib_spl: Failed to set up the extended spell system (are all needed libraries loaded?)"
+			ACTION_RERAISE
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION spl_check_resolve_mismatch//internal
+	INT_VAR level=0
+	STR_VAR type=""
+			resref=""
+	RET mismatch
+BEGIN
+	OUTER_PATCH "%resref%" BEGIN
+		mismatch=0
+		REPLACE_EVALUATE "SP\(PR\|WI\|IN\|CL\)\([0-9]\)" BEGIN
+			PATCH_MATCH "%MATCH1%" WITH
+				"PR" BEGIN
+					mismatch=(!("%type%" STR_EQ priest || "%type%" STR_EQ 2) || "%MATCH2%" STR_CMP "%level%")
+				END
+				"WI" BEGIN
+					mismatch=(!("%type%" STR_EQ wizard || "%type%" STR_EQ 1)|| "%MATCH2%" STR_CMP "%level%")
+				END
+				"IN" BEGIN
+					mismatch=!("%type%" STR_EQ innate || "%type%" STR_EQ 3 || "%type%" STR_EQ 4 || "%type%" STR_EQ 5)
+				END
+				"CL" BEGIN 
+					mismatch=!("%type%" STR_EQ class)
+				END
+			DEFAULT
+				PATCH_FAIL "shouldn't happen"
+			END
+		END
+		""
 	END
 END
 
@@ -343,7 +571,7 @@ BEGIN
 		SPRINT scrl_icon "%icon%"
 		SPRINT scrl_ground_icon gscrl01
 		PATCH_IF GAME_IS "bgee bg2ee bg1 bg2 tob eet tutu tutu_totsc bgt" BEGIN
-			SPRINT desc_image cscrl01
+			SPRINT scrl_desc_image cscrl01
 		END
 		PATCH_MATCH "%spl_type%" WITH
 		wizard BEGIN
@@ -399,7 +627,11 @@ BEGIN
 			opcode=146
 		END
 		// work out the caster level
-		PATCH_IF VARIABLE_IS_SET sfo_data_spells_by_level_set BEGIN
+		PATCH_IF !VARIABLE_IS_SET sfo_data_spells_by_level_set BEGIN
+			INNER_ACTION BEGIN
+				LAM data_spells_by_level
+			END
+		END
 		PATCH_IF "%spl_type%" STR_EQ Wizard BEGIN
 			casterlevel="sfo_spell_level_sl_to_cl_mage_%spl_level%"
 		END ELSE
@@ -407,10 +639,6 @@ BEGIN
 			casterlevel="sfo_spell_level_sl_to_cl_druid_%spl_level%"
 		END ELSE BEGIN
 			casterlevel="sfo_spell_level_sl_to_cl_cleric_%spl_level%"
-		END
-		END ELSE BEGIN
-			LPF warning STR_VAR warning="unable to determine spell level for scroll as sfo_spell_level data not loaded; using 1" END
-			casterlevel=1
 		END
 		// add the payload structure
 		LPF struct_add STR_VAR type=ab_fx struct=scrl patch="s_opcode=opcode;; s_target:=Self;; s_timing:=InstantPermanent;; s_resource:=%spell_resref%;; s_parameter1=casterlevel" RET_ARRAY scrl=struct END
@@ -436,7 +664,11 @@ BEGIN
 	END
 	COPY ".../stratagems-inline/blank" "override/%scroll_resref%.itm"
 		LPF struct_write STR_VAR struct=scrl END
-
+	// log if appropriate
+	ACTION_IF FILE_EXISTS "%data_loc%/scroll_contents.txt" BEGIN
+		ACTION_TO_UPPER spell_resref
+		APPEND_OUTER "%data_loc%/scroll_contents.txt" "%scroll_resref%%TAB%%spell_resref%"
+	END
 END
 
 
@@ -458,6 +690,57 @@ BEGIN
 		REPLACE_TEXTUALLY "SPWI" "CDIA"
 	END
 END
+
+/*
+
+document{spl_make_all_scrolls}
+{
+Construct a scroll for any SPPR/SPWI spell that doesn't have one and should (i.e. exclude spells unavailable to the player, as well as the Wild Mage spells)
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION spl_make_all_scrolls 
+	STR_VAR name_function="spl_cd_scroll_name"
+			price_table="%MOD_FOLDER%/%sfo_library_path%/data/scroll_prices.2da"
+BEGIN
+	LAM data_scroll_resrefs
+	ACTION_PHP_EACH sfo_spell_resrefs AS id=>resref BEGIN
+		OUTER_SET proceed=1
+		ACTION_MATCH "%resref%" WITH
+		"SPPR.*" "SPWI.*" BEGIN
+		END
+		DEFAULT
+			OUTER_SET proceed=0
+		END
+		ACTION_MATCH "%id%" WITH
+		"WIZARD.*" "CLERIC.*" BEGIN
+		END
+		DEFAULT
+			OUTER_SET proceed=0
+		END
+		ACTION_MATCH "%resref%" WITH
+		"%WIZARD_NAHALS_RECKLESS_DWEOMER%" "%WIZARD_CHAOS_SHIELD%" "%WIZARD_IMPROVED_CHAOS_SHIELD%" BEGIN
+				OUTER_SET proceed=0
+		END
+		DEFAULT
+		END
+		OUTER_PATCH "%resref%" BEGIN
+			REPLACE_EVALUATE "\(SPWI\|SPPR\)[0-9]\([0-9][0-9]\)" BEGIN
+				PATCH_IF "%MATCH2%">=50 && (!FILE_EXISTS_IN_GAME "m_dw_sxd.lua" || !RESOURCE_CONTAINS "m_dw_sxd.lua" "%resref%") BEGIN
+					proceed=0
+				END
+			END
+			""
+		END
+		ACTION_IF proceed BEGIN
+			ACTION_IF !RESOURCE_CONTAINS "hidespl.2da" "%resref%" && FILE_EXISTS_IN_GAME "%resref%.spl" && !VARIABLE_IS_SET "%id%_SCROLL" BEGIN
+				LAF spl_make_scroll STR_VAR spell_resref="%resref%" name_function price_table END
+			END
+		END
+	END
+END
+
 
 /*
 document{spl_enforce_school}
@@ -532,12 +815,20 @@ BEGIN
 		END
 		ACTION_FOR_EACH this_school IN abjuration conjuration divination enchantment illusion invocation necromancy alteration BEGIN
 			OUTER_SET $struct("unusable_%this_school%")=0
+			ACTION_TO_UPPER this_school
+			OUTER_SPRINT this_school_syn $sfo_school_synonym("%this_school%")
+			ACTION_TO_LOWER this_school_syn
+			OUTER_SET $struct("unusable_%this_school_syn%")=0
 		END		
 		ACTION_IF VARIABLE_IS_SET $unusable_array("%school%") BEGIN
 			OUTER_SPRINT list $unusable_array("%school%")
 			OUTER_WHILE "%list%" STR_CMP "" BEGIN
 				LAF return_first_entry STR_VAR list separator="," RET entry list END
 				OUTER_SET $struct("unusable_%entry%")=1
+				ACTION_TO_UPPER entry
+				OUTER_SPRINT entry_syn $sfo_school_synonym("%entry%")
+				ACTION_TO_LOWER entry_syn
+				OUTER_SET $struct("unusable_%entry_syn%")=1
 			END
 		END
 	END
@@ -568,7 +859,7 @@ BEGIN
 	OUTER_SPRINT type unknown
 	OUTER_SET level=1
 	OUTER_PATCH "%resref%" BEGIN
-		REPLACE_EVALUATE "SP\(PR\|WI\|IN\|CL\)\([0-9]\)" BEGIN
+		REPLACE_EVALUATE CASE_INSENSITIVE "SP\(PR\|WI\|IN\|CL\)\([0-9]\)" BEGIN
 			PATCH_MATCH "%MATCH1%" WITH
 			PR BEGIN
 				level="%MATCH2%"
@@ -644,18 +935,21 @@ BEGIN
 			END
 		END
 	// have we memorized it?
-		TO_UPPER spell
-		PATCH_IF VARIABLE_IS_SET "%spell%" BEGIN
-			SPRINT spell EVAL "%%spell%%"
-			LPF spl_deabbreviate STR_VAR spell RET resref type level END
-			done=1
-		END 
+		PATCH_IF !done BEGIN
+			TO_UPPER spell
+			PATCH_IF VARIABLE_IS_SET "%spell%" BEGIN
+				SPRINT spell EVAL "%%spell%%"
+				LPF spl_deabbreviate STR_VAR spell RET resref type level END
+				done=1
+			END 
+		END
 	//do it manually
 		PATCH_IF !done BEGIN
 			PATCH_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
 				SPRINT resref "%spell%"
 				INNER_ACTION BEGIN
 					COPY_EXISTING - "%spell%.spl" override
+						READ_LONG 0x34 level
 						READ_SHORT 0x1c type_number
 						PATCH_MATCH "%type_number%" WITH
 						1 BEGIN
@@ -666,8 +960,8 @@ BEGIN
 						END
 						DEFAULT
 							SPRINT type innate
+							level=1
 						END
-						READ_LONG 0x34 level
 					BUT_ONLY
 				END
 			END ELSE BEGIN
@@ -798,4 +1092,381 @@ INT_VAR start_slot=2050 RET value ids BEGIN
 		PATCH_FAIL "unexpected error in free_ids_slot" 
 	END
 	SPRINT ids "SPWI0%value_last_3%"
+END
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_resolve_smtables_entry}
+{
+Return the number corresponding to a given named smtable.2da entry (we search for [0-9]+_name), adding it
+if necessary (for the latter, need to supply a 2da name too.)
+}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION spl_resolve_smtables_entry STR_VAR name="" 2da="" RET value BEGIN
+	OUTER_SET value="-1"
+	COPY_EXISTING "smtables.2da" "%workspace%" 
+		REPLACE_EVALUATE "^\([0-9]*\)_%name%" BEGIN
+			SET value="%MATCH1%"
+		END
+		""
+	BUT_ONLY
+	ACTION_IF value<0 BEGIN
+	COPY_EXISTING "smtables.2da" override
+		COUNT_2DA_ROWS 2 rowcount
+		value=rowcount - 1
+		INSERT_2DA_ROW rowcount 2 "%value%_%name% %2da%"
+		PRETTY_PRINT_2DA		
+	BUT_ONLY
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_generate_smtable}
+{
+Streamlined generator for smtable 2das - assumes animations are constant (as is true in all vanilla entries)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION spl_generate_smtable STR_VAR 2da="" contents="" hit_animation="" area_hit_animation="" BEGIN
+	OUTER_SET index=1
+	COPY ".../stratagems-inline/blank" "override/%2da%.2da"
+	OUTER_SPRINT data "2DA V1.0%WNL%0%WNL%%TAB%RESREF	HitAnimation AreaHitAnimation%WNL%"
+	OUTER_WHILE "%contents%" STRING_COMPARE_CASE "" BEGIN
+		LAF return_first_entry STR_VAR list="%contents%" RET entry contents=list END
+		OUTER_PATCH_SAVE entry "%entry%" BEGIN
+			number_to_add=1
+			REPLACE_EVALUATE "(\([0-9]+\))" BEGIN
+				number_to_add="%MATCH1%"
+			END
+			""
+		END
+		OUTER_FOR (ind=0;ind<number_to_add;++ind) BEGIN
+			OUTER_SPRINT data "%data%%index% %entry% %hit_animation% %area_hit_animation%%WNL%"
+			OUTER_SET ++index
+		END
+	END
+	APPEND "%2da%.2da" "%data%"
+	COPY_EXISTING "%2da%.2da" override PRETTY_PRINT_2DA
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_make_aura}
+{Make an aura power. 'spell', when applied, permanently causes the caster to cast 'payload' 1/sec. The intermediate effect
+has its name autogenerated unless set explicitly.}
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION spl_make_aura
+   STR_VAR spell=""
+           payload=""
+           effect=""
+BEGIN
+   ACTION_IF "%effect%" STRING_EQUAL_CASE "" BEGIN
+      LAF GET_UNIQUE_FILE_NAME STR_VAR extension=eff RET effect=filename END
+   END
+   CREATE spl "%spell%"
+		LPF add_basic_spell_ability END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=272 target=1 timing=1 parameter1=1 parameter2=3 STR_VAR resource="%effect%" END
+   LAF eff_make_casting_effect STR_VAR spell="%payload%" effect END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_make_innate_repeating_spell}
+{
+Make a spell (from a template) that you get back after a certain period
+}
+
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION spl_make_innate_repeating_spell
+   INT_VAR new_is_ids=1
+		   cooldown=0
+           overwrite=0
+           allow_missing=0
+		   patch_description=1
+		   override_description=0
+		   delete_casting=0
+           desc_strref_cd = 100404 // the string to be appended to the description, with "99999" replaced by the actual repeat time. Default value is from SCS shared.tra
+           desc_strref_atwill = 100405 // this string says 'use at will' and gets appended instead if cooldown=0
+   STR_VAR arguments=""
+BEGIN
+	ACTION_IF override_description>0 BEGIN
+		OUTER_SET patch_description=0
+	END
+	ACTION_IF "%arguments%" STRING_COMPARE "" BEGIN
+		ACTION_IF overwrite BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET template=entry arguments=list END
+		END ELSE BEGIN
+			LAF return_first_pair STR_VAR list="%arguments%" RET template=key idsname=value arguments=list END
+		END
+		ACTION_IF VARIABLE_IS_SET "%template%" BEGIN
+			OUTER_SPRINT template EVAL "%%template%%"
+		END
+		OUTER_SPRINT oldname "%template%"
+
+		ACTION_IF (FILE_EXISTS_IN_GAME "%oldname%.spl" || !allow_missing) BEGIN
+			ACTION_IF overwrite BEGIN
+				OUTER_SPRINT newname "%oldname%"
+			END ELSE 
+			ACTION_IF new_is_ids BEGIN
+				LAF spl_resolve_ids INT_VAR level=1 force_extended=0 STR_VAR type=3 ids="%idsname%" RET newname=resref END
+			END ELSE BEGIN
+				OUTER_SPRINT newname "%idsname%" 
+			END
+			OUTER_SET timing = cooldown >0 ? 4 : 1
+			ACTION_IF patch_description BEGIN
+				OUTER_SPRINT extra_string (AT desc_strref_cd)
+			END
+			ACTION_IF cooldown>0 BEGIN
+				OUTER_INNER_PATCH_SAVE extra_string "%extra_string%" BEGIN
+					REPLACE_TEXTUALLY 99999 "%cooldown%"
+				END 
+			END ELSE BEGIN
+				OUTER_SPRINT extra_string (AT desc_strref_atwill)
+			END
+			COPY_EXISTING "%oldname%.spl" "override/%newname%.spl"
+				WRITE_LONG 0x34 1
+				WRITE_SHORT 0x1c 4
+				LPF ALTER_SPELL_HEADER INT_VAR location=4 END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%newname%" END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=1 timing duration=cooldown STR_VAR resource="%newname%" END
+				PATCH_IF patch_description BEGIN
+					READ_STRREF 0x50 desc_old
+					SAY 0x50 "%desc_old%%extra_string%"
+				END ELSE
+				PATCH_IF override_description BEGIN
+					SAY 0x50 (AT override_description)			
+				END
+				PATCH_IF delete_casting BEGIN
+					WRITE_SHORT 0x22 0
+					WRITE_ASCII 0x10 "" (8)
+				END
+				PATCH_IF !overwrite BEGIN
+					LPF ALTER_EFFECT INT_VAR silent=1 STR_VAR resource="%newname%" match_resource="%oldname%" END
+				END
+			BUT_ONLY
+
+		END
+		LAF spl_make_innate_repeating_spell INT_VAR cooldown overwrite allow_missing STR_VAR arguments END
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_make_hla_class_ability}
+{
+Copy a spell (assumed to be a wizard/priest spell, though we don't enforce this) to the SPCL namespace.
+and optionally make it innate. (Set force_innate=0 if you don't want to.)
+You need to specify the resref. Optionally you can specify the id; if not we'll infer it or make it up. Strip it from any
+clone (i.e., in simulacr/projimag) in the process. The new spell will have id HLA_[old_id]
+}
+
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION spl_make_hla_class_ability
+    INT_VAR force_innate=1//boolean
+	STR_VAR resref=""
+		   id=""	
+    RET new_resref
+BEGIN
+    ACTION_TO_UPPER resref
+	ACTION_IF !("%resref%" STRING_MATCHES_REGEXP "SPCL[0-9][0-9][0-9]") BEGIN
+		// do nothing; it's already in SPCL
+		OUTER_SPRINT new_resref "%resref%"
+	END ELSE
+    ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+		// find its id if we don't know it
+		ACTION_IF "%id%" STR_EQ "" BEGIN
+			LAF NAME_NUM_OF_SPELL_RES INT_VAR silent=1 STR_VAR spell_res="%resref%" RET id=spell_name END
+			ACTION_IF "%id%" STR_EQ "" BEGIN
+				OUTER_SPRINT id "%resref%"
+			END	
+		END
+		// resolve the new entry
+		LAF spl_resolve_ids STR_VAR ids="HLA_%id%" type=class RET new_resref=resref END
+		// copy over the spell
+		COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl"
+			PATCH_IF force_innate BEGIN
+				WRITE_SHORT 0x1c 4
+				PATCH_IF !enhanced_edition BEGIN
+					WRITE_LONG 0x34 1 // we need this on vanilla, at least, otherwise HaveSpell() causes crashes. Probably it's safe in EE too, but this component has broken so many times that I don't want to risk it!
+				END
+			END	
+
+		ACTION_FOR_EACH copy_spell IN projimag simulacr BEGIN
+			COPY_EXISTING "%copy_spell%.spl" override
+			   LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%new_resref%" END
+			BUT_ONLY
+			IF_EXISTS
+       END
+	END ELSE BEGIN
+		LAF warning STR_VAR warning="Missing HLA in the LUA tables: %resref%" repeat=no END
+    END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{spl_hide_spells}
+{
+Given a list of spells (as IDS), removes those spells entirely from the game: the spells themselves hidden in HIDESPL; all copies of the scrolls
+are removed from stores, creatures, areas and 2da rndtres/rndscrol; the scroll itself is replaced by a minor gem. The actual spells are still present.</p>
+<p>You can also specify the spells as a k=>blank array
+}
+
+*/
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION spl_hide_spells
+	STR_VAR spells="" spell_array=""
+BEGIN
+	ACTION_CLEAR_ARRAY sfo_internal_spell_array
+	ACTION_IF "%spell_array%" STR_CMP "" BEGIN
+		ACTION_PHP_EACH "%spell_array%" AS entry=>discard BEGIN
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%entry%" RET resref=spell_res success END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT $sfo_internal_spell_array("%entry%") "%resref%"
+			END
+		END
+	END
+	// get an uppercased array of the spell resrefs
+	ACTION_TO_UPPER spells
+	OUTER_WHILE "%spells%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%spells%" RET entry spells=list END
+		LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%entry%" RET resref=spell_res success END
+		ACTION_IF success BEGIN
+			OUTER_SPRINT $sfo_internal_spell_array("%entry%") "%resref%"
+		END
+	END
+	
+	// put the spells in hidespl
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
+		COPY_EXISTING "hidespl.2da" override
+			LPF 2da_read RET_ARRAY hidespl_array=array END
+			PHP_EACH sfo_internal_spell_array AS ids=>resref BEGIN
+				PATCH_IF !enhanced_edition BEGIN
+					SPRINT $hidespl_array("%resref%" "UNUSED") "****"
+				END ELSE BEGIN
+					SPRINT $hidespl_array("%resref%" "IS_HIDDEN") 1
+					SPRINT $hidespl_array("%resref%" "IS_FINAL") 0
+					SPRINT $hidespl_array("%resref%" "IS_REMOVED") 0
+				END
+			END
+			LPF 2da_write STR_VAR array=hidespl_array default="0" END
+	END ELSE BEGIN
+		WARN "spl_remove_spells_from_game cannot fully remove spells, since you are on non-EE without ToBEx"
+	END
+	
+	// get an array of scrolls
+	
+	LAM data_scroll_resrefs
+	
+	ACTION_CLEAR_ARRAY scroll_array
+	ACTION_PHP_EACH sfo_internal_spell_array AS ids=>resref BEGIN
+		ACTION_IF VARIABLE_IS_SET "%ids%_SCROLL" BEGIN
+			OUTER_SPRINT scroll EVAL "%%ids%_SCROLL%"
+			OUTER_SPRINT $scroll_array("%scroll%") ""
+		END 
+	END
+	
+	// remove scrolls from areas
+	
+	COPY_EXISTING_REGEXP GLOB ".*\.are$" override
+		PHP_EACH scroll_array AS scroll=>discard BEGIN
+			PATCH_IF INDEX_BUFFER ("%scroll%")>=0 BEGIN
+				LPF DELETE_AREA_ITEM STR_VAR item_to_delete="%scroll%" END
+			END
+		END
+	BUT_ONLY
+	
+	// remove scrolls from creatures
+
+	COPY_EXISTING_REGEXP GLOB ".*\.cre$" override
+		PHP_EACH scroll_array AS scroll=>discard BEGIN
+			PATCH_IF INDEX_BUFFER ("%scroll%")>=0 BEGIN
+				REMOVE_CRE_ITEM "%scroll%"
+			END
+		END
+	BUT_ONLY	
+	
+	// remove scrolls from stores
+
+	COPY_EXISTING_REGEXP GLOB ".*\.sto$" override
+		PHP_EACH scroll_array AS scroll=>discard BEGIN
+			PATCH_IF INDEX_BUFFER ("%scroll%")>=0 BEGIN
+				REMOVE_STORE_ITEM "%scroll%"
+			END
+		END
+	BUT_ONLY	
+
+	//remove scrolls from rndtres
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "rndtres.2da" BEGIN
+		OUTER_SET in_2da=0
+		ACTION_PHP_EACH scroll_array AS scroll=>discard BEGIN
+			OUTER_SET in_2da=in_2da || RESOURCE_CONTAINS "rndtres.2da" "%scroll%"
+		END
+		
+		ACTION_IF in_2da BEGIN
+			COPY_EXISTING "rndtres.2da" override
+				PHP_EACH scroll_array AS scroll=>discard BEGIN
+					REPLACE_TEXTUALLY "%scroll%" ""
+				END
+				LPF 2da_read INT_VAR allow_incomplete_lines=1 RET_ARRAY rndtres_array=array END 
+				LPF 2da_write STR_VAR array=rndtres_array END // this should repopulate the empty cell created by REPLACE_TEXTUALLY
+		END
+	END
+
+	//remove scrolls from rndtres
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "rndscrol.2da" BEGIN
+		OUTER_SET in_2da=0
+		ACTION_PHP_EACH scroll_array AS scroll=>discard BEGIN
+			OUTER_SET in_2da=in_2da || RESOURCE_CONTAINS "rndscrol.2da" "%scroll%"
+		END
+		
+		ACTION_IF in_2da BEGIN
+			COPY_EXISTING "rndscrol.2da" override
+				PHP_EACH scroll_array AS scroll=>discard BEGIN
+					REPLACE_TEXTUALLY "%scroll%[ %TAB%]+\([0-9A-Z_-]+\)" "\1%TAB%\1" // if there's something to the right, use that
+					REPLACE_TEXTUALLY "%scroll%[ %TAB%]+\([0-9A-Z_-]+\)" "\1%TAB%\1" // if there's something to the left, use that
+					// ignore the edge case where it appears twice consecutively! - you get a garnet
+				END
+				PRETTY_PRINT_2DA
+		END
+	END
+	
+	// now cover over the actual items with something harmless, just in case (MISC34.ITM, a garnet, is in BG, BG2, and IWD)
+	
+	ACTION_PHP_EACH scroll_array AS scroll=>discard BEGIN
+		COPY_EXISTING "misc34.itm" "override/%scroll%.itm" 
+	END
+
+
 END

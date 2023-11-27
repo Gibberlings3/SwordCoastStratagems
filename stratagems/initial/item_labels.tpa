@@ -6,9 +6,9 @@ BEGIN
    <<<<<<<< .../stratagems-inline/autolib.slb
    >>>>>>>>
    
-   COPY ~.../stratagems-inline/autolib.slb~ ~%workspace%~
+   COPY ~.../stratagems-inline/autolib.slb~ ~%data_loc%~
 
-   OUTER_SPRINT opcodelist ""
+ 
    COPY ~%MOD_FOLDER%/ssl/libdata.txt~ ~%MOD_FOLDER%/ssl~
        READ_2DA_ENTRIES_NOW stats_data 5
        SET see_name_code=0
@@ -21,7 +21,7 @@ BEGIN
           PATCH_MATCH opcode WITH
           101 BEGIN
              SPRINT $101_stat(~%parameter%~) ~%statname%~
-             SPRINT opcodelist "%opcodelist% %parameter%"
+             SPRINT $opcodelist("%parameter%") ""
              PATCH_IF "%markername%" STRING_COMPARE "*" BEGIN
                 LPF warning STR_VAR warning="In item_labels, you've tried to give a bespoke name to a 101-type item. You can only do this with 206-types." END
              END
@@ -50,48 +50,65 @@ BEGIN
        END
    BUT_ONLY
 
-   COPY_EXISTING_REGEXP GLOB ~.*\.itm~ override
-       PATCH_TRY 
-		LPF CLONE_EFFECT INT_VAR silent=1 STR_VAR match_function=match_ds_entry function=patch_ds_entry END
-	   WITH DEFAULT
-		PATCH_WARN "SCS's 'item_labels' function has encountered a file it doesn't know how to patch, %SOURCE_RES%.itm (probably the file was broken by a previous mod). SCS has skipped it and continued with installation, but this may cause instabilities."	   
-	   END
+	LAF check_label STR_VAR label=STRATAGEMS_dw_opcodes RET value END
+	ACTION_IF !value BEGIN
+		ACTION_CLEAR_ARRAY item_ds_array
+		COPY_EXISTING_REGEXP - 
+			~.*\.itm~ nowhere
+			~\(spcl152\|spcl321\|dw#sshr\).spl~ nowhere
+			~spcl321.spl~ nowhere
+			PATCH_TRY 
+				PATCH_IF "%SOURCE_EXT%" STR_EQ "SPL" BEGIN
+					GET_OFFSET_ARRAY fx_arr SPL_V10_GEN_EFFECTS
+				END ELSE BEGIN
+					GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+				END
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					PATCH_IF (SHORT_AT fx_off)=101 || (SHORT_AT fx_off)=206 BEGIN
+						SPRINT $item_ds_array("%SOURCE_FILE%") ""
+					END
+				END
+				PATCH_IF "%SOURCE_EXT%" STR_EQ "SPL" BEGIN
+					GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+				END ELSE BEGIN
+					GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+				END
+				PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+					GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						PATCH_IF (SHORT_AT fx_off)=101 || (SHORT_AT fx_off)=206 BEGIN
+							SPRINT $item_ds_array("%SOURCE_FILE%") ""
+						END					
+					END
+				END
+		   
+			WITH DEFAULT
+				PATCH_WARN "SCS's 'item_labels' function has encountered a file it doesn't know how to patch, %SOURCE_RES%.itm (probably the file was broken by a previous mod). SCS has skipped it and continued with installation, but this may cause instabilities."	   
+			END
 
-   BUT_ONLY
+		BUT_ONLY
+		ACTION_PHP_EACH item_ds_array AS resref=>discard BEGIN
+			COPY_EXISTING "%resref%" override
+				LPF CLONE_EFFECT INT_VAR silent=1 STR_VAR match_function=match_ds_entry function=patch_ds_entry END
+		END
+	END
 
+	LAF array_read STR_VAR file="see_protection_spells.2da" path="%MOD_FOLDER%/ds" RET_ARRAY protection_spell_array=array END
+	ACTION_PHP_EACH protection_spell_array AS spell=>discard BEGIN
+		spl.edit[%spell%|allow_missing:i=1]
+		[
+			IF {enhanced_edition}
+			{{
+				m.ab_fx.clone{LPF ds_item STR_VAR arguments="%s_opcode%" RET s_parameter2=value END s_opcode=328 s_target=2 s_timing=0 s_duration=144 s_special=1 s_parameter1=1|match="VARIABLE_IS_SET $opcodelist(~%s_opcode%~)"}
+			}}
+			ELSE
+			{{
+				m.ab_fx.clone{LPF ds_item STR_VAR arguments="%s_opcode%" RET s_parameter2a=value END s_parameter2b=1 s_opcode=328 s_target=2 s_timing=0 s_duration=144 s_parameter1=1|match="VARIABLE_IS_SET $opcodelist(~%s_opcode%~)"}
+				
+			}}
+		]
+	END
 
-   ACTION_IF enhanced_edition BEGIN
-     MAKE_PATCH
-        match=>"opcode is_in [%opcodelist%]"
-        parameter2=>"opcode in ds_item"
-        parameter1=>1
-        opcode=>328
-        target=>2
-        timing=>0
-        duration=>144
-        mode=>1
-     END
-   END ELSE BEGIN
-     MAKE_PATCH
-        match=>"opcode is_in [%opcodelist%]"
-        parameter2a=>"opcode in ds_item"
-        parameter2b=>1
-        parameter1=>1
-        opcode=>318
-        target=>2
-        timing=>0
-        duration=>144
-     END
-   END
-   OUTER_SPRINT spell ""
-   COPY - "%MOD_FOLDER%/ds/see_protection_spells.2da" "%workspace%"
-      COUNT_2DA_ROWS 1 rowcount
-      FOR (i=0;i<rowcount;i+=1) BEGIN
-         READ_2DA_ENTRY i 0 1 this_spell
-         SPRINT spell "%spell% %this_spell%"
-      END
-
-   LAF edit_spell INT_VAR allow_missing=1 STR_VAR spell editstring="clone_effect=>patch_data" END
 END
 
 
@@ -108,23 +125,22 @@ END
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION append_autolib
+DEFINE_DIMORPHIC_FUNCTION append_autolib
        INT_VAR omniscient=0 see_name_code=0
        STR_VAR trigger=""
                statname=""
                markername=""
 BEGIN
-       INNER_ACTION BEGIN
-          APPEND_OUTER ~%workspace%/autolib.slb~ ~TRIGGER=%trigger%~
+         PRINT "appending autolib"
+		 APPEND_OUTER ~%data_loc%/autolib.slb~ ~TRIGGER=%trigger%~
           ACTION_IF omniscient BEGIN
-             APPEND_OUTER ~%workspace%/autolib.slb~ ~!CheckSpellState(scstarget,%statname%)~
+             APPEND_OUTER ~%data_loc%/autolib.slb~ ~!CheckSpellState(scstarget,%statname%)~
           END ELSE BEGIN
              ACTION_IF "%markername%" STRING_EQUAL "*" BEGIN
                 OUTER_SPRINT markername "%statname%_SEEN"
              END
-             APPEND_OUTER ~%workspace%/autolib.slb~ ~OR(2)!CheckSpellState(scstarget,%markername%)!CheckSpellState(scstarget,%statname%)~
+             APPEND_OUTER ~%data_loc%/autolib.slb~ ~OR(2)!CheckSpellState(scstarget,%markername%)!CheckSpellState(scstarget,%statname%)~
           END
-       END
 END
 
 DEFINE_PATCH_FUNCTION match_ds_entry

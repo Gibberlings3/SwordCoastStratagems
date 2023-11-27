@@ -619,7 +619,7 @@ BEGIN
             LPF get_table_column_coordinate STR_VAR column=class RET colnum END
             FOR (i=1;i<rowcount;i+=1) BEGIN
                READ_2DA_ENTRY i colnum colcount this_id
-               PATCH_IF this_id=class_id BEGIN
+               PATCH_IF IS_AN_INT this_id && this_id=class_id BEGIN
                   READ_2DA_ENTRY i 1 colcount kit
                   SET continue=1
                   PATCH_IF "%filter%" STRING_COMPARE "" BEGIN
@@ -1734,170 +1734,179 @@ DEFINE_ACTION_FUNCTION build_kit_spell_enforcer
 BEGIN
 
 
- ACTION_IF (!FILE_EXISTS "%workspace%/kit_spell_build.2da" || force_rebuild) BEGIN
+ ACTION_IF (!FILE_EXISTS "%data_loc%/kit_spell_build.2da" || force_rebuild) BEGIN
   // mark things to ignore
    ACTION_FOR_EACH spellname IN SET_SNARE_TRAP BEGIN
        LAF get_spellcode STR_VAR input="%spellname%" RET resref=value END
        ACTION_TO_UPPER resref
        OUTER_SPRINT $kit_spell_ignore("%resref%") ""
    END
+   // skip OlvynChuru material
+   OUTER_FOR (n=100;n<1000;++n) BEGIN
+		OUTER_SPRINT $kit_spell_ignore("MEWI%n%") ""
+		OUTER_SPRINT $kit_spell_ignore("MEPR%n%") ""
+   END
 
+  ACTION_IF !FILE_EXISTS "%data_loc%/kit_spell_build.tpa" BEGIN
+	  COPY ".../stratagems-inline/blank" "%data_loc%/kit_spell_build.tpa"
+	  ACTION_IF collect_apply BEGIN
+		   COPY ".../stratagems-inline/blank" "%data_loc%/kit_collect_apply.txt"
+	  END
+	  
+	  APPEND_OUTER "%data_loc%/kit_spell_build.tpa" ~DEFINE_PATCH_FUNCTION CRE_enforce_kit_spells_hardcoded INT_VAR level=1 full_delete=0 STR_VAR kit="" BEGIN~
+	  APPEND_OUTER "%data_loc%/kit_spell_build.tpa" ~PATCH_MATCH "%percentage%kit%percentage%" WITH ~
+	  OUTER_WHILE "%kit%" STRING_COMPARE "" BEGIN
+		 LAF return_first_entry STR_VAR list="%kit%" RET kit=list kit_here=entry END
+		 LAF find_clab STR_VAR kit="%kit_here%" RET clab END
+		 ACTION_TO_LOWER kit_here
+		 WITH_SCOPE BEGIN
+			COPY_EXISTING - "%clab%.2da" nowhere
+				 COUNT_2DA_COLS colcount
+				 READ_2DA_ENTRIES_NOW clab_entries colcount
+				 FOR (j=0;j<colcount;j+=1) BEGIN
+					SET clab_level=j
+					SPRINT add_this_level ""
+					SPRINT apply_this_level ""
+					FOR (i=0;i<clab_entries;i+=1) BEGIN
+						READ_2DA_ENTRY_FORMER clab_entries i j entry
+						SET to_add=0
+						SET to_apply=0
+						SET to_remove=0
+						SET to_delete=0
+						TO_UPPER entry
+						INNER_PATCH_SAVE spell "%entry%" BEGIN
+						   READ_ASCII 0x0 type (3)
+						   PATCH_MATCH "%type%" WITH
+						   "GA_" BEGIN
+							   DELETE_BYTES 0x0 3
+							   SET to_add=1
+							   SET to_remove=1
+						   END
+						   "AP_" BEGIN
+							   DELETE_BYTES 0x0 3
+							   SET to_apply=1
+							   SET to_delete=1
+						   END
+						   DEFAULT
+							END
+						END
+						LPF kit_spell_exclude_func STR_VAR spell RET value END
+						PATCH_IF value BEGIN
+						   SET to_add=0
+						   SET to_apply=0
+						   SET to_remove=0
+						   SET to_delete=0
+						END
+						PATCH_IF VARIABLE_IS_SET $kit_spell_ignore("%spell%") BEGIN
+								 SET to_add=0
+								 SET to_apply=0
+								 SET to_remove=0
+								 SET to_delete=0
+						END
+						PATCH_IF to_remove BEGIN
+						   SPRINT $remove_these_spells("%spell%") ""
+						END
+						PATCH_IF to_delete BEGIN
+						   SPRINT $delete_these_spells("%spell%") ""
+						END
+						PATCH_IF to_apply BEGIN
+						   PATCH_IF collect_apply BEGIN
+							PATCH_IF "%type%" STRING_EQUAL_CASE "AP_" BEGIN
+								 SPRINT apply_this_level "%apply_this_level% %entry%"
+							END
+						   END
+						END
+						PATCH_IF to_add BEGIN
+						   TO_UPPER spell
+						   PATCH_IF !VARIABLE_IS_SET $kit_spell_type("%spell%") BEGIN
+							  INNER_ACTION BEGIN
+								ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+								  COPY_EXISTING "%spell%.spl" override
+									 READ_SHORT 0x1c type
+									 READ_LONG 0x34 level
+									 SET level -= 1
+								  BUT_ONLY            
+								  OUTER_SET $kit_spell_type("%spell%")=type
+								  OUTER_SET $kit_spell_level("%spell%")=level
+								  ACTION_IF $kit_spell_type("%spell%")=4 BEGIN
+									 OUTER_SET type=$kit_spell_type("%spell%")
+								  END
+								END
+							  END
+						   END
+						   SPRINT add_this_level "%add_this_level%%TAB%ADD_MEMORIZED_SPELL ~%spell%~ #0 innate%WNL%"  // always add innate spells at level 0
 
+						END
 
-  COPY ".../stratagems-inline/blank" "%workspace%/kit_spell_build.tpa"
-  ACTION_IF collect_apply BEGIN
-       COPY ".../stratagems-inline/blank" "%workspace%/kit_collect_apply.txt"
-  END
-  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~DEFINE_PATCH_FUNCTION CRE_enforce_kit_spells_hardcoded INT_VAR level=1 full_delete=0 STR_VAR kit="" BEGIN~
-  APPEND_OUTER "%workspace%/kit_spell_build.tpa" ~PATCH_MATCH "%percentage%kit%percentage%" WITH ~
-  OUTER_WHILE "%kit%" STRING_COMPARE "" BEGIN
-     LAF return_first_entry STR_VAR list="%kit%" RET kit=list kit_here=entry END
-     LAF find_clab STR_VAR kit="%kit_here%" RET clab END
-     ACTION_TO_LOWER kit_here
-     WITH_SCOPE BEGIN
-        COPY_EXISTING "%clab%.2da" "%workspace%"
-             COUNT_2DA_COLS colcount
-             READ_2DA_ENTRIES_NOW clab_entries colcount
-             FOR (j=0;j<colcount;j+=1) BEGIN
-                SET clab_level=j
-                SPRINT add_this_level ""
-                SPRINT apply_this_level ""
-                FOR (i=0;i<clab_entries;i+=1) BEGIN
-                    READ_2DA_ENTRY_FORMER clab_entries i j entry
-                    SET to_add=0
-                    SET to_apply=0
-                    SET to_remove=0
-                    SET to_delete=0
-                    TO_UPPER entry
-                    INNER_PATCH_SAVE spell "%entry%" BEGIN
-                       READ_ASCII 0x0 type (3)
-                       PATCH_MATCH "%type%" WITH
-                       "GA_" BEGIN
-                           DELETE_BYTES 0x0 3
-                           SET to_add=1
-                           SET to_remove=1
-                       END
-                       "AP_" BEGIN
-                           DELETE_BYTES 0x0 3
-                           SET to_apply=1
-                           SET to_delete=1
-                       END
-                       DEFAULT
-                        END
-                    END
-                    LPF kit_spell_exclude_func STR_VAR spell RET value END
-                    PATCH_IF value BEGIN
-                       SET to_add=0
-                       SET to_apply=0
-                       SET to_remove=0
-                       SET to_delete=0
-                    END
-                    PATCH_IF VARIABLE_IS_SET $kit_spell_ignore("%spell%") BEGIN
-                             SET to_add=0
-                             SET to_apply=0
-                    END
-                    PATCH_IF to_remove BEGIN
-                       SPRINT $remove_these_spells("%spell%") ""
-                    END
-                    PATCH_IF to_remove BEGIN
-                       SPRINT $delete_these_spells("%spell%") ""
-                    END
-                    PATCH_IF to_apply BEGIN
-                       PATCH_IF collect_apply BEGIN
-                        PATCH_IF "%type%" STRING_EQUAL_CASE "AP_" BEGIN
-                             SPRINT apply_this_level "%apply_this_level% %entry%"
-                        END
-                       END
-                    END
-                    PATCH_IF to_add BEGIN
-                       TO_UPPER spell
-                       PATCH_IF !VARIABLE_IS_SET $kit_spell_type("%spell%") BEGIN
-                          INNER_ACTION BEGIN
-                            ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
-                              COPY_EXISTING "%spell%.spl" override
-                                 READ_SHORT 0x1c type
-                                 READ_LONG 0x34 level
-                                 SET level -= 1
-                              BUT_ONLY            
-                              OUTER_SET $kit_spell_type("%spell%")=type
-                              OUTER_SET $kit_spell_level("%spell%")=level
-                              ACTION_IF $kit_spell_type("%spell%")=4 BEGIN
-                                 OUTER_SET type=$kit_spell_type("%spell%")
-                                 OUTER_SPRINT add_this_level "%add_this_level% ADD_MEMORIZED_SPELL %spell% #0 innate"  // always add innate spells at level 0
-                              END
-                            END
-                          END
-                       END
-                    END
-
-                END  // end of going through this level
-                PATCH_IF "%add_this_level%" STRING_COMPARE_CASE "" BEGIN
-                   SPRINT $add_level("%clab_level%") "%add_this_level%"
-                END
-                PATCH_IF "%apply_this_level%" STRING_COMPARE_CASE "" BEGIN
-                   SPRINT $apply_level("%clab_level%") "%apply_this_level%"
-                END
-             END
-     BUT_ONLY
-     OUTER_SPRINT remove_string ""
-     OUTER_SPRINT delete_string_core ""
-     ACTION_PHP_EACH remove_these_spells AS spell=>null BEGIN
-          OUTER_SPRINT remove_string "%remove_string% REMOVE_MEMORIZED_SPELL %spell%"
-     END
-     ACTION_PHP_EACH delete_these_spells AS spell=>null BEGIN
-          OUTER_SPRINT delete_string_core "%delete_string_core% %spell%"
-     END
-     ACTION_IF "%delete_string_core%" STRING_COMPARE "" BEGIN
-       OUTER_SPRINT delete_string ~
-       PATCH_IF full_delete BEGIN
-                        GET_OFFSET_ARRAY offset_array CRE_V10_EFFECTS 
-                        PHP_EACH offset_array AS ind=>fx_off BEGIN 
-                                    READ_ASCII (fx_off + 0x88) parent 
-                                    PATCH_MATCH "%parent%" WITH 
-                                    %delete_string_core% BEGIN 
-                                         WRITE_SHORT (fx_off+0x8) 999 
-                                    END 
-                                    DEFAULT 
-                                    END 
-                        END
-                        LPF DELETE_CRE_EFFECT INT_VAR opcode_to_delete=999 END
-                     END~
-     END ELSE BEGIN
-        OUTER_SPRINT delete_string ""
-     END
-     OUTER_SPRINT add_string ""
-     OUTER_FOR (level=1;level<50;level+=1) BEGIN
-          ACTION_IF VARIABLE_IS_SET $add_level("%level%") BEGIN
-             OUTER_SPRINT add_this_level $add_level("%level%")
-             OUTER_SPRINT add_string "%add_string% PATCH_IF level>=%level% BEGIN %add_this_level% END"
-          END
-     END
-     APPEND_OUTER "%workspace%/kit_spell_build.tpa" "%kit_here% BEGIN  
-     %remove_string% 
-     %add_string% 
-     %delete_string% 
-END "
-     ACTION_IF collect_apply BEGIN
-       OUTER_SET made_insertion=0
-       OUTER_FOR (level=1;level<50;level+=1) BEGIN
-          ACTION_IF VARIABLE_IS_SET $apply_level("%level%") BEGIN
-             OUTER_SPRINT apply_this_level $apply_level("%level%")
-             ACTION_IF !made_insertion BEGIN
-                 OUTER_SET made_insertion=1
-                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" ""
-                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" "AP_ for kit %kit_here%"
-                 APPEND_OUTER "%workspace%/kit_collect_apply.txt" ""
-             END
-             APPEND_OUTER "%workspace%/kit_collect_apply.txt" "Level %level%: %apply_this_level%"
-          END
-       END
-     END
-    END
-  END
-  APPEND_OUTER "%workspace%/kit_spell_build.tpa" "DEFAULT END"
-  APPEND_OUTER "%workspace%/kit_spell_build.tpa" "END"
+					END  // end of going through this level
+					PATCH_IF "%add_this_level%" STRING_COMPARE_CASE "" BEGIN
+					   SPRINT $add_level("%clab_level%") "%add_this_level%"
+					END
+					PATCH_IF "%apply_this_level%" STRING_COMPARE_CASE "" BEGIN
+					   SPRINT $apply_level("%clab_level%") "%apply_this_level%"
+					END
+				 END
+		 BUT_ONLY
+		 OUTER_SPRINT remove_string ""
+		 OUTER_SPRINT delete_string_core ""
+		 ACTION_PHP_EACH remove_these_spells AS spell=>null BEGIN
+			  OUTER_SPRINT remove_string "%remove_string%%TAB%REMOVE_MEMORIZED_SPELL ~%spell%~%WNL%"
+		 END
+		 ACTION_PHP_EACH delete_these_spells AS spell=>null BEGIN
+			  OUTER_SPRINT delete_string_core "%delete_string_core% ~%spell~"
+		 END
+		 ACTION_IF "%delete_string_core%" STRING_COMPARE "" BEGIN
+		   OUTER_SPRINT delete_string ~
+		   PATCH_IF full_delete BEGIN
+							GET_OFFSET_ARRAY offset_array CRE_V10_EFFECTS 
+							PHP_EACH offset_array AS ind=>fx_off BEGIN 
+										READ_ASCII (fx_off + 0x88) parent 
+										PATCH_MATCH "%parent%" WITH 
+										%delete_string_core% BEGIN 
+											 WRITE_SHORT (fx_off+0x8) 999 
+										END 
+										DEFAULT 
+										END 
+							END
+							LPF DELETE_CRE_EFFECT INT_VAR opcode_to_delete=999 END
+						 END~
+		 END ELSE BEGIN
+			OUTER_SPRINT delete_string ""
+		 END
+		 OUTER_SPRINT add_string ""
+		 OUTER_FOR (level=1;level<50;level+=1) BEGIN
+			  ACTION_IF VARIABLE_IS_SET $add_level("%level%") BEGIN
+				 OUTER_SPRINT add_this_level $add_level("%level%")
+				 OUTER_SPRINT add_string "%add_string% PATCH_IF level>=%level% BEGIN%WNL%%add_this_level%END%WNL%"
+			  END
+		 END
+		 APPEND_OUTER "%data_loc%/kit_spell_build.tpa" "%kit_here% BEGIN  
+		 %remove_string% 
+		 %add_string% 
+		 %delete_string% 
+	END "
+		 ACTION_IF collect_apply BEGIN
+		   OUTER_SET made_insertion=0
+		   OUTER_FOR (level=1;level<50;level+=1) BEGIN
+			  ACTION_IF VARIABLE_IS_SET $apply_level("%level%") BEGIN
+				 OUTER_SPRINT apply_this_level $apply_level("%level%")
+				 ACTION_IF !made_insertion BEGIN
+					 OUTER_SET made_insertion=1
+					 APPEND_OUTER "%data_loc%/kit_collect_apply.txt" ""
+					 APPEND_OUTER "%data_loc%/kit_collect_apply.txt" "AP_ for kit %kit_here%"
+					 APPEND_OUTER "%data_loc%/kit_collect_apply.txt" ""
+				 END
+				 APPEND_OUTER "%data_loc%/kit_collect_apply.txt" "Level %level%: %apply_this_level%"
+			  END
+		   END
+		 END
+		END
+	  END
+	  APPEND_OUTER "%data_loc%/kit_spell_build.tpa" "DEFAULT END"
+	  APPEND_OUTER "%data_loc%/kit_spell_build.tpa" "END"
+	 END
  END
- INCLUDE "%workspace%/kit_spell_build.tpa"
+ INCLUDE "%data_loc%/kit_spell_build.tpa"
 END
 
 DEFINE_PATCH_FUNCTION kit_spell_exclude_func // things to be ignored entirely (not just skipped for reinstall)

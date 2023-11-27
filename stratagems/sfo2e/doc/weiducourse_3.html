@@ -1,0 +1,507 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course in WEIDU - chapter 1</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+<div class="ribbon_menu">
+    <ul>
+      <li><a href="#always">The ALWAYS block</a></li>
+      <li><a href="#installation">Installation options</a></li>
+      <li><a href="#tables">Tables</a></li>
+      <li><a href="#script_dialog">Scripts/Dialogs</a></li>
+      <li><a href="#appending">Appending to files</a></li>
+      <li><a href="#cycling">Extended headers</a></li>
+      <li><a href="#dialog">Editing dialog.tlk</a></li>
+    </ul>
+    <span><img src="files/logo.gif" width="305" height="83" alt="G3" /></span> 
+	</div>
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on WEIDU - chapter 3: Specific WEIDU commands</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+
+
+<div class="section">
+<p>This chapter details some specific sets of commands that WEIDU provides. Unlike chapter 2, the focus here is less on general programming tools, more on specific commands that may be useful in a mod. The discussion here is far from exhaustive; as always, check the WEIDU readme to see the full range of options.</p>
+<p><a href="weiducourse.html">Back to main menu</a>
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="always" id="always"></a>3.1 The ALWAYS block</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+Sometimes it is useful to have some piece of code that runs at the start of your mod installation whichever component is being installed, and/or runs at the start of each component. This can be done by the ALWAYS block, which is defined in the mod preamble, e.g. after AUTO_EVAL_STRINGS, but in any case before you start defining languages. For instance, maybe you want to set a bunch of variables whose names are the ids entries of each spell and whose values are the resrefs of each spell. We wrote a macro to do that in section 2.7, set_spell_vars. Suppose we put this macro in a file, mymod/lib/set_spell_vars.tph. Then you would do put this content in your preamble:
+<div class="code"><pre><code>ALWAYS
+	INCLUDE "%MOD_FOLDER%/lib/set_spell_vars.tph"
+	LAM set_spell_vars
+END
+</code></pre></div></p>
+<p>In this case, and often in your ALWAYS block, you only actually want the code to run once: running it twice will either cause problems, or (more often) just take unnecessary time. To avoid this, you can use a variable to make sure the content is only run once, as in:
+<div class="code"><pre><code>ALWAYS
+	ACTION_IF !VARIABLE_IS_SET always_block_installed BEGIN
+		OUTER_SET always_block_installed=1
+		INCLUDE "%MOD_FOLDER%/lib/set_spell_vars.tph"
+		LAM set_spell_vars
+	END
+END
+</code></pre></div></p>
+<p>I generally find it more elegant to put the entire ALWAYS block (including any variable that we check to run it only once) into a single include:
+<div class="code"><pre><code>ALWAYS
+	INCLUDE "%MOD_FOLDER%/lib/always.tph"
+END
+</code></pre></div></p>
+
+</div>
+<div class="ribbon_rectangle_h3"><h3><a name="installation" id="installation"></a>3.2 Controlling installation options with component flags</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+Recall that the basic structure of a tp2 file is
+<div class="code"><pre><code>[preamble]
+
+BEGIN "first component" DESIGNATED 100
+
+[contents of first component]
+
+BEGIN "second component" DESIGNATED 200
+
+[contents of second component]
+
+...
+</code></pre></div></p>
+<p>It is possible to control the way installation goes by attaching various 'flags' to a component. Flags are commands that directly follow the original "BEGIN x" (DESIGNATED is actually a flag) and precede the main piece of WEIDU code. You can have as many flags as you like on a component. This account is not exhaustive, but it should list most of the more important flags.</p>
+<p><h4>Requiring or forbidding other mod components</p></h4>
+<p>Often, in complicated mods, one of your components may only work if another of your components - or a component from another mod - has been installed. You can do this by a REQUIRE_COMPONENT flag, like this:
+<div class="code"><pre><code>BEGIN "Make Minsc awesome" DESIGNATED 100
+
+[content]
+
+BEGIN "Give Minsc an awesome sword" DESIGNATED 200
+REQUIRE_COMPONENT "mymod.tp2" 100 "This component requires 'Awesome Minsc' to be installed"
+
+[content]
+</code></pre></div>
+This tells WEIDU that component 200 is not to be installed unless component 100 of 'mymod.tp2' has already been installed, and to display the string "This component requires 'Awesome Minsc' to be installed" if it hasn't been. (This string can, and usually should, be a tra file entry.) 'mymod.tp2' is the tp2 file of the mod in which component 100 is found; it can be the current mod or a different one.</p>
+<p>You can also tell WEIDU to install your component only if another component is <b>not</b> installed. The syntax is exactly the same, but you use FORBID_COMPONENT instead of REQUIRE_COMPONENT.</p>
+
+<p><h4>REQUIRE_PREDICATE</h4></p>
+<p>Sometimes you want a more complicated check, e.g. that your mod should only install if at least one from a list of components is installed. You can do this with the powerful REQUIRE_PREDICATE flag. The syntax is 'REQUIRE_PREDICATE expression string', where 'expression' is something that evaluates to an integer (think of it as a Boolean). If value=0, the component is skipped and the string is displayed.</p>
+<p>For instance, here's code to require that one or other of the 'Icewind dale arcane' spells from IWDification or SCS are installed:
+<div class="code"><pre><code>BEGIN "component that requires IWD arcane spells" DESIGNATED 200
+REQUIRE_PREDICATE
+	MOD_IS_INSTALLED setup-iwdification 40 
+	|| MOD_IS_INSTALLED setup-stratagems 1500
+	"This component requires the Icewind Dale arcane spells to be present"
+</code></pre></div></p>
+<p>REQUIRE_PREDICATE can check for anything, not just component presence or absence; another common scenario is to check whether a particular game type is present, as in:
+<div class="code"><pre><code>BEGIN "component that requires EE" DESIGNATED 100
+REQUIRE_PREDICATE
+	GAME_IS "BGEE BG2EE IWDEE EET"
+	"This component requires the Enhanced Edition version of the game"
+	
+[content]
+
+BEGIN "component that requires SoD" DESIGNATED 200
+REQUIRE_PREDICATE
+	GAME_INCLUDES "SOD"
+	"This component requires Siege of Dragonspear"
+	
+[content]
+
+BEGIN "component that doesn't work on PS:T" DESIGNATED 300
+REQUIRE_PREDICATE
+	!GAME_IS "PST PSTEE"
+	"This component is not available for Planescape: Torment"
+</code></pre></div></p>
+<p>Technically the following is legal:
+<div class="code"><pre><code><font color="red">BEGIN "component that requires dw#melee.bcs" DESIGNATED 100
+REQUIRE_PREDICATE
+	FILE_EXISTS_IN_GAME "dw#melee.bcs"
+	"This component requires SCS AI system to be installed"
+</font></code></pre></div>
+However, it is generally considered bad practice to use predicates like this, because they are not compatible with automated installers like Project: Infinity. Those installers need to be able to work out which components are compatible or incompatible by looking only at the tp2 files, not at the result of installing them. So it's strongly recommended that you restrict REQUIRE_PREDICATE to checking which game you are on and which other components are or are not installed.</p>
+<p><h4>Component groups</h4></p>
+<p>In mods with many components, it can be useful to divide them into groups: for instance, Sword Coast Stratagems splits its components into New Spells and Spell Tweaks; Gameplay Tweaks; AI improvements; Tactical challenges. When the player installs the mod, they are first asked which groups they want to view; they are then only offered the choice to install components from those groups.</p>
+<p>You assign components to groups using the GROUP flag, like this:
+<div class="code"><pre><code>BEGIN "Make Minsc Awesome" DESIGNATED 100 GROUP "Minsc options"
+
+[content]
+
+BEGIN "Give Minsc an awesome battle-cry" DESIGNATED 200 GROUP "Minsc options"
+
+[content]
+
+BEGIN "Rename Anomen 'the annoying'" DESIGNATED 300 GROUP "Anomen options"
+
+[content]
+</code></pre></div></p>
+<p>Each component is labelled by a particular string (e.g. "Minsc options"), and all components with the same string are grouped together. As usual, in a live mod these strings (and indeed the component names) should nearly always be  tra entries.</p>
+<p><h4>Subcomponents</h4></p>
+<p>Subcomponents allow you to group together a set of mutually-incompatible subcomponents, so that the user picks only one. For instance, maybe you have several different awesome titles to give Minsc; the player can only choose one.</p>
+<p>You designate subcomponents using the SUBCOMPONENT flag, like this:
+<div class="code"><pre><code>BEGIN "Minsc becomes 'Minsc the Awesome'" DESIGNATED 100 
+SUBCOMPONENT "Give Minsc an awesome title"
+
+[content]
+
+BEGIN "Minsc becomes 'Minsc the Bodacious'" DESIGNATED 110 
+SUBCOMPONENT "Give Minsc an awesome title"
+
+[content]
+
+BEGIN "Minsc becomes 'Minsc the Hero of Baldur's Gate" DESIGNATED 120 
+SUBCOMPONENT "Give Minsc an awesome title"
+
+[content]
+</code></pre></div></p>
+<p>When the player installs, they will be asked to pick one of these components (or to skip all of them).</p>
+<p>You can put requirements (with REQUIRE_PREDICATE or REQUIRE/FORBID_COMPONENT) for a whole group of subcomponents: just put them on the first component in the list. You can also put a predicate on specific subcomponents. For example, the whole 'give Minsc an awesome title' component only makes sense on a BG or BG2 game, and Minsc can't really be the Hero of Baldur's Gate unless BG has already happened. So we might alter the above example to
+<div class="code"><pre><code>BEGIN "Minsc becomes 'Minsc the Awesome'" DESIGNATED 100 
+SUBCOMPONENT "Give Minsc an awesome title"
+REQUIRE_PREDICATE (!GAME_IS "iwd how totlm iwdee pst pstee") "This component requires Minsc and he's not in this game (shame)"
+
+[content]
+
+BEGIN "Minsc becomes 'Minsc the Bodacious'" DESIGNATED 110 
+SUBCOMPONENT "Give Minsc an awesome title"
+
+[content]
+
+BEGIN "Minsc becomes 'Minsc the Hero of Baldur's Gate" DESIGNATED 120 
+SUBCOMPONENT "Give Minsc an awesome title" (GAME_IS "bg2 tob bg2ee")
+
+[content]
+</code></pre></div></p>
+<p><h4>Labels</h4></p>
+<p>
+WEIDU generally refers to components by their component number (as in: REQUIRE_COMPONENT "stratagems.tp2" 5900 "This component requires the core AI component"). That has two problems: (i) it's not very human-readable; (ii) sometimes mod numbers change. It would be helpful to have a way to refer to a component that's human-readable and doesn't change when the component number does.</p>
+<p><em>In principle,</em> this functionality is provided by the LABEL component flag, which allows each component to be labelled with a string. The component number can then be returned by the ID_OF_LABEL WEIDU command: if stratagems component 5900 gets assigned label 'dw_main_ai_component', 'ID_OF_LABEL stratagems.tp2 dw_main_ai_component' evaluates to 5900.</p>
+<p>
+Here's an example (rewriting our previous example of REQUIRE_COMPONENT to use LABELs):
+<div class="code"><pre><code>BEGIN "Make Minsc awesome" DESIGNATED 100 
+LABEL dw_awesome_minsc_initialize
+
+[content]
+
+BEGIN "Give Minsc an awesome sword" DESIGNATED 200
+LABEL dw_awesome_minsc_sword
+REQUIRE_COMPONENT mymod.tp2 ID_OF_LABEL mymod.tp2 dw_awesome_minsc_initialize
+"This component requires 'Awesome Minsc' to be installed"
+
+[content]
+</code></pre></div>
+</p>
+<p>Note that LABELs are not readable by the player, and so shouldn't be tra entries. Internal to WEIDU there is no need to use your modder prefix with them (as I have in the above), but it's helpful for Project Infinity.</p>
+<p>For mods with many components and component groups, LABEL unfortunately seems to greatly increase the time for WEIDU to parse the tp2; for that reason, I don't myself use it, despite its elegance.</p>
+
+<p><h4>Asking individually about components</h4></p>
+<p>By default, any WEIDU mod with multiple components offers you the chance to install all of them. For some mods (e.g. tweak mods, that offer you various different and perhaps incompatible ways to modify your game) this is inappropriate. You can turn it off by putting 'ASK_EVERY_COMPONENT' in the preamble of your TP2 file.</p>
+<p>If you are using component groups, WEIDU automatically acts as if ASK_EVERY_COMPONENT were present.</p>
+
+</div>
+
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="tables" id="tables"></a>3.3 Reading from and writing to tables</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+A ‘table’ is just a text file consisting of text arranged in rows and columns, separated by spaces. The 2da and ids files in the Infinity engine are tables. WEIDU provides several tools to interact with tables. (All the commands discussed in this section are patch-context commands, to be used while editing a table.)</p>
+<p><h4>How WEIDU describes tables</h4></p>
+<p>WEIDU identifies a table entry by three numbers: the row, the column, and the minimum column count. Rows and columns both count from 0 up (so the first column is column 0, etc.) - but WEIDU only considers columns at least as long as the maximum column length.</p>
+<p>For instance, look at (the EE version of) kitlist.2da. The first row contains two entries, ‘2DA’ and ‘v1.0’ (these aren’t really table entries at all, just part of the way a 2da file is defined). The second row contains only one entry (again, not really a table entry). The third row contains the column headers: ‘ROWNAME’, ‘LOWER’, ‘MIXED’ and so forth – there are 9 of them. The remaining rows contain the actual data, but each row has a row header too, so there are 10 entries in each subsequent row.</p>
+<p>That means that (say) "the entry in row 4, column 1" means something different for different minimum column counts. If you are working with a minimum column count of 2, the ‘2DA v1.0’ row and the column-header rows both count, and so the first row of actual data is row 2, and our entry is ‘WIZARD_SLAYER’. If you take minimum column count as 3 (or as 9) the ‘2DA v1.0’ row doesn’t count, but the column-header row does, and so the first row of actual data is row 1, and our entry is ‘KENSAI’. With a minimum column count of 10, the first row of actual data is row 0, and our entry is ‘CAVALIER’. And for a minimum column count of 11 or more, there is no data, and so ‘row 4, column 1’ doesn’t determine an entry.</p>
+<p><h4>READ_2DA_ENTRY and SET_2DA_ENTRY</h4></p>
+<p>The simplest way to get table data is to use the READ_2DA_ENTRY command. For instance, suppose you happen to know that ‘CAVALIER’ is row 4 of the actual data in kitlist.2da, and you want to get the description string number for cavaliers (it lives in the ‘help’ column, column 4 of the data). Then you can just do
+<div class="code"><pre><code>COPY_EXISTING - "kitlist.2da" nowhere
+	READ_2DA_ENTRY 4 4 10 cavalier_description 
+</code></pre></div>
+<p>The syntax for READ_2DA_ENTRY is ‘READ_2DA_ENTRY row column min_col_count var’ and the entry in (row,column), given a minimum column count of ‘min_col_count’, is read and stored in ‘var’. (We do ‘COPY_EXISTING -‘ because we don’t want to change the file, just read data from it.)</p>
+<p>SET_2DA_ENTRY does exactly the same thing in reverse: it sets a table entry to a string. Here’s code to give cavaliers a new description:
+<div class="code"><pre><code>OUTER_SET new_cav_desc=RESOLVE_STR_REF @10	// where ‘10’ is an entry in the .tra file 
+						//containing the new description
+COPY_EXISTING "kitlist.2da" override
+	SET_2DA_ENTRY 4 4 10 "%new_cav_desc%"
+</code></pre></div>
+<p><h4>Determining column and row counts</h4></p>
+<p>In many situations, you won’t know what the exact number of rows is. For instance, kitlist.2da has one row for each kit, and other kits may have been added by mods. Less often, you won’t know how many columns there are: for instance, weapprof.2da has one column per kit. (No, I don’t know why Bioware thought it was a good idea to store some kit data as rows and other kit data as columns.)</p>
+<p>You can use COUNT_2DA_ROWS to determine the number of rows. The syntax is ‘COUNT_2DA_ROWS min_col_count var’: var is set equal to the number of rows with at least min_col_count columns.</p>
+<p>COUNT_2DA_COLS returns the number of columns. The syntax is simpler: ‘COUNT_2DA_COLS var’ stores the (maximum) number of columns in var.</p>
+<p>Here’s some more sophisticated code that defines a function to return the number (column 0) of an arbitrary kit (identified by its rowname entr, e.g. CAVALIER). (We’ll shortly see that there is actually a better way to do this.)
+<div class="code"><pre><code>DEFINE_DIMORPHIC_FUNCTION return_kit_number
+	STR_VAR kit=""
+RET kit_number
+BEGIN
+	OUTER_SET kit_number="-1" // default value, indicates no kit present
+	COUNT_2DA_COLS colcount 	// we could just rely on it being 10, but I tend to do the 
+					// count explicitly to guard against typos
+	COUNT_2DA_ROWS colcount rowcount
+	FOR (row=0;row &lt; rowcount;++row) BEGIN
+		READ_2DA_ENTRY row 1 colcount this_kit
+		PATCH_IF "%this_kit%" STR_EQ "%kit%" BEGIN // we found our kit
+			READ_2DA_ENTRY row 0 colcount kit_number
+			row=rowcount // since we’ve found it, we can skip to the end and save time
+		END
+	END
+END
+</code></pre></div></p>
+<p><h4>Faster table interactions with READ_2DA_ENTRIES_NOW and friends</h4></p>
+READ_2DA_ENTRY works fine, but it’s not that efficient if you’re doing a large number of reads from the same table. The reason is that every time you use it, WEIDU has to parse the whole table, just to find that one entry. It would be more efficient to read the whole table at once, and then interrogate the read-in data multiple times, and WEIDU provides functionality to do that too.</p>
+<p>(Like any speedup issue, this isn’t worth worrying about unless you’re doing really large amounts of table-editing – any one-off reading of a few dozen values from a table will take only a fraction of a second, even with READ_2DA_ENTRY. That said, I actually find the alternate functioning easier to use, even if it takes a bit of getting used to.)</p>
+<p>Here's how it works. We use READ_2DA_ENTRIES_NOW to collect all the table data at once (or all the table data for a certain column width), like this:
+<div class="code"><pre><code>
+READ_2DA_ENTRIES_NOW my-data colcount
+</code></pre></div>
+This reads the first ‘colcount’ columns worth of data from every row in the table and stores it in a bespoke data structure called ‘my-data’ (or whatever other string you specify – but make it unique). (Columns with fewer than colcount entries are ignored; columns with more than colcount entries are truncated.) As a bonus, an ordinary variable – also called ‘my-data’ – is set equal to the total number of rows read in (saving us the trouble of doing COUNT_2DA_ROWS).</p>
+<p>To interrogate the new data structure, we do
+<div class="code"><pre><code>READ_2DA_ENTRY_FORMER my-data row col var
+</code></pre></div>
+which puts the (row,col) entry in the read-in table into var. Notice that we do need to specify which data structure we’re using (in principle you might have multiple active at once) but we don’t need to specify the minimum column count (since we did it already when we read the data in).</p>
+<p>Here's our function rewritten to use this method (and made somewhat faster as a consequence):
+<div class="code"><pre><code>DEFINE_DIMORPHIC_FUNCTION return_kit_number
+	STR_VAR kit=""
+RET kit_number
+BEGIN
+	OUTER_SET kit_number="-1" // default value, indicates no kit present
+	COUNT_2DA_COLS colcount 	// we could just rely on it being 10, but I tend to do the 
+					// count explicitly to guard against typos
+	READ_2DA_ENTRIES_NOW kitdata colcount
+	FOR (row=0;row &lt; kitdata;++row) BEGIN
+		READ_2DA_ENTRY_FORMER kitdata row 1 this_kit
+		PATCH_IF "%this_kit%" STR_EQ "%kit%" BEGIN // we found our kit
+			READ_2DA_ENTRY_FORMER kitdata row 0 kit_number
+			row=kitdata // since we’ve found it, we can skip to the end and save time
+		END
+	END
+END</code></pre></div>
+<p>You can do the same thing in reverse to write a large amount of data to a table, though you’ll probably use it less often: SET_2DA_ENTRY_LATER puts an entry into a data structure, and SET_2DA_ENTRIES_NOW flushes the data structure into the file. See the WEIDU readme for the detailed syntax.</p>
+</div>
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="script_dialog" id="script_dialog"></a>3.4 Editing scripts and dialogs</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>In chapter 1 we saw how to use COMPILE in order to turn d and baf files into dlg and bcs files. In this section we'll consider some more sophisticated ways to engage with these files.</p>
+<p>It's important to recall that WEIDU has an entirely different format for interacting with dlg files in particular: the .d file format itself includes functionality to edit many features of dialog files. That format is outside the scope of this course.</p>
+<p><h4>Patching extant files</h4></p>
+<p>
+One quite common modding scenario is that a script or dialog already in the game needs to be modified. (For instance, maybe some script uses the Attack() command and needs to be changed to use the AttackOneRound() command.) At least for scripts, the most effective way to do it is (i) decompile the script to a text file; (ii) run a search-and-replace on that text file using REPLACE_TEXTUALLY or REPLACE_EVALUATE; (iii) recompile it.  You do it like this:
+<div class="code"><pre><code>COPY_EXISTING ascript.bcs override
+	DECOMPILE_AND_PATCH BEGIN
+		REPLACE_TEXTUALLY "Attack(" "AttackOneRound("
+	END
+BUT_ONLY
+</code></pre></div>
+</p>
+You can do this with dialog files too - the syntax is the same - but it is often simpler to use the .d format. 
+
+<p><h4>Decompiling and recompiling separately</h4></p>
+<p>DECOMPILE_AND_PATCH starts with and ends with a compiled script. In rare circumstances, you want to start with a compiled script and end with a decompiled script, or vice versa. For instance, you might want to start with a decompiled script, do some replacements on it, and then copy over the compiled version, or you might want to have a compiled script with a name different from the decompiled script (simple COMPILE commands can't handle this situation).</p>
+<p>You do this with the patch-context commands DECOMPILE_BCS_TO_BAF and COMPILE_BAF_TO_BCS (or, for dialogs, DECOMPILE_DLG_TO_D and COMPILE_D_TO_DLG).</p>
+<p>While in principle you could use DECOMPILE_BCS_TO_BAF, followed by a REPLACE_TEXTUALLY, followed by COMPILE_BAF_TO_BCS, it's not a good idea: use DECOMPILE_AND_PATCH instead. (Getting it wrong leads to install-time errors rather than run-time errors.)</p>
+
+<p><h4>Pitfalls of search-and-replace on scripts</h4></p>
+<p>One perennial problem with doing a search-and-replace on a script is that the exact form of the decompiled script depends both on the compiler and on the system on which it is being decompiled. As for the first: normally you look at decompiled scripts in Near Infinity, but its compilation conventions are not *quite* WEIDU's. So if your apparently-reasonable REPLACE_TEXTUALLY isn't working, try looking at WEIDU's version of the decompilation. You can do this with a quick mod test component and DECOMPILE_BCS_TO_BAF, or you can do it at the command line: weidu ascript.bcs will put ascript.baf into the main game directory.</p>
+<p>As to the second: WEIDU uses the contents of the various ids files in the game to carry out its decompilation. If the command 'SetGlobalTimer("mytimer","GLOBAL",EIGHT_HOURS)' is in the decompiled script, it is because there is some line like '2400 EIGHT_HOURS' in gtimes.ids. The problem is that different installs might have slightly different .ids files, and so a script may decompile differently on different systems. The safe thing is to look up the ids value during the course of patching, like this:
+<div class="code"><pre><code>COPY_EXISTING ascript.bcs override
+	// replace 8-hour timer with 4-hour timer
+	LOOKUP_IDS_SYMBOL_OF_INT eight_hours gtimes 2400
+	DECOMPILE_AND_PATCH BEGIN
+		REPLACE_TEXTUALLY 
+			~SetGlobalTimer("mytimer","GLOBAL",%eight_hours%)~
+			~SetGlobalTimer("mytimer","GLOBAL",1200)~	
+	END
+BUT_ONLY
+</code></pre></div>
+</p>
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="appending" id="appending"></a>3.5 Appending to files</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>Here I want to briefly consider how we add new text to the bottom of an (existing or new) text file. </p>
+
+<p><h4>The APPEND and APPEND_OUTER commands</h4></p>
+<p>Suppose you want to add halflings to the list of hated enemies available for rangers to choose. That list is controlled by the table (text file) haterace.2da, which looks like this (showing only a small part):
+<div class="code"><pre><code>BEHOLDER                54770       123     54772
+DEMONIC                 54760       121     54762
+DRAGON                  54816       146     54817
+</code></pre></div>
+The first entry in the table is a human-readable designation of the creature. The second and fourth entries are dialog.tlk entries that describe the creature in the selection screen. The third entry is the code for the race, taken from race.ids.
+</p>
+<p>Adding halflings to the table just requires us to add this row:
+<div class="code"><pre><code>HALFLING		7195	5	9154
+</code></pre></div>
+(here we are taking advantage of the fact that the name and description for halflings is already in dialog.tlk). We do it like this:
+<div class="code"><pre><code>APPEND "racetext.2da" "HALFLING		7195	5	9154"
+</code></pre></div></p>
+<p>APPEND is used to append a string to existing in-game files: using it involves specifying the name of an in-game file, which WEIDU will then find whether it's still compressed or it's present in the override directory. You can alternately use APPEND_OUTER, which appends to some file whose location is specified by a path relative to your game directory. For instance, you can add a string to the EE ini file like this:
+<div class="code"><pre><code>APPEND_OUTER "%USER_DIRECTORY%/baldur.lua" 
+~SetPrivateProfileString('Script','DMWW_genai_difficulty','5')~
+</code></pre></div></p>
+<p><h4>Subtleties of APPEND</h4></p>
+<p>Sometimes a string being appended will have variables in it that need to be evaluated; we do this with the EVALUATE_BUFFER flag, as with COMPILE. Here's code adding Wolves to the hated race list:
+<div class="code"><pre><code>
+OUTER_SET wolf_description=RESOLVE_STR_REF (@100) // @100 is a tra ref giving the description for the ranger select screen
+APPEND "racetext.2da" "WOLF		6629	5	%wolf_description%"
+</code></pre></div></p>
+<p>Very often we only want to APPEND a string if it's not there already. The UNLESS flag handles this, as in:
+<div class="code"><pre><code>APPEND "racetext.2da" "HALFLING		7195	5	9154" UNLESS "HALFLING"
+</code></pre></div>The APPEND will be enacted only if the string 'HALFLING' is not already in racetext.2da.</p>
+<p>By default, APPEND removes any double spaces from the file to which the data is appended; you can override this with the KEEP_CRLF flag. Whether or not you use KEEP_CRLF, APPEND always adds its content as a new line.</p>
+<p>All these points apply equally to APPEND_OUTER.</p>
+</div>
+
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="cycling" id="cycling"></a>3.6 Manually cycling through extended headers</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>As I noted previously, large amounts of the data in IE files are stored in the so-called ‘extended header’, which contains variably many copies of a data structure – for instance, .cre files have effects, items, memorized spells, and so on. Because this data doesn’t have fixed offsets, you can’t straightforwardly edit it just by using READ_LONG/WRITE_LONG etc.</p>
+<p>In modern WEIDU, mostly you can edit this data using either built-in-WEIDU commands or the function library that ships with WEIDU: ADD_CRE_EFFECT and ALTER_EFFECT let you edit effects in .cre files. But it is sometimes useful to know how to do it manually, for two reasons (i) there are not functions for all IE data types; (ii) if you are patching a large number of files (e.g. going through every spell in the game and editing them) it can be quite slow to use WEIDU’s functions and you may want to do it manually for efficiency.</p>
+<p>As a concrete example, let’s suppose we want to increase the price of every drink sold by a tavern by a factor of 10. This requires us to edit the ‘drink’ part of the extended header. (You will find this tutorial easier to understand if you have a tavern file – say, TRMER03.STO from BG2 – open in Near Infinity while reading.)</p>
+<p><h4>How extended headers are structured</h4></p>
+<p>An extended header is normally specified by three numbers:
+<ul>
+<li>The <b>entry length</b> – how many bytes make up each individual header entry. For drinks, the answer is 0x14 (i.e., 20 bytes).</li>
+<li>The <b>first entry offset</b> – the offset in the file for the first individual entry. For (unmodded) TRMER03, the drinks start at 0x9c.</li>
+<li>The <b>number of entries</b> – how many individual entries make up the header. For unmodded TRMER03, there are 5 drinks.</li>
+</ul>
+(Occasionally, an extended header has a fourth number required, the <b>index</b>. I’ll skip that for simplicity; if you want to understand it, look at the WEIDU readme.)</p>
+<p>The entry length is always the same for a given data type. The first entry offset and the number of entries are stored at fixed locations in the file: for .sto files, and for drinks, the first offset is stored in a LONG variable at 0x4c and the number of entries is stored in a LONG variable at 0x50. (All this can either be read off a copy of the file in Near Infinity, or else looked up in IESDP.)</p>
+<p>So the offset at the start of the nth entry (counting from zero) is the first entry offset, plus (n x the entry length).</p> 
+<p><h4>Cycling through entries with loops</h4></p>
+<p>The simplest way to edit all entries is to cycle through them with a FOR loop. Here’s an implementation of our tavern-increasing task:
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION increase_drink_cost
+INT_VAR multiplier=10
+BEGIN
+	READ_LONG 0x4c first_offset
+	READ_LONG 0x50 drink_count
+	FOR (n=0;n&lt;drink_count;++n) BEGIN
+		drink_offset=first_offset + n*0x14
+		WRITE_LONG (0xc + drink_offset) (THIS * multiplier)
+	END
+END
+</code></pre></div>
+(Here the drink cost is at byte 0xc inside the ‘drink’ data structure. I’ve implemented it as a function with ‘multiplier’ free – partly in case we change our mind later about the size of the multiplier, mostly because it’s more readable that way.)</p>
+<p><h4>Cycling through entries with GET_OFFSET_ARRAY</h4></p>
+<p>WEIDU offers an elegant alternative to FOR loop cycling, which is much easier to use once you get the hang of it. The GET_OFFSET_ARRAY command automatically reads all the offsets for entries of a given type into the values of an array, with the number of the entry as its key. (So for drinks, if we call the array drink_arr, $drink_arr(0)=0x94 is the offset of the first drink entry, $drink_arr(1)=0xa8 is the offset of the second, and so on. You can then just cycle through them all with PHP_EACH.</p>
+<p>To use GET_OFFSET_ARRAY, you need to give it a name for the array (e.g. drink_arr), and then 7 integers, which are in order:
+<ol>
+<li>The offset where the first entry offset is stored (0x4c for drinks)</li>
+<li>The number of bytes that the first entry offset occupies (4 for drinks)</li>
+<li>The offset where the number of entries is stored (0x50 for drinks)</li>
+<li>The number of bytes that the number of entries takes up (4 for drinks)</li>
+<li>The offset of the ‘index’ (usually there isn’t one, so set it to zero)</li>
+<li>The number of bytes that the index occupies (usually set it to zero)</li>
+<li>The length of the actual entry (0x1c for drinks).</li>
+</ol></p>
+<p>Here’s our drink-repricing function reimplemented with GET_OFFSET_ARRAY:
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION increase_drink_cost
+INT_VAR multiplier=10
+BEGIN
+	GET_OFFSET_ARRAY drink_arr 0x4c 4 0x50 4 0 0 0xc
+	PHP_EACH drink_arr AS drink_ind=>drink_offset BEGIN	
+		WRITE_LONG (0xc + drink_offset) (THIS * multiplier)
+	END
+END
+</code></pre></div></p>
+<p>For many data types WEIDU makes it easier for you by hardcoding these offsets. When there is a hardcode, you can just replace the list of 7 integers by the hardcoded string, like this:
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION increase_drink_cost
+INT_VAR multiplier=10
+BEGIN
+	GET_OFFSET_ARRAY drink_arr STO_V10_DRINKS
+	PHP_EACH drink_arr AS drink_ind=>drink_offset BEGIN	
+		WRITE_LONG (0xc + drink_offset) (THIS * multiplier)
+	END
+END</code></pre></div></p>
+<p>See the WEIDU readme for a list of all the available hardcoded options, but basically anything in a (BG2-version) area, creature, item, spell, or store file is covered.</p>
+<p><h4>Second-level extended headers</h4></p>
+<p>In a few cases, the extended header system goes one level deeper: some data structures in the extended header have extended headers of their own. The most important example for most uses is ITM and SPL files: they have a variable number of Ability data structures, and each Ability has a variable number of Effect data structures.</p>
+<p>In this case, the second-level structures are usually stored in one section of the overall file. Each first-level structure stores two integers: the index of the first second-level header used by that first-level structure, and the number of second-level structures used by that structure. </p>
+<p>For instance, look at the Magic Missile spell (SPWI112.spl). In BG2, it has 5 ability entries (corresponding to casting the spell at levels 1,3,5,7,9) and each has 3 associated effect entries. So the index in the first ability is 0 (we always count from zero) and the number in that entry is 3, the index in the first ability is 3 and the number is 3; the index in the third ability is 6 and the number is 3, and so on. So effects 0,1,2 are used by the first ability header; effects 3,4,5 by the second, and so on.</p>
+<p>If you want to edit all the second-level headers, then, you need to cycle through the first-level headers, and then check each first-level header to find the first-entry indext and number of entries for the associated second-level headers, and then edit each of those second-level headers. You can do this manually with loops, but this time I’ll skip straight to the neat way to do it, using GET_OFFSET_ARRAY2.</p>
+<p>This is quite a lot like GET_OFFSET_ARRAY, but now it needs 8 integers.
+<ol>
+<li>The offset of the currently-being-edited first-level structure. (This will need to be a variable, as you’ll be looping through all the values.)</li>
+<li>The offset where the first entry offset is stored </li>
+<li>The number of bytes that the first entry offset occupies.</li>
+<li>The offset where the number of entries is stored, relative to the start of first-level structure.</li>
+<li>The number of bytes that the number of entries takes up. </li>
+<li>The offset of the first-entry index, again relative to the start of the first-level structure.</li>
+<li>The number of bytes that the index occupies (if there is one, otherwise just set it to zero).</li>
+<li>The length of the actual entry.</li>
+</ol></p>
+<p>As an example, suppose we want to edit Magic Missile so that it does 1d6+1 damage per missile at levels 1-3, 1d8+1 damage at levels 5-7, and 1d10+1 at level 9. (That’s actually a bit fiddly to do with WEIDU’s built-in function library.) Here’s some code to implement it:
+<div class="code"><pre><code>COPY_EXISTING "spwi112.spl" override
+	GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+	PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN // cycle through abilities
+		READ_SHORT (ab_off + 0x10) level // read in the level of this header
+		GET_OFFSET_ARRAY2 fx_arr ab_off 0x6a 4 0x1e 2 0x20 2 0x30
+		PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN // cycle through effects
+			PATCH_IF (SHORT_AT fx_off)=12 BEGIN // if this is a ‘damage’ opcode
+				WRITE_LONG (fx_off+0x20) (level<5?6:(level<9?8:10))
+			END
+		END
+	END
+BUT_ONLY</code></pre></div></p>
+<p>Look at the GET_OFFSET_ARRAY2 arguments more closely:
+<ul>
+<li>ab_off is the offset of the current ability (we’re looping through them with our first PHP_EACH)</li>
+<li>0x6a is where the main header stores the offset to Effect data structures.That offset is stored in a 4-byte chunk of the file, which is what the ‘4’ is.</li>
+<li>Inside the ‘ability’ data structure, the first effect index is stored in 2 bytes at 0x1e, hence the next two entries are ‘0x1e’ and ‘2’.</li>
+<li>Also inside the ‘ability’ data structure, the number of effects is stored in 2 bytes at 0x20, hence the next two entries are ‘0x20’ and ‘2’.</li>
+<li>The last entry, 0x30, is the length of the ‘effect’ data structure.</li>
+</ul>
+As with GET_OFFSET_ARRAY, the values for most commonly-used data structures are preloaded. In our example, we could replace 
+<div class="code"><pre><code>GET_OFFSET_ARRAY2 fx_arr ab_off 0x6a 4 0x1e 2 0x20 2 0x30
+</code></pre></div>
+with
+<div class="code"><pre><code>GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+</code></pre></div></p>
+
+<p><h4>Adding and subtracting headers</h4></p>
+<p>It is possible to insert or delete bytes so as to add or remove (primary or secondary) headers. It is very fiddly, however: you need to keep track as you go along of the fact that data has been moved, and you need to update all other offsets in the file once you’re done. If at all possible, use a pre-existing function before doing this.</p>
+
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="dialog" id="dialog"></a>3.7 Direct interaction with the dialog file</h3></div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+Most of the time, new strings get into dialog.tlk through either SAY commands or through compiling a script or a dialog. But occasionally you want to know the contents of a particular string identified by number. And sometimes it’s helpful to be able to put a string directly into dialog.tlk, or to edit an existing string. (For instance, changing the description or name of a kit has to be done this way.)</p>
+<p><h4>Getting string values</h4></p>
+Here’s how to read a string value at a particular dialog.tlk index: ACTION_GET_STRREF value var finds the string at index ‘value’ (which can be an integer variable) and stores the result in the string variable ‘var’. For instance, in Baldur’s Gate II the description for the Berserker kit is stored at index 25201, so 
+<div class="code"><pre><code>ACTION_GET_STRREF 25201 desc
+</code></pre></div>
+stores the berserker description string in ‘desc’.</p>
+<p>Some string also come with attached audio files; ACTION_GET_STRREF_S has the same syntax and recovers the name of that file. (GET_STRREF and GET_STRREF_S are patch-context versions).</p>
+<p>The patch-context command READ_STRREF offers an occasionally-useful shortcut: READ_STRREF offset var reads in a 4-byte integer at ‘offset’ and sets var to the string (if any) with that index. For instance,
+<div class="code"><pre><code>COPY_EXISTING - "minsc.cre" nowhere
+	READ_STRREF NAME1 minsc_name
+</pre></code></div>
+<p>sets ‘minsc_name’ equal to whatever actual string names Minsc (‘Minsc’, probably, though it might be different in some languages). READ_STRREF_S is also available and does exactly what you might expect.</p>
+<p><h4>Setting string values</h4></p>
+<p>The most straightforward way to get a string into dialog.tlk is to use RESOLVE_STR_REF, like this:
+<div class="code"><pre><code>OUTER_SET string_val=RESOLVE_STR_REF ("This is a new string")</code></pre></div>
+RESOLVE_STR_REF ("This is a new string") is set equal to the number of that string in dialog.tlk. If it’s already there, it just returns the existing string number; if it’s not, it adds it and then returns the new number.</p>
+<p>If you want to edit an existing string, use STRING_SET_EVALUATE: ‘STRING_SET_EVALUATE index var2’ sets the string with index ‘index’ equal to the string ‘var2’. For instance,
+<div class="code"><pre><code>STRING_SET_EVALUATE desc_strref "%desc%" </code></pre></div>
+sets the dialog.tlk entry with index equal to the integer variable ‘desc_strref’ equal to the string variable ‘desc. (If you actually can hardcode the integer value you can just use STRING_SET.)</p>
+<p>STRING_SET_EVALUATE is an action-context command; slightly annoyingly, there is no patch-context version.</p>
+</div>
+
+
+</body>

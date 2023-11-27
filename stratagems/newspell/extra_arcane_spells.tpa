@@ -1,0 +1,565 @@
+DEFINE_ACTION_FUNCTION extra_arcane_spells BEGIN
+
+	LAF check_label STR_VAR label="dw_tof_arcane_spells" RET value END
+	ACTION_IF !value BEGIN
+
+		LAF make_label STR_VAR label="dw_tof_arcane_spells" END
+		LAM data_spells_by_level
+		LAM data_scroll_resrefs
+		INCLUDE "%MOD_FOLDER%/%lua_loc%/ui_detect_class_kit.tph"
+		INCLUDE "%MOD_FOLDER%/%lua_loc%/ui_extra_spells.tph"
+		
+
+		ACTION_IF is_iwd BEGIN
+			 OUTER_SPRINT style "%MOD_FOLDER%/%sfo_library_path%/data/spell_styles_iwd.2da"
+		END ELSE BEGIN
+			 OUTER_SPRINT style "%MOD_FOLDER%/%sfo_library_path%/data/spell_styles_bg.2da"
+		END
+		
+		
+		// create instant projectile if not present already
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "dw#inst.pro" BEGIN
+		
+		COPY_EXISTING axe.pro "%workspace%/dw#inst.pro"
+		WRITE_SHORT 0xa 255
+		WRITE_LONG 0xc 0
+		WRITE_ASCII 0x104 "" (8)
+		
+		ADD_PROJECTILE "%workspace%/dw#inst.pro"
+		OUTER_SET projectile_number=dw#inst
+		APPEND "missile.ids" "%projectile_number%%TAB%dw_instant_projectile"
+	END
+		
+		
+		LAF spellstyle_load_styles STR_VAR file="%style%" RET_ARRAY style_vvc style_wav style_glow END
+
+	//	we've stopped doing this, because it leads to problems and doesn't matter if we're using extended spell space anyway
+	//	LAF spl_remap_level_9_wizard_spells END
+		ACTION_IF is_iwd BEGIN
+			OUTER_SET max_caster_level=30
+		END ELSE BEGIN
+			OUTER_SET max_caster_level=20
+		END
+
+		LAF elemental_projectiles END
+		
+
+		ACTION_FOR_EACH spell IN
+			telekinesis
+			stormbolts
+			minor_lightning_bolt
+			stonefist
+			turn_pebble_to_boulder
+			icy_ray		
+			telekinetic_storm
+			combust
+			create_boneguard
+			ice_knife
+		BEGIN
+			LAF "%spell%" END
+		END
+		
+		// install scrolls
+		
+		LAF array_read STR_VAR file=arcane_spell_maps.2da path="%data_loc%" case=lower RET_ARRAY shadow_map=array END
+		
+		// do the shadow map
+		COPY_EXISTING_REGEXP ".*\.sto" override
+			proceed=0
+			PHP_EACH shadow_map AS old=>discard BEGIN
+				PATCH_IF INDEX_BUFFER (CASE_INSENSITIVE "%old%")>=0 BEGIN
+					proceed=1
+				END
+			END
+			PATCH_IF proceed BEGIN
+				LPF struct_read RET_ARRAY m=struct END
+				LPF struct_clone 
+					STR_VAR 
+						type=item 
+						struct=m 
+						match="resref_here:=~%s_resref%~;; TO_LOWER resref_here;; value=VARIABLE_IS_SET $shadow_map(~%resref_here%~)" 
+						patch="resref_here:=~%s_resref%~;; TO_LOWER resref_here;; s_resref:=$shadow_map(~%resref_here%~)"
+					RET_ARRAY m=struct END
+				LPF struct_write STR_VAR struct=m END
+			END
+		BUT_ONLY
+	END
+	
+END
+
+
+DEFINE_ACTION_FUNCTION elemental_projectiles 
+BEGIN
+
+	single_target_lightning_bolt=pro.copy[pro_minor_lightning_bolt=>"%pro_minor_lightning_bolt%"|source_location=resource missile_entry=dw_Single_Target_Lightning_Bolt] 
+	
+	boulder=pro.copy[bullet=>"%pro_boulder%"|missile_entry=dw_Boulder_Spell][s_projectile_animation:="%pro_boulder%"]
+	install[dwbouldr.bam|location=resource]
+
+	frost_ray=pro.copy[scorcher=>"%pro_polar_ray%"|source_location=resource missile_entry=dw_Frost_Ray] //unmodded copy of Scorching Ray
+	[
+		m_pro_animation:="%pro_polar_ray%"
+		m_pro_color_1=71
+		m_fire_sound:=TRA_08
+		m_lined_up_aoe=0
+		m_pass_target=1
+	]
+	install[dwpolar.bam|location=resource]
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION create_boneguard BEGIN
+
+	// sanity check
+	
+ ACTION_IF VARIABLE_IS_SET "WIZARD_MONSTER_SUMMONING_7" BEGIN
+
+	LAF make_label STR_VAR label="dw#createboneguard" END // tell SCS it's installed
+	
+	// clone the wrap spell (note we're assuming the spell has a subspell to handle Timestop issues)
+	WIZARD_CREATE_BONEGUARD,WIZARD_CREATE_BONEGUARD_SCROLL=spl.copy["%WIZARD_MONSTER_SUMMONING_7%"=>WIZARD_CREATE_BONEGUARD|icon_base_name=boneguard_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@50
+		m_description:=@51
+		m.spl_enforce_school{necromancy}
+	]
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_MONSTER_SUMMONING_7%A.spl" BEGIN
+		COPY_EXISTING "%WIZARD_CREATE_BONEGUARD%.spl" override
+			LPF ALTER_EFFECT INT_VAR match_opcode=146 STR_VAR resource="%WIZARD_CREATE_BONEGUARD%A" END
+		OUTER_SPRINT resref_payload "%WIZARD_MONSTER_SUMMONING_7%A"
+		OUTER_SPRINT resref_payload_new "%WIZARD_CREATE_BONEGUARD_7%A"
+		COPY_EXISTING "%resref_payload%.spl" "override/%resref_payload_new%.spl"
+	END ELSE BEGIN
+		OUTER_SPRINT resref_payload "%WIZARD_MONSTER_SUMMONING_7%"
+		OUTER_SPRINT resref_payload_new "WIZARD_CREATE_BONEGUARD_7"
+	END
+
+	spl.copy[%resref_payload%=>%resref_payload_new%]
+	[
+		m.ab_fx.alter{s_opcode=177 s_parameter2=2 s_probability1=50 s_dicenumber=0 s_dicesize=0 s_resource:=dw#spbgd|match="s_opcode=331"}
+		m.ab_fx.clone{s_probability2=51 s_probability1=100|match="s_opcode=177" number:i=2}
+	]
+	
+	eff.make[dw#spbgd]
+	[
+		m_duration=2400
+		m_timing=1
+		m_resource:=ms7bgrd
+		m_resource2:=spraised
+		m_target=1
+		m_opcode=67
+	]
+	log_this[%WIZARD_WAIL_OF_THE_BANSHEE_SCROLL% %WIZARD_CREATE_BONEGUARD_SCROLL%|file=arcane_spell_maps.2da]
+	
+    // tweak monster file
+	
+	cre.copy[ms7bgrd|source_locbase="iwdspells/copyover/wizard_monster_summoning_7"]
+	[
+		m_both_names:=@52
+		IF {!is_iwd} 
+			{{	
+			m.cre_swap_scripts{gnsummm=>bdsum00}  
+			}}
+		m_xp_value=0
+		m_allegiance:=controlled
+		m_str=21
+		m_dex=16
+		m.fx.delete{s_opcode=233}
+	]	
+	
+
+ END
+
+END
+
+
+DEFINE_ACTION_FUNCTION ice_knife BEGIN
+
+	pro.copy[dagger=>%pro_ice_knife%|missile_entry=dw_Ice_Knife][m_pro_color_5=68 m_pro_color_6=71]
+	pro.copy[idpro25=>%pro_ice_knife_secondary%|missile_entry=dw_Ice_Knife_Area source_location=resource]
+	[
+		m_cone_shaped=0
+		m_cone_width=0
+		m_explosion_size=96
+		m_trap_size=96
+	]
+	
+	WIZARD_ICE_KNIFE,WIZARD_ICE_KNIFE_SCROLL=spl.make[WIZARD_ICE_KNIFE|icon_location=icon icon_base_name="iceknife_" force_extended:i=1]
+	[
+		m_name:=@21
+		m_description:=@22
+		m_type:=wizard
+		m_level=1
+		m.spl_enforce_school{invocation}
+		m.secondary=10
+		m.ab.add{s_location:=spell s_level=1 s_range=60 s_target:=LivingActor s_casting_time=1 s_projectile:="%pro_ice_knife%"}
+		m.ab.clone{s_level=entry_index*2+3|number:i=4}
+		m.ab_fx.add{s_opcode=12 s_target:=PresetTarget s_dicenumber=1 s_dicesize=4 damagetype:=piercing s_power=1 s_dispel_resist=1}
+		m.ab_fx.add{s_opcode=333 s_target:=PresetTarget s_power=0 s_parameter1=1 s_parameter2=p_level s_timing=1 s_resource:="DW-THISB"}	
+	]
+	spl.make[%WIZARD_ICE_KNIFE%B]
+	[
+		m.ab.alter{s_level=1}
+		m.ab.add{s_projectile:="%pro_ice_knife_secondary%"}
+		m.ab.clone{s_level=entry_index*2+3|number:i=4}
+		m.ab_fx.add{s_opcode=12 s_target:=PresetTarget s_damagetype:=cold s_power=1 s_dispel_resist=1 s_save_for_half=1 s_save_vs_spell=1 s_dicesize=4 s_dicenumber=(p_level+1)/2}
+	]
+	
+	log_this[%WIZARD_POWER_WORD_SLEEP_SCROLL% %WIZARD_ICE_KNIFE_SCROLL%|file=arcane_spell_maps.2da]
+
+
+END
+
+DEFINE_ACTION_FUNCTION combust BEGIN
+
+
+	// main spell
+	
+	WIZARD_COMBUST,WIZARD_COMBUST_SCROLL=spl.make[WIZARD_COMBUST|icon_base_name="combust_" icon_location=icon force_extended:i=1]
+	[
+		m_name:=@19
+		m_description:=@20
+		m_type:=wizard
+		m_level=2
+		m.spl_enforce_school{invocation}
+		m_sectype=10
+		m.ab.add{s_location:=spell s_casting_time=2 s_projectile:=dw#inst}
+		m.ab.clone{s_level=5+entry_index*2|number:i=5}
+		m.ab_fx.add{s_opcode=12 s_power=2 s_parameter2b=8 s_target=2 s_timing=1 s_dicenumber=p_level=1?3:(p_level+3)/2 s_dicesize=6 s_dispel_resist=1}
+		IF {enhanced_edition}
+		{{
+			m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:="DW-THISB"}
+		}}
+		m.ab_fx.add{s_opcode=146 s_power=2 s_target=2 s_timing=1 s_dispel_resist=1 s_resource:="DW-THISB" save_vs_spell=1}	
+		
+	]
+	
+	// secondary spell
+	
+	spl.make["%WIZARD_COMBUST%B"]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=12 s_power=2 s_parameter2b=8 s_target=2 s_timing=4 s_duration=6 s_dicenumber=1 s_dicesize=8 s_dispel_resist=1}
+		m.ab_fx.add{s_opcode=215 s_power=2 s_parameter2=1 s_target=2 s_timing=1 s_duration=6 s_dispel_resist=1 s_resource:=soflamc}
+		m.ab_fx.add{s_opcode=142 s_power=2 s_parameter2=94 s_target=2 s_timing=0 s_duration=6 s_dispel_resist=1}
+		m.ab_fx.add{s_opcode=146 s_power=2 s_target=2 s_timing=4 s_duration=6 s_dispel_resist=1 s_resource:="%WIZARD_COMBUST%B" s_save_vs_spell=1}
+	]
+
+
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_MELF_ACID_ARROW_SCROLL% %WIZARD_COMBUST_SCROLL%" END
+END
+
+
+DEFINE_ACTION_FUNCTION telekinetic_storm BEGIN
+
+	// projectile
+	
+	// start with unmodified copy of IWD idpro303
+	
+	pro.copy[idpro303=>"%pro_telekinetic_storm%"|source_location=resource missile_entry=dw_Telekinetic_Storm]
+	[
+		m_explosion_color=116
+		m_cone_shaped=0
+		m_cone_width=360
+		m_ring_animation:=invoct
+		m_random_speed=0
+		m_explosion_animation:=area2x
+		m_animation_granularity=7
+		m_explosion_sound:=eff_p96
+		m_affect_only_enemies=1
+	]
+	
+	// spell
+
+	WIZARD_TELEKINETIC_STORM,WIZARD_TELEKINETIC_STORM_SCROLL=spl.make[WIZARD_TELEKINETIC_STORM|icon_base_name=telekinetic_storm_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@17
+		m_description:=@18
+		m_type:=wizard
+		m_level=8
+		m.spl_enforce_school{alteration}
+		m_sectype=10
+		m.ab.add{s_location:=spell s_projectile:="%pro_telekinetic_storm%" s_range=60 s_target=4 s_casting_time=8}
+		n=max_caster_level - 16
+		m.ab.clone{s_level=17+entry_index|number:i=n}
+		m.ab_fx.add{s_opcode=12 s_power=8 s_parameter2b=64 s_target=2 s_timing=1 s_dicenumber=p_level=1?16:p_level s_dicesize=6 s_save_for_half=1 s_dispel_resist=1}
+		if {is_iwd}
+		{{
+			m.ab_fx.add{s_opcode=215 s_power=8 s_target=2 s_timing=1 s_dispel_resist=1 s_resource:=alterh}
+			m.ab_fx.add{s_opcode=174 s_target=2 s_duration=2 s_dispel_resist=1 s_resource:="#eff_m15"}
+		}}
+		ELSE 
+		{{
+			m.ab_fx.add{s_opcode=215 s_power=8 s_target=2 s_duration=2 s_dispel_resist=1 s_resource:=spstrenh}		
+		}}
+	]
+
+	install[area2x.bam area2x.vvc invoct.bam invoch.bam invoch.vvc|location=resource overwrite:i=0]
+
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_ABI_DALZIMS_HORRID_WILTING_SCROLL% %WIZARD_TELEKINETIC_STORM_SCROLL%" END
+
+
+END
+
+DEFINE_ACTION_FUNCTION icy_ray BEGIN
+
+	LAF resolve_splprot_entry INT_VAR stat=15 value=100 STR_VAR relation=greater_equal RET splprot_num=value END
+
+	WIZARD_VERIDONS_ICY_RAY,WIZARD_VERIDONS_ICY_RAY_SCROLL=spl.make[WIZARD_VERIDONS_ICY_RAY|icon_base_name=iceray_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@13
+		m_description:=@14
+		m_type:=wizard
+		m_level=9
+		m.spl_enforce_school{invocation}
+		m_sectype=10
+		m.ab.add{s_location:=spell s_target=1 s_range=60 s_projectile:="%pro_polar_ray%" s_level=1 s_casting_time=3}
+		n=max_caster_level - 18
+		m.ab.clone{s_level=entry_index+18|number:i=n}
+		m.ab_fx.add{s_opcode=324 s_target=2 s_timing=0 s_power=9 s_parameter2=splprot_num s_resource:=DW-THIS}
+		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_resource:=DW-THISB s_save_vs_spell s_savebonus="-2"}
+		m.ab_fx.add{s_opcode=12 s_target=2 s_timing=1 s_power=9 s_parameter2b=2 s_dicenumber=p_level=1?18:p_level s_dicesize=8 s_save_vs_spell=1 s_save_for_half=1 s_bypass_mirror_image=1 s_dispel_resist=2}
+	]
+	
+	// secondary spell - applies frozen hold
+	
+	OUTER_SET frostify=RESOLVE_STR_REF (@15)
+	OUTER_SET defrost=RESOLVE_STR_REF (@16)
+	
+	spl.make["%WIZARD_VERIDONS_ICY_RAY%B"]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=4 s_duration=6 s_parameter1=RESOLVE_STR_REF (@16)}
+		m.ab_fx.add{s_opcode=7 s_target=2 s_timing=0 s_duration=6 s_parameter1=71 s_parameter2=entry_index|number:i=7} // color change
+		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=1 s_parameter1=RESOLVE_STR_REF(@15)}
+		m.ab_fx.add{s_opcode=45 s_target=2 s_timing=0 s_parameter2=2 s_duration=6 s_dispel_resist=2} //1-rd hold
+	]
+
+	// items/spells that protect against 175 need to protect against the secspell
+	
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_POWER_WORD_KILL_SCROLL% %WIZARD_VERIDONS_ICY_RAY_SCROLL%" END
+
+	ACTION_TIME "regexp" BEGIN
+	
+		ACTION_FOR_EACH ext IN spl itm BEGIN
+			LAF struct_apply_regexp STR_VAR type=ab_fx regexp=".*" ext function="value=(SHORT_AT 0x0 = 101) && (SHORT_AT 0x8 = 45)" RET_ARRAY array END
+			ACTION_PHP_EACH array AS resref=>null BEGIN
+				COPY_EXISTING "%resref%.%ext%" override
+					LPF CLONE_EFFECT INT_VAR silent=1 multi_match=1 match_opcode=101 match_parameter2=45 opcode=318 parameter2=0 STR_VAR resource="%WIZARD_VERIDONS_ICY_RAY%B" END	
+				BUT_ONLY
+			END
+		END
+
+	
+	END
+END
+
+DEFINE_ACTION_FUNCTION turn_pebble_to_boulder BEGIN
+
+// the weapon
+// (modified from Minute Meteors)
+
+	itm.copy[melfmet=>dwpebb5]
+	[
+		m_both_names:=@11
+		m_identified_description:=@12
+		m_enchantment=2
+		m.ab_fx.delete{}
+		m.fx.delete{}
+		m.ab.alter{s_icon:=ibull01 s_dicenumber=3 s_dicesize=8 s_damage_bonus=0 s_damage_type=2 s_projectile:="%pro_boulder%" s_attack_bonus=5}
+		m.ab_fx.add{s_opcode=318 s_target=2 s_duration=1 s_parameter2=13 s_resource:=dwpebb5} //unless Large...
+		m.ab_fx.add{s_opcode=39 s_target=2 s_duration=2 s_parameter2=1} //...knocked down on hit
+	]
+	
+	OUTER_FOR (level=6;level<=max_caster_level;++level) BEGIN
+		itm.copy[dwpebb5=>"dwpebb%level%"]
+		[
+			m.ab.alter{s_attack_bonus=level}
+			m.ab_fx.alter{s_resource:="dwpebb%level%"|match="s_opcode=318"}
+		]
+	
+	END
+	
+	// the spell
+	
+	WIZARD_TURN_PEBBLE_TO_BOULDER,WIZARD_TURN_PEBBLE_TO_BOULDER_SCROLL=spl.make[WIZARD_TURN_PEBBLE_TO_BOULDER|icon_base_name="pebble_" icon_location=icon force_extended:i=1]
+	[
+		m_name:=@9
+		m_description:=@10
+		m_type:=wizard
+		m_level=3
+		m.spl_enforce_school{alteration}
+		m_sectype=10
+		m.ab.add{s_location:=spell s_casting_time=3 s_target=5 s_level=1}
+		n=max_caster_level - 5
+		m.ab_fx.add{s_opcode=174 s_target=1 s_timing=1} // template for apply_spell_style
+		m.ab.clone{s_level=entry_index+6|number:i=n}
+		m.ab_fx.add{s_opcode=111 s_target=1 s_power=3 s_parameter1=p_level=1?5:((p_level - 2)/3) s_timing=1 s_resource:="dwpebb%p_level%"}
+	]
+	COPY_EXISTING "%WIZARD_TURN_PEBBLE_TO_BOULDER%.spl" override
+		spellstyle_apply_style{mage_alteration}
+	
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_MELF_METEOR_SCROLL% %WIZARD_TURN_PEBBLE_TO_BOULDER_SCROLL%" END
+
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION stonefist BEGIN
+
+// the weapon
+// (modified from a pristine copy of IWDEE's IBODY)
+
+	itm.copy[dwstnfi1|source_location=resource]
+	[
+		m_both_names:=@7
+		m_unidentified_description:=@8
+		m.fx.alter{s_parameter1=1} // 1 APR
+		m.fx.add{s_opcode=7 s_target=2 s_timing=2 s_parameter1=42 s_parameter2=entry_index|number:i=7} //color
+		m.ab.alter{s_attack_bonus=32767 s_dicesize=6 s_dicenumber=1 s_add_strength_bonus=0 s_number_charges=1}
+		m.ab_fx.add{s_opcode=45 s_target=2 s_duration=6 s_save_vs_spell=1}
+		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=1 s_parameter1=1280 s_save_vs_spell=1}
+		m.ab_fx.add{s_opcode=142 s_target=2 s_timing=1 s_duration=6 s_parameter2=55 s_save_vs_spell=1}
+	]
+
+	OUTER_FOR (power=2;power<=5;++power) BEGIN
+		itm.copy[dwstnfi1=>"dwstnfi%power%"] [m.ab.alter{s_dicenumber=power}]
+	END
+	
+// the spell
+
+	WIZARD_STONEFIST,WIZARD_STONEFIST_SCROLL=spl.make[WIZARD_STONEFIST|icon_base_name=stonefist_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@5
+		m_description:=@6
+		m_type:=wizard
+		m_level=1
+		m.spl_enforce_school{conjuration}
+		m_sectype=9
+		m.ab.add{s_location:=spell s_casting_time=1 s_target=5 s_level=1}
+		m.ab_fx.add{s_opcode=174 s_target=1 s_timing=1} // template for apply_spell_style
+		n=max_caster_level - 1
+		m.ab.clone{s_level=entry_index+2|number:i=n}
+		m.ab_fx.add{
+			s_opcode=111 
+			s_target=1 
+			s_parameter1=1 
+			s_duration=30*p_level 
+			PATCH_MATCH "%p_level%" WITH
+			1 2 3 BEGIN
+				s_resource:=dwstnfi1
+			END
+			4 5 BEGIN
+				s_resource:=dwstnfi2
+			END
+			6 7 BEGIN
+				s_resource:=dwstnfi3
+			END
+			8 9 BEGIN
+				s_resource:=dwstnfi4
+			END
+			DEFAULT
+				s_resource:=dwstnfi5
+			END
+		}
+	
+	]
+	COPY_EXISTING "%WIZARD_STONEFIST%.spl" override
+		LPF spellstyle_apply_style STR_VAR arguments=mage_alteration END
+
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_RAY_OF_ENFEEBLEMENT_SCROLL% %WIZARD_STONEFIST_SCROLL%" END
+
+END
+
+
+
+DEFINE_ACTION_FUNCTION minor_lightning_bolt BEGIN
+
+	//main spell
+	
+	WIZARD_MINOR_LIGHTNING_BOLT,WIZARD_MINOR_LIGHTNING_BOLT_SCROLL=spl.make[WIZARD_MINOR_LIGHTNING_BOLT|icon_base_name=minor_lightning_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@3
+		m_description:=@4
+		m_type:=wizard
+		m_level=2
+		m.spl_enforce_school{invocation}
+		m_sectype=10
+		m_break_sanctuary=1
+		m.ab.add{s_location:=spell s_target=1 s_level=1 s_range=50 s_casting_time=2 s_projectile:="%pro_minor_lightning_bolt%"}
+		m.ab.clone{s_level=entry_index*2+5|number:i=5}
+		m.ab_fx.add{s_opcode=12 s_power=2 s_target=2 s_timing=1 s_parameter2b=4 s_dicenumber=p_level=1?3:(3+p_level)/2 s_dicesize=6 s_save_vs_spell=1 s_save_for_half=1 s_bypass_mirror_image=1 s_dispel_resist=1}
+	]
+	
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_STINKING_CLOUD_SCROLL% %WIZARD_MINOR_LIGHTNING_BOLT_SCROLL%" END
+
+END
+
+DEFINE_ACTION_FUNCTION stormbolts BEGIN
+
+	// main spell
+	
+	WIZARD_STORMBOLTS,WIZARD_STORMBOLTS_SCROLL=spl.make[WIZARD_STORMBOLTS|icon_base_name=stormbolts_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@1
+		m_description:=@2
+		m_type:=Wizard
+		m_level=9
+		m.spl_enforce_school{invocation}
+		m_sectype=10
+		m_break_sanctuary=1
+		m.ab.add{s_location:=spell s_target=5 s_level=1 s_casting_time=9 s_projectile:=INAREANP}
+		m.ab_fx.add{s_opcode=146 s_target=2 s_parameter2=1 s_timing=4 s_duration=1 s_power=0 s_resource:=DW-THISB}
+		m.ab_fx.add{s_opcode=215 s_target=1 s_duration=1 s_parameter2=1 s_resource:="#storm"}	
+	]
+
+	// secondary spell
+	
+	spl.make["%WIZARD_STORMBOLTS%B"]
+	[
+		m_type:=wizard
+		m_level=9
+		m.spl_enforce_school{invocation}
+		m_sectype=10
+		m.ab.add{s_target=1 s_range=60 s_projectile:="%pro_minor_lightning_bolt%" s_level=1}
+		n=max_caster_level - 18
+		m.ab.clone{s_level=entry_index+19|number:i=n}
+		m.ab_fx.add{s_opcode=12 s_target=2 s_timing=1 s_power=9 s_parameter2b=4 s_dicenumber=p_level=1?18:p_level s_dicesize=8 s_save_vs_spell=1 s_save_for_half=1 s_bypass_mirror_image=1 s_dispel_resist=1}
+		m.ab_fx.add{s_opcode=45 s_target=2 s_duration=6 s_dispel_resist=2 s_power=9 s_save_vs_spell=1}
+		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=1 s_parameter1=128 s_dispel_resist=2 s_power=9 s_save_vs_spell=1}
+		m.ab_fx.add{s_opcode=142 s_target=2 s_duration=6 s_parameter2=55 s_dispel_resist=2 s_power=9 s_save_vs_spell=1}
+		m.ab_fx.add{s_opcode=174 s_timing=4 s_duration=6 s_target=2 s_resource:=eff_e05}
+	]
+	
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_METEOR_SWARM_SCROLL% %WIZARD_STORMBOLTS_SCROLL%" END
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION telekinesis BEGIN
+
+	WIZARD_TELEKINESIS,WIZARD_TELEKINESIS_SCROLL=spl.copy[balortk1=>WIZARD_TELEKINESIS|source_location=resource icon_base_name=telekinesis_ icon_location=icon force_extended:i=1]
+	[
+		m_name:=@41
+		m_description:=@42
+		m_type:=wizard
+		m.spl_enforce_school{alteration}
+		m_level=5
+		m.ab.alter{s_location:=spell s_casting_time=5 s_projectile:=INAREANP}
+		m.ab_fx.alter{save_vs_spell=1 save_bonus="-2"}
+		m.ab_fx.delete{s_opcode=155 OR s_opcode=165 OR s_opcode=215}
+		m.ab_fx.add{s_opcode=174 s_target=1 s_timing=1} // template for spellstyle
+	]
+	COPY_EXISTING "%WIZARD_TELEKINESIS%.spl" override
+		spellstyle_apply_style{mage_alteration}
+	
+	LAF log_this STR_VAR file=arcane_spell_maps.2da input="%WIZARD_IMPROVED_HASTE_SCROLL% %WIZARD_TELEKINESIS_SCROLL%" END
+	
+END
+

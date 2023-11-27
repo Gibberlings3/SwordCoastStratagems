@@ -1,0 +1,322 @@
+DEFINE_ACTION_FUNCTION make_elemental_spell_lists 
+	INT_VAR adjust_description=1
+	STR_VAR tra=sfo_lua 
+			tra_path="DEFAULT" 
+	RET earth_names air_names fire_names water_names all_names 
+BEGIN
+
+	ACTION_IF !VARIABLE_IS_SET marker_loc BEGIN
+		OUTER_SPRINT marker_loc "weidu_external/markers"
+	END
+	ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
+		OUTER_SPRINT lua_loc lua
+	END
+	ACTION_IF "%tra_path%" STR_EQ "DEFAULT" BEGIN
+		OUTER_SPRINT tra_path "%MOD_FOLDER%/%lua_loc%/lang"
+	END
+
+
+	ACTION_IF !FILE_EXISTS "%marker_loc%/dw#elementalist_spell_lists.mrk" BEGIN // if we haven't made the lists, make them
+
+		COPY_EXISTING "misc01.itm" "%marker_loc%/dw#elementalist_spell_lists.mrk"
+
+		ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
+			OUTER_SPRINT lua_loc "lua"
+		END
+		INCLUDE "%MOD_FOLDER%/%lua_loc%/ui_spell_system.tph" 
+
+		// load in the strings 'Earth', 'Air', 'Fire', 'Water'
+		
+		WITH_TRA "%tra_path%/english/%tra%.tra" "%tra_path%/%LANGUAGE%/%tra%.tra" BEGIN
+			OUTER_SPRINT earth_string @32
+			OUTER_SPRINT air_string @31
+			OUTER_SPRINT fire_string @33
+			OUTER_SPRINT water_string @34
+			OUTER_SPRINT all_string @36
+		END
+
+		// start with all spells that use an appropriate damage opcode
+
+		LAF find_elemental_spells RET_ARRAY earth air fire water earth_shared air_shared fire_shared water_shared END
+
+		// add a bunch manually
+	
+		ACTION_FOR_EACH spell IN PROTECTION_FROM_PETRIFICATION STONEFIST GLITTERDUST GREASE TURN_PEBBLE_TO_BOULDER STONE_SKIN CONJURE_LESSER_EARTH_ELEMENTAL PROTECTION_FROM_ACID FLESH_TO_STONE STONE_TO_FLESH CONJURE_EARTH_ELEMENTAL IRON_BODY IMPRISONMENT FREEDOM BEGIN
+			OUTER_SPRINT spell "WIZARD_%spell%"
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%spell%" RET success spell_res END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT spell "%spell_res%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SPRINT $earth("%spell%") ""
+			END
+		END
+		
+		ACTION_FOR_EACH spell IN STINKING_CLOUD SHOUT CLOUDKILL PROTECTION_FROM_ELECTRICITY CONJURE_LESSER_AIR_ELEMENTAL CONJURE_AIR_ELEMENTAL SUMMON_DJINNI SUFFOCATE GREAT_SHOUT BEGIN
+			OUTER_SPRINT spell "WIZARD_%spell%"
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%spell%" RET success spell_res END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT spell "%spell_res%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SPRINT $air("%spell%") ""
+			END
+		END
+		
+		ACTION_FOR_EACH spell IN PROTECTION_FROM_FIRE MELF_METEOR CONJURE_LESSER_FIRE_ELEMENTAL CONJURE_FIRE_ELEMENTAL SUMMON_EFREET BEGIN
+			OUTER_SPRINT spell "WIZARD_%spell%"
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%spell%" RET success spell_res END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT spell "%spell_res%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SPRINT $fire("%spell%") ""
+			END
+		END
+		
+		ACTION_FOR_EACH spell IN CHILL_TOUCH PROTECTION_FROM_COLD CONJURE_LESSER_WATER_ELEMENTAL CONJURE_WATER_ELEMENTAL ABI_DALZIMS_HORRID_WILTING BEGIN
+			OUTER_SPRINT spell "WIZARD_%spell%"
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%spell%" RET success spell_res END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT spell "%spell_res%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SPRINT $water("%spell%") ""
+			END
+		END
+
+		ACTION_FOR_EACH spell IN PROTECTION_FROM_THE_ELEMENTS PROTECTION_FROM_ENERGY  BEGIN
+			OUTER_SPRINT spell "WIZARD_%spell%"
+			LAF RES_NUM_OF_SPELL_NAME INT_VAR silent=1 STR_VAR spell_name="%spell%" RET success spell_res END
+			ACTION_IF success BEGIN
+				OUTER_SPRINT spell "%spell_res%"
+			END
+			ACTION_IF FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				OUTER_SPRINT $earth_shared("%spell%") ""	
+				OUTER_SPRINT $air_shared("%spell%") ""	
+				OUTER_SPRINT $fire_shared("%spell%") ""	
+				OUTER_SPRINT $water_shared("%spell%") ""	
+				ACTION_IF adjust_description BEGIN
+					LAF add_elem_spell_desc STR_VAR elem_string="%all_string%" spell END
+				END
+			END
+		END
+
+		// make the LUA lists
+		
+		ACTION_FOR_EACH elem IN earth air fire water BEGIN
+			OUTER_SPRINT elem_string EVAL "%%elem%_string%"
+			ACTION_IF adjust_description BEGIN
+				ACTION_PHP_EACH "%elem%" AS spell=>discard BEGIN
+					LAF add_elem_spell_desc STR_VAR elem_string spell END
+				END
+			END
+			LAF define_spell_list INT_VAR determine_empty_levels=1 STR_VAR key="mage_%elem%" list_name=EVAL "%%elem%_string%" spell_array="%elem%" END
+			LAF define_spell_list INT_VAR determine_empty_levels=1 STR_VAR key="mage_%elem%_shared" list_name=EVAL "%%elem%_string%_SHARED" spell_array="%elem%_shared" END
+		END
+
+	END ELSE BEGIN
+	// if we've made the lists, just read them in
+		COPY_EXISTING "m_dw_ssd.lua" "%workspace%"
+			PATCH_FOR_EACH elem IN earth air fire water BEGIN
+				CLEAR_ARRAY "%elem%"
+				REPLACE_EVALUATE "dwSpellList\['mage_%elem%'\]={\([^}]*\)}" BEGIN
+					INNER_PATCH "%MATCH1%" BEGIN
+						REPLACE_EVALUATE "\([A-Z0-9_]+\)=true" BEGIN
+							SPRINT $"%elem%"("%MATCH1%") ""
+						END
+						""
+					
+					
+					END
+				END
+				""
+			END
+  
+    END
+  
+	// make the list of names
+
+	ACTION_CLEAR_ARRAY name_array_all
+	ACTION_FOR_EACH elem IN earth air fire water BEGIN
+	ACTION_CLEAR_ARRAY name_array
+	ACTION_PHP_EACH "%elem%" AS resref=>null BEGIN
+		ACTION_IF "%resref%" STRING_COMPARE_CASE null BEGIN
+		 COPY_EXISTING "%resref%.spl" override
+			READ_STRREF 0x8 name_here
+		 BUT_ONLY
+		 OUTER_SPRINT $name_array("%name_here%") ""
+		 OUTER_SPRINT $name_array_all("%name_here%") ""
+		END
+	END
+	ACTION_SORT_ARRAY_INDICES name_array LEXICOGRAPHICALLY
+	OUTER_SPRINT "names" ""
+	ACTION_PHP_EACH name_array AS name=>null BEGIN
+		ACTION_IF "%names%" STRING_EQUAL "" BEGIN
+			OUTER_SPRINT names "%name%"
+		END ELSE BEGIN
+			OUTER_SPRINT names "%names%, %name%"
+		END
+	END
+	OUTER_SPRINT "%elem%_names" "%names%"
+	END
+	ACTION_SORT_ARRAY_INDICES name_array_all LEXICOGRAPHICALLY
+	OUTER_SPRINT "names" ""
+	ACTION_PHP_EACH name_array_all AS name=>null BEGIN
+		ACTION_IF "%names%" STRING_EQUAL "" BEGIN
+			OUTER_SPRINT names "%name%"
+		END ELSE BEGIN
+			OUTER_SPRINT names "%names%, %name%"
+		END
+	END
+	OUTER_SPRINT "all_names" "%names%"
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION find_elemental_spells RET_ARRAY earth air fire water earth_shared air_shared fire_shared water_shared BEGIN
+
+
+	// start by parsing HIDESPL
+	
+	COPY_EXISTING hidespl.2da override
+		COUNT_2DA_ROWS 3 rowcount
+		FOR (row=0;row<rowcount;++row) BEGIN
+			READ_2DA_ENTRY row 0 3 spell
+			TO_UPPER spell
+			SPRINT $is_hidden("%spell%") ""
+		END
+	BUT_ONLY
+	
+	// now go through all the spells
+	OUTER_FOR (num=1;num<=50;++num) BEGIN
+		ACTION_IF num<10 BEGIN
+			OUTER_SPRINT num_str "0%num%"
+		END ELSE BEGIN
+			OUTER_SPRINT num_str "%num%"
+		END
+		OUTER_FOR (lvl=1;lvl<=9;++lvl) BEGIN
+			OUTER_SPRINT spell "SPWI%lvl%%num_str%"
+			ACTION_IF !VARIABLE_IS_SET $is_hidden("%spell%") && FILE_EXISTS_IN_GAME "%spell%.spl" BEGIN
+				COPY_EXISTING "%spell%.spl" override
+					LPF analyse_elemental_type RET earth air fire water multiple END
+				BUT_ONLY
+				ACTION_FOR_EACH elem IN earth air fire water BEGIN
+					ACTION_IF "%elem%"=1 BEGIN
+						ACTION_IF multiple BEGIN
+							OUTER_SPRINT $"%elem%_shared"("%spell%") "%elem%"
+						END ELSE BEGIN
+							OUTER_SPRINT $"%elem%"("%spell%") "%elem%_shared"		
+						END
+					END
+				END
+			END
+		END
+	END
+
+
+
+END
+
+DEFINE_PATCH_FUNCTION analyse_elemental_type RET earth air fire water multiple BEGIN
+	earth=0
+	air=0
+	water=0
+	fire=0
+	SPRINT resref "%SOURCE_RES%"
+	TO_UPPER resref
+	GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+	PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+		GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+		PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+			READ_SHORT fx_off opcode
+			PATCH_MATCH "%opcode%" WITH
+			146 148 232 333 326 BEGIN
+				READ_ASCII 0x14+fx_off resource
+				INNER_ACTION BEGIN
+					ACTION_IF FILE_EXISTS_IN_GAME "%resource%.spl" && !("%resource%" STRING_EQUAL_CASE "%resref%") BEGIN
+						COPY_EXISTING "%resource%.spl" override
+							LPF analyse_elemental_type RET earth air fire water END
+						BUT_ONLY
+					END
+				END
+			END
+			/* too many counter-examples, e.g. Iron Body, Resilient Sphere
+			27 BEGIN
+				earth=1
+			END
+			28 BEGIN
+				water=1
+			END
+			29 BEGIN
+				air=1
+			END
+			30 BEGIN
+				fire=1		
+			END
+			*/
+			12 BEGIN
+				READ_SHORT 0xa+fx_off dmg_type
+				PATCH_MATCH "%dmg_type%" WITH 
+				1 BEGIN
+					earth=1
+				END
+				2 BEGIN
+					water=1
+				END
+				4 BEGIN
+					air=1
+				END
+				8 BEGIN
+					fire=1
+				END
+				DEFAULT
+				END
+			END
+			DEFAULT
+			END
+		END
+		total=earth+air+fire+water
+		multiple=(total>1)?1:0
+		
+	END
+
+	//hardcoded exceptions
+	PATCH_MATCH "%resref%" WITH
+	"%WIZARD_CHROMATIC_ORB%" BEGIN
+		fire=0
+		earth=0
+		air=0
+		water=0
+		multiple=0
+	END
+	DEFAULT END
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION add_elem_spell_desc STR_VAR elem_string="" spell="" BEGIN
+
+	COPY_EXISTING "%spell%.spl" override
+		READ_LONG 0x50 desc_strref
+	BUT_ONLY
+	ACTION_GET_STRREF desc_strref desc
+	OUTER_SET found=0
+	OUTER_INNER_PATCH_SAVE desc "%desc%" BEGIN
+		REPLACE_EVALUATE "\(^[ %TAB]*([A-Za-z/, ]+)\)[ %TAB]*\([%WNL%%MNL%%LNL%]\)" BEGIN
+			PATCH_IF found BEGIN
+				SPRINT subst "%MATCH1%%MATCH2%"
+			END ELSE BEGIN
+				SPRINT subst "%MATCH1%\[%elem_string%\]%MATCH2%"
+			END
+		END
+		"%subst%"	
+	END
+	STRING_SET_EVALUATE desc_strref "%desc%"
+
+
+
+END
+

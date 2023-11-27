@@ -1,0 +1,220 @@
+DEFINE_ACTION_FUNCTION haste_cancels_slow BEGIN
+
+
+
+	// get data needed by lib_opcode
+	
+	LAM opcode_load_data
+	// run the (hardcoded) material to make sure all slow effects have THAC0 and AC penalties
+	
+	ACTION_IF GAME_IS IWDEE BEGIN
+		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/iwd/slow_fixes.tph"
+	END ELSE BEGIN
+		INCLUDE "%MOD_FOLDER%/%component_loc%/lib/bg/slow_fixes.tph"	
+	END
+	LAF slow_fixes END
+	
+	// make spells to display 'haste negated by slow' and 'slow negated by haste', if they don't exist already
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "dw_neg16.spl" BEGIN
+		CREATE spl dw_neg16
+			INSERT_BYTES 0x72 0x28
+			WRITE_LONG 0x6a (0x72+0x28)
+			WRITE_SHORT 0x68 1
+			WRITE_SHORT 0x82 1
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=139 target=2 parameter1=RESOLVE_STR_REF (@52000) timing=1 END
+		CREATE spl dw_neg40
+			INSERT_BYTES 0x72 0x28
+			WRITE_LONG 0x6a (0x72+0x28)
+			WRITE_SHORT 0x68 1
+			WRITE_SHORT 0x82 1
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=139 target=2 parameter1=RESOLVE_STR_REF (@52001) timing=1 END
+	END	
+	
+	// set the required spellstates/sectypes
+	
+	LAF ds_resolve_stat STR_VAR id=HASTE_IMMUNITY RET stat_ind_haste=stat_ind END
+	
+	ADD_SECTYPE dw_persistent_16 ""
+	ADD_SECTYPE dw_persistent_40 ""
+	COPY_EXISTING "msectype.2da" override
+		REPLACE_TEXTUALLY "dw_persistent_\(16\|40\)\([^0-9]+\)[0-9]+" "dw_persistent_\1\2-1"
+	
+	// go through items and spells to identify haste/slow
+
+	ACTION_CLEAR_ARRAY haste_files
+	ACTION_CLEAR_ARRAY slow_files
+	ACTION_CLEAR_ARRAY advanced_haste
+	ACTION_CLEAR_ARRAY via_177
+	COPY_EXISTING_REGEXP - ".*\.\(itm\|spl\)" nowhere
+		CLEAR_ARRAY headers
+		has_haste=0
+		has_slow=0
+		has_advanced_haste=0
+		PATCH_IF "%SOURCE_EXT%" STR_EQ "itm" BEGIN
+			GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+			skip=0
+		END ELSE BEGIN
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS	
+			READ_BYTE 0x27 sectype
+			skip=(sectype=dw_persistent_16 || dw_persistent_40) // this should be idempotent, don't affect anything twice
+		END
+		PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN	
+			PATCH_IF "%SOURCE_EXT%" STR_EQ "itm" || (SHORT_AT (0x10+ab_off))<=50 BEGIN
+				SET $headers("%ab_ind%")=0
+				GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					opcode=SHORT_AT fx_off
+					PATCH_IF opcode=177 BEGIN
+						READ_ASCII fx_off+0x14 eff
+						TO_UPPER eff
+						PATCH_IF IS_AN_INT $opcode_eff_arr("%eff%") BEGIN
+							opcode=$opcode_eff_arr("%eff%")
+							via_177=1
+						END
+					END ELSE BEGIN
+						via_177=0
+					END
+					PATCH_IF opcode=16 BEGIN
+						has_haste=1
+						has_advanced_haste=has_advanced_haste || (LONG_AT (fx_off+0x8))=1
+						SET $headers("%ab_ind%")=1
+						PATCH_IF via_177 BEGIN
+							SPRINT $via_177("%SOURCE_FILE%") "%eff%"
+						END
+					END ELSE
+					PATCH_IF opcode=40 BEGIN
+						has_slow=1
+						SET $headers("%ab_ind%")=1	
+						PATCH_IF via_177 BEGIN
+							SPRINT $via_177("%SOURCE_FILE%") "%eff%"
+						END
+					END				
+				END
+			END
+		END
+		PATCH_IF has_haste || has_slow BEGIN
+			PATCH_IF "%SOURCE_EXT%" STR_EQ "SPL" BEGIN
+				all_headers=1
+				PHP_EACH ab_arr AS ab_ind=>discard BEGIN
+					all_headers=all_headers && $headers("%ab_ind%")
+				END
+			END ELSE BEGIN
+				all_headers=0
+			END
+		END	
+		PATCH_IF has_haste BEGIN	
+			PATCH_IF all_headers BEGIN 
+				SPRINT $haste_files("%SOURCE_FILE%" "-1") ""
+			END ELSE BEGIN
+				PHP_EACH ab_arr AS ab_ind=>discard BEGIN
+					PATCH_IF $headers("%ab_ind%") BEGIN
+						SPRINT $haste_files("%SOURCE_FILE%" "%ab_ind%") ""
+					END
+				END
+			END
+		END ELSE
+		PATCH_IF has_slow BEGIN
+			PATCH_IF all_headers BEGIN 
+				SPRINT $slow_files("%SOURCE_FILE%" "-1") ""
+			END ELSE BEGIN
+				PHP_EACH ab_arr AS ab_ind=>discard BEGIN
+					PATCH_IF $headers("%ab_ind%") BEGIN
+						SPRINT $slow_files("%SOURCE_FILE%" "%ab_ind%") ""
+					END
+				END
+			END		
+		END
+		PATCH_IF has_advanced_haste BEGIN
+			SPRINT $advanced_haste_files("%SOURCE_FILE%") ""		
+		END
+	BUT_ONLY
+	
+	// patch the hastes
+	
+	ACTION_PHP_EACH haste_files AS k=>discard BEGIN
+		LAF process_haste_file INT_VAR header=k_1 STR_VAR file="%k_0%"  END
+	END
+
+	// patch the slows
+	
+	ACTION_PHP_EACH slow_files AS k=>discard BEGIN
+		LAF process_slow_file INT_VAR header=k_1 STR_VAR file="%k_0%"  END
+	END
+
+END
+
+//////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION process_haste_file 
+	INT_VAR header="-1"
+	STR_VAR file=""
+BEGIN
+	ACTION_IF VARIABLE_IS_SET $via_177("%file%") BEGIN
+		OUTER_SET via_177=1
+		OUTER_SPRINT eff $via_177("%file%")
+	END ELSE BEGIN
+		OUTER_SET via_177=0
+		OUTER_SPRINT eff ""
+	END
+	// first-pass copy
+	COPY_EXISTING "%file%" override
+		// handle advanced haste (which should give immunity to subsequent haste effects)
+		PATCH_IF VARIABLE_IS_SET $advanced_haste_files("%file%") && !via_177 BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=16 opcode=328 parameter1=0 parameter2=stat_ind_haste special=1 STR_VAR insert=below END
+		END
+		// put in the block that removes Slow
+		PATCH_IF !via_177 BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=16 opcode=221 parameter1=10 parameter2=dw_persistent_40 timing=1 duration=0 STR_VAR insert=below END
+		END ELSE BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=177 opcode=221 parameter1=10 parameter2=dw_persistent_40 timing=1 duration=0 STR_VAR match_resource="%eff%" insert=below END		
+		END
+	// second pass, doing the dismember
+	LAF opcode_extract INT_VAR opcode=16 sectype=dw_persistent_16 header include_primary=1 STR_VAR file eff RET subspell END
+	// add the various features
+	COPY_EXISTING "%subspell%.spl" override
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=318 parameter1=0x00010000 parameter2=138 timing=0 duration=1 STR_VAR resource="%subspell%" END
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=326 parameter1=0x00010000 parameter2=138 timing=1 duration=0 STR_VAR resource="dw_neg40" END
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=221 parameter1=10 parameter2=dw_persistent_16 timing=1 duration=0 END
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=324 timing=0 duration=1 parameter1=stat_ind_haste parameter2=110 STR_VAR resource="%subspell%" END
+
+END
+
+
+//////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION process_slow_file 
+	INT_VAR header="-1"
+	STR_VAR file=""
+BEGIN
+	ACTION_IF VARIABLE_IS_SET $via_177("%file%") BEGIN
+		OUTER_SET via_177=1
+		OUTER_SPRINT eff $via_177("%file%")
+	END ELSE BEGIN
+		OUTER_SET via_177=0
+		OUTER_SPRINT eff ""
+	END
+	// first-pass copy
+	COPY_EXISTING "%file%" override
+		// clear out any existing immunity effects
+		PATCH_FOR_EACH match_resource IN SPIN977 SPWISH25 SPWM164 SPIN983 SPIN575 SPWI312 BEGIN
+			LPF DELETE_EFFECT INT_VAR match_opcode=321 STR_VAR match_resource END
+		END
+		// put in the block that removes Haste
+		PATCH_IF !via_177 BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=40 opcode=221 parameter1=10 parameter2=dw_persistent_16 timing=1 duration=0 savingthrow=0 savebonus=0 STR_VAR insert=below END
+		END ELSE BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=177 opcode=221 parameter1=10 parameter2=dw_persistent_16 timing=1 duration=0 savingthrow=0 savebonus=0 STR_VAR match_resource="%eff%" insert=below END		
+		END
+	// second pass, doing the dismember
+	LAF opcode_extract INT_VAR saves=1 opcode=40 sectype=dw_persistent_40 header include_primary=1 STR_VAR file eff RET subspell END
+	// add the various features
+	COPY_EXISTING "%subspell%.spl" override
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=318 parameter1=0x00008000 parameter2=138 timing=0 duration=1 STR_VAR resource="%subspell%" END					
+		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 target=2 opcode=326 parameter1=0x00008000 parameter2=138 timing=0 duration=1 STR_VAR resource="dw_neg16" END
+		PATCH_IF !via_177 BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=40 target=2 opcode=221 parameter1=10 parameter2=dw_persistent_40 timing=1 duration=0 STR_VAR insert=first END
+		END ELSE BEGIN
+			LPF CLONE_EFFECT INT_VAR match_opcode=177 target=2 opcode=221 parameter1=10 parameter2=dw_persistent_40 timing=1 duration=0 STR_VAR insert=first match_resource="%eff%" END		
+		END
+END

@@ -12,27 +12,34 @@ BEGIN
    INNER_ACTION BEGIN
       OUTER_SPRINT type mage
       OUTER_SPRINT component_loc mage
-      LAUNCH_ACTION_MACRO read_in_spells_per_level
-      LAUNCH_ACTION_MACRO read_in_spell_choices
-      LAUNCH_ACTION_MACRO read_in_individual_overrides
+      LAM data_spells_by_level
+	 LAM read_in_spell_choices
+      LAM read_in_individual_overrides
+	  LAM data_saving_throws
+	  LAM data_thac0
       LAM read_in_spell_trigger_data
+		LAM read_in_instant_prebuff_spells
+
       ACTION_IF !VARIABLE_IS_SET mage_tra_loaded BEGIN
            LOAD_TRA "%scs_tra_loc%/english/mage.tra" "%scs_tra_loc%/%LANGUAGE%/mage.tra"
+		   OUTER_SET mage_tra_loaded=1
       END
    END
-   LPF initialise_enforce_caster STR_VAR filename type arguments RET detect_invisible class race alignment game spells_are_bg1 modify_level kitdata script_required=script END
-   LPF find_mage_type STR_VAR class race alignment kitdata filename RET class kit castertype spell_list spell_list_defensive END
+   LPF initialise_enforce_caster STR_VAR filename type arguments RET detect_invisible class race alignment game spells_are_bg1 modify_level kitdata script_required=script skip_defensive_spells END
+    LPF find_mage_type STR_VAR class race alignment kitdata filename RET class kit castertype spell_list spell_list_defensive END
    LPF get_caster_level INT_VAR modify_level STR_VAR type=mage castertype filename RET level END
-	PATCH_TIME alloc_total BEGIN
-	LPF allocate_mage_spells INT_VAR level spells_are_bg1 refinements STR_VAR class kit race filename spell_list spell_list_defensive RET spells chain_contingencies sequencers level_nine_max spell_turn_list END
-    END  
+ 	PATCH_TIME alloc_total BEGIN
+		LPF allocate_mage_spells INT_VAR level spells_are_bg1 refinements skip_defensive_spells STR_VAR class kit race filename spell_list spell_list_defensive RET spells chain_contingencies sequencers level_nine_max spell_turn_list END
+    END 
   PATCH_IF "%script%" STRING_EQUAL_CASE "" BEGIN
      LPF determine_caster_script_name STR_VAR prefix="mg" RET script END
      SET insert_script=1
    END ELSE BEGIN
      SET insert_script=0
    END
+
    LPF build_mage_script INT_VAR level level_nine_max detect_invisible STR_VAR filename kit race script spells chain_contingencies sequencers spell_turn_list END
+ 
    PATCH_IF insert_script BEGIN
        LPF strip_scs_scripts END
        LPF CRE_insert_script_low STR_VAR arguments= ~%script%~ END
@@ -158,16 +165,34 @@ BEGIN
                CONJURER MAGESCHOOL_CONJURER BEGIN
                   SPRINT kit conjurer
                END
+			   DW_ELEMENTALIST_AIR BEGIN
+				  SPRINT kit air
+			   END
+			   DW_ELEMENTALIST_EARTH BEGIN
+				  SPRINT kit earth
+			   END
+			   DW_ELEMENTALIST_FIRE BEGIN
+				  SPRINT kit fire
+			   END			   
+			   DW_ELEMENTALIST_WATER BEGIN
+				  SPRINT kit water
+			   END
                DEFAULT
                   LPF assign_mage_kit STR_VAR class race alignment RET kit END
                END
 
-               PATCH_IF (("%race%" STRING_EQUAL_CASE lich || "%race%" STRING_EQUAL_CASE demilich ) && FILE_EXISTS "%MOD_FOLDER%/mage/spellchoices/%base_folder_spells_mage%/%kit%_lich.2da") BEGIN
+               PATCH_IF (("%race%" STRING_EQUAL_CASE lich || "%race%" STRING_EQUAL_CASE demilich) && FILE_EXISTS "%MOD_FOLDER%/mage/spellchoices/%base_folder_spells_mage%/%kit%_lich.2da") BEGIN
                    SPRINT spell_list "%kit%_lich"
                END ELSE BEGIN
                    SPRINT spell_list "%kit%"
                END
-               SPRINT spell_list_defensive "%kit%"
+			   PATCH_MATCH "%kit%" WITH
+			   earth air fire water BEGIN
+				 SPRINT spell_list_defensive "invoker"
+			   END
+			   DEFAULT
+				SPRINT spell_list_defensive "%kit%"
+			   END
          END
    END
 
@@ -185,7 +210,7 @@ DEFINE_PATCH_FUNCTION assign_mage_kit
            alignment=""
    RET kit
 BEGIN
-   PATCH_IF ~%race%~ STRING_EQUAL_CASE lich BEGIN
+   PATCH_IF ~%race%~ STRING_EQUAL_CASE lich && !tof_arcane_spells BEGIN
       SET choice=RANDOM(1 3)
    END ELSE BEGIN
       PATCH_MATCH "%class%" WITH
@@ -201,13 +226,17 @@ BEGIN
          SET choice=RANDOM(3 4)
       END
       DEFAULT
-        PATCH_MATCH ~%alignment%~ WITH
-         LAWFUL_EVIL CHAOTIC_EVIL NEUTRAL_EVIL BEGIN
-             SET choice=RANDOM(1 4)
-         END
-         DEFAULT
-             SET choice=RANDOM(2 4)
-         END
+		PATCH_IF tof_arcane_spells && ( RANDOM (1 4) = 1) BEGIN
+			SET choice=RANDOM(5 8)
+		END ELSE BEGIN	  
+			PATCH_MATCH ~%alignment%~ WITH
+			LAWFUL_EVIL CHAOTIC_EVIL NEUTRAL_EVIL BEGIN
+				 SET choice=RANDOM(1 4)
+			END
+			DEFAULT
+				 SET choice=RANDOM(2 4)
+			END
+		END 
       END
    END
    PATCH_MATCH choice WITH
@@ -223,12 +252,57 @@ BEGIN
    4 BEGIN
       SPRINT kit enchanter
    END
-   DEFAULT END
-   SPRINT arguments ~mageschool_%kit%~
-   TO_UPPER arguments
-   PATCH_IF "%class%" STRING_COMPARE_CASE "innocent" BEGIN
-      LPF CRE_kit STR_VAR arguments END
+   5 BEGIN
+	  SPRINT kit air
    END
+   6 BEGIN
+	  SPRINT kit earth
+   END
+   7 BEGIN 
+	  SPRINT kit fire
+   END
+   8 BEGIN
+      SPRINT kit water 
+   END
+   DEFAULT END
+   PATCH_MATCH "%kit%" WITH
+   earth air fire water BEGIN
+		PATCH_IF elementalists BEGIN
+			SPRINT arguments "DW_ELEMENTALIST_%kit%"
+			PATCH_MATCH "%kit%" WITH
+			earth BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=27 parameter1=10 END // acid resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=332 parameter1=20 parameter2=4 END // extra acid damage			
+			END
+			air BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=29 parameter1=10 END // electrical resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=332 parameter1=20 parameter2=3 END // extra electricity damage			
+			END
+			fire BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=30 parameter1=10 END // fire resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=84 parameter1=10 END // magic fire resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=332 parameter1=20 parameter2=1 END // extra fire damage			
+			END
+			water BEGIN
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=28 parameter1=10 END // cold resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=85 parameter1=10 END // magic cold resistance
+				LPF ADD_CRE_EFFECT INT_VAR target=1 timing=9 opcode=332 parameter1=20 parameter2=2 END // extra cold damage
+			END
+			DEFAULT
+				PATCH_FAIL "shouldn't be possible"
+			END
+			
+		END ELSE BEGIN
+			SPRINT arguments ""
+		END
+   END
+   DEFAULT
+	   SPRINT arguments ~mageschool_%kit%~
+	END
+	PATCH_IF "%class%" STR_CMP "innocent" && "%arguments%" STR_CMP "" BEGIN
+	  TO_UPPER arguments
+	  LPF CRE_kit STR_VAR arguments END
+	END
 END
 
 
@@ -289,7 +363,7 @@ BEGIN
             REPLACE_TEXTUALLY ~/\*slowspell\*/~ ~OR(2)CheckStat(Myself,0,WIZARD_IMPROVED_ALACRITY)Global("alacritycompromise","LOCALS",1)~
         COMPILE EVALUATE_BUFFER "%workspace%/ssl_out/%scriptname%.baf"
      END ELSE BEGIN
-        LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%%variables_sr%" script="%base%" location=~ssl/main~ locbase=mage rename_to=~%scriptname%~ booleans="%spells% %booleans_extra%" END
+        LAF ssl_to_bcs STR_VAR variables="%variables_here%%variables_extra%%variables_sr%" script="%base%=>%scriptname%" location=~ssl/main~ locbase=mage  booleans="%spells% %booleans_extra%" END
      END
 END
 
@@ -328,6 +402,26 @@ BEGIN
                 SPRINT base dw#mage
                 SPRINT magetype standard_mage
          END
+		 air BEGIN
+                SPRINT variables ~IsAirElementalist=True~
+			    SPRINT base dw#mage
+                SPRINT magetype standard_mage		 
+		 END
+		 earth BEGIN
+                SPRINT variables ~IsEarthElementalist=True~
+			    SPRINT base dw#mage
+                SPRINT magetype standard_mage		 
+		 END
+		 fire BEGIN
+                SPRINT variables ~IsFireElementalist=True~
+			    SPRINT base dw#mage
+                SPRINT magetype standard_mage		 
+		 END
+		 water BEGIN
+                SPRINT variables ~IsWaterElementalist=True~
+                SPRINT base dw#mage
+                SPRINT magetype standard_mage		 
+		 END
          fighter_mage BEGIN
                 SPRINT variables ~IsHighLevel=True&IsFM=True~
                 SPRINT base dw#fgmag
@@ -382,14 +476,14 @@ BEGIN
      END
 
      PATCH_IF "%kit%" STRING_EQUAL_CASE bard BEGIN
-         SET spell_level = $caster_level_to_spell_level("bard" "%level%")
+         SET spell_level = $sfo_spell_level_cl_to_sl("bard" "%level%")
      END ELSE BEGIN
-         SET spell_level = $caster_level_to_spell_level("mage" "%level%")
+         SET spell_level = $sfo_spell_level_cl_to_sl("mage" "%level%")
      END
      FOR (i=1;i<=spell_level;i+=1) BEGIN
          SPRINT variables ~%variables%&HasL%i%=True~
      END
-     PATCH_IF "%race%" STRING_EQUAL_CASE lich BEGIN
+     PATCH_IF "%race%" STRING_EQUAL_CASE lich || "%race%" STR_EQ skeleton BEGIN
          SPRINT variables "%variables%&IsLich=True"
          SPRINT base dw#lich
      END
@@ -411,6 +505,7 @@ DEFINE_PATCH_FUNCTION allocate_mage_spells
       INT_VAR level=0
               spells_are_bg1="-1"
               refinements=0
+			  skip_defensive_spells=0
       STR_VAR class=""
               kit=""
               race=""
@@ -447,10 +542,9 @@ BEGIN
       END
       TO_LOWER kit
       TO_LOWER race
-      /// wipe existing spells
+	  /// wipe existing spells
       LPF CRE_remove_spells STR_VAR arguments=wizard END
       LPF CRE_remove_spells STR_VAR arguments=dw END
-
       // assign HLAs
       PATCH_IF !disable_hlas BEGIN
         PATCH_MATCH "%kit%" WITH
@@ -469,7 +563,6 @@ BEGIN
       END
       // basic defensive choices
 
-
       PATCH_IF !VARIABLE_IS_SET "defensive_file_loaded_%spell_list_defensive%" BEGIN
           INNER_ACTION BEGIN
              ACTION_IF FILE_EXISTS "%MOD_FOLDER%/mage/spellchoices_defensive/%base_folder_spells_mage%/%spell_list_defensive%.tph" BEGIN
@@ -483,7 +576,11 @@ BEGIN
       PATCH_IF debug_variable=2 BEGIN
           PATCH_PRINT "defensive spells are %spell_list_defensive% with base folder %base_folder_spells_mage%; iwd_arcane=%iwd_arcane%; iwd_divine=%iwd_divine%"
       END
-      LPF "defensive_spells_%spell_list_defensive%" INT_VAR level RET spells END
+	  PATCH_IF !skip_defensive_spells BEGIN
+		LPF "defensive_spells_%spell_list_defensive%" INT_VAR level RET spells END
+	  END ELSE BEGIN
+		SPRINT spells "SEQ_O CCN_O SEQ_0 MS_DEFENSIVE"
+	  END
 
       PATCH_IF debug_variable=2 BEGIN
           PATCH_PRINT "defensive spells chosen are: %spells%"
@@ -492,23 +589,26 @@ BEGIN
 
       // fine-tune spells
 
-
       LPF individual_choices STR_VAR spells filename component=mage RET spells END
       PATCH_IF debug_variable=2 BEGIN
           PATCH_PRINT "individual choices made; spells now %spells%"
       END
-
-
 
       LPF mage_spell_swap_race_preparatory STR_VAR spells race RET spells END
       LPF mage_spell_swap_specific_preparatory STR_VAR filename spells RET spells END
       PATCH_IF spells_are_bg1 BEGIN
          LPF mage_spell_swap_bg1_preparatory STR_VAR spells RET spells END
       END
+	  PATCH_MATCH "%kit%" WITH
+	  earth air fire water BEGIN
+        LPF mage_spell_swap_elementalist STR_VAR spells kit RET spells END	  
+	  END
+	  DEFAULT
+	  END
       PATCH_IF debug_variable=2 BEGIN
           PATCH_PRINT "swaps made; spells now %spells%"
       END
-      PATCH_IF iwd_arcane BEGIN
+      PATCH_IF iwd_arcane || is_iwd BEGIN
          LPF mage_spell_swap_iwd STR_VAR spells RET spells END
       END 
       PATCH_IF debug_variable=2 BEGIN
@@ -525,46 +625,52 @@ BEGIN
       DEFAULT
          SPRINT class_here "%class%"
       END
+
       LPF determine_number_of_spells INT_VAR level STR_VAR race class="%class_here%" RET av_0 av_1 av_2 av_3 av_4 av_5 av_6 av_7 av_8 END
-      FOR (i=1;i<=9;i+=1) BEGIN
-         PATCH_IF INDEX ("EXTRA_LEVEL_%i%" "%hla_list%") >=0 BEGIN
+
+    FOR (i=1;i<=9;i+=1) BEGIN
+        PATCH_IF INDEX ("EXTRA_LEVEL_%i%" "%hla_list%") >=0 BEGIN
             SET lev= i - 1
             SET $av("%lev%")+=1
-         END
-      END
-      FOR (i=8;i>=0;i -= 1) BEGIN
-         PATCH_IF $av("%i%")>0 BEGIN
+        END
+    END
+    FOR (i=8;i>=0;i -= 1) BEGIN
+        PATCH_IF $av("%i%")>0 BEGIN
             SET lev_max=i
             SET i="-1"
-         END
-      END
-      SET spell_turn_max = lev_max - 2
-      SET level_nine_max="%av_8%"
-      LPF count_spell_levels STR_VAR spells prefix=~WIZARD_~ RET ct_0 ct_1 ct_2 ct_3 ct_4 ct_5 ct_6 ct_7 ct_8 END
-      FOR (i=0;i<9;i+=1) BEGIN
+        END
+    END
+    SET spell_turn_max = lev_max - 2
+	PATCH_IF !VARIABLE_IS_SET hla_innate BEGIN
+		LPF check_if_hlas_are_innate RET hla_innate END
+	END
+	
+	SET level_nine_max=hla_innate?99:av_8
+ 
+	LPF count_spell_levels STR_VAR spells prefix=~WIZARD_~ RET ct_0 ct_1 ct_2 ct_3 ct_4 ct_5 ct_6 ct_7 ct_8 END
+    FOR (i=0;i<9;i+=1) BEGIN
         SET $av(~%i%~)=$av(~%i%~) - $ct(~%i%~)
-      END
-      FOR(i=0;i<9;i+=1) BEGIN
-         SET spell_level=i+1
-         SET spell_num=$av(~%i%~)
-         PATCH_IF debug_variable=2 BEGIN
-           SPRINT ct_here $ct("%i%")
-           PATCH_PRINT ~Spells at level %i%=%spell_num%; number already cast is %ct_here%~
-         END
-         PATCH_IF spell_num < 0 BEGIN
+    END
+    FOR(i=0;i<9;i+=1) BEGIN
+        SET spell_level=i+1
+        SET spell_num=$av(~%i%~)
+        PATCH_IF debug_variable=2 BEGIN
+			SPRINT ct_here $ct("%i%")
+			PATCH_PRINT ~Spells at level %i%=%spell_num%; number already cast is %ct_here%~
+        END
+        PATCH_IF spell_num < 0 BEGIN
             LPF log_this STR_VAR file=illegal_wizard_spells.txt input= ~%SOURCE_RES% at level %spell_level%~ END
-         END
-         SPRINT ~spells_here~ ~~
-         PATCH_IF spell_num>0 BEGIN
+        END
+        SPRINT ~spells_here~ ~~
+        PATCH_IF spell_num>0 BEGIN
             FOR (j=0;j<spell_num;j+=1) BEGIN
-              PUSH spells_here PLACEHOLDER
+				PUSH spells_here PLACEHOLDER
             END
             SPRINT swap_in $spell_choices_mage(~%spell_list%~ ~%spell_level%~)
-              LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
+				LPF substitute_spells STR_VAR spells= ~%spells_here%~ swap_out=PLACEHOLDER swap_in RET spells_here=spells END
             PUSH spells ~%spells_here%~
-         END
-      END
-
+        END
+    END
 
       // fine-tune remaining spells
 
@@ -573,6 +679,9 @@ BEGIN
       LPF mage_spell_swap_level STR_VAR spells RET spells END
       PATCH_IF iwd_arcane BEGIN
          LPF mage_spell_swap_iwd STR_VAR spells RET spells END // we do this twice: once for prep, once for main
+		 PATCH_IF !tof_arcane_spells BEGIN
+			LPF mage_spell_swap_tof STR_VAR spells RET spells END
+		 END
       END
       PATCH_IF spells_are_bg1 BEGIN
          LPF mage_spell_swap_bg1 STR_VAR spells RET spells END
@@ -739,6 +848,8 @@ BEGIN
          PATCH_PRINT "Chain contingencies: %chain_contingencies%"
          PATCH_PRINT "Sequencers: %sequencers%"
       END
+
+	  
       LPF CRE_add_spells STR_VAR arguments=~%spells_add%~ END
       LPF look_for_wands RET wands END
       SPRINT spells "%spells_list% %hla_list% %wands%"

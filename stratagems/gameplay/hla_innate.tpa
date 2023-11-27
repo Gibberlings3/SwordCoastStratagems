@@ -1,117 +1,92 @@
 DEFINE_ACTION_FUNCTION hla_innate BEGIN
-    LAF read_in_2da STR_VAR file=luabbr RET_ARRAY luabbr_data=array_data END
-    ACTION_PHP_EACH luabbr_data AS var=>val BEGIN
-       OUTER_SPRINT filename "lu%val%"
-       ACTION_IF FILE_EXISTS_IN_GAME "%filename%.2da" BEGIN
-          COPY_EXISTING "%filename%.2da" override
-               LPF get_table_column_coordinate STR_VAR column=NUM_ALLOWED RET num_allowed_column=colnum END
-               COUNT_2DA_COLS colcount
-               READ_2DA_ENTRIES_NOW lua_entries colcount
-               FOR (row=0;row<lua_entries;row+=1) BEGIN
-                  SET check=0
-                  READ_2DA_ENTRY_FORMER lua_entries row 1 ability
-                  TO_UPPER ability
-                  // preliminary patch: Paladin/Blackguard summoning should be limited to one use
-                  PATCH_MATCH "%ability%" WITH
-                     "GA_%PALADIN_SUMMON_DEVA%" "GA_%BLACKGUARD_SUMMON_FALLEN_DEVA%" BEGIN
 
-                           SET_2DA_ENTRY row num_allowed_column colcount 1
-                     END
-                     DEFAULT
-                  END
-                  
-                  // main patch
-                  SET edit=0
-                  INNER_PATCH "%ability%" BEGIN
-                     REPLACE_EVALUATE "^GA_\(.*\)$" BEGIN
-                        SPRINT resref "%MATCH1%"
-                        TO_UPPER resref
-                        PATCH_IF VARIABLE_IS_SET $hla_resref_map("%resref%") BEGIN
-                           SPRINT new_resref $hla_resref_map("%resref%")
-                           SET edit=1
-                        END ELSE
-                        PATCH_IF VARIABLE_IS_SET $hla_no_change_map("%resref%") BEGIN
-                           // do nothing, no change
-                           END ELSE BEGIN
-                           INNER_ACTION BEGIN
-                                COPY_EXISTING "%resref%.spl" "%workspace%"
-                                     SET type= SHORT_AT 0x1c
-                                BUT_ONLY
-                           END
-                           PATCH_IF (type=1||type=2) BEGIN
-                               SET edit=1
-                               INNER_ACTION BEGIN
-                                   LAF make_hla_innate STR_VAR resref RET new_resref END
-                               END
-                               TO_UPPER new_resref
-                               SPRINT $hla_resref_map("%resref%") "%new_resref%"
-                           END ELSE BEGIN
-                               SPRINT $hla_no_change_map("%resref%") ""
-                               SPRINT new_resref "%resref%"
-                           END
-                        END
-                     END
-                     ""
-                  END
-                  PATCH_IF edit BEGIN
-                     SET_2DA_ENTRY row num_allowed_column colcount 1
-                     PATCH_IF "%resref%" STRING_COMPARE_CASE "%new_resref%" BEGIN
-                         SET_2DA_ENTRY row 1 colcount "GA_%new_resref%"
-                     END
-                  END
-               END
-          BUT_ONLY
-       END
-    END
-    COPY "%data_loc_root%/dw_shared/dw#hla_feat.2da" "%data_loc_root%/dw_shared"
+
+	// start by removing underlevelled effects from wizard/priest HLAs
+	
+	LAF run STR_VAR file=hla_minimum_level END
+
+
+	LAF 2daq_extract STR_VAR resref=luabbr column=ABBREV RET_ARRAY luabbr_data=array END
+	ACTION_PHP_EACH luabbr_data AS k=>v BEGIN
+		ACTION_IF !VARIABLE_IS_SET $luabbr_list("%v%") BEGIN
+			
+			OUTER_SPRINT $luabbr_list("%v%") ""
+			OUTER_SPRINT filename "lu%v%"
+			COPY_EXISTING "%filename%.2da" override
+				LPF 2da_read RET_ARRAY lu_array=array lu_rows=rows END
+				PHP_EACH lu_rows AS row=>discard BEGIN
+					SPRINT ability $lu_array("%row%" ABILITY)
+					TO_UPPER ability					
+					// preliminary patch: Paladin/Blackguard summoning should be limited to one use
+					PATCH_MATCH "%ability%" WITH
+					"GA_%PALADIN_SUMMON_DEVA%" "GA_%BLACKGUARD_SUMMON_FALLEN_DEVA%" BEGIN
+						SET $lu_array("%row%" NUM_ALLOWED)=1
+					END
+					DEFAULT
+					END
+					// main loop
+					PATCH_IF !VARIABLE_IS_SET $done_innate_hla("%ability%") BEGIN
+						SET $done_innate_hla("%ability%")=1
+						SPRINT resref ""
+						INNER_PATCH "%ability%" BEGIN
+							REPLACE_EVALUATE "^GA_\(.*\)$" BEGIN
+								SPRINT resref "%MATCH1%"
+								TO_UPPER resref
+							END
+						""					
+						END
+						PATCH_IF "%resref%" STR_CMP "" && FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+							INNER_ACTION BEGIN
+								COPY_EXISTING - "%resref%.spl" nowhere
+									type=SHORT_AT 0x1c
+								BUT_ONLY
+								ACTION_IF type=1 || type=2 BEGIN
+									LAF spl_make_hla_class_ability STR_VAR resref RET new_resref END
+									ACTION_TO_UPPER new_resref
+									OUTER_SPRINT $hla_resref_map("%resref%") "%new_resref%"
+									OUTER_SPRINT $hla_ga_map("%ability%") "GA_%new_resref%"
+								END
+							END
+						END
+					END
+					PATCH_IF VARIABLE_IS_SET $hla_ga_map("%ability%") BEGIN
+						SPRINT $lu_array("%row%" ABILITY) $hla_ga_map("%ability%")
+					END					
+					
+				END			
+			BUT_ONLY
+			IF_EXISTS
+		END
+	END
+	// now we need to go around again to replace the old with the new
+	ACTION_PHP_EACH luabbr_list AS v=>discard BEGIN
+		COPY_EXISTING "lu%v%.2da" override
+			LPF 2da_read RET_ARRAY lu_rows=rows lu_array=array END
+			PHP_EACH lu_rows AS row=>discard BEGIN
+				PATCH_FOR_EACH col IN ABILITY PREREQUISITE EXCLUDED_BY BEGIN
+					SPRINT ability $lu_array("%row%" "%col%")
+					TO_UPPER ability
+					PATCH_IF VARIABLE_IS_SET $hla_ga_map("%ability%") BEGIN
+						SPRINT $lu_array("%row%" "%col%") $hla_ga_map("%ability%")
+					END
+				END
+			END
+			LPF 2da_write STR_VAR array=lu_array END
+		BUT_ONLY
+		IF_EXISTS
+	END
+
+	// update the SCS copy
+
+    COPY "%data_loc_shared%/dw_feat_data.2da" "%data_loc_shared%"
          PHP_EACH hla_resref_map AS old=>new BEGIN
             REPLACE_TEXTUALLY CASE_INSENSITIVE "%old%" "%new%"
          END
     BUT_ONLY
-    COPY_EXISTING_REGEXP "lu.*\.2da$" override  // this sorts out prerequisites and exclusions
-        PHP_EACH hla_resref_map AS old=>new BEGIN
-           REPLACE_TEXTUALLY "GA_%old%" "GA_%new%"
-        END
-   BUT_ONLY
 
 END
 
-DEFINE_ACTION_FUNCTION make_hla_innate
-   STR_VAR resref=""
-   RET new_resref
-BEGIN
-   ACTION_TO_UPPER resref
-   OUTER_SPRINT new_resref "%resref%"
-   ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
-      COPY_EXISTING "%resref%.spl" "%workspace%"
-            SET type= SHORT_AT 0x1c
-      BUT_ONLY
-      ACTION_IF (type=1 || type=2) BEGIN
-        ACTION_MATCH "%resref%" WITH
-         "SPWI.*" "SPPR.*" BEGIN
-            LAF return_spellname STR_VAR resref RET spellname END
-            OUTER_SPRINT idsname "HLA_%spellname%"
-            LAF add_spell_to_ids INT_VAR type=4 STR_VAR idsname filename="%resref%" RET new_resref=newname END
-         END
-         DEFAULT
-               OUTER_SPRINT new_resref "%resref%"
-         END
-         COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl"
-             WRITE_SHORT 0x1c 4
-			 PATCH_IF !enhanced_edition BEGIN
-				WRITE_LONG 0x34 1 // we need this on vanilla, otherwise HaveSpell() causes crashes. Probably it's safe in EE too, but this component has broken so many times that I don't want to risk it!
-			 END
-         BUT_ONLY
-         ACTION_FOR_EACH copy_spell IN projimag simualcr BEGIN
-            ACTION_IF FILE_EXISTS_IN_GAME "%copy_spell%.spl" BEGIN
-               COPY_EXISTING "%copy_spell%.spl" override
-                   LPF ADD_SPELL_EFFECT INT_VAR opcode=172 target=1 timing=1 STR_VAR resource="%resref_new%" END
-               BUT_ONLY
-            END
-         END
-      END
-   END ELSE BEGIN
-      LAF warning STR_VAR warning="Missing HLA in the LUA tables: %resref%" repeat=no END
-   END
-END
+
+
+
 

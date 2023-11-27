@@ -5,17 +5,17 @@ DEFINE_ACTION_FUNCTION genai STR_VAR version=0
 // 3: edits after only
 BEGIN
 
-     LAF define_difficulty STR_VAR type=genai RET difficulty_variable END
+    LAF define_difficulty STR_VAR type=genai RET difficulty_variable END
 
      ACTION_IF !IS_AN_INT version BEGIN
         OUTER_SET version=0
      END
      LAF include STR_VAR file=~genai_shared.tph deployment.tph~ END
 
-  //   LAM read_in_genai_item_data    // not at all clear this helps
-     LAM read_in_clab_spelldata
-     LAM read_in_proficiency_progression
-     LAM read_in_proficiencies
+	LAM read_in_clab_spelldata
+	LAM data_saving_throws
+	LAF data_proficiencies RET_ARRAY weapprof profs profsmax END
+	OUTER_SET proficiencies_read_in=1
 
      ACTION_IF !disable_hlas BEGIN
         LAM read_in_hla_choices
@@ -57,38 +57,46 @@ END
 
 DEFINE_ACTION_FUNCTION pc_summons BEGIN
 
-   LAF ssl_to_bcs STR_VAR script=~dw#summe dw#sumrn dw#sumtw~ location=ssl variables="MyWeaponDamageType=MultipleDamageType&MyWeaponStrength=Unknown" END
+	// most of this is automated (tied to bdsum00) in EE
 
+	// make the scripts 
+   LAF ssl_to_bcs STR_VAR script=~dw#summe dw#sumrn dw#sumtw~ location=ssl variables="MyWeaponDamageType=MultipleDamageType&MyWeaponStrength=Unknown" END
    ACTION_IF FILE_EXISTS_IN_GAME ~gminionm.bcs~ BEGIN //GMinion installed
        LAF compile_rename STR_VAR file="summon_gminion=>dw#sumei summon_gminion_ranged=>dw#surni summon_gminion=>dw#sutwi" location=baf END
    END ELSE BEGIN
        LAF compile_rename STR_VAR file="summon_vanilla=>dw#sumei summon_vanilla_ranged=>dw#surni summon_vanilla_twoattack=>dw#sutwi" location=baf END
    END
 
-   LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~ogrelesu worgsu dogwisu gnollsu wolfdisu ogresu
-                                       ogregrsu spidgisu spidphsu spidswsu
-                                       skelsu01 skelsu07 skelsu11
-                                       ghastsu skelwasu elairsu1 elearsu1 elfirsu1 carriosu
-                                       elairsuw elairsu2 elairsu3 elfirsu2 elfirsu3 elfirsu4
-                                       stalke nishrusu sword01 haksu~
-                             editstring=~strip_script=>dw#sumei insert_script_high=>dw#sumei~
-   END
-   LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~ettercsu wyvernsu~
-                             editstring=~strip_script=>dw#sutwi insert_script_high=>dw#sutwi~
-   END
+	// on non-EE, manually sub in
+	ACTION_IF !enhanced_edition BEGIN
+		LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~ogrelesu worgsu dogwisu gnollsu wolfdisu ogresu
+										   ogregrsu spidgisu spidphsu spidswsu
+										   skelsu01 skelsu07 skelsu11
+										   ghastsu skelwasu elairsu1 elearsu1 elfirsu1 carriosu
+										   elairsuw elairsu2 elairsu3 elfirsu2 elfirsu3 elfirsu4
+										   stalke nishrusu sword01 haksu~
+								 editstring=~strip_script=>dw#sumei insert_script_high=>dw#sumei~
+		END
+		ACTION_IF FILE_EXISTS_IN_GAME ~_asloisu.cre~ BEGIN // check for d0tweak - NB this is "_" even in BGT
+			ACTION_FOR_EACH crebase IN asloi dogwa dogwi earbl earbr earca earpo flind gnoll grebe greha
+									  grill ibber obgob obold ogre olfdi olfdr tterc wolf worg xvart zombi
+									  ske1 ske2 ske3 ske4 ske5
+			BEGIN
+				LAF swap_text INT_VAR allow_missing=1 STR_VAR files= ~_%crebase%su.cre~ swaps=~gminionm=>dw#sumei gminionr=>dw#surni~ END
+			END
+		END
+		LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~koboldsu hobgobsu~
+								 editstring=~strip_script=>dw#surni insert_script_high=>dw#surni~
+		END
+    END
+	// do these manually even on EE
+	LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~ettercsu wyvernsu~
+							 editstring=~strip_script=>dw#sutwi insert_script_high=>dw#sutwi~
+	END
 
-   LAF edit_creature INT_VAR allow_missing=1 STR_VAR creature=~koboldsu hobgobsu~
-                             editstring=~strip_script=>dw#surni insert_script_high=>dw#surni~
-   END
 
-   ACTION_IF FILE_EXISTS_IN_GAME ~_asloisu.cre~ BEGIN // check for d0tweak - NB this is "_" even in BGT
-       ACTION_FOR_EACH crebase IN asloi dogwa dogwi earbl earbr earca earpo flind gnoll grebe greha
-                                  grill ibber obgob obold ogre olfdi olfdr tterc wolf worg xvart zombi
-                                  ske1 ske2 ske3 ske4 ske5
-       BEGIN
-              LAF swap_text INT_VAR allow_missing=1 STR_VAR files= ~_%crebase%su.cre~ swaps=~gminionm=>dw#sumei gminionr=>dw#surni~ END
-       END
-   END
+
+
 
 END
 
@@ -466,8 +474,15 @@ DEFINE_ACTION_FUNCTION edit_creatures_before BEGIN
 
         // Skeleton assassin should swap invisibility scrolls for potions
 
-        LAF edit_creature STR_VAR creature=hgskl02 editstring="remove_items=>~potn10 potn52~ add_items=>~%WIZARD_INVISIBILITY_SCROLL%(x3)~" END
+        LAF edit_creature STR_VAR creature=hgskl02 editstring="remove_items=>~potn10 potn52~ add_items=>~scrl90(x3)~" END
 
+		// vanilla Eler Had is class=thief, kit=berserker, which confuses script allocation
+		
+		COPY_EXISTING "gromg09.cre" override
+			PATCH_IF BYTE_AT 0x273=4 BEGIN // thief
+				WRITE_LONG 0x244 0
+			END
+		BUT_ONLY
 
      END // end of BG2 part
 
@@ -555,6 +570,7 @@ DEFINE_ACTION_FUNCTION apply_genai_changes BEGIN
                LPF genai STR_VAR arguments="%genai_set%" END
          WITH DEFAULT
 			LPF regexp_warning STR_VAR parent=apply_genai_changes END
+			PATCH_RERAISE
          END
       END
       SET counter+=1

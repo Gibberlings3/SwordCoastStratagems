@@ -1,0 +1,997 @@
+DEFINE_ACTION_FUNCTION elemental_cre BEGIN
+
+	LAF make_label STR_VAR label=dw-elemental_cre END
+
+	LAM data_thac0
+	LAM data_saving_throws
+	LAF include STR_VAR file=move_spell_resources.tph location=lib locbase=iwdspells END // for the make-bams-green color patches
+	LAF include STR_VAR file=elemental_cre_shared.tph END
+
+	ACTION_IF is_iwd BEGIN
+		LAF elemental_summoning_iwd END
+	END ELSE BEGIN
+		LAF elemental_summoning_bg END	
+	END
+	
+	
+	LAF elemental_scripting END
+	LAF innate_elemental_spells END
+	LAF make_shared_elemental_resources END
+	LAF innate_elemental_spells END
+	
+	LAF check_ini STR_VAR ini=log_elemental_cre RET log_elem=value END
+	
+	COPY_EXISTING_REGEXP ".*\.cre" override
+		LPF is_elemental RET value type END
+		PATCH_IF value BEGIN
+			LPF "%type%_elemental_patch" END
+			PATCH_IF log_elem BEGIN
+				READ_STRREF 0xc name
+				LPF log_this STR_VAR file="elemental_cre_%type%.txt" input="%name% (%SOURCE_RES%)" END
+			END
+		END
+	BUT_ONLY
+	
+
+END
+
+DEFINE_ACTION_FUNCTION elemental_summoning_bg BEGIN
+
+	// do some renaming
+	
+	// greater elementals
+
+	cre.edit[elairsu3][m_both_names:=@15]
+	cre.edit[elearpr2 elearsu3][m_both_names:=@16]
+	cre.edit[elfirpr2 elfirsu3][m_both_names:=@17]
+
+	// elder elementals		
+
+	cre.edit[elairsu4][m_both_names:=@19]
+	cre.edit[elearpr3 elearsu4][m_both_names:=@20]
+	cre.edit[elfirpr3 elfirsu4][m_both_names:=@21]
+
+	// lesser elementals
+
+	cre.edit[es8air][m_both_names:=@27]
+	cre.edit[es8erth][m_both_names:=@28]
+	cre.edit[es8fire][m_both_names:=@29]
+
+	// update the description of the L6 priest Fire Elemental spell (the actual spell is fine)
+	
+	spl.edit[%CLERIC_CONJURE_FIRE_ELEMENTAL%]
+	[
+		m_description:=@11
+	]
+
+	// clone that spell to create the L6 priest Water Elemental spell
+	
+	CLERIC_CONJURE_WATER_ELEMENTAL,CLERIC_CONJURE_WATER_ELEMENTAL_SCROLL=spl.copy[%CLERIC_CONJURE_FIRE_ELEMENTAL%=>CLERIC_CONJURE_WATER_ELEMENTAL]
+	[
+		m_name:=@24
+		m_description:=@13
+	]
+	COPY_EXISTING "%CLERIC_CONJURE_WATER_ELEMENTAL%.spl" override
+		REPLACE_TEXTUALLY "SPFIR1P" "DW#WAT1" (8) 
+		REPLACE_TEXTUALLY "SPFIR2P" "DW#WAT2" (8) 
+		REPLACE_TEXTUALLY "SPFIR3P" "DW#WAT3" (8) 
+
+	ACTION_FOR_EACH letter IN A B C BEGIN
+		COPY_EXISTING "%WIZARD_CONJURE_LESSER_WATER_ELEMENTAL%%letter%.bam" "override/%CLERIC_CONJURE_WATER_ELEMENTAL%%letter%.bam"
+	END
+	
+	// update the description of the L7 priest Earth Elemental spell and tweak its probabilities
+	
+	spl.edit[%CLERIC_CONJURE_EARTH_ELEMENTAL%]
+	[
+		m_description:=@12
+		m.fx.delete{s_resource==speart1p}
+		m.fx.alter{probability1=69;;probability2=0|match="s_resource==speart2p"}
+		m.fx.alter{probability1=99;;probability2=70|match="s_resource==speart3p"}
+	]
+
+	// clone that spell to create the L7 priest Air Elemental spell
+	
+	CLERIC_CONJURE_AIR_ELEMENTAL,CLERIC_CONJURE_AIR_ELEMENTAL_SCROLL=spl.copy[%CLERIC_CONJURE_EARTH_ELEMENTAL%=>CLERIC_CONJURE_AIR_ELEMENTAL]
+	[
+		m_name:=@23
+		m_description:=@14
+	]
+	
+	COPY_EXISTING "%CLERIC_CONJURE_AIR_ELEMENTAL%.spl" override
+		REPLACE_TEXTUALLY "SPEART1P" "SPAIR1" (8) 
+		REPLACE_TEXTUALLY "SPEART2P" "SPAIR2" (8) 
+		REPLACE_TEXTUALLY "SPEART3P" "SPAIR3" (8) 
+	
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_AIR_ELEMENTAL%%letter%.bam" "override/%CLERIC_CONJURE_AIR_ELEMENTAL%%letter%.bam"
+	END
+	
+	// if appropriate, do Elemental Swarm
+	
+	spl.edit[%CLERIC_ELEMENTAL_SWARM%|allow_missing:i=1]
+	[
+		m_name:=@25
+		m_description:=@26
+		m.fx.delete{}
+		PATCH_FOR_EACH resource IN SPAIR2 SPEART2P SPFIR2P DW#WAT2 BEGIN
+			m.fx.add{s_opcode=177 s_target=1 s_parameter2=2 s_duration=60 s_resource:=%resource%}
+		END
+	]
+	
+END
+
+
+
+DEFINE_ACTION_FUNCTION elemental_summoning_iwd BEGIN
+
+	// create air elementals at levels 12, 16, 24
+	// (these are fairly minimal placeholders, to be subsequently edited by the cre-edit)
+	
+	cre.copy[es8air=>es12air]
+	[
+		m_level_all=12
+		m_xp_value=0
+		m_xp=12
+		m_hp=84
+		m_dv:=es12air
+	]
+	cre.copy[es8air=>es16air]
+	[
+		m_level_all=16
+		m_xp_value=0
+		m_xp=16
+		m_hp=112
+		m_dv:=es16air
+	]
+	cre.copy[es8air=>es24air]
+	[
+		m_level_all=24
+		m_xp_value=0
+		m_xp=24
+		m_hp=160
+		m_dv:=es24air
+	]
+	// rename the L16 ones 'greater elementals' and the L24 ones 'elder elementals'
+	
+	array.new[elem_names]
+	[
+		ES16AIR=>15
+		ES16ERTH=>16
+		ES16FIRE=>17
+		ES16WATR=>18
+		ES24AIR=>19
+		ES24ERTH=>20
+		ES24FIRE=>21
+		ES24WATR=>22
+	]
+	ACTION_PHP_EACH elem_names AS creature=>tra_ref BEGIN
+		COPY_EXISTING "%creature%.cre" override 
+			SAY 0x8 (AT tra_ref)
+			SAY 0xc (AT tra_ref)
+	END
+	
+	// rename the elementals associated with the L5 spell as 'lesser'
+
+	COPY_EXISTING "es8air.cre" override
+		WRITE_LONG 0x8 2845
+		WRITE_LONG 0xc 2845
+	BUT_ONLY
+	COPY_EXISTING "es8erth.cre" override
+		WRITE_LONG 0x8 2850
+		WRITE_LONG 0xc 2850
+	BUT_ONLY	
+	COPY_EXISTING "es8fire.cre" override
+		WRITE_LONG 0x8 2878
+		WRITE_LONG 0xc 2878
+	BUT_ONLY
+	COPY_EXISTING "es8watr.cre" override
+		SAY 0x8 @10
+		SAY 0xc @10
+	BUT_ONLY	
+
+	// add new smtable entry for priest air elementals (water is actually there already, but unused) 
+	
+	LAF spl_resolve_smtables_entry STR_VAR name=DW_AIR_ELEMENTAL_PRI 2da="%2da_air_elemental_priest%" RET table_air_priest=value END
+
+	// generate the new priest tables
+	
+	LAF spl_generate_smtable STR_VAR 2da=CEELEMP contents="es16erth(14) es24erth(6)" hit_animation="MSumm1H" area_hit_animation="CEElemX" END
+	LAF spl_generate_smtable STR_VAR 2da="%2da_air_elemental_priest%" contents="es16air(14) es24air(6)" hit_animation="MSumm1H" area_hit_animation="CWElemX" END
+	LAF spl_generate_smtable STR_VAR 2da=CFELEMP contents="es12fire(12) es16fire(7) es24fire" hit_animation="MSumm1H" area_hit_animation="CFElemX" END
+	LAF spl_generate_smtable STR_VAR 2da=CWELEMP contents="es12watr(12) es16watr(7) es24watr" hit_animation="MSumm1H" area_hit_animation="CWElemX" END
+
+	// update the descriptions of the existing priest spells
+	
+	
+	
+	
+	spl.edit[%CLERIC_CONJURE_EARTH_ELEMENTAL%]
+	[
+		m_description:=@12
+	]
+	spl.edit[%CLERIC_CONJURE_FIRE_ELEMENTAL%]
+	[
+		m_description:=@11
+	]
+
+
+	// make the new Air Elemental spell
+	
+	CLERIC_CONJURE_AIR_ELEMENTAL,_=spl.copy[%CLERIC_CONJURE_EARTH_ELEMENTAL%=>CLERIC_CONJURE_AIR_ELEMENTAL]
+	[
+		m_name:=@23
+		m_description:=@14
+		m.fx.alter{s_parameter2=table_air_priest|match="s_opcode=331"}
+	]	
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_AIR_ELEMENTAL%%letter%.bam" "override/%CLERIC_CONJURE_AIR_ELEMENTAL%%letter%.bam"
+	END
+	
+	// make the new Water Elemental spell
+
+	CLERIC_CONJURE_WATER_ELEMENTAL,_=spl.copy[%CLERIC_CONJURE_FIRE_ELEMENTAL%=>CLERIC_CONJURE_WATER_ELEMENTAL]
+	[
+		m_name:=@24
+		m_description:=@13
+		m.fx.alter{s_parameter2=24|match="s_opcode=331"}
+	]
+
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_WATER_ELEMENTAL%%letter%.bam" "override/%CLERIC_CONJURE_WATER_ELEMENTAL%%letter%.bam"
+	END
+
+	// add new smtables entries for wizards
+	
+	LAF spl_resolve_smtables_entry STR_VAR name=DW_EARTH_ELEMENTAL_WIZ2 2da="%2da_earth_elemental_wizard%" RET table_earth=value END
+	LAF spl_resolve_smtables_entry STR_VAR name=DW_AIR_ELEMENTAL_WIZ2 2da="%2da_air_elemental_wizard%" RET table_air=value END
+	LAF spl_resolve_smtables_entry STR_VAR name=DW_WATER_ELEMENTAL_WIZ2 2da="%2da_water_elemental_wizard%" RET table_water=value END
+	LAF spl_resolve_smtables_entry STR_VAR name=DW_FIRE_ELEMENTAL_WIZ2 2da="%2da_fire_elemental_wizard%" RET table_fire=value END
+
+	// generate the actual tables
+	
+	LAF spl_generate_smtable STR_VAR 2da="%2da_earth_elemental_wizard%" contents="es12erth(12) es16erth(7) es24erth" hit_animation="MSumm1H" area_hit_animation="CEElemX" END
+	LAF spl_generate_smtable STR_VAR 2da="%2da_air_elemental_wizard%" contents="es12air(12) es16air(7) es24air" hit_animation="MSumm1H" area_hit_animation="CWElemX" END
+	LAF spl_generate_smtable STR_VAR 2da="%2da_fire_elemental_wizard%" contents="es12fire(12) es16fire(7) es24fire" hit_animation="MSumm1H" area_hit_animation="CFElemX" END
+	LAF spl_generate_smtable STR_VAR 2da="%2da_water_elemental_wizard%" contents="es12watr(12) es16watr(7) es24watr" hit_animation="MSumm1H" area_hit_animation="CWElemX" END
+
+	// copy the L5 spells over the L6 ones, updating level and smtables entry
+
+
+	COPY_EXISTING "spell.ids" override
+		REPLACE_TEXTUALLY "WIZARD_CFE_OLD" WIZARD_CONJURE_FIRE_ELEMENTAL
+		REPLACE_TEXTUALLY "WIZARD_CAE_OLD" WIZARD_CONJURE_AIR_ELEMENTAL
+		REPLACE_TEXTUALLY "WIZARD_CEE_OLD" WIZARD_CONJURE_EARTH_ELEMENTAL
+	BUT_ONLY
+	
+	// unhide the original L6 spells
+	
+	COPY_EXISTING "hidespl.2da" override
+		REPLACE_TEXTUALLY "%WIZARD_CFE_OLD%.*[%WNL%%LNL%%MNL%]" ""
+		REPLACE_TEXTUALLY "%WIZARD_CAE_OLD%.*[%WNL%%LNL%%MNL%]" ""
+		REPLACE_TEXTUALLY "%WIZARD_CEE_OLD%.*[%WNL%%LNL%%MNL%]" ""
+
+	// Fire
+	
+	COPY_EXISTING "%WIZARD_CONJURE_FIRE_ELEMENTAL%.spl" "override/%WIZARD_CFE_OLD%.spl"
+		WRITE_LONG 0x34 6
+		SAY 0x50 @6
+	BUT_ONLY
+	
+	ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_CONJURE_FIRE_ELEMENTAL%A.spl" BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_FIRE_ELEMENTAL%A"
+	END ELSE BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_FIRE_ELEMENTAL%"
+	END
+	COPY_EXISTING "%resref%.spl" override
+		LPF ALTER_EFFECT INT_VAR match_opcode=331 parameter2=table_fire END
+		REPLACE_TEXTUALLY "%WIZARD_CONJURE_FIRE_ELEMENTAL%" "%WIZARD_CFE_OLD%"
+	BUT_ONLY
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_FIRE_ELEMENTAL%%letter%.bam" "override/%WIZARD_CFE_OLD%%letter%.bam"
+	END
+	OUTER_SPRINT WIZARD_CONJURE_LESSER_FIRE_ELEMENTAL_SCROLL "%WIZARD_CONJURE_FIRE_ELEMENTAL_SCROLL%"
+	LAF spl_make_scroll
+		STR_VAR spell_resref="%WIZARD_CFE_OLD%"
+		RET WIZARD_CONJURE_FIRE_ELEMENTAL_SCROLL=scroll_resref
+	END	
+
+	
+	// Earth
+
+	COPY_EXISTING "%WIZARD_CONJURE_EARTH_ELEMENTAL%.spl" "override/%WIZARD_CEE_OLD%.spl"
+		WRITE_LONG 0x34 6
+		SAY 0x50 @7
+	BUT_ONLY
+		ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_CONJURE_EARTH_ELEMENTAL%A.spl" BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_EARTH_ELEMENTAL%A"
+	END ELSE BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_EARTH_ELEMENTAL%"
+	END
+	COPY_EXISTING "%resref%.spl" override
+		LPF ALTER_EFFECT INT_VAR match_opcode=331 parameter2=table_earth END
+		REPLACE_TEXTUALLY "%WIZARD_CONJURE_EARTH_ELEMENTAL%" "%WIZARD_CEE_OLD%"
+	BUT_ONLY
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_EARTH_ELEMENTAL%%letter%.bam" "override/%WIZARD_CEE_OLD%%letter%.bam"
+	END
+
+	OUTER_SPRINT WIZARD_CONJURE_LESSER_EARTH_ELEMENTAL_SCROLL "%WIZARD_CONJURE_EARTH_ELEMENTAL_SCROLL%"
+	LAF spl_make_scroll
+		STR_VAR spell_resref="%WIZARD_CEE_OLD%"
+		RET WIZARD_CONJURE_EARTH_ELEMENTAL_SCROLL=scroll_resref
+	END	
+
+
+	// Air
+
+	COPY_EXISTING "%WIZARD_CONJURE_AIR_ELEMENTAL%.spl" "override/%WIZARD_CAE_OLD%.spl"
+		WRITE_LONG 0x34 6
+		SAY 0x50 @8
+	BUT_ONLY
+	ACTION_IF FILE_EXISTS_IN_GAME "%WIZARD_CONJURE_AIR_ELEMENTAL%A.spl" BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_AIR_ELEMENTAL%A"
+	END ELSE BEGIN
+		OUTER_SPRINT resref "%WIZARD_CONJURE_AIR_ELEMENTAL%"
+	END
+	COPY_EXISTING "%resref%.spl" override
+		LPF ALTER_EFFECT INT_VAR match_opcode=331 parameter2=table_air END
+		REPLACE_TEXTUALLY "%WIZARD_CONJURE_AIR_ELEMENTAL%" "%WIZARD_CAE_OLD%"
+	BUT_ONLY
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_AIR_ELEMENTAL%%letter%.bam" "override/%WIZARD_CAE_OLD%%letter%.bam"
+	END
+	// there is a random L6 Air Elemental scroll lying around in IWDEE which we may as well use	
+	itm.edit[scrl7y][m_identified_description:=@8]
+	OUTER_SPRINT WIZARD_CONJURE_LESSER_AIR_ELEMENTAL_SCROLL "%WIZARD_CONJURE_AIR_ELEMENTAL_SCROLL%"
+	OUTER_SPRINT WIZARD_CONJURE_AIR_ELEMENTAL_SCROLL scrl7y
+	
+	// Water
+
+	newname=spl.copy[%WIZARD_CONJURE_WATER_ELEMENTAL%=>WIZARD_CONJURE_WATER_ELEMENTAL_DWTEMP]
+	[
+		m_level=6
+		m_description:=@9
+		m.fx.alter{s_parameter2=table_water|match="s_opcode=331"}
+	]	
+	ACTION_FOR_EACH letter IN A B C BEGIN
+			COPY_EXISTING "%WIZARD_CONJURE_WATER_ELEMENTAL%%letter%.bam" "override/%newname%%letter%.bam"
+	END
+	COPY_EXISTING "spell.ids" override 
+		REPLACE_TEXTUALLY "_DWTEMP" ""
+	OUTER_SPRINT WIZARD_CONJURE_LESSER_WATER_ELEMENTAL_SCROLL "%WIZARD_CONJURE_WATER_ELEMENTAL_SCROLL%"
+	LAF spl_make_scroll
+		STR_VAR spell_resref="%newname%"
+		RET WIZARD_CONJURE_WATER_ELEMENTAL_SCROLL=scroll_resref
+	END	
+
+	// redesignate the L5 spells as 'lesser'
+
+	ACTION_GET_STRREF 24827 lesser_air
+	ACTION_GET_STRREF 24829 lesser_earth
+	ACTION_GET_STRREF 24830 lesser_fire 
+	OUTER_SPRINT lesser_water @5
+
+	ACTION_FOR_EACH element IN earth air fire water BEGIN
+		OUTER_SPRINT newname EVAL "%lesser_%element%%"
+		LAF rename_elemental_summoning_to_lesser STR_VAR element newname END
+	END
+	
+	// Lesser Air Elemental should have the IWD (water) elemental summon, not the visually-different BG2 spportal
+	
+	COPY_EXISTING "caelemw.2da" override
+		REPLACE_TEXTUALLY "SPPORTAL" "CWElemX"
+	BUT_ONLY
+
+	// distribute scrolls
+	// (this is basically copying the distribution of the Lesser versions, in Bandoth's and Kieran Nye's stores)
+	
+	sto.edit[bandoth kieran2]
+	[
+		array.new{scroll_array}{0=>"%WIZARD_CONJURE_WATER_ELEMENTAL_SCROLL%" 1=>"%WIZARD_CONJURE_FIRE_ELEMENTAL_SCROLL%" 2=>"%WIZARD_CONJURE_EARTH_ELEMENTAL_SCROLL%" 3=>"%WIZARD_CONJURE_AIR_ELEMENTAL_SCROLL%"}
+		m.item.clone{s_resref:=$scroll_array("%index%")|number:i=4 match="s_resref==sccae"}
+	
+	]
+
+END
+
+DEFINE_ACTION_FUNCTION rename_elemental_summoning_to_lesser 
+	STR_VAR element="" newname=""
+BEGIN
+	// get the resref
+	ACTION_TO_UPPER element
+	OUTER_SPRINT ids "WIZARD_CONJURE_%element%_ELEMENTAL"
+	OUTER_SPRINT ids_new "WIZARD_CONJURE_LESSER_%element%_ELEMENTAL"
+	OUTER_SPRINT resref EVAL "%%ids%%"
+
+	// rename the spell itself
+	COPY_EXISTING "%resref%.spl" override
+		READ_STRREF 0x8 oldname
+		SAY 0x8 "%newname%"
+		SAY 0xc "%newname%"
+		READ_LONG 0x50 desc_strref
+		GET_STRREF desc_strref desc
+		INNER_PATCH_SAVE desc "%desc%" BEGIN
+			REPLACE_TEXTUALLY "%oldname%" "%newname%"
+		END
+		SAY 0x50 "%desc%"
+	BUT_ONLY
+	OUTER_SPRINT scroll EVAL "%%ids_new%_SCROLL%"
+	ACTION_IF FILE_EXISTS_IN_GAME "%scroll%.itm" BEGIN
+		COPY_EXISTING "%scroll%.itm" override
+			SAY 0x8 "%newname%"
+			SAY 0xc "%newname%"
+			SAY 0x54 "%desc%"
+	END	
+	
+	// update the spell.ids entry
+	
+	COPY_EXISTING "spell.ids" override
+		REPLACE_TEXTUALLY "%ids_new%" "%ids_new%_OLD"
+		REPLACE_TEXTUALLY "\(25[0-9][0-9][ %TAB%]\)+%ids%" "\1%ids_new%"
+	BUT_ONLY
+	
+	// get updated BAMs
+	
+	ACTION_IF "%element%" STRING_COMPARE_CASE "water" BEGIN
+		ACTION_FOR_EACH letter IN A B C BEGIN
+			OUTER_SPRINT resref_old EVAL "%WIZARD_CONJURE_LESSER_%element%_ELEMENTAL%"
+			COPY_EXISTING "%resref_old%%letter%.bam" "override/%resref%%letter%.bam"
+		END
+		LAF bam_patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%a %resref%c" condition=is_red_tweaked action=col_swap END
+		LAF bam_patch_colors INT_VAR suppress_warning=1 STR_VAR bam="%resref%b" condition=is_dark_red action=col_swap_2 END
+	END
+ 
+
+
+END
+
+DEFINE_ACTION_FUNCTION elemental_scripting BEGIN
+
+
+	ACTION_IF is_iwd BEGIN
+		// air
+		LAF install_script STR_VAR script=baf_air_elemental location=script END	
+		cre.edit[es8air][m_script_class:="%baf_air_elemental%"]
+
+		// fire
+		LAF install_script STR_VAR script=baf_fire_elemental location=script END
+		cre.edit[es8fire es12fire es16fire es20fire es24fire][m_script_class:="%baf_fire_elemental%"]
+		cre.edit[cyfiree][m.cre_insert_script{%baf_fire_elemental%|loc="before efatkmel"}]
+		
+		// water
+		LAF extend STR_VAR script="gnelewtf ldelem1" top=baf_water_elemental location=script END
+		LAF install_script STR_VAR script=baf_water_elemental location=script END
+		cre.edit[cywatere][m.cre_insert_script{%baf_water_elemental%|loc="before efatkmel"}]
+		
+		// earth
+		LAF install_script STR_VAR script=baf_earth_elemental location=script END
+		cre.edit[cyearthe][m.cre_insert_script{%baf_earth_elemental%|loc="before efatkmel"}]
+		
+				
+	END ELSE BEGIN
+	
+		LAF install_script STR_VAR script="baf_water_elemental baf_air_elemental baf_earth_elemental baf_fire_elemental" location=script END
+		ACTION_FOR_EACH script IN airele01 ohbnonin BEGIN
+			ACTION_IF FILE_EXISTS_IN_GAME "%script%.bcs" BEGIN
+				LAF DELETE_SCRIPT_BLOCK STR_VAR script match=AIR_ELEMENTAL_EFFECT END
+			END
+		END
+	END
+	
+	ACTION_IF is_bg2 BEGIN
+	
+		// fire
+	
+		COMPILE EVALUATE_BUFFER "%MOD_FOLDER%/%component_loc%/script/elemzaam.baf"
+		COPY_EXISTING "elemzaam.bcs" "override/elemimix.bcs"
+
+		// air
+	
+		LAF splconv STR_VAR spell=CHAIN_LIGHTNING new_type=innate RET spl_innate_chain_lightning=new_resref END
+		LAF splconv STR_VAR spell=CALL_LIGHTNING new_type=innate RET spl_innate_call_lightning=new_resref END	
+
+		COMPILE EVALUATE_BUFFER "%MOD_FOLDER%/%component_loc%/script/elemchan.baf"
+		COPY_EXISTING "elemchan.bcs" "override/elemyanc.bcs"
+		LAF extend STR_VAR script=elemyanc top=yanc_top location=script END
+		LAF extend STR_VAR script=elemchan top=chan_top location=script END
+
+		//earth
+
+		LAF splconv STR_VAR spell=STONE_SKIN new_type=innate RET spl_innate_stone_skin=new_resref END
+		LAF splconv STR_VAR spell=FLESH_TO_STONE new_type=innate RET spl_innate_flesh_to_stone=new_resref END	
+
+
+		COMPILE EVALUATE_BUFFER "%MOD_FOLDER%/%component_loc%/script/elemsunn.baf"
+		COPY_EXISTING "elemsunn.bcs" "override/elemogre.bcs"
+
+		//water
+		 
+		LAF splconv STR_VAR spell=VITRIOLIC_SPHERE new_type=innate RET spl_innate_vitriolic_sphere=new_resref END
+		COMPILE EVALUATE_BUFFER "%MOD_FOLDER%/%component_loc%/script/elemhydr.baf"
+
+
+	END
+
+
+
+END
+
+
+
+DEFINE_PATCH_FUNCTION shared_elemental_patch RET level weaponcode RET_ARRAY m BEGIN
+	PATCH_IF m_level1>16 BEGIN
+		m_level_all=20
+		m_str=22
+		m_str_ex=0
+		m_int=12
+		m_dex=10
+		m_wis=12
+		m_con=20
+		m_cha=10
+		m_ac="-4"
+		SPRINT weaponcode 16hd
+	END ELSE
+	PATCH_IF m_level1>12 BEGIN
+		m_level_all=16
+		m_str=21
+		m_str_ex=0
+		m_int=12
+		m_dex=10
+		m_wis=12
+		m_con=18
+		m_cha=10
+		m_ac="-2"
+		SPRINT weaponcode 12hd
+	END ELSE 
+	PATCH_IF m_level1>8 BEGIN
+		m_level_all=12
+		m_str=20
+		m_str_ex=0
+		m_int=12
+		m_dex=10
+		m_wis=12
+		m_con=17
+		m_cha=10
+		m_ac=0
+		SPRINT weaponcode 12hd
+	END ELSE BEGIN
+		m_level_all=8
+		m_str=18
+		m_str_ex=100
+		m_int=12
+		m_dex=10
+		m_wis=12
+		m_con=16
+		m_cha=10
+		m_ac=2
+		SPRINT weaponcode 8hd
+	END
+	m.immunity_effect{poison insects}
+	m.cre_enforce_thac0{}
+	m.cre_enforce_saves{}
+	level=m_level_all
+	
+END
+
+DEFINE_PATCH_FUNCTION fire_elemental_patch BEGIN
+	LPF struct_read RET_ARRAY m=struct END
+	LPF shared_elemental_patch RET level weaponcode RET_ARRAY m END
+	SPRINT weapon EVAL "%itm_fire_elemental_weapon_%weaponcode%%"
+	m_resist_fire=125
+	m_resist_cold="-50"
+	m_resist_magic_fire=125
+	m_resist_magic_cold="-50"
+	m.cre_add_items{%weapon%(weapon)|replace:i=1}
+	PATCH_IF level>=16 BEGIN
+		m.cre_add_spells{%spl_fire_elemental_shroud%}
+	END
+	PATCH_IF !is_iwd BEGIN
+		m.cre_insert_script{%baf_fire_elemental%|loc=high}
+	END
+	LPF struct_write STR_VAR struct=m END
+END
+
+DEFINE_PATCH_FUNCTION water_elemental_patch BEGIN
+	LPF struct_read RET_ARRAY m=struct END
+	LPF shared_elemental_patch RET level weaponcode RET_ARRAY m END
+	SPRINT weapon EVAL "%itm_water_elemental_weapon_%weaponcode%%"
+	m_resist_slashing=25
+	m_resist_piercing=25
+	m_resist_crushing=75
+	m_resist_missile=25
+	m.cre_add_items{%weapon%(weapon)|replace:i=1}
+	PATCH_IF level>=16 BEGIN
+		m.cre_add_spells{%spl_water_elemental_smashing_wave%}
+	END
+	PATCH_IF !is_iwd BEGIN
+		m.cre_insert_script{%baf_water_elemental%|loc=high}
+	END
+	PATCH_IF VARIABLE_IS_SET "%CLERIC_SMASHING_WAVE%" BEGIN
+		m.immunity_spell{%CLERIC_SMASHING_WAVE%}
+	END
+	LPF struct_write STR_VAR struct=m END
+
+END
+
+DEFINE_PATCH_FUNCTION air_elemental_patch BEGIN
+	LPF struct_read RET_ARRAY m=struct END
+
+	LPF shared_elemental_patch RET level weaponcode RET_ARRAY m END
+	SPRINT weapon EVAL "%itm_air_elemental_weapon_%weaponcode%%"
+	m_resist_electricity=100
+	m_resist_missile=75
+	m.cre_add_items{%weapon%(weapon)|replace:i=1}
+	PATCH_IF level>=16 BEGIN
+		m.cre_add_spells{%spl_air_elemental_whirlwind_spell%}
+	END
+	PATCH_IF !is_iwd BEGIN
+		m.cre_insert_script{%baf_air_elemental%|loc=high}
+	END
+	LPF struct_write STR_VAR struct=m END
+
+END
+
+DEFINE_PATCH_FUNCTION earth_elemental_patch BEGIN
+	LPF struct_read RET_ARRAY m=struct END
+	LPF shared_elemental_patch RET level weaponcode RET_ARRAY m END
+	SPRINT weapon EVAL "%itm_earth_elemental_weapon_%weaponcode%%"
+	m_resist_missile=50
+	m_resist_slashing=50
+	m_resist_piercing=50
+	m_resist_crushing="-25"
+	m.cre_add_items{%weapon%(weapon)|replace:i=1}
+	
+	PATCH_IF level>=16 BEGIN
+		m.cre_add_spells{%spl_earth_elemental_spike_stones%}
+	END
+	PATCH_IF "%SOURCE_RES%" STRING_COMPARE_CASE "CYEARTHE" BEGIN // all non-IWD cases, all IWD cases except one which has a beam-in graphic
+		m.cre_insert_script{%baf_earth_elemental%|loc=high}
+	END
+	LPF struct_write STR_VAR struct=m END
+
+END
+
+DEFINE_PATCH_FUNCTION air_prince_patch BEGIN
+
+	LPF struct_read RET_ARRAY m=struct END
+
+	m-str=22
+	m_con=20
+
+	m_resist_missile=100 // as per PnP
+	
+	// elemental resistances are from PnP source material, so leave them
+	
+	// reset spells
+	
+	m.cre_remove_spells{all}
+	
+	// add spells
+	
+	LPF splconv STR_VAR spell=CHAIN_LIGHTNING new_type=innate RET chain_lightning=new_resref END
+	LPF splconv STR_VAR spell=CALL_LIGHTNING new_type=innate RET call_lightning=new_resref END
+
+	m.cre_add_spells{%chain_lightning%(3) %call_lightning% %spl_air_elemental_whirlwind_spell%}
+
+	LPF struct_write STR_VAR struct=m END
+
+
+END
+
+DEFINE_PATCH_FUNCTION earth_prince_patch BEGIN
+
+	LPF struct_read RET_ARRAY m=struct END
+
+	// leave most abilities scores alone, but push Con to 20, drop Dex to 15	
+	m_con=20
+	m_dex=15
+
+	// Earth Elemental physical resistances
+	m_resist_missile=50
+	m_resist_slashing=50
+	m_resist_piercing=50
+	m_resist_crushing="-25"
+	
+	// elemental resistances (at least for Ogremoch) are from PnP source material, so leave them
+	
+	// reset spells
+	
+	m.cre_remove_spells{all}
+	
+	// add spells
+	
+	LPF splconv STR_VAR spell=FLESH_TO_STONE new_type=innate RET flesh_to_stone=new_resref END
+	LPF splconv STR_VAR spell=STONE_SKIN new_type=innate RET stoneskin=new_resref END
+
+	m.cre_add_spells{spogre01 %flesh_to_stone%(3) %stoneskin%(3) %spl_earth_elemental_spike_stones%}
+
+	LPF struct_write STR_VAR struct=m END
+
+
+END
+
+DEFINE_PATCH_FUNCTION fire_prince_patch BEGIN
+
+	LPF struct_read RET_ARRAY m=struct END
+
+	m_str=22
+	m_con=20
+
+	m_resist_cold="-50"
+	m_resist_magic_cold="-50"
+	
+	// other elemental resistances are from PnP source material, so leave them
+	
+	// reset spells
+	
+	m.cre_remove_spells{all}
+	
+	// add spells
+	
+
+	m.cre_add_spells{spimix01(3) %spl_imix_fireball% %spl_fire_elemental_shroud%}
+
+	LPF struct_write STR_VAR struct=m END
+
+
+END
+
+DEFINE_PATCH_FUNCTION water_prince_patch BEGIN
+
+	LPF struct_read RET_ARRAY m=struct END
+
+	m_str=22
+	m_con=20
+
+	// m_resist_slashing=25 // 50% slashing resistance is as per PnP
+	m_resist_piercing=25
+	m_resist_crushing=75
+	m_resist_missile=25
+	
+	// other elemental resistances are from PnP source material, so leave them
+	
+	// reset spells
+	
+	m.cre_remove_spells{all}
+	
+	// add spells
+	
+	LPF splconv STR_VAR spell=VITRIOLIC_SPHERE new_type=innate RET vitriolic_sphere=new_resref END
+
+	m.cre_add_spells{%vitriolic_sphere%(3) %spl_olhydra_ice_storm% %spl_water_elemental_smashing_wave%}
+
+	LPF struct_write STR_VAR struct=m END
+
+
+END
+
+
+
+DEFINE_ACTION_FUNCTION innate_elemental_spells BEGIN
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Innate spike stones
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF VARIABLE_IS_SET "CLERIC_SPIKE_STONES" BEGIN
+		spl.copy[%CLERIC_SPIKE_STONES%=>%spl_earth_elemental_spike_stones%]
+		[
+			m_type:=innate
+			m.ab.alter{s_type:=magical;;s_location:=innate;;s_casting_time=0}
+			m.fx.add{s_opcode=172 s_timing=1 s_target=1 s_resource:="%spl_earth_elemental_spike_stones%"}
+			m.fx.add{s_opcode=171 s_timing=4 s_duration=60 s_target=1 s_resource:="%spl_earth_elemental_spike_stones%"}
+		]
+	END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Innate shroud of flame 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF VARIABLE_IS_SET "WIZARD_SHROUD_OF_FLAME" BEGIN
+		spl.copy[%WIZARD_SHROUD_OF_FLAME%=>%spl_fire_elemental_shroud%]
+		[
+			m_type:=innate
+			m.ab.alter{s_type:=magical;;s_location:=innate;;s_casting_time=0}
+			m.fx.add{s_opcode=172 s_timing=1 s_target=1 s_resource:="%spl_fire_elemental_shroud%"}
+			m.fx.add{s_opcode=171 s_timing=4 s_duration=60 s_target=1 s_resource:="%spl_fire_elemental_shroud%"}
+		]
+	END
+	
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Innate whirlwind
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF VARIABLE_IS_SET "CLERIC_WHIRLWIND" BEGIN
+		spl.copy[%CLERIC_WHIRLWIND%=>%spl_air_elemental_whirlwind_spell%]
+		[
+			m_type:=innate
+			m.ab.alter{s_type:=magical;;s_location:=innate;;s_casting_time=0}
+			m.fx.add{s_opcode=172 s_timing=1 s_target=1 s_resource:="%spl_air_elemental_whirlwind_spell%"}
+			m.fx.add{s_opcode=171 s_timing=4 s_duration=60 s_target=1 s_resource:="%spl_air_elemental_whirlwind_spell%"}
+		]
+	END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Innate smashing wave
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF VARIABLE_IS_SET "CLERIC_SMASHING_WAVE" BEGIN
+		spl.copy[%CLERIC_SMASHING_WAVE%=>%spl_water_elemental_smashing_wave%]
+		[
+			m_type:=innate
+			m.ab.alter{s_type:=magical;;s_location:=innate;;s_casting_time=0}
+			m.fx.add{s_opcode=172 s_timing=1 s_target=1 s_resource:="%spl_water_elemental_smashing_wave%"}
+			m.fx.add{s_opcode=171 s_timing=4 s_duration=60 s_target=1 s_resource:="%spl_water_elemental_smashing_wave%"}
+		]
+	END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Rename elemental-prince whirlwind to Wind Blast (NB it has no icon, so we need to treat it just as a scripted ability)
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+	spl.edit[spyanc01|allow_missing:i=1]
+	[
+		m_name:=@30
+	]
+
+	
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Ogremoch earthquake becomes proper innate
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	spl.edit[spogre01|allow_missing:i=1]
+	[
+		m_type:=Innate
+		m.ab.alter{s_casting_time=1 s_location:=Innate}
+	]
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Imix flame strike becomes proper innate
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	spl.edit[spimix01|allow_missing:i=1]
+	[
+		m_type:=Innate
+		m.ab.alter{s_casting_time=1 s_location:=Innate}
+	]
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// 20d6 fireball for Imix
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF is_bg2 BEGIN
+		spl.copy[%WIZARD_FIREBALL%=>%spl_imix_fireball%]
+		[
+			m_type:=Innate
+			m.ab.delete{s_level>1}
+			m.ab.alter{s_casting_time=1 s_location:=Innate}
+			m.ab_fx.alter{s_dicenumber=20|match="s_opcode=12"}
+		]
+	END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// 10d8 ice storm for Olhydra
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	ACTION_IF is_bg2 BEGIN
+		spl.copy[%WIZARD_ICE_STORM%=>%spl_olhydra_ice_storm%]
+		[
+			m_type:=Innate
+			m.ab.alter{s_casting_time=1 s_location:=Innate}
+			m.ab_fx.alter{s_dicenumber=10|match="s_opcode=12"}
+		]
+	END
+
+
+END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Detect elementals
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION is_elemental
+	RET value type
+BEGIN
+	SPRINT type ""
+	value=0
+
+   // exclusions
+   PATCH_MATCH "%SOURCE_RES%" WITH
+   "bdsha.*" // spirits
+   cdshwele druear druear01 drufir drufir01 druidwe // shapeshift templates
+   servsu // aerial servant
+   dlwater // water kin elemental
+   elwatg01 ohbwat01 // ToB water-weird-type elementals
+   BEGIN END
+   elemimix elemzaam BEGIN
+		PATCH_IF is_bg2 BEGIN
+			LPF fire_prince_patch END
+	    END
+   END
+   elemogre elemsunn BEGIN
+		PATCH_IF is_bg2 BEGIN
+			LPF earth_prince_patch END
+		END
+   END
+   elemyanc elemchan BEGIN
+		PATCH_IF is_bg2 BEGIN
+			LPF air_prince_patch END
+		END
+   END
+   elemhydr BEGIN
+		PATCH_IF is_bg2 BEGIN
+			LPF water_prince_patch END
+		END
+   END
+   DEFAULT
+	
+	READ_BYTE 0x273 class
+	READ_LONG 0x28 animation
+	PATCH_MATCH "%class%" WITH
+	186 // air
+	BEGIN
+		PATCH_IF animation=0x7320 || animation=0x7321 BEGIN
+			value=1
+			SPRINT type "air"
+		END ELSE BEGIN
+			SPRINT type "mismatch"
+		END
+	END	
+	187 // fire
+	BEGIN
+		PATCH_IF animation=0x7310 || animation=0x7311 || animation=0xe24c BEGIN
+			value=1
+			SPRINT type "fire"
+		END ELSE BEGIN
+			SPRINT type "mismatch"
+		END	
+	END
+	188  // earth
+	BEGIN
+		PATCH_IF animation=0x7300 || animation=0x7301 || animation=0xe24b BEGIN
+			value=1
+			SPRINT type "earth"
+		END ELSE BEGIN
+			SPRINT type "mismatch"
+		END	
+	END
+	219  //water
+	BEGIN
+		PATCH_IF animation=0xef10 || animation=0xe24d || animation=0xe26c BEGIN
+			value=1
+			SPRINT type "water"
+		END ELSE BEGIN
+			SPRINT type "mismatch"
+		END
+		
+	END
+	DEFAULT
+	END
+   END
+	
+
+
+
+
+
+END
+
+DEFINE_PATCH_FUNCTION is_red_tweaked
+    INT_VAR red=0 green=0 blue=0
+    RET value
+BEGIN
+    SET value=1
+    PATCH_IF (red<150 || green>100) BEGIN
+       SET value=0
+    END
+END
+
+
+
+

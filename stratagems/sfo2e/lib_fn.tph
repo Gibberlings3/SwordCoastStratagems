@@ -15,7 +15,7 @@ Functions here should have no dependencies outside lib_fn.
 document{return_first_entry}
 {
 Given a list of strings (separated by spaces, either bare or in "" or ~~ quotes), return the first entry, and the rest of the list. If 'separator' is specified,
-use it instead of space to separate strings. (It should be a single character.)
+use it instead of space to separate strings. (It should be a single character.) If you use ' ' as a separator, newlines and tabs are replaced by spaces in processing the string
 }
 */
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -29,6 +29,11 @@ DEFINE_DIMORPHIC_FUNCTION return_first_entry
 BEGIN
 	ACTION_IF "%separator%" STR_EQ "" BEGIN
 		FAIL "return_first_entry called with empty separator (list=%list%)"
+	END
+	ACTION_IF "%separator%" STR_EQ " " BEGIN
+		OUTER_PATCH_SAVE list "%list%" BEGIN
+			REPLACE_TEXTUALLY "[%WNL%%LNL%%MNL%%TAB%]+" " "
+		END
 	END
 	LAF trim_string STR_VAR string="%list%" character="%separator%" RET list=string END
 	OUTER_PATCH_SAVE list "%list%" BEGIN
@@ -91,30 +96,43 @@ END
 document{trim_string}
 {
 Given a single string, and a character (space by default) remove any occurrences of the character from the beginning and end of the string.
+If require_both=1, only strip if the character appears at beginning and end (and only strip one).
 }
 */
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 DEFINE_DIMORPHIC_FUNCTION trim_string
+	INT_VAR require_both=0
 	STR_VAR character=" " 
 			string=""
 	RET string
 BEGIN
 	OUTER_PATCH_SAVE string "%string%" BEGIN
-	 ind=INDEX_BUFFER ("%character%")
-	 WHILE ind=0 BEGIN
-		DELETE_BYTES 0x0 1
 		ind=INDEX_BUFFER ("%character%")
-	 END
-	 
-	 rind=RINDEX_BUFFER ("%character%")
-	 len=BUFFER_LENGTH
-	 WHILE len>0 && rind=len - 1 BEGIN
-		DELETE_BYTES (BUFFER_LENGTH - 1) 1
-		rind=RINDEX_BUFFER ("%character%")
-		len=BUFFER_LENGTH
-	 END
+		PATCH_IF !require_both BEGIN
+			WHILE ind=0 BEGIN
+				DELETE_BYTES 0x0 1
+				ind=INDEX_BUFFER ("%character%")
+			END
+			 
+			rind=RINDEX_BUFFER ("%character%")
+			len=BUFFER_LENGTH
+			WHILE len>0 && rind=len - 1 BEGIN
+				DELETE_BYTES (BUFFER_LENGTH - 1) 1
+				rind=RINDEX_BUFFER ("%character%")
+				len=BUFFER_LENGTH
+			END
+		END ELSE BEGIN
+			PATCH_IF BUFFER_LENGTH>=2 BEGIN
+				READ_ASCII 0x0 lchar (1)
+				READ_ASCII BUFFER_LENGTH -1 rchar (1)
+				PATCH_IF "%lchar%" STR_EQ "%character%" && "%rchar%" STR_EQ "%character%" BEGIN
+					DELETE_BYTES BUFFER_LENGTH - 1 1
+					DELETE_BYTES 0x0 1
+				END
+			END
+		END
 	END
 
 END
@@ -214,12 +232,9 @@ DEFINE_DIMORPHIC_FUNCTION point_in_bounds
        x_in_bounds
        y_in_bounds
 BEGIN
-   OUTER_INNER_PATCH "" BEGIN
-      LPF point_in_bounds
-          INT_VAR x xmin xmax y ymin ymax 
-          RET in_bounds x_in_bounds y_in_bounds
-      END
-   END
+   OUTER_SET x_in_bounds=(x>=xmin && x<=xmax ? 1 : 0) || (x<0)
+   OUTER_SET y_in_bounds=(y>=ymin && y<=ymax ? 1 : 0) || (y<0)
+   OUTER_SET in_bounds = x_in_bounds * y_in_bounds
 END
 
 //////////////////////////////////////////
@@ -375,6 +390,38 @@ BEGIN
 	OUTER_PATCH_SAVE string "%string%" BEGIN
 		PATCH_FOR_EACH spc IN "\" "$" "^" "." "*" "+" "?" "[" "]"  BEGIN
 			REPLACE_TEXTUALLY EXACT_MATCH "%spc%" "\%spc%"
+		END
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{tolower_safe}
+{
+Convert the (assumed mixed-case) string to lowercase, skipping any accented characters
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION tolower_safe
+	STR_VAR arguments=""
+	RET value
+BEGIN
+	OUTER_SPRINT value ""
+	OUTER_PATCH "%arguments%" BEGIN
+		len=BUFFER_LENGTH
+		WHILE len>0 BEGIN
+			READ_ASCII 0x0 char (1)
+			PATCH_MATCH "%char%" WITH 
+			"[A-Z]" BEGIN
+				TO_LOWER char
+			END
+			DEFAULT
+			END
+			SPRINT value "%value%%char%"
+			DELETE_BYTES 0x0 1
+			len -=1
 		END
 	END
 END

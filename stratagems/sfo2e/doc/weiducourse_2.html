@@ -1,0 +1,1057 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course in WEIDU - chapter 1</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+<div class="ribbon_menu">
+    <ul>
+      <li><a href="#actionpatch">ACTION vs PATCH</a></li>
+      <li><a href="#variables">Variables</a></li>
+      <li><a href="#variablesplus">More variables</a></li>
+      <li><a href="#controlflow">Control flow</a></li>
+      <li><a href="#arrays">Arrays</a></li>
+      <li><a href="#regexps">Pattern-matching</a></li>
+      <li><a href="#functions">Functions/Macros</a></li>
+      <li><a href="#errors">Errors/Debugging</a></li>
+    </ul>
+    <span><img src="files/logo.gif" width="305" height="83" alt="G3" /></span> 
+	</div>
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on WEIDU - chapter 2: Programming in WEIDU</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+
+
+<div class="section">
+<p>
+<ul class="course_list">
+<li><a href="weiducourse_0.html">Introduction</a>
+</li>
+<li><a href="weiducourse_1.html">Chapter 1 (Introductory WEIDU)</a></li>
+<li><a href="weiducourse_2.html">Chapter 2 (Programming in WEIDU)</a></li>
+<li><a href="weiducourse_3.html">Chapter 3 (Specific WEIDU commands)</a></li>
+<li><a href="weiducourse_4.html">Chapter 4 (More advanced topics)</a></li>
+<li><a href="weiducourse_A.html">Appendix (the WEIDU readme)</a></li>
+</ul>
+</p>
+</div>
+
+<div class="section">
+<p>
+You can install some pretty sophisticated mods just using the tools in Chapter 1, but to really get at WEIDU’s power you need to learn to use it like a programming language. This chapter is a basic introduction to WEIDU at that level. If you’ve never used any other programming language before you might find it a bit fast in places.</p>
+</div>
+<div class="ribbon_rectangle_h3"><h3><a name="actionpatch" id="actionpatch"></a>2.1 WEIDU’s biggest hassle: action and patch contexts</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>Before going any further, we need to reckon with one of the more annoying features of WEIDU: the distinction between action and patch contexts. Look at the following component:
+<div class="code"><pre><code>BEGIN "Hello, world" DESIGNATED 100
+
+PRINT "Hello, world!"
+</code></pre></div></p>
+
+<p>This works fine and does exactly what you’d expect it to. But now look at this:
+<div class="code"><pre><code><font color="red">BEGIN "Hello, world BROKEN" DESIGNATED 100
+COPY_EXISTING "minsc.cre" override
+	PRINT "Hello,world!"
+BUT_ONLY
+</font></code></pre></div></p>
+<p>This will fail to install: WEIDU will tell you it’s badly formed code.</p> 
+<p>The reason is that the print command in this second bit of code appears in a patch: a chunk of code that’s modifying a currently-open file (in this case, minsc.cre). WEIDU has different syntax for patch contexts than for action contexts (the basic context you’re in when you’re not doing patching), and WEIDU commands work only in one context, not both. In some cases, that makes sense: COPY_EXISTING and EXTEND_TOP only work in action contexts, WRITE_LONG and SAY only work in patch contexts. But some commands shouldn’t really depend on the context. Usually WEIDU defines duplicate commands in this case. For instance, you can print in patch context like this:
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	PATCH_PRINT "Hello,world!"
+BUT_ONLY</code></pre></div></p>
+<p>Occasionally it doesn’t provide a copy at all and you have to work around it. You can force a change of context from action to patch like this:
+<div class="code"><pre><code>OUTER_PATCH "" BEGIN
+	PATCH_PRINT "Hello world"
+END</code></pre></div></p>
+<p>Or from patch to action like this:
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	INNER_ACTION BEGIN	
+		PRINT "Hello,world!"
+	END
+BUT_ONLY</code></pre></div>
+(The OUTER_PATCH command is actually a more general, powerful tool we’ll talk about later.) But there’s no way around the fact that the context distinction is really annoying: 80% of my install-time bugs come from it.</p>
+<p>(How does WEIDU work out what context we’re in? It goes into patch context as soon as you do a COPY, COPY_EXISTING, or anything else that starts a patch. It goes out of patch context as soon as it encounters a command that’s in action context. So in the broken component above, WEIDU actually goes into action context when it sees the ‘PRINT’ command. It doesn’t get upset until it encounters ‘BUT_ONLY’, which is a patch-context command that doesn’t make sense in action context and can't be used to start a patch.)</p>
+<p>In my examples below, I’ll mostly use action context; I’ll explain the patch-context alternatives as I go along.</p>
+</div>
+
+ <div class="ribbon_rectangle_h3"><h3><a name="variables" id="variables"></a>2.2 The basics of variables: integers and strings</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+WEIDU has two basic kinds of variables, Integer and String, and it’s reasonably fussy about distinguishing them. It’s sometimes also helpful to think of it as having a Boolean type (0/1) though really these are just integers. (There are also arrays; we’ll talk about them later.) Variables can have basically any sensible name; there are no real conventions. (Don't use a WEIDU command name, or a string with spaces in, as a variable; both are legal, but neither wise.)</p>
+<p>This is a good point to remind you that this whole course assumes that you put AUTO_EVAL_STRINGS into the preamble of your tp2 file. If you didn't, variables work a little differently, and you're on your own.</p>
+<p><h4>Strings</h4></p>
+You set a string like this:
+<div class="code"><pre><code>OUTER_SPRINT var "Minsc is awesome"
+</code></pre></div></p>
+<p>In patch context, it’s just
+<div class="code"><pre><code>SPRINT var "Minsc is awesome"
+</code></pre></div></p>
+<p>
+To tell WEIDU you want the value of variable ‘var’ and not just the string ‘var’, you wrap it in % signs and quote marks, like this:
+
+<div class="code"><pre><code>PRINT "%var%"</code></pre></div>
+This displays ‘Minsc is awesome’. If you’d used ‘PRINT var’ you’d just have got ‘var’.</p>
+<p>
+You can concatenate (join) strings like this
+<div class="code"><pre><code>SPRINT var "Cat"
+SPRINT var2 "Dog"
+SPRINT var3 "%var%%var2%"
+</code></pre></div>
+Or like this:
+<div class="code"><pre><code>SPRINT var3 "%var%" ^ "%var2%"</code></pre></div></p>
+<p><h4>Integers</h4></p>
+<p>You set an integer like this:
+<div class="code"><pre><code>OUTER_SET var=17</code></pre></div>
+In patch context, this is instead
+<div class="code"><pre><code>SET var=17</code></pre></div>
+or just
+<div class="code"><pre><code>var=17</code></pre></div>
+(i.e. you can drop the SET in patch context.)</p>
+<p>You can enter integers in binary, hexadecimal or decimal form: WEIDU treats 0b11111111, 0xff, and 255 as the same. If you want to set an integer to a negative value, you need to put the value in quotes: 
+<div class="code"><pre><code>OUTER_SET var="-17"</code></pre></div>
+<p>Unlike strings, WEIDU is fine for you to use the variable name, without quotes or % signs, to reference its value. (I guess because ‘var’ clearly isn’t an integer itself, so if you use it in an integer context, it’s obviously being used as a variable). So you can do 
+<div class="code"><pre><code>OUTER_SET var1=10
+OUTER_SET var2=20
+OUTER_SET var3=var1+var2</code></pre></div>
+WEIDU is happy to dynamically convert between strings and integers (using base-10) where it’s well-defined to do so. If var=17, then ‘PRINT "%var%"’ will just return 17; conversely,
+<div class="code"><pre><code>OUTER_SPRINT var "17"
+OUTER_SET var=var+1</code></pre></div>
+is well-defined.</p>
+<p>WEIDU treats "x+=n" as a synonym for "x=x+n" (you can also use *=, -= and /= in this way) and "++x" as a synonym for "x=x+1". </p>
+
+<p><h4>Arithmetic</h4></p>
+<p>WEIDU uses the standard arithmetic operations: x+y, x*y, x**y are all well-defined. x MODULO y returns the remainder of x/y; x / y is division without remainder.</p>
+
+<p><h4>Variable scoping</h4></p>
+
+<p>WEIDU variables, by default, are defined with global scope: once defined, they remain defined permanently and can be accessed at any later point in the code. This even includes later components - consider this code, for instance:
+<div class="code"><pre><code>
+BEGIN "Set variable" DESIGNATED 100
+
+OUTER_SPRINT var "Variable has been set"
+
+BEGIN "Check variable" DESIGNATED 200
+
+PRINT "%var%"
+</code></pre></div>
+The result you get from component 200 will depend on whether it is installed in the same run as component 100 or not.</p>
+<p>You can restrict variable scope in several ways. The bluntest is to use the (action-context) command CLEAR_EVERYTHING, which wipes all variables. A subtler move is to use the WITH_SCOPE construct, which works like this:
+<div class="code"><pre><code>OUTER_SPRINT var "Minsc is awesome!"
+
+WITH_SCOPE BEGIN
+	OUTER_SPRINT var "Anomen is annoying"
+	PRINT "%var%"
+END
+
+PRINT "%var%"
+</code></pre></div><p>
+The first PRINT command prints 'Anomen is annoying', but the reassignment of 'var' takes place inside WITH_SCOPE, and so is forgotten at the end of the WITH_SCOPE block. The second PRINT command prints 'Minsc is awesome!", as you'd expect. WITH_SCOPE is an action-context command; PATCH_WITH_SCOPE is the patch-context version.</p>
+<p>The most powerful way to handle variable scope is to use functions, which we'll come to later.</p>
+<p><h4>Reading integer-valued variables from files</h4></p>
+<p>There are patch-context commands that read data from the currently-being-patched file and store it in a variable – kind of the opposite of WRITE_LONG and friends. READ_BYTE [offset] [variable] reads a BYTE from offset and stores it in [variable]; similarly, READ_SHORT and READ_LONG do what you’d expect.</p>
+<p>Here’s code that sets the Strength score of any creature in the game to at least 16:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	READ_BYTE 0x238 str
+	PATCH_IF str<16 BEGIN
+		WRITE_BYTE 0x238 16
+	END
+BUT_ONLY</code></pre></div>
+(Here the first line is an action-context instruction that copies every cre file in the game; see below for more about it. The ‘PATCH_IF’ command is explained properly in the next section.)</p>
+<p>You can also use integer-valued expressions BYTE_AT [offset], SHORT_AT [offset] and LONG_AT [offset] to directly refer to data. Here’s an alternative and slightly more elegant way to write the code above:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	PATCH_IF (LONG_AT 0x238)<16 BEGIN
+		WRITE_BYTE 0x238 16
+	END
+BUT_ONLY</code></pre></div>
+<p>As a useful shorthand, whenever you do WRITE_[BYTE/SHORT/LONG] WEIDU reads in the current value of whatever you’re writing and stores it in the variable ‘THIS’. So you can do, e.g.,
+<div class="code"><pre><code>COPY_EXISTING  "minsc.cre" override
+	WRITE_BYTE 0x238 (THIS + 2)
+BUT_ONLY</code></pre></div>
+which increases Minsc's Strength by 2.</p>
+<p><h4>Signed integers</h4></p>
+<p>Some IE integers stored as a signed byte (or signed short, or signed long). In this case you’ll normally want to read them in using READ_SBYTE, READ_SSHORT or READ_SLONG. (If ‘-1’ is stored as a short integer, using READ_SSHORT will return ‘-1’, READ_SHORT will return 65535.)</p>
+<p><h4>Reading strings from files</h4></p>
+<p>The READ_ASCII command lets a string be read in from an offset in a file, like this:
+
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	READ_ASCII 0x2cc dialog
+	PATCH_PRINT "Minsc’s dialog file is %dialog%"
+BUT_ONLY</code></pre></div>
+As with WRITE_ASCII, there are some difficulties caused by the fact that strings vary in length. By default WEIDU reads in up to 8 characters’ worth with READ_ASCII (it stops if it gets to the end of a string) but you can manually override this. For instance, script names (aka ‘death variables’), which tell the engine how to refer to a creature, can be up to 32 characters long; you read them like this:
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	READ_ASCII 0x280 dv (32)
+	PATCH_PRINT "Minsc’s script name is %dv%"
+BUT_ONLY</code></pre></div>
+<p><h4>Reading data from the IDS files</h4></p>
+<p>Infinity Engine games use .ids files to associate human-readable strings to the integers that the game engine actually uses to store most information. If you look at class.ids in Near Infinity, for instance, it’s a long table with entries like ‘1 MAGE’, ‘2 FIGHTER’, ‘149 WYVERN’ and the like. The engine uses the integer ‘1’ every time it wants to note that something is a mage, and mostly doesn’t care what the human-readable string is; it’s used by WEIDU when you compile a script, and by the engine when it processes the little fragments of script in .dlg files.</p>
+<p>It’s often useful (especially when it comes to writing readable code) to use these human-readable values and to translate back and forth between the human-readable value and the engine-visible number. WEIDU has functionality to do this fairly easily. Here’s how you get the number of a human-readable value:
+<div class="code"><pre><code>OUTER_SET class_num = IDS_OF_SYMBOL (class WYVERN)</code></pre></div></p>
+<p>Here IDS_OF_SYMBOL is an integer, which we’re assigning to the variable ‘class_num’ using OUTER_SET. The general syntax is: ‘IDS_OF_SYMBOL (ids_file entry)’. Here’s a application to turn Minsc into a halfling:
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	WRITE_BYTE 0x272 IDS_OF_SYMBOL (race HALFLING)
+BUT_ONLY</code></pre></div></p>
+<p>The patch here does the same thing as ‘WRITE_BYTE 0x272 5’, since 5 is the ids code for ‘halfling’, but it’s much more readable, and much harder to get wrong.</p>
+<p>To go in the other direction, use the patch-context command LOOKUP_IDS_SYMBOL_OF_INT, like this:</p>
+<div class="code"><pre><code>COPY_EXISTING "minsc.cre" override
+	LOOKUP_IDS_SYMBOL_OF_INT myrace race (BYTE_AT 0x272)
+	PATCH_PRINT "Minsc’s race is %myrace%"
+BUT_ONLY</code></pre></div>
+Here the general syntax is ‘LOOKUP_IDS_SYMBOL_OF_INT variable idsfile integer’. The human-readable value of ‘integer’ is looked up in idsfile.ids and the result is stored in ‘variable’. </p>
+<p>Annoyingly, there’s no action-context version of LOOKUP_IDS_SYMBOL_OF_INT. If you want to do it in action context, you have to use OUTER_PATCH:
+<div class="code"><pre><code>OUTER_PATCH "" BEGIN
+	LOOKUP_IDS_SYMBOL_OF_INT class_name class 15
+END
+PRINT "class 15 is %class_name%"</code></pre></div></p>
+</div>
+ <div class="ribbon_rectangle_h3"><h3><a name="variablesplus" id="variablesplus"></a>2.3 More on variables: Booleans, binaries, and tricks of the trade </h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+
+<p><h4>Booleans</h4></p>
+<p>WEIDU treats the integers 0 and 1 as ‘false’ and true’. Most logical operations return 0 or 1 as values. For instance, given integer variables x,y, the expression 'x=y' is either 1 if x=y, or 0 if they’re distinct. ‘x<y’, ‘x<=y’, ‘x>=y’ and ‘x>y’ work similarly. x!=y is 1 if x and y are distinct integers, 0 if they’re the same integers.</p>
+<p> For strings, we’d instead do
+<div class="code"><pre><code>"%x%" STRING_EQUAL "%y%"
+</code></pre></div>
+or, if we don’t care about case,
+<div class="code"><pre><code>"%x%" STRING_EQUAL_CASE "%y%"
+</code></pre></div>
+Again, these are integers, and can be used in code on that basis. STR_EQ is a permitted synonym for STRING_EQUAL_CASE. You can also use STRING_COMPARE (synonym: STR_CMP) and STRING_COMPARE_CASE, which are the negation of STRING_EQUAL and friends: "%x%" STR_CMP "%y%" is true just if x and y are not equal. 
+(If x and y are string variables, or just not variables at all, ‘x=y’ will throw an error when you run your mod.)</p>
+<p>Likewise, IS_AN_INT x evaluates to 1 if x is an integer variable and 0 otherwise; VARIABLE_IS_SET x evaluates to 1 if x is a variable (integer or string) and 0 otherwise.</p>
+<p>WEIDU also has many Boolean-valued expressions that refer to files in the game. For instance, FILE_EXISTS_IN_GAME "minsc.cre" is true (1) if and only if ‘minsc.cre’ is a game file, either in the game’s main data files or in the override. FILE_EXISTS "mymod/lib/script.baf" is true iff that file exists. </p>
+<p><h4>Boolean algebra</h4></p>
+<p>You can do fairly standard things like ‘AND’ (synonym: &&), ‘OR’ (synonym: ‘||’) and ‘NOT’ (synonym: ‘!’) with Booleans. </p>
+<p><h4>Integer-alternative assignment</h4></p>
+<p>WEIDU has a nice lightweight  way to assign an integer one value if some condition holds and another value if it doesn’t. The general syntax is
+<div class="code"><pre><code>(OUTER_)SET variable = condition ? v1 : v2</code></pre></div>
+‘condition’ should be 1 or 0. If it’s 1, variable is set to v1; if it’s 0, variable is set to v2. For instance,
+<div class="code"><pre><code>OUTER_SET vmax= v1 > v2 ? v1 : v2</code></pre></div>
+sets vmax to whichever of v1 and v2 is larger. This is often quicker to write and clearer to read than conventional control-flow methods (see below) like
+<div class="code"><pre><code>ACTION_IF v1>v2 THEN BEGIN OUTER_SET vmax=v1 END ELSE BEGIN OUTER_SET vmax=v2 END</code></pre></div></p>
+<p>Here’s an example of this to give even-more-compact code to patch every creature’s Strength to at least 16:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	WRITE_BYTE 0x238 (THIS<16)? 16: THIS
+BUT_ONLY
+</code></pre></div></p>
+<p><h4>Binary arithmetic</h4></p>
+<p>WEIDU has binary operations BNOT, BAND and BOR (and actually others, but these are the main ones). For instance, 0b00010111 BAND 0b00001100 = 0b00000100. (BNOT is evaluated on the assumption of 32 bits, so BNOT 0b1 is 0b11111111111111111111111111111110.) They’re mainly useful for setting ‘flags’, the one-bit entries in files that keep track of things like weapon usability.</p> 
+<p>For instance, here’s some code to make a weapon usable by a mage:
+<div class="code"><pre><code>COPY_EXISTING "sw1h01.itm" // nonmagical longsword
+	WRITE_BYTE 0x20 (THIS BAND 0b11111011)
+BUT_ONLY</code></pre></div></p>
+<p>As a useful shorthand, WEIDU defines BIT0-BIT31 in the obvious way: BIT1 is 0b10, for instance. (In general, BITN=2**N.) So the above code could be rewritten as 
+<div class="code"><pre><code>COPY_EXISTING "sw1h01.itm" // nonmagical longsword
+	WRITE_BYTE 0x20 (THIS BAND (BNOT BIT2))
+BUT_ONLY</code></pre></div></p>
+<p><h4>More advanced variable assignment tricks</h4></p>
+<p>WEIDU is fine with things like
+<div class="code"><pre><code>OUTER_SPRINT myvar dwvar
+OUTER_SPRINT "%myvar%" "Minsc is awesome"</code></pre></div>
+which assigns value ‘Minsc is awesome’ to ‘dwvar’. 
+Here’s a slightly more delicate example:
+<div class="code"><pre><code>OUTER_SPRINT spell WIZARD_FIREBALL
+OUTER_SPRINT WIZARD_FIREBALL SPWI304
+OUTER_SPRINT wrong_resref "%%spell%%"
+OUTER_SPRINT resref EVAL "%%spell%%"</code></pre></div>
+<p>
+<p>When WEIDU processes a SPRINT or SET command, it does variable substitution on the right hand side, but it only does it once. So when we tell it to set wrong_resref to "%%spell%%" it replaces "%spell%" with ‘WIZARD_FIREBALL’, but then sets wrong_resref to "%WIZARD_FIREBALL%" without evaluating. The ‘EVAL’ command in the second assignment tells WEIDU to evaluate as far as it can. When it does that, "%WIZARD_FIREBALL%" gets evaluated to "SPWI304" and resref gets set to that.</p>
+<p>If you copy a file with string variable values in it, by default they are not evaluated. You can force evaluation with the patch-context command EVALUATE_BUFFER, as in
+<div class="code"><pre><code>COPY "mymod/resources/file_with_variables.2da" override
+	EVALUATE_BUFFER</code></pre></div></p>
+<p>A slight variant occurs when you compile scripts or dialogs (probably the most common context in which you have variable values). There, EVALUATE_BUFFER is not a separate command but an option in the COMPILE command, used like this:
+<div class="code"><pre><code>COMPILE EVALUATE_BUFFER "mymod/scripts/script_with_variables.baf" override
+</code></pre></div></p>
+	
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="controlflow" id="controlflow"></a>2.4 Basic Control Flow</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>WEIDU includes most of the standard control-flow operations: for, while, if and the like. </p>
+<p><h4>ACTION_IF and PATCH_IF</h4></p>
+<p>Here’s a WEIDU IF loop:
+<div class="code"><pre><code>ACTION_IF FILE_EXISTS_IN_GAME "minsc.cre" BEGIN
+	COPY_EXISTING "minsc.cre" override
+		<font color="gray">… do some stuff</font>
+END</code></pre></div> 
+The condition in the ACTION_IF is any expression that evaluates out to an integer.</p>
+<p>You can put an ELSE condition on the end of an IF block:
+<div class="code"><pre><code>ACTION_IF FILE_EXISTS_IN_GAME "minsc.cre" BEGIN
+	COPY_EXISTING "minsc.cre" override
+		<font color="gray">… do some stuff</font>
+END ELSE BEGIN
+	PRINT "Minsc is missing!"
+END</code></pre></div> </p>
+<p>You can nest multiple IF … THEN … ELSE like this:
+<div class="code"><pre><code>ACTION_IF FILE_EXISTS_IN_GAME "minsc.cre" BEGIN
+	COPY_EXISTING "minsc.cre" override
+		<font color="gray">… do some stuff</font>
+END ELSE 
+ACTION_IF FILE_EXISTS_IN_GAME "dynahe.cre" BEGIN
+	PRINT "Minsc is missing, but at least Dynaheir isn’t"
+END ELSE
+ACTION_IF FILE_EXISTS_IN_GAME "jaheir.cre" BEGIN
+	PRINT "Minsc and Dynaheir are missing, but we’ve found Jaheira"
+END ELSE BEGIN
+	PRINT "Where is everybody??!"
+END
+</code></pre></div><p>
+
+<p>PATCH_IF is the patch context version of ACTION_IF.</p>
+<p><h4>OUTER_WHILE and WHILE</h4></p>
+<p>Here’s a WEIDU while loop:
+<div class="code"><pre><code>OUTER_SET count=10
+OUTER_WHILE count>0 BEGIN
+	PRINT "countdown: %count%"
+END</code></pre></div><p>
+<p>As usual in programming, you should use WHILE loops cautiously, as they can lead to infinite looping. WHILE is the patch-context version of OUTER_WHILE.</p>
+<p><h4>OUTER_FOR and FOR</h4></p>
+<p>
+Here’s a WEIDU FOR loop:
+<div class="code"><pre><code>OUTER_FOR (count=1;count<=10;++count) BEGIN
+	PRINT "counting up: %count%"
+END</code></pre></div></p>
+<p>This is actually a more powerful command than meets the eye. The general syntax is
+<div class="code"><pre><code>OUTER_FOR (patch commands; value; patch commands) BEGIN … END</code></pre></div>
+When this is run, the first set of patch commands are executed; then the second set are sequentially executed until value comes in false. So for instance, an alternative (if less readable) way to write the previous loop would be
+<div class="code"><pre><code>OUTER_FOR (count=1;count<=10;PATCH_PRINT "counting up: %count%"  ++count) BEGIN END</code></pre></div></p>
+<p>
+FOR is the patch-context version of OUTER_FOR.</p>
+<p><h4>ACTION_FOR_EACH and PATCH_FOR_EACH</h4></p>
+<p>You can cycle through an arbitrary list of elements like this:
+<div class="code"><pre><code>ACTION_FOR_EACH hero IN Minsc Jaheira Dynaheir Imoen BEGIN
+	PRINT "I want %hero% to join my party!"
+END</code></pre></div></p>
+<p>For instance, here’s a somewhat more elegant way to edit all the copies of Minsc:</p>
+<div class="code"><pre><code>ACTION_FOR_EACH cre IN minsc minsc2 minsc4 minsc6 BEGIN
+	COPY_EXISTING "%cre%.cre" override
+	<font color="gray">... some edits</font>
+	BUT_ONLY
+END</code></pre></div></p>
+<p><h4>ACTION_MATCH and PATCH_MATCH</h4></p>
+<p>ACTION_MATCH is a fairly powerful way of choosing between various options depending on the value of a variable. Here’s an example:
+<div class="code"><pre><code>ACTION_MATCH "%npc%" WITH
+Minsc BEGIN
+	PRINT "%npc% is awesome!"
+END
+Anomen "Sir Anomen" BEGIN
+	PRINT "%npc% is annoying; don’t hire them"
+END
+Jaheira Imoen Dynaheir BEGIN
+	PRINT "%npc% is a solid choice"
+END
+Edwin Viconia Sarevok BEGIN
+	PRINT "%npc% is powerful, but watch your back!"
+END
+DEFAULT
+	PRINT "%npc%? Never heard of them!"
+END
+</code></pre></div></p>
+<p>Here the string ‘%npc%’, which is the value of the string variable ‘npc’, is sequentially compared to the various possible matches. If it’s ‘Minsc’ the first block executes; if it’s ‘Anomen’ or ‘Sir Anomen’ the second block executes, and so on. The DEFAULT block executes if none of the conditions is matched.</p>
+<p>The patch-context version of ACTION_MATCH is PATCH_MATCH; here’s a slightly more serious use of it, to patch the strength scores of large powerful creatures:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	LOOKUP_IDS_SYMBOL_OF_INT race race (BYTE_AT 0x272)
+	str=0
+	str_ex=0
+	PATCH_MATCH "%race%" WITH
+	OGRE MINOTAUR BEGIN
+		str=18
+		str_ex=100
+	END
+	TROLL SNOW_TROLL BEGIN
+		str=19
+	END
+	GIANT GOLEM BEGIN
+		str=22
+	END
+	DEFAULT
+	END
+	PATCH_IF str>0 BEGIN
+		WRITE_BYTE 0x238 str
+	END
+	PATCH_IF str_ex>0 BEGIN
+		WRITE_BYTE 0x239 str_ex
+	END
+BUT_ONLY
+</code></pre></div></p>
+<p>
+This code cycles through all the creatures in the game. It reads in the (human-readable) race of the creature and compares it sequentially to various possibilities. If it’s an ogre or minotaur its strength gets set to 18/00; if it’s a troll or snow troll it’s set to 19; if it’s a giant or golem, to 22; otherwise, it’s not set at all. (The DEFAULT block here is empty, so nothing is done if there’s no match, but we still need it.)</p>
+<p>ACTION_MATCH and PATCH_MATCH are actually quite a lot more powerful than this, but their real power requires regexps, which I discuss below.</p>
+</div>
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="arrays" id="arrays"></a>2.5 Arrays</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>A WEIDU array is something like arrays, lists or hashes in other programming languages, and defines an association between elements. </p>
+<p><h4>Array basics</h4></p>
+<p>The simplest way to define an array is as a list of key=>value pairs, like this:
+<div class="code"><pre><code>ACTION_DEFINE_ASSOCIATIVE_ARRAY myarray BEGIN
+	"Minsc"=>"Awesome!"
+	"Jaheira"=>"Judgmental"
+	"Anomen"=>"Annoying"
+	"Sir Anomen"=>"Over-promoted"
+	"Melissan"=>"Clearly trustworthy?"
+END
+</code></pre></div>
+(PATCH_DEFINE_ASSOCIATIVE_ARRAY is the patch-context version.)</p>
+<p>Once this is done, you can access the contents of the ‘myarray’ array as if they were variables, like this:
+<div class="code"><pre><code>OUTER_SPRINT minsc_status $myarray("Minsc")
+</code></pre></div>
+(We use OUTER_SPRINT because $myarray("Minsc") is a string; we could use OUTER_SET if it was an integer.)</p>
+<p> You can use a string variable as a key, as in
+<div class="code"><pre><code>OUTER_SPRINT hero minsc
+OUTER_SPRINT minsc_status $myarray("%hero%")
+</code></pre></div></p>
+<p>
+You can set new array values in the same way:
+<div class="code"><pre><code>
+OUTER_SPRINT $myarray("Sarevok") "Treacherous, but 100hp on a critical… you’re hired."
+</code></pre></div></p>
+<p>
+And you can check if an array element is set using VARIABLE_IS_SET, just as with regular variable values:
+<div class="code"><pre><code>ACTION_IF VARIABLE_IS_SET $myarray("Melissan") BEGIN
+	PRINT "Melissan’s value is set"
+END</code></pre></div>
+<p><h4>Cycling through arrays with ACTION_PHP_EACH or PHP_EACH</h4></p>
+<p>The main value of arrays is that you can cycle through all data in them, in order, like this:
+<div class="code"><pre><code>ACTION_PHP_EACH myarray AS character=>note BEGIN
+	PRINT "%character%: %note%"
+END
+</code></pre></div></p>
+<p>The general syntax is ‘ACTION_PHP_EACH [array] AS [key]=>[value] BEGIN… END. The content between the BEGIN and END is executed once for each array key=>value pair, and the actual key and value are substituted in for the variables you choose (which can be anything).(There is actually slightly more to ACTION_PHP_EACH than this, as we’ll see when we look at multidimensional arrays.) PHP_EACH is the patch-context version.</p>
+<p>Note that an array is a unique mapping of a value to each key. If you do
+<div class="code"><pre><code>OUTER_SPRINT $myarray("Sarevok") "Treacherous, but 100hp on a critical… you’re hired." 
+OUTER_SPRINT $myarray("Sarevok") "(note to self: don’t trust him.)"
+</code></pre></div>
+then the second assignment to Sarevok will just overwrite the first, and if you cycle through with ACTION_PHP_EACH you’ll only see the second.</p>
+<p>Arrays are stored in the order that they are defined: if you cycle through the example ‘myarray’ array, you’ll get Minsc, Jaheira, Anomen, Sir Anomen, and Melissan – followed by Sarevok if you defined him with a subsequent $myarray("Sarevok") command. You can sort an array by keys, if you want:
+<div class="code"><pre><code>ACTION_SORT_ARRAY_INDICES myarray LEXICOGRAPHICALLY</code></pre></div>
+in which case a subsequent ACTION_PHP_EACH will return the entries in the order Anomen, Jaheira, Melissan, Minsc, Sarevok, Sir Anomen. Here the ‘LEXICOGRAPHICALLY’ command means that the sort is in alphabetical order (in which 11 precedes 2, for instance). If you do
+<div class="code"><pre><code>ACTION_SORT_ARRAY_INDICES myarray NUMERICALLY</code></pre></div>
+then you’ll get numerical order. (That doesn’t make sense with the array I defined here, but might make sense if your keys were integers.) SORT_ARRAY_INDICES is the patch-context version.</p>
+<p><h4>Array subtleties: arrays vs. structs</h4></p>
+<p>What’s really going on in array assignments is a little subtle, especially if you’re used to arrays in more standard languages. A command like
+<div class="code"><pre><code>OUTER_SPRINT $myarray("Minsc") "Awesome"</code></pre></div>
+(or the equivalent in an ACTION_DEFINE_ASSOCIATIVE_ARRAY command) does two things. Firstly it sets a variable, myarray_Minsc, to the string ‘Awesome’. Secondly, it puts ‘Minsc’ in the ‘myarray’ ordered list of keys. You can access the variable by either name: 
+<div class="code"><pre><code>OUTER_SPRINT myvar "%myarray_Minsc%"</code></pre></div>
+works the same way as
+<div class="code"><pre><code>OUTER_SPRINT myvar $myarray("Minsc")</code></pre></div>
+But if you just do 
+<div class="code"><pre><code>OUTER_SPRINT myarray_Tiax "Insane"</code></pre></div>
+then ‘Tiax’ will not be added to the list of ‘myarray’ keys.</p>
+<p>A little terminology helps: given a string (say, ‘myarray’), then a ‘struct’ (my term) is the collection of all variables with that string as prefix: the myarrray struct might contain myarray_0, myarray_1, myarray_2_fighter, myarray_Tiax, etc., etc. The myarray array ranges over part of the myarray struct, but not necessarily all of it. Using ‘myarray_Tiax=1’ adds to the struct but not to the array; using ‘$myarray("Tiax")=1’, or the ACTION_DEFINE_ASSOCIATIVE_ARRAY command, adds to both.</p>
+One place where this comes up is clearing arrays. WEIDU lets you do
+<div class="code"><pre><code>ACTION_CLEAR_ARRAY myarray</code></pre></div>
+(CLEAR_ARRAY is the patch-context version), and this wipes the array but leaves the underlying struct unchanged. So if you ACTION_CLEAR_ARRAY the ‘myarray’ array, using ACTION_PHP_EACH to cycle through it will do nothing (there are no keys to cycle) but the individual variables (myarray_Minsc, myarray_Jaheira, and the like) remain set.
+<p><h4>Example: Control flow with arrays</h4></p>
+As an example of how arrays can be used, suppose you want to edit every single-classed character in the game to make sure they have a prime requisite score of at least 16. Here’s some compact but readable code to do that, using arrays.
+<div class="code"><pre><code>ACTION_DEFINE_ASSOCIATIVE_ARRAY cre_abil BEGIN
+	str=>0x238
+	int=>0x23a
+	wis=>0x23b
+	dex=>0x23c
+	con=>0x23d
+	cha=>0x23e
+END
+
+ACTION_DEFINE_ASSOCIATIVE_ARRAY prime_req BEGIN
+	MAGE=>int	
+	FIGHTER=>str	
+	CLERIC=>wis	
+	THIEF=>dex	
+	\\[… - add the other classes here]
+
+END
+
+COPY_EXISTING_REGEXP ".*\.cre" override
+	READ_BYTE 0x273 class_num
+	LOOKUP_IDS_SYMBOL_OF_INT class class class_num
+	TO_UPPER class
+	PATCH_IF VARIABLE_IS_SET $prime_req("%class%") BEGIN
+		SPRINT abil $prime_req("%class%")
+		offset=$cre_abil("%abil%")
+		READ_BYTE offset current_value
+		PATCH_IF current_value<16 BEGIN
+			WRITE_BYTE offset 16
+		END
+	END
+BUT_ONLY
+</code></pre></div></p>
+<p>The first array just describes part of the .cre file structure, listing which ability score lives in which offset. The second array lists the prime requisites. The main bit of code goes through each creature and (i) reads the numerical value of the creature’s class; (ii) looks up the human-readable id for the class in class.ids (and uppercases it just in case, since our array uses upper-case class names); (iii) checks if there’s a prime requisite for that class; (iv) if so, gets the offset for that prime requisite and reads its current value; (v) if it’s less than 16, sets it to 16.</p>
+<p>You can actually do the main bit of code a bit more compactly once you’ve got some practice, like this:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	READ_BYTE 0x273 class_num
+	LOOKUP_IDS_SYMBOL_OF_INT class class class_num
+	TO_UPPER class
+	PATCH_IF VARIABLE_IS_SET $prime_req("%class%") BEGIN
+		offset=EVAL "%cre_abil_%prime_req_%class%%%"
+		WRITE_BYTE offset (THIS < 16)? 16: THIS
+	END
+BUT_ONLY
+</code></pre></div></p>
+<p><h4>Multi-dimensional arrays</h4></p>
+<p>WEIDU also permits arrays with more than one key. For instance, here’s (part of) an array that lists the ability scores of joinable characters (note the commas separating keys):
+<div class="code"><pre><code>ACTION_DEFINE_ASSOCIATIVE_ARRAY char_abil BEGIN
+	Minsc,STR=>18
+	Minsc,STR_EX=>93
+	Minsc,INT=>8
+	Dynaheir,STR=>11
+	Dynaheir,STR_EX=>0
+	Dynaheir,INT=>17
+END
+</code></pre></div></p>
+<p>The underlying variables are things like ‘char_abil_Minsc_STR’. You can cycle through an array like this with ACTION_PHP_EACH char_abil AS key=>value; what happens is that key_0 is set to the first key and key_1 is set to the second. (And so on; in principle you can define arrays of any dimension.)</p>
+<p>For instance, here’s code to extract Minsc’s ability scores into a subarray:
+<div class="code"><pre><code>ACTION_PHP_EACH char_abil AS key=>ability BEGIN
+	ACTION_IF "%key_0%" STR_EQ "Minsc" BEGIN
+		OUTER_SET $minsc_abil("%key_1%")=ability
+	END
+END</code></pre></div></p>
+<p>
+Because of how WEIDU stores arrays, you can get yourself into trouble if you use multidimensional arrays whose keys contain the "_" symbol. For instance, $array("A" "B" "C"), $array("A_B_C"), $array("A_B" "C"),  and $array("A" "B_C") are four different array entries, with keys (A,B,C), (A_B_C), (A_B,C) and (A,B_C) – but all of them point to the same string, array_A_B_C. </p>
+
+
+</div>
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="regexps" id="regexps"></a>2.6 Regular expressions and pattern-matching</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+In common with many languages, WEIDU uses ‘regular expressions’, or regexps, to identify and edit strings and files. (If you’re completely unfamiliar with regular expressions in programming generally, you might want to find a general tutorial elsewhere before reading this section.)</p>
+<p><h4>The basics of WEIDU regular expressions</h4></p>
+<p>Suppose ‘desc’ is a long string, and you want to see if it contains ‘Minsc’. You do it like this:
+<div class="code"><pre><code>ACTION_IF INDEX ("Minsc" "%desc%")>0 BEGIN … END</code></pre></div>
+INDEX ("Minsc" "%desc%") is an integer that tells us how far into "desc" you have to go before you find "Minsc", or -1 if it’s not there at all. So: 
+<ul>
+<li>if ‘desc’ is ‘Minsc is awesome’, INDEX ("Minsc" "%desc%") is 0. </li>
+<li>If ‘desc’ is ‘We love Minsc’, it’s 8.</li>
+<li>If ‘desc’ is ‘We love Anomen’ (why?), it’s -1.</li>
+</ul>
+(You can also, optionally, add an integer at the end of the parentheses to say how far into the string you should start looking: INDEX ("Minsc" "%desc%" 4) tells you to start 4 characters into the string.)</p>
+<p>That’s fine if you want to check for a specific string. But the first slot in ‘INDEX’ is a regexp, which can search for many strings at once. Suppose you want to check for either Minsc or Jaheira? You can do it like this:
+<div class="code"><pre><code>ACTION_IF INDEX ("\(Minsc\|Jaheira\)" "%desc%")>0 BEGIN … END</code></pre></div></p>
+<p>Some more examples:
+<ul>
+<li>"Minsc[0-9]" searches for Minsc0,Minsc1, … Minsc9.</li>
+<li>"Minsc[0-9]+" searches for ‘Minsc’ followed by any number of integers.</li>
+<li>"Minsc[0-9][0-9]" searches for ‘Minsc’ followed by exactly 2 integers.</li>
+<li>"Minsc[abc]" searches for ‘Minsca’, ‘Minscb’, or ‘Minscc’.</li>
+<li>"Minsc[a-z]" searches for ‘Minsc’ followed by any letter of the alphabet.</li>
+<li>"Minsc[a-z0-9]" searches for ‘Minsc’ followed by any letter or number.</li>
+<li>"Minsc[^z]" searches for ‘Minsc’, followed by anything except a ‘z’.</li>
+<li>"Minsc +Jaheira" searches for ‘Minsc’, followed by any nonzero number of spaces, followed by ‘Jaheira’.</li>
+<li>"Minsc *Jaheira" searches for ‘Minsc’, followed by any number (including zero) of spaces, followed by ‘Jaheira’</li>
+<li>"Minsc.*Jaheira" searches for ‘Minsc’, followed by anything you like except a new line, followed by ‘Jaheira’</li>
+<li>"^Minsc" searches for ‘Minsc’, but only if it appears at the start a line</li>
+<li>"Minsc$" searches for ‘Minsc’, but only if it appears at the end of a line</li>
+</ul>
+<p><h4>Formal regexp syntax</h4></p>
+<p>The formal rules for WEIDU regexps are in section 13 of the WEIDU readme, but I’ll repeat the main rules here for convenience:
+<ol>
+<li>These characters have special meanings:
+$^.*+?[]\
+If you want to search for these literal characters, you need to ‘escape’ them: so if you want to search for ‘.’, put ‘\.’ in your regexp. </li>
+<li>. matches any character except the invisible ‘new line’ symbol</li>
+<li>* matches the previous character zero, one, or many times</li>
+<li>+ matches the previous character one or many times</li>
+<li>? matches the previous character zero or one times</li>
+<li>[…] is a set of characters, like [ab] or [012ab], any one of which must be present for a match. You can use ranges like a-z or 0-9. An initial ^, as in [^0-9], complements the set, so that anything except the characters listed is matched.</li>
+<li>^ matches at the start of a line; $ matches at the end of a line.</li>
+<li>You can write alternate expressions like this: \(expression1\|expression2\|expression3\). You can also ‘group’ an expression using \( and \) even if you’re not distinguishing alternates; we’ll see why that’s useful shortly.</li>
+</ol>
+</p><p>
+WEIDU also predefines a number of useful strings. TAB is the ASCII character for tab, so matching [ %TAB%]+ lets you look for whitespace in text. WNL, MNL and LNL are the various ‘end of line’ symbols used in various text files, so matching [%WNL%%LNL%%MNL%] matches end-of-line.</p>
+<p><h4>WEIDU commands with regexps in</h4></p>
+<p>WEIDU uses regexps very widely in its commands; here’s a very partial list. </p>
+<p>We’ve already seen INDEX. RINDEX is like INDEX, but counts backwards from the end of the string. A fairly different example is COPY_EXISTING_REGEXP, which copies any existing file matching the regexp to the destination directory. For instance,
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	[patch]
+BUT_ONLY</code></pre></div>
+copies any file matching ‘.*\.cre’ to the override (patching it on the way). That regexp, expanded, means: any characters at all (*), appearing any number of times (.), followed by a period (\. – note the slash, because . is a special character), followed by ‘cre’. In other words, this returns every .cre file in the game. If we’d done <div class="code"><pre><code>COPY_EXISTING "minsc.*\.cre"</code></pre></div>
+ it would have copied "minsc.cre", "minsc2.cre", and any other .cre file starting with ‘minsc'.</p>
+<p>RESOURCE_CONTAINS [file] [regexp] checks if there’s any match for the regexp in the existing file ‘file’. For instance, RESOURCE_CONTAINS "kitlist.2da" "OHTYR" returns 1 if the string ‘OHTYR’ appears in kitlist.2da, the list of kits. (It was missing in Siege of Dragonspear until 2.6 launched.)</p>
+<p> FILE_CONTAINS checks a specific file (which could be an in-game file in the override, or one of your mod’s files).</p>
+<p>INDEX_BUFFER is like INDEX but it checks the currently-being-patched file. So 
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	PATCH_IF INDEX_BUFFER "\(wtasight\|wtarsgt\)">=0 BEGIN
+		SPRINT $combat_scripts("%SOURCE_RES%")
+	END
+BUT_ONLY</code></pre></div>
+makes a list of all .cre files that use the ‘wtasight’ or ‘wtarsgt’ combat scripts. ("SOURCE_RES" is a special WEIDU variable that contains the name (without extension) of the file being patched.)</p>
+<p> RINDEX_BUFFER is like INDEX_BUFFER but counts down.</p>
+<p>
+COUNT_REGEXP_INSTANCES tells you how many times a regexp appears in a string, as in:
+<div class="code"><pre><code>OUTER_SET n=COUNT_REGEXP_INSTANCES "Minsc" "%string%"
+PRINT "Minsc is mentioned %n% times in this string"
+</code></pre></div>
+<p><h4>Pattern matching with ACTION_MATCH and PATCH_MATCH</h4></p>
+<p>You can use pattern matching for control flow, like this (the patch-context version is PATCH_MATCH):
+<div class="code"><pre><code>ACTION_MATCH "%resref%" WITH
+"minsc .*" BEGIN
+	PRINT "Awesome"
+END
+"jaheir.*" "imoen.*" BEGIN
+	PRINT "part of the gang"
+END
+"anomen.*" BEGIN
+	PRINT "annoying"
+END
+DEFAULT
+	PRINT "mysterious"
+END</code></pre></div>
+Patterns are evaluated (case-insensitively) from top to bottom, carrying out the first block matched; if none are matched, the DEFAULT block is carried out. In this case, if ‘regexp’ were set to ‘minsc’ or ‘minsc2’, you’d get ‘Awesome’; if it were set to ‘Jaheir6’ or ‘imoenb’, you’d get ‘part of the gang’; if it were set to ‘anomen’ or ‘anomensucks’, you’d get ‘annoying’; if it were set to ‘Sarevok’ or ‘’, you’d get ‘mysterious’. This can save you a lot of END ELSE commands.</p>
+<p>I've illustrated ACTION_MATCH here with string matching, but it can also match integers, as in:
+<div class="code"><pre><code>ACTION_MATCH var WITH
+var2 BEGIN
+	PRINT "equal to var2"
+END
+1 2 3 BEGIN
+	PRINT "1, 2, or 3"
+END
+DEFAULT
+	PRINT "Something else"
+END</code></pre></div>
+If 'var' and 'var2' are both integer variables, and are equal, the first match applies; if not, but 'var' is equal to 1, 2, or 3, the second does;  if not, the third does.</p>
+<p>In certain edge cases, something intended as a string match accidentally executes as an integer match.
+Here's a (stripped down, simplified) bug I ran into in my own code:
+<div class="code"><pre><code>OUTER_SET enchantment=1
+OUTER_SET patch=1
+
+OUTER_SPRINT function "enchantment"
+
+ACTION_MATCH "%function%" WITH
+"patch" BEGIN
+	PRINT "matched 'patch'"
+END
+DEFAULT
+	PRINT "matched default"
+END
+</code></pre></div>The intention was that 'function', a string, was compared to 'patch', failed to match, and so the default block matched. But because 'function' was set to 'enchantment', and 'enchantment' was itself an integer variable, and because the same was also true of 'patch', in fact the first match occured.</p>
+<p>ACTION_MATCH and PATCH_MATCH actually have more features than these, but mostly I haven't found them useful so I won't discuss them here; see the main WEIDU readme, and the tutorial, if you're curious.</p>
+<p><h4>Find and replace</h4></p>
+<p>So far we’ve only been matching regexps, but we can also replace a matched regexp with new text. You do this in patch context, on the current file being patched. There are two WEIDU find-and-replace commands, the relatively simple REPLACE_TEXTUALLY and the powerful REPLACE_EVALUATE.</p> 
+<p>In the simplest applications, REPLACE_TEXTUALLY works like this: REPLACE_TEXTUALLY regexp newtext, with the new text being swapped in for each occurrence of the regexp; for instance, 
+<div class="code"><pre><code>REPLACE_TEXTUALLY "Minsc" "Minsc the Awesome"</code></pre></div>
+replaces any occurrence of ‘Minsc’ in the file being patched with ‘Minsc the Awesome’. You can also include the special expressions \1, \2, etc in newtext, and they’re then swapped for the first, second etc. matched group expression (i.e., expression wrapped in \( \) ) in your regexp. For instance,
+<div class="code"><pre><code>REPLACE_TEXTUALLY "\(Anomen\|Jaheira\|Viconia\|Aerie\)" "\1 the cleric" </code></pre></div>
+will replace any occurrence of ‘Anomen’ with ‘Anomen the cleric’, any occurrence of ‘Jaheira’ with ‘Jaheira the cleric’, etc.</p> 
+<p>As a slightly more complicated example, consider
+<div class="code"><pre><code>REPLACE_TEXTUALLY "See(\([^)]*\))" "Detect(\1)"</code></pre></div>
+The regexp matches See(whatever) (where ‘whatever’ is any sequence of characters excluding a right-parenthesis and contained between parentheses), and replaces it with Detect(whatever).</p>
+<p>The \1 construct lets you do elementary processing in your search-and-replace, but to do anything more sophisticated you need REPLACE_EVALUATE. The syntax is REPLACE_EVALUATE regexp BEGIN some-processing END newtext. Here’s an example of it in action:
+<div class="code"><pre><code>REPLACE_EVALUATE "\(Minsc\|Anomen\|Sarevok\|Jaheira\)" BEGIN
+	PATCH_MATCH "%MATCH1%" WITH
+	"Minsc" BEGIN
+		SPRINT epithet "Awesome"
+	END
+	"Anomen" BEGIN
+		SPRINT epithet "Annoying"
+	END
+	"Jaheira" BEGIN
+		SPRINT epithet "Judgmental"
+	END
+	"Sarevok" BEGIN
+		SPRINT epithet "Violent"
+	END
+	DEFAULT
+			// it shouldn’t be possible to get here
+	END
+END
+"%MATCH1% the %epithet"
+</code></pre></div>
+Here a whole block of processing is carried out between the find and replace steps of find-and-replace. The variables MATCH1, MATCH2 etc are set respectively to the first, second etc matched groups in the regexp, an arbitrary bit of patch-context code is executed, and then finally the substitution is made. </p>
+
+<p>REPLACE_EVALUATE isn’t just useful for editing a file: it’s also a powerful tool to get information out of a file. For instance, the following code breaks the file into an array, one entry per line in the file:
+<div class="code"><pre><code>CLEAR_ARRAY lines
+count=0
+REPLACE_EVALUATE "^\([^%WNL%%MNL%%LNL%]+\)" BEGIN
+	SPRINT $lines("%count%") "%MATCH1%"
+	++count
+END	
+""</code></pre></div>
+<p>The regexp matches any string starting at the beginning of a line (the ^ denotes this) and then containing an arbitrary (but non-zero) number of symbols not including an end-of-line symbol. That match is then written into a line of the array. The actual ‘replace’ is irrelevant – we’re throwing the file away anyway after getting the data – so we just do "".</p>
+
+<p><h4>OUTER_PATCH and INNER_PATCH</h4></p>
+<p>The OUTER_PATCH action-context command (and its patch-context cousin, INNER_PATCH) extend REPLACE_TEXTUALLY and, even more so, REPLACE_EVALUATE, into extremely flexible tools to analyze strings in situations where WEIDU’s built-in analyzers aren’t sufficient. OUTER_PATCH takes a string and lets you treat that string as if it were a file, patching it however you like (but, most commonly, using REPLACE_EVALUATE and REPLACE_TEXTUALLY to rearrange it).</p>
+<p>For instance, suppose you know that a certain string, ‘var’, consists of two words separated by a space. You can get the two words like this:
+<div class="code"><pre><code>OUTER_PATCH "%var%" BEGIN
+	REPLACE_EVALUATE "\([^ ]\) \([^ ]\)" BEGIN
+		SPRINT var1 "%MATCH1%"
+		SPRINT var2 "%MATCH2%"
+	END
+	""
+END</code></pre></div>
+The regexp here matches any number of characters other than a space, followed by a space, followed by any number of characters other than a space. We group both sets of characters and then assign them to two new variables. We don’t care what the regexp is actually replaced with, so we just use "".</p>
+<p>The string being patched is thrown away after the patch is finished. If you want to keep it, you can use OUTER_PATCH_SAVE instead. For instance, the following code replaces all spaces in a string with commas:
+<div class="code"><pre><code>OUTER_PATCH_SAVE var "%var%" BEGIN
+	REPLACE_TEXTUALLY " " ","
+END</code></pre></div><p>
+</div>
+
+
+<div class="ribbon_rectangle_h3"><h3><a name="functions" id="functions"></a>2.7 Functions and macros</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+WEIDU uses ‘functions’ (and, occasionally, ‘macros’) to organize code into discrete sections and to allow useful bits of code to be reused without physically retyping them. Using the extensive library of functions that WEIDU ships with already makes many tasks far, far easier; once you can write your own functions, and learned to use functions provided by other people, you will find WEIDU’s capacities radically transformed.</p>
+<p>(Another reminder: this whole course assumes you have AUTO_EVAL_STRINGS in the preamble of your tp2 file. If you don't, functions work a bit differently, and you're on your own.)</p>
+<p><h4>The basic shape of a function</h4></p>
+<p>You can think of a function as a machine that takes inputs (strings and/or integers), takes some action, and then provides outputs (strings and/or arrays). Or rather, as a machine that maybe takes inputs, maybe does something to files, maybe provides outputs – because each step, individually, is optional. (A function that takes no action and modifies no file, however, would be fairly pointless.) In programming jargon, you 'call' or 'run' a function when you use it.</p>
+<p>The basic input/output structure of a function is specified like this:
+<ul>
+<li>Some (or no) INT_VARs, which are variables that you can feed to the function and that should be integers. Each INT_VAR has a ‘default value’, which the function uses if you decide not to feed it that variable.</li>
+<li>Some (or no) STR_VARs, which are also variables that you can feed to the function and that should be strings. Again, each has a default value.</li>
+<li>Some (or no) RET strings, which are strings that are returned by the function</li>
+<li>Some (or no) RET_ARRAY arrays, which are arrays that are returned by the function. (We’ll mostly leave RET_ARRAY to a later section.)</li>
+</ul>
+<p><h4>Calling a function: a simple example</h4></p>
+<p>To see how the function interface works, consider a very simple pair of functions, both of which are included in WEIDU: RES_NUM_OF_SPELL_NAME and RES_NAME_OF_SPELL_NUM. (This example is not all that impressive as an illustration of how useful functions are, to be honest: I’m using it just because it’s easy to understand.)</p>
+<p>To understand the example, note that in the IE games there are three ways to refer to spells: by resref (the filename), by IDS number, or by IDS entry. For instance, Fireball can be referred to as WIZARD_FIREBALL (its entry in spell.ids), as 1304 (the number of that entry), or as SPWI304 (its resref, i.e. its actual filename). The filename can be obtained from the IDS entry: entries of form 1xyz have resref SPWIxyz, entries of form 2xyz have resref SPPRxyz, etc.</p>
+<p>RES_NUM_OF_SPELL_NAME determines the resref automatically from the ids name (and the number too, though you can just get that from WEIDU’s built-in IDS_OF_SYMBOL). It takes one argument, a STR_VAR called ‘spell_name’ and returns two RET values, spell_num and spell_res. You use it like this (say, to determine the resref and number of Fireball:
+<div class="code"><pre><code>LAUNCH_ACTION_FUNCTION RES_NUM_OF_SPELL_NAME 
+	STR_VAR spell_name=WIZARD_FIREBALL
+	RET fireball_number=spell_num
+	    fireball_resref=spell_res
+END</code></pre></div></p>
+<p>After this code has run, ‘fireball_number’ will be set to 3104 and fireball_resref’ will be set to SPWI304.</p>
+<p>Relatedly, RES_NAME_OF_SPELL_NUM takes one argument, an INT_VAR called ‘spell_num’, and returns spell_name and spell_res, like this:
+<div class="code"><pre><code>LAUNCH_ACTION_FUNCTION RES_NAME_OF_SPELL_NUM
+	INT_VAR spell_num=3104
+	RET fireball_name=spell_name
+	    fireball_resref=spell_res
+END</code></pre></div></p>
+<p>(There’s also NAME_NUM_OF_SPELL_RES, which does exactly what you’d expect.)</p>
+<p>Launching functions is, like every other WEIDU command, different in action and patch contexts: you use LAUNCH_PATCH_FUNCTION in patch context. To complicate things further, functions themselves can either be action functions (which only work in action context), patch functions (which only work in patch context), or dimorphic functions (which work in both). RES_NUM_OF_SPELL_NAME and friends are all dimorphic. (To complicate it further still, in principle an action function can have the same name as a <em>different</em> patch function.)</p>
+<p>There are a number of variants worth knowing:
+<ol>
+<li>You can abbreviate LAUNCH_ACTION_FUNCTION as LAF, and LAUNCH_PATCH_FUNCTION as LPF, which I’ll do from here on (it saves a lot of typing).</li>
+<li>You can assign variables to INT_VARs and STR_VARs, like this:
+<div class="code"><pre><code>OUTER_SPRINT fireball_name WIZARD_FIREBALL
+
+LAF RES_NUM_OF_SPELL_NAME 
+	STR_VAR spell_name="%fireball_name%"
+	RET fireball_number=spell_num
+	    fireball_resref=spell_res
+END
+
+OUTER_SET fireball_number=3104
+LAF RES_NAME_OF_SPELL_NUM
+	INT_VAR spell_num=fireball_number
+	RET fireball_name=spell_name
+	    fireball_resref=spell_res
+END</code></pre></div>
+
+As usual with integer and string variables, you can assign an integer value just by using the variable, but you have to wrap a string variable in "% %" to get its value and not just its name.</li>
+<li>You don’t need to include all the STR_VARs, INT_VARs, and return value. If you leave STR_VARs or INT_VARs unspecified, the function uses a default value for each (the function definition includes these default values); if you leave return values unspecified, you just don’t get them. This is perfectly legal, for instance:
+<div class="code"><pre><code>LAF RES_NUM_OF_SPELL_NAME 
+	STR_VAR spell_name=WIZARD_FIREBALL
+	RET fireball_resref=spell_res
+END</code></pre></div>
+	(Technically so is this:
+<div class="code"><pre><code>LAF RES_NUM_OF_SPELL_NAME 
+	RET fireball_resref=spell_res
+END</code></pre></div>
+However, for this particular function it doesn’t make sense to run it without an argument, and it will probably fail at run-time.)</li>
+<li>If the variables you want to use for input and output actually have the same name as the function’s names for those inputs and outputs, you can simplify your notation. ‘STR_VAR var’ abbreviates ‘STR_VAR var="%var%" ‘; INT_VAR var abbreviates ‘INT_VAR var=var’; RET var abbreviates ‘RET var=var’. (This abbreviation scheme requires AUTO_EVAL_STRINGS and is the main reason I use it.) So for instance, this code
+<div class="code"><pre><code>OUTER_SPRINT spell_name SPWI304
+LAF RES_NUM_OF_SPELL_NAME 
+	STR_VAR spell_name
+	RET spell_num spell_res
+END</code></pre></div>
+sets ‘spell_num’ and ‘spell_res’ to the number and resref of SPWI304.</li>
+</ol></p>
+<p><h4>A more complicated example: high-level spell editing</h4></p>
+<p>To get a better sense of what functions can do for you, let’s consider a less trivial example: suppose you want to modify the Fireball spell so that it does 1d8 fire damage per level instead of 1d6 damage, imposes a 2-point saving throw penalty, and then does an additional 1d4 fire damage per level after one round if you fail your saving throw. (This is way overpowered: it’s a coding example, not an actually-sensible change.)</p>
+<p>If you open up Fireball in Near Infinity (for simplicity I’ll assume we’re on the Enhanced Edition), you’ll see that it has six ability headers (one for each of levels 5-10) and, under each, a bunch of effects, including a Damage effect (opcode 12) that encodes the save-for-half rule, the fact that the saving throw is against spells, the lack of a save penalty, and the 1d6/level damage. So making this change in WEIDU requires us (i) to edit the damage block to change the dice size and add the save penalty and (ii) to add an extra Damage block that triggers after 1 round for the extra damage and that you can save to avoid entirely. (To do it properly we’d also ideally add some visual effects and maybe a ‘burning’ text string, but let’s keep it simple for now.)</p>
+<p>It is possible to do this directly using WEIDU’s low-level editing commands and control flow (I wrote many such bits of code in the days before WEIDU got functions) but it’s a very time-consuming, finicky business (and so most people would end up making the spell in an editor and just copying it across). Doing it in modern WEIDU is child’s play using the ALTER_EFFECT and CLONE_EFFECT patch functions. I won’t give the full input structure for them, because it’s pretty complicated (see the WEIDU documentation for the full version) but the basic idea is that ALTER_EFFECT cycles through all the effect blocks in a spell (or item or creature), checks each against a set of ‘match’ conditions, and if it finds a match, applies a bunch of ‘patch’ conditions (each patch sets the value of one field in the effect). CLONE_EFFECT is similar, except that instead of modifying the existing effect it creates a copy of it and modifies the copy.</p>
+<p>Here, then, is the full implementation of our change to Fireball:
+<div class="code"><pre><code>COPY_EXISTING "spwi304.spl" override
+	SAY DESCRIPTION @100
+	LPF ALTER_EFFECT INT_VAR match_opcode=12 dicesize=8 savebonus="-2" END
+	LPF CLONE_EFFECT INT_VAR match_opcode=12 dicesize=4 timing=4 duration=6 special=0 END
+BUT_ONLY</code></pre></div></p>
+<p>And that’s it! The ALTER_EFFECT matches against opcode=12 (the damage opcode) and sets the new number of dice and the save penalty. The CLONE_EFFECT matches the same blocks, but now it creates a copy of them, sets the damage for the copy to 1d4/level, changes the timing/duration so that it comes in after 6 seconds instead of being instant, and removes the ‘save for half’ flag (so that a saving throw removes the effect altogether).</p>
+<p>There are many functions like ALTER_EFFECT and CLONE_EFFECT which, collectively, move WEIDU a long way towards editing objects at a high level (via their logical content) rather than at a low level (via editing the actual bytes). This makes code radically faster to write, easier to read, and less likely to contain stealth bugs.</p>
+<p><h4>Writing your own functions</h4></p>
+Defining functions is fairly simple: they’re just embedded bits of WEIDU code. For instance, here’s a (pointless) function to add together two integers:
+<div class="code"><pre><code>DEFINE_ACTION_FUNCTION add_two_integers
+	INT_VAR 
+		int1=0
+		int2=0
+	RET 
+		value
+BEGIN
+	OUTER_SET value=int1+int2
+END</code></pre></div><p>
+<p>First you have a DEFINE_ACTION_FUNCTION that tells WEIDU you’re defining an action function. Then you have the name of the function. Then you have the INT_VARs and/or STR_VARs, along with their default settings. Then you have the return values. Finally, you have actual WEIDU code, wrapped in BEGIN…END.</p>
+<p>The above function’s code is in action context, because it’s an action function. For patch functions, you write patch-context code. Here's a marginally more useful function that pulls the name and description from the file being edited (assumed to be a spell):
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION get_name_desc
+	RET 	
+		name_strref
+		desc_strref
+BEGIN
+	READ_LONG 0x8 name_strref
+	READ_LONG 0x50 desc_strref
+END</code></pre></div></p>
+<p>Dimorphic functions are basically action functions that can also be run as patch functions, so you define them like this:
+<div class="code"><pre><code>DEFINE_DIMORPHIC_FUNCTION add_two_integers
+	INT_VAR 	int1=0
+			int2=0
+	RET value
+BEGIN
+	OUTER_SET value=int1+int2
+END</code></pre></div></p>
+<p>When defining your own functions, note that you <b>must</b> actually return all the values you say you will. If you declare a variable in the RET part of a function, and don't actually return that variable when the function is called, WEIDU will throw an error. For instance, the following is badly designed:
+<div class="code"><pre><code><font color="red">DEFINE_ACTION_FUNCTION return_cre_name_strref_BAD
+	STR_VAR cre=""
+	RET cre_name
+BEGIN
+	COPY_EXISTING - "%cre%.cre" nowhere
+		READ_LONG 0x8 cre_name
+	IF_EXISTS
+END
+</font></code></pre></div>
+Sensibly, this function does an IF_EXISTS when it copies "%cre%.cre": if it didn't, and '%cre%.cre' doesn't in fact exist, the function will fail at run-time. But in fact it will fail at run-time anyway in this circumstance, because the return variable 'cre_name' is undefined. Here's a fixed version:
+<div class="code"><pre><code>DEFINE_ACTION_FUNCTION return_cre_name_strref
+	STR_VAR cre=""
+	RET cre_name
+BEGIN
+	OUTER_SET cre_name="-1"
+	COPY_EXISTING - "%cre%.cre" nowhere
+		READ_LONG 0x8 cre_name
+	IF_EXISTS
+END
+</code></pre></div>
+Unfortunately, WEIDU can't check at install time whether your functions always return values (it's mathematically impossible to do this) so you just have to be careful.</p>
+
+<p>Importantly, any variables set within a function are forgotten at the end of running the function (that is: their scope is local to the function), unless you explicitly return them as a RET or RET_ARRAY value of the function. Consider the following function
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION is_goblinoid
+	RET value
+BEGIN
+	READ_BYTE 0x272 race_var
+	value= (race_var=143 || race_var=111 || race_var=161)
+END</code></pre></div>
+The interim variable ‘race_var’ is forgotten after the function terminates. This means that you can casually define intermediate variables and the like in your functions, confident that they will not escape the function to rampage elsewhere.</p>
+A function is <em>encapsulated</em> when it depends only on the arguments it’s given, and not on any tacit background variables. For instance, RES_NUM_OF_SPELL_NAME is encapsulated: what it returns depends only on its arguments and on spell.ids. The following function is not encapsulated:
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION I_am_not_encapsulated
+	RET value
+BEGIN
+	value = ( VARIABLE_IS_SET external_variable ) ? 1 : 0
+	END
+END</code></pre></div>
+In general it is a good idea to encapsulate your functions: it guarantees they do what you expect, irrespective of the context in which you call them. Don’t over-stress it, though: there are contexts where encapsulation violation is useful.</p>
+<p><h4>Array returns</h4></p>
+<p>The RET_ARRAY feature of functions is subtle and should be used carefully. A RET_ARRAY this_array, in a function definition, does two things:
+<ol><li>WEIDU does a PHP_EACH over all values of this_array, and sets them to the function-defined values;</li>
+<li>The actual array is also exported.</li>
+</ol></p>
+<p>For instance, consider this function
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION set_this_value
+STR_VAR array=""
+RET_ARRAY array
+BEGIN
+	SET $array("value1")=1
+END</code></pre></div>
+If you now do
+<div class="code"><pre><code>LPF set_this_value STR_VAR array=array1 RET_ARRAY array2=array END</code></pre></div>
+then array2 will have only one value: $array2("value1")=1. No other contents of the ‘array1’ array will be written. If we wanted to copy the whole input array to the output array, we’d have to do something like
+<div class="code"><pre><code>DEFINE_PATCH_FUNCTION set_this_value_and_copy_the_array
+STR_VAR array=""
+RET_ARRAY array
+BEGIN
+	PHP_EACH "%array%" AS k=>v BEGIN
+		SPRINT $array("%k%") "%v%"
+	END
+	SET $array("value1")=1
+END</code></pre></div></p>
+<p>Unlike ordinary RET variables, WEIDU lets you return an empty array with RET_ARRAY. There is, however, a bug in WEIDU (as of v249) which <b>sometimes</b> causes this to fail (and WEIDU to throw an error) if you return an empty array whose name is shared with an already-defined array.</p>
+<p><h4>Macros</h4></p>
+<p>As well as functions, WEIDU permits macros. A macro is effectively a small piece of included code (there is not much difference between putting a bit of code in a macro and INCLUDE-ing it). Unlike functions, macros are not encapsulated at all: any change to a variable made in the macro is preserved once the macro stops running.</p>
+<p>The syntax for macros is very similar to that for functions. You call them via LAUNCH_ACTION_MACRO (abbreviated to LAM) or LAUNCH_PATCH_MACRO (abbreviated to LPM), like this:
+<div class="code"><pre><code>LAM my_macro</code></pre></div>
+Note that there is no need to specify variables, no return values, and no END at the end.
+You define them like this:
+<div class="code"><pre><code>DEFINE_ACTION_MACRO my_macro BEGIN
+	[some code]
+END</code></pre></div>
+In most circumstances, you should avoid macros and use functions instead: they are much less likely to mess up your code by accidentally changing the value of some variable. The main exception I’ve found are when you want to read in a large amount of unstructured data and it’s inconvenient to package that data as an array. For instance, here's a macro that goes through all spells in the game in the standard (SPWI/SPPR/SPCL/SPIN) namespace and, for each, creates a variable whose name is the spell's spell.ids name and whose value is its resref (so that, for instance, WIZARD_FIREBALL is set to SPWI304).
+<div class="code"><pre><code>DEFINE_ACTION_MACRO set_spell_vars
+BEGIN
+	COPY_EXISTING_REGEXP - "sp\(in\|cl\|pr\|wi\)[0-9][0-9][0-9]\.spl" nowhere
+		SPRINT spell_res "%SOURCE_RES%"
+		TO_UPPER spell_res
+		LPF NAME_NUM_OF_SPELL_RES STR_VAR spell_res RET spell_name END
+		SPRINT "%spell_name%" "%spell_res%"
+END
+</code></pre></div></p>
+<p>If you tried doing this with a function, all the values would be lost when the function finished running, and they can't be returned as separate RET values because you don't know what they all are (and even if you did, the syntax would be hideous).</p>
+<p>Although by default variables in a macro have global scope, you can declare some to be local to the macro if you want to. You do so using the command LOCAL_SET (for integer variables) or LOCAL_SPRINT (for string variables), with the same syntax as SET and SPRINT, respectively. For instance, in the above macro the string variables 'spell_res' and 'spell_name' really ought to be internal to the macro: we don't want them returned. So a better version of the macro is
+<div class="code"><pre><code>DEFINE_ACTION_MACRO set_spell_vars
+BEGIN
+	LOCAL_SPRINT spell_name ""
+	LOCAL_SPRINT spell_res ""
+	COPY_EXISTING_REGEXP - "sp\(in\|cl\|pr\|wi\)[0-9][0-9][0-9]\.spl" nowhere
+		SPRINT spell_res "%SOURCE_RES%"
+		TO_UPPER spell_res
+		LPF NAME_NUM_OF_SPELL_RES STR_VAR spell_res RET spell_name END
+		SPRINT "%spell_name%" "%spell_res%"
+END
+</code></pre></div>
+(Note that these declarations must go right at the beginning of the macro definition (in any order you like): if you put them in after any other code, WEIDU will complain.</p>
+<p>I <b>strongly</b> recommend that you make sure any variables that you don't explicitly want to return are made local in this way. Loose variables in macros can lead to extremely nasty and hard-to-trace bugs.</p>
+<p><h4>Limitations of function scoping</h4></p>
+<p>
+Variables set in a function are local scope and are forgotten after the function finishes running, but functions are not completely effective in localizing scope. For one, function (and macro) definitions always have global scope, even if defined within another function. The following code works properly, for instance:
+<div class="code"><pre><code>DEFINE_ACTION_FUNCTION wrapper BEGIN
+	DEFINE_ACTION_FUNCTION hello_world BEGIN
+		PRINT "Hello, world!"
+	END
+END
+LAF wrapper END
+LAF hello_world END</code></pre></div></p>
+<p>However, function definitions are wiped by the CLEAR_EVERYTHING command: the following code will throw an error:
+<div class="code"><pre><code><font color="red">DEFINE_ACTION_FUNCTION hello_world BEGIN
+	PRINT "Hello, world!"
+END
+CLEAR_EVERYTHING
+LAF hello_world END</font></code></pre></div></p>
+</p>
+<p>Similarly, TRA files LOADed during a function call are remembered even when the function finishes, so that this code works properly, for instance:
+<div class="code"><pre><code>DEFINE_ACTION_FUNCTION load_tra BEGIN
+		LOAD_TRA "%MOD_FOLDER%/test.tra"
+END
+LAF load_tra END
+
+OUTER_SPRINT var @1
+PRINT "var is %var%"</code></pre></div>
+Restricting the scope of loaded .tra files requires WITH_TRA (or, again, a CLEAR_EVERYTHING).
+</div>
+
+<div class="ribbon_rectangle_h3"><h3><a name="errors" id="errors"></a>2.8 Error Handling and Debugging</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>I'll be honest: WEIDU's error handling is shaky compared to mainstream computer languages. Still, it does exist, and it's useful to learn a bit about it.</p>
+<p><h4>WEIDU error messages</h4></p>
+<p>
+It's helpful to think of four sorts of errors in your code:
+<ol>
+<li><p><b>Lexer errors</b> occur when WEIDU runs into an 'invalid character' in your code: a character that just isn't allowed to be there. Lexer errors are fairly rare, but if you just put the symbol '#' in your code, for instance, you'll get one. WEIDU reports lexer errors fairly helpfully, telling you which the character is and where it occurs in your code. (It will also give you a condescending message telling you not to use MS Word to write your code. I assume this was a thing people used to do.)</p>
+<p>In my experience the usual cause of lexer errors is leaving out a quotation mark somewhere - either not wrapping a string in quotation marks properly, or failing to end the quotes on a string.</p></li>
+<li><p><b>Parse errors</b> occur when WEIDU can make sense of the individual characters in your code but can't work out how to interpret it as grammatical WEIDU code. When WEIDU encounters a parse error, it tells you which bit of code caused it, and lists all the WEIDU commands that <em>would</em> have been legal. Sometimes this is helpful, but often it's a bit counterintuitive exactly where WEIDU finally gives up and decides your code is ungrammatical - the actual error in the code might have been much earlier. For instance, in this code
+<div class="code"><pre><code><font color="red">COPY_EXISTING "minsc.cre" override
+	// make Minsc a berserker if he's already a fighter
+	READ_BYTE 0x273 class
+	ACTION_IF class=1 BEGIN
+		WRITE_LONG 0x244 0x4001
+	END
+BUT_ONLY
+</font></code></pre></div>
+WEIDU will only complain when it gets to the WRITE_LONG, but of course the error is using ACTION_IF rather than PATCH_IF. The most extreme example occurs when you leave out an END - often WEIDU will get all the way to the end of the file before throwing a parse error.</p>
+<p>In my experience, parse errors usually occur either because action and patch context get mixed up, or because an END is missing (or too many are present), or because I have misremembered the syntax of some fiddly WEIDU command. A good highlighter can really cut down on parse errors.</p>
+</p></li>
+<li><p><b>Install time errors</b> occur when your code is legal, but something goes wrong when it's running (i.e., when the mod is installing). WEIDU will <em>try</em> to give you an error message when this happens that explains what went wrong, but it is not reliable in doing so. A fairly common WEIDU error message is 'Not_Found' - this doesn't mean that some game file can't be found, but that WEIDU can't find the error message it was looking for.</p>
+<p>
+Don't ask me why, but I have found that WEIDU can sometimes be coaxed into giving a more informative error message if you force it to emit some other string - via PATCH_PRINT or similar - shortly before the place where the error happens.
+</p>
+<p>In any case, if a WEIDU component throws an install-time error, the <em>whole</em> component will be rolled back, and all the changes it made before the error will be undone, leaving the game you're modding in the same state it was before the component started to install. This is something WEIDU <em>is</em> reliable on - I've never known it to mess up clean uninstallation.
+</p>
+</li>
+<li><p>
+<b>Run time errors</b> occur when the code has managed to run and the component has installed without errors, but it hasn't done what it is supposed to do. For instance, consider this code:
+<div class="code"><pre><code><font color="red">COPY_EXISTING "minsc.cre" override
+	// make Minsc a berserker if he's already a fighter
+	SAY 0x0 "Minsc the Awesome!"
+BUT_ONLY
+</font></code></pre></div>
+This code installs without errors, but the offset for Minsc's name string is wrong and in fact the patch to minsc.cre breaks the file - any area with this creature in will crash.</p>
+<p>Run-time errors are the worst errors, as they can't be caught without actually testing your component. Where possible, try to code so that if something goes wrong it leads to an install-time rather than run-time error.
+</p></li>
+</ol>
+</p>
+<p><h4>WEIDU warnings, and the debug log</h4></p>
+<p>When WEIDU hits an install-time problem but the problem isn't immediately fatal, it throws a WARNING: a message is displayed on the screen and then the component is flagged as INSTALLED WITH WARNINGS rather than SUCCESSFULLY INSTALLED. There's no really systematic rule for when WEIDU gives a warning rather than throwing an error, but an example is if it tries to compile a BAF file to BCS but the compilation fails - WEIDU will keep going after this failure, but warns you something has gone wrong.</p>
+<p>It can be tricky to work out just what WEIDU is warning you about: if it throws an error then installation stops right away, so you can read what WEIDU says, but a WARNING might be buried behind thousands of lines of subsequent text. Usually the best solution is to look at your mod's <b>debug log</b>. This file has a name like 'setup-mymod.debug'. By default it is just dumped in your game directory, but if you create a directory called 'debugs' in your game directory, WEIDU puts debug logs there instead. Searching it for 'warning' and 'error' usually finds the problem fairly quickly. (Sometimes it is also useful to do this for especially obscure install-time errors.)</p>
+<p><em>Do not be complacent about WEIDU warnings.</em> Just because your mod has installed, that doesn't mean it's working correctly. You should always try to identify the source of warnings and resolve the problem. I strongly recommend against releasing any mod that gives install-time warnings.</p>
+<p><h4>Forcing WEIDU errors and warnings</h4></p>
+If you insert 'FAIL string' into your code, WEIDU will throw an error as soon as it hits it, with 'string' as the error message. (PATCH_FAIL is the patch-context version.) A common reason to do this is when you're writing a function to do something to a file, and you want the function to throw an install-time error if it's otherwise going to break the file.</p>
+<p>For instance, suppose you're writing a patch function to patch spell files, and you want to guard against it accidentally being applied to an item file (which will normally be broken if you apply to it code intended for a spell file). You can guard against this by putting this code into the function:
+<div class="code"><pre><code>PATCH_IF !("%SOURCE_EXT%" STR_EQ "SPL") BEGIN
+	PATCH_FAIL "function 'my_function' has been applied to %SOURCE_FILE%, but it only works on SPL files"
+END
+</code></pre></div>
+Then if you (or someone else)! accidentally applies the function to an item (or anything else that isn't a spell) you get an install-time error and not a run-time error.</p>
+<p>Similarly, 'WARN string' (or its patch-context analog, 'PATCH_WARN string') throws a WEIDU warning and displays 'string'.</p>
+
+<p><h4>Catching errors</h4></p>
+<p>Most modern programming languages have the ability to 'catch' and 'handle' errors - instead of just ending execution of the code when an error occurs, the code itself responds to the error.</p>
+<p>WEIDU can <em>technically</em> do this. (There is a significant caveat, that I'll come to later.)</p>
+<p>As an example, suppose we're patching a file, and we have a string, 'patch', that might or might not be the name of a patch function. If it is, we want to apply it to the file. We would <em>like</em> to do something like this:
+<div class="code"><pre><code><font color="red">PATCH_IF IS_A_FUNCTION "%patch%" BEGIN // not actually a WEIDU command!
+	LPF "%patch%" END
+END
+</font></code></pre></div></p>
+But there is not actually a WEIDU command to check if a string names a function: the only way to test it is to run the function and see if WEIDU throws an error. ('Failure("Unknown function: [patch]'.) Instead we can catch the 'Unknown function' error, and if we encounter it, just keep going without running the function. The syntax looks like PATCH_MATCH:
+<div class="code"><pre><code>PATCH_TRY 
+	LPF "%function%" END
+WITH
+".*Unknown function.*" BEGIN
+END
+DEFAULT
+	PATCH_RERAISE
+END
+</code></pre></div></p>
+<p>Here, we TRY running the function. If we get an error, we can then pattern-match on the error just as in PATCH_MATCH. In the above code, if the error message contains the string 'Unknown function' then the problem is that the function doesn't exist, in which case we shrug and get on with things. If it does not contain that string, the problem is instead that the function went wrong somehow, and so we want to keep the error. We do that with the PATCH_RERAISE command, which just re-triggers the error.</p>
+<p>Of course, the action-context versions are ACTION_TRY and ACTION_RERAISE.</p>
+<p>Unfortunately, error handling in WEIDU is unsafe. As the main WEIDU readme says, 'TRY is not safe to use because many errors are intended to be fatal and if the mod installation were to proceed anyway, it might do so in an inconsistent state, with resource leaks or with other errors'. So you should be careful, at best, using it in live code. (The specific example I use above happens to be an exception - failing to run a function because it doesn't exist doesn't create any state problems - but I know this because I happened to ask WEIDU's current maintainer, not because of any systematic principle.)</p>
+<p>At the least, you should usually make sure that a TRY generates a warning. As a real-life example, my SCS mod goes through every creature in the game and applies a function 'genai' to it. That function often gets upset if some earlier mod has done something stupid to the file. Rather than have SCS fail outright in that situation, I get it to throw a warning, with code like this:
+<div class="code"><pre><code>COPY_EXISTING_REGEXP ".*\.cre" override
+	PATCH_TRY
+		LPF genai END
+	WITH DEFAULT
+		PATCH_WARN "SCS function 'genai' has failed to run on creature file %SOURCE_FILE%"
+	END
+BUT_ONLY
+</code></pre></div></p>
+<p><h4>The MODDER flag</h4></p>
+<p>MODDER is an additional flag you can add to the preamble of your TP2 code while you are developing it (you need to remove it when you release the mod). Its syntax looks like this:
+<div class="code"><pre><code>MODDER 
+	setup_tra none 
+	area_variables none 
+	missing_extern none 
+	missing_resref none 
+	ict2_actions none 
+	missing_eval none 
+	overwriting_file none 
+	fun_args warn
+</code></pre></div>
+</p>
+Here there are a number of feedback options (setup_tra, area_variables, etc), and for each you can set it to 'none', 'warn', or 'fail'. For each option, WEIDU looks out for code that is legal but does something that is usually ill-advised, and throws a warning or an error if (respectively) 'warn' or 'fail' is set. 'warn' is actually the default, so if you leave an option off entirely, it is set to warn.</p>
+<p>The example above is the one I use when modding. As you can see, I actually don't find most of the MODDER flags useful. The huge exception is fun_args, which warns you when you call a function with an argument that actually isn't one of the arguments it was defined with. (Yes, you can do this; no, you should never do this, which is why I didn't tell you it was legal in section 2.7) This is a major source of silent bugs in function-heavy WEIDU coding, and it's extremely helpful to have fun_args turned on to catch them.</p>
+<p>If multiple mods are installed at once, the MODDER flag on one mod can in some circumstances affect other mods. For this reason it's essential to remove (or comment out) your MODDER flag before releasing your mod.</p>
+</div>
+</body>

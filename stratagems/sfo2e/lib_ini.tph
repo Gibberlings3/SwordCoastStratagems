@@ -11,7 +11,7 @@ document{ini_read}
 {
 Read in a file, or in patch context this file, in the 'ini' format. By default, store it in a 2d array (section,key)-> value. If 'flat' is set, instead store it as key=>value, ignoring sections. 
 If 'backwards' is set, swap key and value. if 'case' is set, force the key and value into upper or lower case.
-Also return a k=>_ array 'section_array' of section keys.
+Also return a k=>_ array 'section_array' of section keys. If "section" is set, return only entries in the 'section' section (this automatically sets flat=1).
 
 In action context, if path,location, and locbase are all blank, assume an in-game ini file.
 
@@ -23,63 +23,70 @@ DEFINE_PATCH_FUNCTION ini_read
 	INT_VAR backwards=0//Boolean
 			flat=0//Boolean
 	STR_VAR case=""//[upper|lower]
+			section=""
 	RET_ARRAY array section_array
 BEGIN
 	CLEAR_ARRAY array
 	CLEAR_ARRAY section_array
-	SPRINT section default
+	PATCH_IF "%section%" STR_CMP "" BEGIN
+		flat=1
+	END
+	SPRINT section_here default
 	READ_ASCII 0x0 data (BUFFER_LENGTH)
 	LPF data_lines STR_VAR data RET_ARRAY lines END
 	PHP_EACH lines AS ind=>line BEGIN
 		INNER_PATCH "%line%" BEGIN
 			READ_ASCII (BUFFER_LENGTH - 1) last_char (1)
 			REPLACE_EVALUATE "^\[\([^]]*\)\]" BEGIN
-				SPRINT section "%MATCH1%"
+				SPRINT section_here "%MATCH1%"
 				PATCH_MATCH "%case%" WITH
 				upper BEGIN
-					TO_UPPER section
+					TO_UPPER section_here
 				END
 				lower BEGIN
-					TO_LOWER section
+					TO_LOWER section_here
 				END
 				DEFAULT
 				END
-				SPRINT $section_array("%section%") ""
+				SPRINT $section_array("%section_here%") ""
 			END
 			""
-			REPLACE_EVALUATE "\(^[^ =%WNL%%LNL%%MNL%]*[^ %TAB%]\)[ %TAB%]*=[ %TAB%]*\([^ %TAB%].*\)" BEGIN
-			SPRINT key "%MATCH1%"
-			SPRINT value "%MATCH2%"
-			INNER_PATCH_SAVE key "%key%" BEGIN
-				REPLACE_TEXTUALLY "^[ %TAB%]+" "" // strip leading spaces
-			END
-			INNER_PATCH_SAVE value "%value%" BEGIN	// strip trailing spaces
-				REPLACE_TEXTUALLY "[ %TAB%]+$" ""
-			END
-			PATCH_MATCH "%case%" WITH
-			upper BEGIN
-				TO_UPPER key
-				TO_UPPER value
-			END
-			lower BEGIN
-				TO_LOWER key
-				TO_LOWER value
-			END
-			DEFAULT
-			END
-			LPF trim_string STR_VAR string="%value%" character=~"~ RET value=string END
-			PATCH_IF backwards BEGIN
-					SPRINT temp "%value%"
-					SPRINT value "%key%"
-					SPRINT key "%temp%"
+			PATCH_IF "%section%" STR_EQ "" OR "%section%" STR_EQ "%section_here%" BEGIN
+			//	REPLACE_EVALUATE "\(^[^ =%WNL%%LNL%%MNL%]*[^ %TAB%]\)[ %TAB%]*=[ %TAB%]*\([^ %TAB%].*\)" BEGIN
+			REPLACE_EVALUATE "\(^[^ =%WNL%%LNL%%MNL%]*[^ %TAB%]\)[ %TAB%]*=[ %TAB%]*\(.*\)" BEGIN
+					SPRINT key "%MATCH1%"
+					SPRINT value "%MATCH2%"
+					INNER_PATCH_SAVE key "%key%" BEGIN
+						REPLACE_TEXTUALLY "^[ %TAB%]+" "" // strip leading spaces
+					END
+					INNER_PATCH_SAVE value "%value%" BEGIN	// strip trailing spaces
+						REPLACE_TEXTUALLY "[ %TAB%]+$" ""
+					END
+					PATCH_MATCH "%case%" WITH
+					upper BEGIN
+						TO_UPPER key
+						TO_UPPER value
+					END
+					lower BEGIN
+						TO_LOWER key
+						TO_LOWER value
+					END
+					DEFAULT
+					END
+					LPF trim_string INT_VAR require_both=1 STR_VAR string="%value%" character=~"~ RET value=string END
+					PATCH_IF backwards BEGIN
+						SPRINT temp "%value%"
+						SPRINT value "%key%"
+						SPRINT key "%temp%"
+					END
+					PATCH_IF flat BEGIN
+						SPRINT $array("%key%") "%value%"
+					END ELSE BEGIN
+						SPRINT $array("%section_here%" "%key%") "%value%"
+					END
 				END
-				PATCH_IF flat BEGIN
-					SPRINT $array("%key%") "%value%"
-				END ELSE BEGIN
-					SPRINT $array("%section%" "%key%") "%value%"
-				END
+				""
 			END
-			""
 		END	
 	END
 
@@ -89,6 +96,7 @@ DEFINE_ACTION_FUNCTION ini_read
 	INT_VAR backwards=0//Boolean
 			flat=0//Boolean
 	STR_VAR file=""
+			section=""
 			path=""
 			location=""
 			locbase=""
@@ -98,11 +106,173 @@ BEGIN
 	LAF sfo_path STR_VAR file path location locbase RET path END
 	ACTION_IF "%path%" STR_EQ "" BEGIN
 		COPY_EXISTING - "%file%" nowhere
-			LPF ini_read INT_VAR backwards flat STR_VAR case RET_ARRAY array section_array END
+			LPF ini_read INT_VAR backwards flat STR_VAR section case RET_ARRAY array section_array END
 		BUT_ONLY
 	END ELSE BEGIN
 		COPY - "%path%/%file%" nowhere
-			LPF ini_read INT_VAR backwards flat STR_VAR case RET_ARRAY array section_array END
+			LPF ini_read INT_VAR backwards flat STR_VAR section case RET_ARRAY array section_array END
 		BUT_ONLY	
 	END
+END
+
+/*
+document{ini_write
+{
+Write an array to a file, or in patch context this file, in the 'ini' format. If the array is 2D, treat the first key as section entries. Lacks the functionality to wrap multiline entries in quotes.
+}
+*/
+
+DEFINE_PATCH_FUNCTION ini_write
+	STR_VAR array=""
+BEGIN
+	CLEAR_ARRAY section_list
+	PHP_EACH "%array%" AS sfo_reserved_array_ini_write_k=>v BEGIN
+		PATCH_IF VARIABLE_IS_SET sfo_reserved_array_ini_write_k_1 BEGIN
+			SPRINT section_header "%sfo_reserved_array_ini_write_k_0%"
+		END ELSE BEGIN
+			SPRINT section_header "sfo_reserved_no_section"
+		END
+		PATCH_IF VARIABLE_IS_SET $section_list("%section_header%") BEGIN
+			SPRINT data $section_list("%section_header%")
+		END ELSE BEGIN
+			SPRINT data ""
+		END
+		SPRINT $section_list("%section_header%") "%data%%sfo_reserved_array_ini_write_k_1%=%v%%WNL%"
+	END
+	SPRINT alldata ""
+	PHP_EACH section_list AS header=>data BEGIN
+		PATCH_IF "%header%" STR_CMP "sfo_reserved_no_section" BEGIN
+			SPRINT alldata "%alldata%%WNL%[%header%]%WNL%"
+		END
+		SPRINT alldata "%alldata%%data%"
+	END
+	DELETE_BYTES 0x0 BUFFER_LENGTH
+	INSERT_BYTES 0x0 STRING_LENGTH "%alldata%"
+	WRITE_ASCII 0x0 "%alldata%"
+END
+
+DEFINE_ACTION_FUNCTION ini_write
+	STR_VAR file=""
+			path=""
+			location=""
+			locbase=""
+			array=""
+BEGIN
+	LAF sfo_path STR_VAR file path location locbase RET path END
+	ACTION_IF "%path%" STR_EQ "" BEGIN
+		COPY_EXISTING "%file%" override
+			LPF ini_write STR_VAR array END
+		BUT_ONLY
+	END ELSE BEGIN
+		COPY "%path%/%file%" "%path%"		
+			LPF ini_write STR_VAR array END
+		BUT_ONLY	
+	END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Load the standard ini
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{ini_load}
+{
+Loads the default ini into SFO_reserved_ini_hash_%MOD_FOLDER% and SFO_reserved_ini_hash_%MOD_FOLDER%_2d. (Needs to be mod-specific in case we end up reinstalling
+multiple SFO mods at once.)
+
+The ini is located at %SFO_ini_file_location%/%SFO_ini_file% - by default these are %MOD_FOLDER% and %MOD_FOLDER%.ini respectively, but they can be set to other values.
+
+The ini is automatically lowercased.
+}
+
+*/
+
+DEFINE_ACTION_MACRO ini_load BEGIN
+	ACTION_IF !VARIABLE_IS_SET "SFO_ini_loaded_%MOD_FOLDER%" BEGIN
+		OUTER_SET "SFO_ini_loaded_%MOD_FOLDER%"=1
+		ACTION_IF !VARIABLE_IS_SET "SFO_ini_file_%MOD_FOLDER%" BEGIN
+			OUTER_SPRINT file "%MOD_FOLDER%.ini" 
+		END ELSE BEGIN
+			OUTER_SPRINT file EVAL "%SFO_ini_file_%MOD_FOLDER%%" 
+		END
+		ACTION_IF !VARIABLE_IS_SET "SFO_ini_file_location_%MOD_FOLDER%" BEGIN
+			OUTER_SPRINT path "%MOD_FOLDER%"
+		END ELSE BEGIN
+			OUTER_SPRINT path EVAL "%SFO_ini_file_location_%MOD_FOLDER%%" 
+		END
+		ACTION_IF FILE_EXISTS "%path%/%file%" BEGIN
+			LAF ini_read INT_VAR flat=1 STR_VAR file path case=lower RET_ARRAY "SFO_reserved_ini_hash_%MOD_FOLDER%"=array END
+			LAF ini_read INT_VAR flat=0 STR_VAR file path case=lower RET_ARRAY "SFO_reserved_ini_hash_%MOD_FOLDER%_2d"=array END
+		END
+	END	
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Check an ini value (case-insensitive)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/*
+document{ini_check}
+{
+Return a value from the mod's ini (which needs to have previously been read in, as a flat ini, into SFO_reserved_ini_hash).
+If 'section' is set, instead return a section-dependent value from the ini (it needs to have previously been read into SFO_reserved_ini_hash_2d).
+If the ini doesn't contain that value, whine unless silent=1. ini and arguments are synonyms.
+}
+
+
+*/
+
+
+DEFINE_DIMORPHIC_FUNCTION ini_check
+        INT_VAR silent=0
+		STR_VAR ini=""
+				arguments=""
+				section=""
+        RET value
+BEGIN
+	OUTER_PATCH "" BEGIN
+		PATCH_IF "%arguments%" STR_CMP "" BEGIN
+			SPRINT ini "%arguments%"
+		END
+        TO_LOWER ini
+		PATCH_IF "%section%" STR_EQ "" BEGIN
+			PATCH_IF !VARIABLE_IS_SET $"SFO_reserved_ini_hash_%MOD_FOLDER%"(~%ini%~) BEGIN
+			   SPRINT value 0
+			   PATCH_IF !silent BEGIN
+					PATCH_WARN "ini entry %ini% has been checked, but is not present in the ini file"
+			   END
+			END ELSE BEGIN
+			   SPRINT value $"SFO_reserved_ini_hash_%MOD_FOLDER%"(~%ini%~)
+			END
+		END ELSE BEGIN
+			PATCH_IF !VARIABLE_IS_SET $"SFO_reserved_ini_hash_%MOD_FOLDER%_2d"(~%section%~ ~%ini%~) BEGIN
+			   SPRINT value 0
+			   PATCH_IF !silent BEGIN
+					PATCH_WARN "ini entry %ini% in section %section% has been checked, but is not present in the ini file"
+			   END
+			END ELSE BEGIN
+			   SPRINT value $"SFO_reserved_ini_hash_%MOD_FOLDER%_2d"(~%section%~ ~%ini%~)
+			END
+		
+		
+		END
+	END
+END
+
+/*
+document{check_ini}
+{
+Legacy name for ini_check.
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION check_ini
+        INT_VAR silent=0
+		STR_VAR ini=""
+				arguments=""
+				section=""
+        RET value
+BEGIN
+	LAF ini_check INT_VAR silent STR_VAR ini arguments section RET value END
 END

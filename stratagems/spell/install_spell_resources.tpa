@@ -1,0 +1,102 @@
+DEFINE_ACTION_FUNCTION install_spell_resources STR_VAR version=""
+BEGIN
+
+	LAM data_scroll_resrefs
+
+	// check for installation of other resources
+
+	OUTER_SET ascension=FILE_EXISTS_IN_GAME "fingrom.cre" 
+
+	// Detect Spell Revisions
+
+	OUTER_SET demivrgvs=FILE_EXISTS_IN_GAME ~dvimhere.mrk~ 
+
+	// detect Item Revisions
+
+	OUTER_SET item_revisions= MOD_IS_INSTALLED "item_rev.tp2" 0 
+
+	// detect IWD spellsystem
+
+	LAF check_label STR_VAR label=dw_iwdspells_arcane_installed RET dw_iwd_arcane=value END
+	OUTER_SET iwd_arcane=( (MOD_IS_INSTALLED "iwdification.tp2" 30) || dw_iwd_arcane || is_iwd ) 
+
+	LAF check_label STR_VAR label=dw_iwdspells_divine_installed RET dw_iwd_divine=value END
+	OUTER_SET iwd_divine= ( (MOD_IS_INSTALLED "iwdification.tp2" 40) || dw_iwd_divine || is_iwd ) 
+
+	// main install
+
+	LAF 2da_read STR_VAR file=spelltweaks.2da location=data case=mixed RET_ARRAY spelltweak_array=array spelltweak_rows=rows END
+	ACTION_PHP_EACH spelltweak_rows AS file=>discard BEGIN
+		LAF check_ini STR_VAR ini="%file%" section="spell system changes" RET not_disabled=value END
+		LAF check_label STR_VAR label="dw_%file%" RET already_installed=value END
+		ACTION_IF not_disabled BEGIN
+				// component check
+			OUTER_SET proceed=("%version%" STR_EQ "all" && !($spelltweak_array("%file%" component) STR_EQ "debug"))|| "%version%" STR_EQ $spelltweak_array("%file%" component) 
+			// game check
+			ACTION_IF proceed BEGIN
+
+				ACTION_IF already_installed BEGIN
+					PRINT "Not installing spell tweak %file% as it has already been installed"
+					OUTER_SET proceed=0
+				END ELSE BEGIN
+		
+
+					OUTER_SPRINT games $spelltweak_array("%file%" games)
+					OUTER_SET gamecheck=0
+					OUTER_SET is_all=1
+					OUTER_WHILE "%games%" STR_CMP "" BEGIN
+						LAF return_first_entry STR_VAR list="%games%" separator="," RET game=entry games=list END
+						OUTER_SET gamecheck=(gamecheck || "is_%game%")
+					END
+					OUTER_SET proceed=proceed && gamecheck
+				END
+
+				// compatibility check
+				ACTION_IF proceed BEGIN
+					OUTER_SPRINT compat $spelltweak_array("%file%" compatibility)
+					OUTER_WHILE "%compat%" STR_CMP "" BEGIN
+						LAF return_first_entry STR_VAR list="%compat%" separator="," RET check=entry compat=list END
+						ACTION_MATCH "%check%" WITH
+						"*" BEGIN
+						END
+						not_sr BEGIN
+							OUTER_SET proceed=proceed && !demivrgvs
+						END
+						orig BEGIN
+							OUTER_SET proceed=proceed && !enhanced_edition
+						END
+						ee BEGIN
+							OUTER_SET proceed=proceed && enhanced_edition
+						END
+						iwd_arcane BEGIN
+							OUTER_SET proceed=proceed && iwd_arcane
+						END
+						iwd_divine BEGIN
+							OUTER_SET proceed=proceed && iwd_divine
+						END
+						not_iwd_arcane BEGIN
+							OUTER_SET proceed=proceed && !iwd_arcane
+						END
+						not_iwd_divine BEGIN
+							OUTER_SET proceed=proceed && !iwd_divine
+						END
+						not_bg BEGIN
+							OUTER_SET proceed=proceed && (is_bg2 OR !is_bg)
+						END
+						force_blade BEGIN
+							OUTER_SET proceed=proceed && (VARIABLE_IS_SET WIZARD_MORDENKAINEN_SWORD_IWD || is_iwd)
+						END
+						DEFAULT
+							WARN "install_spell_resources: unknown compatibility check %check%"
+						END
+					END
+				END
+				ACTION_IF proceed BEGIN
+					// main install
+					LAF make_label STR_VAR label="dw_%file%" END
+					LAF run STR_VAR file END	
+				END
+			END
+		END
+	END
+END

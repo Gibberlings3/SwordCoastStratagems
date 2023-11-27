@@ -3,10 +3,15 @@ DEFINE_ACTION_FUNCTION genai_iwd BEGIN
    LAF include STR_VAR file=genai.tpa END // for the kits_levels function
 
    LAF include STR_VAR file=research_iwd_scripts.tph locbase=lib END
-   LAF iwd_script_explore END
+   
+   LAF check_ini STR_VAR ini=assume_unmodified_iwd_scripts RET value END
+   ACTION_IF !value BEGIN
+	LAF iwd_script_explore END
+   END
    LAM read_in_iwd_genai_scripts // do it once, not once per run
    LAF genai_edits_before END
    LAF kits_levels END
+   LAF genai_edits_ini END
    LAF genai_edits_area END
    LAF genai_edits_creature END
 
@@ -15,6 +20,15 @@ DEFINE_ACTION_FUNCTION genai_iwd BEGIN
 END
 
 DEFINE_ACTION_FUNCTION genai_edits_before BEGIN
+
+	// make the marker spell for DW_HELP_GROUP
+	
+	LAF ds_resolve_stat STR_VAR id=DW_HELP_GROUP RET stat_ind END
+	CREATE spl "dw#hlpmk"
+		LPF add_basic_spell_ability END
+		LPF ADD_SPELL_EFFECT INT_VAR opcode=328 target=2 timing=9 parameter2=stat_ind special=1 END
+
+
 
     // ranged creatures using designated melee scripts
     
@@ -28,7 +42,14 @@ DEFINE_ACTION_FUNCTION genai_edits_before BEGIN
     LAF swap_are_cre_script STR_VAR area=ar9101 creature=hobart script="efatkmel=>efatkbth" END
     LAF swap_are_cre_script STR_VAR area=ar9715 creature=hobart2 script="efatkmel=>efatkbth" END
     
-    // a few creatures should call for help but not respond to others' calls or go hostile on hearing them - they have an item which prevents them responding
+    // should be in a group
+	
+	are.edit[ar1201]
+	[
+		m.actor.alter{s_script_override:=GNTEAM3M|match="~%s_name%~ STR_EQ ~Orc 9~ OR ~%s_name%~ STR_EQ ~Orc 8~"}
+	]
+	
+	// a few creatures should call for help but not respond to others' calls or go hostile on hearing them - they have an item which prevents them responding
 
     LAF clone_item STR_VAR item=~dw#marker_file=>dw#nohlp~ END
     LAF edit_creature STR_VAR creature=~fleezum flozem fleezum2 flozem2 malavon marketh seth sethh~ editstring=~add_items=>dw#nohlp~ END
@@ -71,6 +92,51 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 
+DEFINE_ACTION_FUNCTION genai_edits_ini BEGIN
+
+    COPY_EXISTING_REGEXP GLOB "ar.*\.ini" override
+		made_ini_change=0
+		LPF ini_read RET_ARRAY array END
+		PHP_EACH array AS k=>v BEGIN
+			PATCH_MATCH "%k_1%" WITH 
+			"script_.*" BEGIN
+				SPRINT filename $array("%k_0%" "cre_file")
+				LPF genai STR_VAR script_old="%v%" filename RET script END
+				PATCH_IF !"%script%" STR_EQ "" && !"%script%" STR_EQ "%v%" BEGIN
+					SPRINT $array("%k_0%" "%k_1%") "%script%"
+					made_ini_change=1
+				END
+			END
+			DEFAULT
+			END		
+		END
+		PATCH_IF made_ini_change BEGIN
+			LPF ini_write STR_VAR array END
+		END
+	BUT_ONLY
+END
+		
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION genai_edits_are BEGIN
+		COPY_EXISTING_REGEXP GLOB ".*\.are" override
+//COPY_EXISTING "ar3401.are" override
+          GET_OFFSET_ARRAY act_arr ARE_V10_ACTORS
+          PHP_EACH act_arr AS act_ind=>act_off BEGIN
+             READ_ASCII (0x80+act_off) filename
+             FOR (script_off=0x58+act_off;script_off<0x80+act_off;script_off+=8) BEGIN
+                READ_ASCII script_off script_old
+                LPF genai STR_VAR script_old filename RET script END
+                PATCH_IF "%script%" STRING_COMPARE_CASE "" BEGIN
+                   WRITE_ASCIIE script_off "%script%" (8)
+                END
+             END
+          END
+    BUT_ONLY
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+
 DEFINE_ACTION_FUNCTION genai_edits_area BEGIN
 
     COPY_EXISTING_REGEXP GLOB "ar.*\.are" override
@@ -86,7 +152,6 @@ DEFINE_ACTION_FUNCTION genai_edits_area BEGIN
                 END
              END
           END
-          PATCH_PRINT "...done"
     BUT_ONLY
 END
 
@@ -114,6 +179,5 @@ DEFINE_ACTION_FUNCTION genai_edits_creature BEGIN
          END
      END
    BUT_ONLY
-   PRINT "...done"
 END
 

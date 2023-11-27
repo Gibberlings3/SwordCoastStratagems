@@ -1,20 +1,45 @@
 DEFINE_ACTION_FUNCTION fast_bears BEGIN
 
-/////////////////////////////////////////////////////////////////////////
-/// BG:EE speed override
-/////////////////////////////////////////////////////////////////////////
+	ACTION_IF enhanced_edition BEGIN
+		LAF fast_bears_ee END
+	END ELSE BEGIN
+		LAF fast_bears_vanilla END
+	END
 
-ACTION_IF FILE_EXISTS_IN_GAME ~extspeed.2da~ BEGIN
-         COPY_EXISTING ~extspeed.2da~ override 
-                 COUNT_2DA_ROWS 2 rowcount
-                 FOR (i=1;i<rowcount;i+=1) BEGIN
-                    READ_2DA_ENTRY i 0 2 anim
-                    PATCH_IF (anim=29184 || anim=29185 || anim=29186 || anim=29187) BEGIN
-                       SET_2DA_ENTRY i 1 2 ~4~
-                    END
-                 END
-         BUT_ONLY
+
 END
+
+DEFINE_ACTION_FUNCTION fast_bears_ee BEGIN
+
+	// make slowing spell
+	
+	spl.make[dw#bslw]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=126 s_target=2 s_timing=1 s_parameter1=50 s_parameter2=2}
+	]
+	
+	// make remover
+	
+	spl.make[dw#bslr]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#bslw}
+	]
+
+	// append script
+	
+	LAF extend STR_VAR script=bear top=bear_ee location=resource END
+
+
+
+
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION fast_bears_vanilla BEGIN
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -51,71 +76,39 @@ END
 
 OUTER_SPRINT bearlist ~~
 COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
-  PATCH_TRY
-     SPRINT bearname ~%SOURCE_RES%~
-     LPF CRE_is_bear RET value=value END
-     PATCH_IF value=1 BEGIN
-        LPF CRE_has_bear_script RET value=value END
-        PATCH_IF value=0 BEGIN
-           PUSH bearlist ~%bearname%~
-        END
-     END
-  WITH DEFAULT
-			LPF regexp_warning STR_VAR parent=fast_bears END
-  END
+	PATCH_TRY
+		READ_LONG 0x28 anim
+		PATCH_IF (anim=0x7200 || anim=0x7201 || anim=0x7202 || anim=0x7203) &&  INDEX_BUFFER ("%tutu_var%c?bear")>=0 BEGIN
+			LPF ADD_CRE_EFFECT INT_VAR opcode=176 target=1 parameter1=8 parameter2=1 timing=1 END
+		END
+	WITH DEFAULT
+		LPF regexp_warning STR_VAR parent=fast_bears END
+	END
 BUT_ONLY
-
-
-/////////////////////////////////////////////////////////////////////////
-// patched velocity for always-hostile bears
-/////////////////////////////////////////////////////////////////////////
-
-    MAKE_PATCH
-       add_effect_inline=>~opcode=>176 target=>1 parameter1=>8 parameter2=>1 timing=>1~
-    END
-
-    LAF edit_creature STR_VAR creature=~%bearlist%~ edits=~patch_data~ END
 
 /////////////////////////////////////////////////////////////////////////
 // shapeshift spells
 /////////////////////////////////////////////////////////////////////////
 // this creates problems with a persistent effect; we could sectype around it on non-EE but it's a pain so I'll wait to do it on request
 
+/*
     ACTION_IF enhanced_edition BEGIN
-        LAF edit_spell STR_VAR spell=~DRUID_SHAPESHIFT_BROWNBEAR DRUID_SHAPESHIFT_BLACKBEAR WIZARD_POLYMORPH_BROWN_BEAR WIZARD_POLYMORPH_BLACK_BEAR~
-                        editstring=~add_effect_inline=>"opcode=>126 target=>1 parameter1=>8 parameter2=>1 duration=>3600000"~
-        END
-        MAKE_PATCH
-            add_effect_inline=>"number_to_add=>2 opcode=>321 target=>1 resource=>~entry_index from [%WIZARD_POLYMORPH_BLACK_BEAR% %WIZARD_POLYMORPH_BROWN_BEAR%]~"
-        END
-        LAF edit_spell STR_VAR spell=WIZARD_POLYMORPH_NATURAL_FORM edits=patch_data END
-        MAKE_PATCH
-            add_effect_inline=>"number_to_add=>2 opcode=>321 target=>1 resource=>~entry_index from [%DRUID_SHAPESHIFT_BLACKBEAR% %DRUID_SHAPESHIFT_BROWNBEAR%]~"
-        END
-        LAF edit_spell STR_VAR spell=spin123 edits=patch_data END
+		spl.edit[%DRUID_SHAPESHIFT_BROWNBEAR% %DRUID_SHAPESHIFT_BLACKBEAR% %WIZARD_POLYMORPH_BROWN_BEAR% %WIZARD_POLYMORPH_BLACK_BEAR%]
+		[
+			m.ab_fx.add{s_opcode=126 s_target=1 s_parameter1=8 s_parameter2=1 s_duration=3600000}
+		]
+		spl.edit[%WIZARD_POLYMORPH_NATURAL_FORM%]
+		[
+			m.ab_fx.add{s_opcode=321 s_target=1 s_resource:=%WIZARD_POLYMORPH_BLACK_BEAR%}
+			m.ab_fx.add{s_opcode=321 s_target=1 s_resource:=%WIZARD_POLYMORPH_BROWN_BEAR%}
+		]
+		spl.edit[spin123]
+		[
+			m.ab_fx.add{s_opcode=321 s_target=1 s_resource:=%DRUID_SHAPESHIFT_BLACKBEAR%}
+			m.ab_fx.add{s_opcode=321 s_target=1 s_resource:=%DRUID_SHAPESHIFT_BROWNBEAR%}
+		]
     END
+	
+	*/
 END
-
-/////////////////////////////////////////////////////////////////////////
-// auxiliary functions
-/////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION CRE_is_bear
-     RET value
-BEGIN
-     LPF CRE_read_animation_code RET anim=value END
-     PATCH_IF (anim=0x7200 || anim=0x7201 || anim=0x7202 || anim=0x7203) BEGIN
-        SET value=1
-     END ELSE BEGIN
-        SET value=0
-     END
-END
-DEFINE_PATCH_FUNCTION CRE_has_bear_script
-     RET value
-BEGIN
-     LPF CRE_match_script STR_VAR arguments=~%tutu_var%bear~ RET value1=value END
-     LPF CRE_match_script STR_VAR arguments=~%tutu_var%cbear~ RET value2=value END
-     SET value=value1 OR value2
-END
-
 
