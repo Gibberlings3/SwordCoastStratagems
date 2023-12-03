@@ -20,6 +20,7 @@ DEFINE_ACTION_FUNCTION resurrection BEGIN
 	LAF ds_resolve_stat STR_VAR id=DW_WAS_IMPRISONED RET imprisonment_stat=stat_ind END
 	LAF ds_resolve_stat STR_VAR id=DW_IS_CHARNAME RET charname_stat=stat_ind END
 	LAF ds_resolve_stat STR_VAR id=DW_CAN_BE_SLAYER RET slayer_stat=stat_ind END
+	LAF ds_resolve_stat STR_VAR id=PETRIFY_IMMUNITY RET petrify_immunity_stat=stat_ind END
 
 	// get NPC data
 	LAM data_joinable_dvs
@@ -59,6 +60,7 @@ DEFINE_ACTION_FUNCTION resurrection BEGIN
 	spl.make[dw#p1pet]
 	[
 		m.ab.add{}
+		m.ab_fx.add{s_opcode=324 s_target=2 s_timing=0 s_duration=1 s_parameter1=petrify_immunity_stat s_parameter2=110 s_resource:=dw#p1pet}
 		m.ab_fx.add{s_opcode=58 s_target=2 s_timing=1} //dispel
 		m.ab_fx.add{s_opcode=328 s_target=2 s_timing=1 s_parameter2=imprisonment_stat s_special=1} // we can safely double up
 		m.ab_fx.add{s_opcode=139 s_target=2 s_timing=1 s_parameter1=petrify_strref}
@@ -304,7 +306,7 @@ DEFINE_ACTION_FUNCTION resurrection BEGIN
 	]
 	
 	// alter all raise dead effects to restore animation;
-	// collect spells/items that use Freedom, Petrify, or Cure Petrify
+	// collect spells/items that use Freedom, Petrify, Cure Petrify, or immunity to 134
 
 	COPY_EXISTING_REGEXP ".*\.\(spl\|itm\)" override
 		PATCH_IF "%SOURCE_EXT%" STR_EQ itm BEGIN
@@ -323,6 +325,16 @@ DEFINE_ACTION_FUNCTION resurrection BEGIN
 				212 134 43 BEGIN
 					SET $"uses_%opcode_here%_opcode"("%SOURCE_FILE%")=1
 				END 
+				101 BEGIN
+					PATCH_IF LONG_AT (fx_off+0x8) = 134 BEGIN
+						SET $petrify_immunity("%SOURCE_FILE%")=1
+					END
+				END
+				324 BEGIN
+					PATCH_IF LONG_AT (fx_off+0x4) = petrify_immunity_stat && LONG_AT (fx_off+0x8) = 110 BEGIN
+						SET $petrify_immunity_already("%SOURCE_FILE%")=1
+					END
+				END
 				DEFAULT
 				END
 			END
@@ -365,6 +377,14 @@ DEFINE_ACTION_FUNCTION resurrection BEGIN
 			LPF CLONE_EFFECT INT_VAR match_opcode=43 opcode=326 timing=1 duration=0 parameter1=charname_stat parameter2=110 STR_VAR resource=dw#p1ptr END
 	END
 	
+	// immunity to petrify needs to apply PETRIFY_IMMUNITY
+	
+	ACTION_PHP_EACH petrify_immunity AS file=>discard BEGIN
+		ACTION_IF !VARIABLE_IS_SET $petrify_immunity_already("%file%") BEGIN
+			COPY_EXISTING "%file%" override
+				LPF CLONE_EFFECT INT_VAR match_opcode=101 match_parameter2=134 opcode=328 parameter1=0 parameter2=petrify_immunity_stat special=1 END
+		END
+	END
 	
 	// append temple descriptions
 	
