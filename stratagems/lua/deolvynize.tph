@@ -32,12 +32,31 @@ BEGIN
 	MKDIR "%workspace%/temp_spells"
 	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_rows=rows kitlist_array=array END
 	LAM data_spells_by_level
+	OUTER_SET autogroup_index=1
+	ACTION_CLEAR_ARRAY deolvynize_spell_lists
+	// sort out the kits that don't use core spells
+	ACTION_FOR_EACH list IN exclude_all_priest exclude_all_mage BEGIN
+		OUTER_SPRINT data EVAL "%%list%%"
+		OUTER_PATCH "%data%" BEGIN
+				REPLACE_EVALUATE "\[\([^]]*\)\] *= *true," BEGIN
+					LOOKUP_IDS_SYMBOL_OF_INT kit kit "%MATCH1%"
+					SPRINT $no_standard_spells("%kit%") ""
+				END
+				""
+		END
+	END
 	ACTION_PHP_EACH olvyn_spells AS resref=>discard BEGIN
 		// get data
 		ACTION_FOR_EACH datatype IN type scroll class_include kit_exclude alignment_exclude kit_include BEGIN
 			OUTER_SPRINT "%datatype%" $olvyn_array("%resref%" "%datatype%")
 		END
 		ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
+			// start with kit_include. If this is set for a kit that doesn't get standard spells, assume this is a bespoke list (or a shared list)
+			ACTION_IF "%kit_include%" STR_CMP "" BEGIN
+				LAF deolvynize_process_kit_include INT_VAR autogroup_index STR_VAR kit_list="%kit_include%" RET spell_list_used spell_list autogroup_index RET_ARRAY deolvynize_spell_lists END
+			END ELSE BEGIN
+				OUTER_SET spell_list_used=0
+			END
 			// parse class_include
 			ACTION_CLEAR_ARRAY class_exclude
 			ACTION_IF type=1 BEGIN
@@ -53,7 +72,9 @@ BEGIN
 			OUTER_PATCH_SAVE class_include "%class_include%" BEGIN
 				REPLACE_TEXTUALLY "," " "
 			END
+			OUTER_SET any_class_includes=0
 			OUTER_WHILE "%class_include%" STR_CMP "" BEGIN
+				OUTER_SET any_class_includes=1
 				LAF return_first_entry STR_VAR list="%class_include%" RET entry class_include=list END
 				OUTER_PATCH "" BEGIN
 					LOOKUP_IDS_SYMBOL_OF_INT class class entry
@@ -67,23 +88,9 @@ BEGIN
 					OUTER_SPRINT include_class "%include_class%%class% "
 				END
 			END
-			// parse kit_include
-			ACTION_CLEAR_ARRAY kit_include_array
-			OUTER_PATCH_SAVE kit_include "%kit_include%" BEGIN
-				REPLACE_TEXTUALLY "," " "
-			END
-			OUTER_WHILE "%kit_include%" STR_CMP "" BEGIN
-				LAF return_first_entry STR_VAR list="%kit_include%" RET entry kit_include=list END
-				OUTER_SET $kit_include_array("%entry%")=1
-			END
-			// parse kit_exclude
-			ACTION_IF type=1 BEGIN
-				OUTER_SPRINT kit_exclude_base "%exclude_all_mage%"
-			END ELSE BEGIN
-				OUTER_SPRINT kit_exclude_base "%exclude_all_priest%"
-			END
+
 			OUTER_SPRINT exclude_kit ""
-			OUTER_PATCH_SAVE kit_exclude "%kit_exclude_base% %kit_exclude%" BEGIN
+			OUTER_PATCH_SAVE kit_exclude "%kit_exclude%" BEGIN
 				REPLACE_TEXTUALLY "," " "
 			END
 			OUTER_WHILE "%kit_exclude%" STR_CMP "" && "%kit_exclude%" STR_CMP " " BEGIN
@@ -134,7 +141,9 @@ BEGIN
 				END
 				OUTER_SPRINT exclude_alignment "%exclude_alignment%%alignment% "
 			END	
-			// attempt to handle kit_include entries that don't just whitelist default kit-exclude
+			// attempt to handle kit_include entries that just add extra spells
+			// temporarily deprecated
+			/*
 			ACTION_PHP_EACH kit_include_array AS kit_number=>value BEGIN
 				ACTION_IF value BEGIN
 					// find the kit name
@@ -168,29 +177,99 @@ BEGIN
 						END					
 					END
 				END
-			END			
+			END		
+			*/
 			// install, assuming there are any classes to install it to 
-			ACTION_IF "%include_class%" STR_CMP "" BEGIN
-			// make sure the spell is in the temp directory (we can't just use override, it might be biffed)
-				COPY_EXISTING "%resref%.spl" "%workspace%/temp_spells"
-				// find an id
-				ACTION_IF type=1 BEGIN
-					OUTER_SPRINT id "WIZARD_CST_%resref%"			
-				END ELSE BEGIN
-					OUTER_SPRINT id "CLERIC_CST_%resref%"		
+			ACTION_IF "%include_class%" STR_CMP "" || spell_list_used BEGIN
+				// install the spell if it's not already in the namespace
+				ACTION_MATCH "%resref%" WITH
+				"SP\(WI\|PR\).*" BEGIN
+					OUTER_SPRINT resref_new "%resref%"
 				END
-				ACTION_TO_UPPER id
-				LAF extended_add_spell STR_VAR id file="%resref%" path="%workspace%/temp_spells" include_class exclude_kit exclude_alignment RET resref_new=resref END
-				// reroute the scroll
-				ACTION_IF "%scroll%" STR_CMP "" BEGIN
-					COPY_EXISTING "%scroll%.itm" override
-						LPF ALTER_EFFECT INT_VAR match_opcode=146 silent=1 STR_VAR resource="%resref_new%" END
-						LPF ALTER_EFFECT INT_VAR match_opcode=147 silent=1 STR_VAR resource="%resref_new%" END
-						LPF ALTER_EFFECT INT_VAR match_opcode=148 silent=1 STR_VAR resource="%resref_new%" END
-					IF_EXISTS
+				DEFAULT
+					// make sure the spell is in the temp directory (we can't just use override, it might be biffed)
+					COPY_EXISTING "%resref%.spl" "%workspace%/temp_spells"
+					// find an id
+					ACTION_IF type=1 BEGIN
+						OUTER_SPRINT id "WIZARD_CST_%resref%"			
+					END ELSE BEGIN
+						OUTER_SPRINT id "CLERIC_CST_%resref%"		
+					END
+					ACTION_TO_UPPER id
+					LAF extended_add_spell STR_VAR id file="%resref%" path="%workspace%/temp_spells" include_class exclude_kit exclude_alignment RET resref_new=resref END
+					// reroute the scroll
+					ACTION_IF "%scroll%" STR_CMP "" BEGIN
+						COPY_EXISTING "%scroll%.itm" override
+							LPF ALTER_EFFECT INT_VAR match_opcode=146 silent=1 STR_VAR resource="%resref_new%" END
+							LPF ALTER_EFFECT INT_VAR match_opcode=147 silent=1 STR_VAR resource="%resref_new%" END
+							LPF ALTER_EFFECT INT_VAR match_opcode=148 silent=1 STR_VAR resource="%resref_new%" END
+						IF_EXISTS 
+					END
+				END
+			END
+			// add to a spell list as appropriate
+			ACTION_IF spell_list_used BEGIN
+				ACTION_IF "%include_class%" STR_CMP "" BEGIN
+					OUTER_SPRINT spell_list_here "%spell_list%_shared"
+				END ELSE BEGIN
+					OUTER_SPRINT spell_list_here "%spell_list%"
+				END
+				ACTION_IF !VARIABLE_IS_SET "%spell_list_here%" BEGIN
+					OUTER_SPRINT "%spell_list_here%" ""
+				END
+				OUTER_SPRINT temp EVAL "%%spell_list_here%%"
+				OUTER_SPRINT "%spell_list_here%" "%temp% %resref_new%"
+				ACTION_IF INDEX (SPWI "%resref_new%")>=0 BEGIN
+					OUTER_SPRINT $spell_list_type("%spell_list_here%") "mage"
+				END ELSE BEGIN
+					OUTER_SPRINT $spell_list_type("%spell_list_here%") "priest"				
 				END
 			END
 		END
+	END
+	//reload spells, since we've added some
+	LAM data_spell_resrefs
+	OUTER_SPRINT class_block_learn ""
+	OUTER_SPRINT class_block_priest ""
+	ACTION_PHP_EACH deolvynize_spell_lists AS k=>v BEGIN
+		OUTER_SPRINT list EVAL "%%v%%"
+		OUTER_SPRINT list_shared EVAL "%%v%_shared%"
+		OUTER_SPRINT spell_list ""
+		OUTER_SPRINT block ""
+		ACTION_IF VARIABLE_IS_SET "%v%" BEGIN
+			LAF define_spell_list STR_VAR spells="%list%" key="%v%" END
+			OUTER_SPRINT spell_list "%spell_list% %v%"
+			OUTER_SPRINT block "%v%"
+		END
+		ACTION_IF VARIABLE_IS_SET "%v%_shared"  BEGIN
+			LAF define_spell_list STR_VAR spells="%list_shared%" key="%v%_shared" END
+			OUTER_SPRINT spell_list "%spell_list% %v%_shared"
+		END
+		OUTER_WHILE "%k%" STR_CMP "" && "%spell_list%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%k%" separator="-" RET kit=entry k=list END
+			ACTION_IF $spell_list_type("%v%") STR_EQ "mage" BEGIN
+				LAF set_spell_list STR_VAR kit allow_learn="%spell_list%" END
+				ACTION_IF INDEX ("%block%" "%class_block_learn%")<0 BEGIN
+					OUTER_SPRINT class_block_learn "%class_block_learn% %block%"
+				END
+			END ELSE BEGIN
+				LAF set_spell_list STR_VAR kit allow_priest="%spell_list%" END		
+				ACTION_IF INDEX ("%block%" "%class_block_priest%")<0 BEGIN
+					OUTER_SPRINT class_block_priest "%class_block_priest% %block%"
+				END
+			END
+		END
+	END
+	ACTION_IF "%class_block_learn%" STR_CMP "" BEGIN
+		ACTION_FOR_EACH class IN MAGE FIGHTER_MAGE MAGE_THIEF CLERIC_MAGE FIGHTER_MAGE_THIEF SORCERER BARD BEGIN
+			LAF set_spell_list STR_VAR class block_learn="%class_block_learn%" END
+		END
+	END
+	ACTION_IF "%class_block_priest%" STR_CMP "" BEGIN
+		ACTION_FOR_EACH class IN CLERIC FIGHTER_CLERIC CLERIC_MAGE CLERIC_RANGER DRUID FIGHTER_DRUID CLERIC_THIEF FIGHTER_MAGE_CLERIC RANGER PALADIN BEGIN
+			LAF set_spell_list STR_VAR class block_priest="%class_block_priest%" END
+		END
+		LAF set_spell_list STR_VAR class=SHAMAN block_learn="%class_block_priest%" END
 	END
 
 END
@@ -267,7 +346,6 @@ BEGIN
 			END
 			ind_now=end+1
 		END
-		
 
 
 END
@@ -390,6 +468,57 @@ end"
 
 END
 
+
+
+DEFINE_DIMORPHIC_FUNCTION deolvynize_process_kit_include
+	INT_VAR autogroup_index=1
+	STR_VAR kit_list=""
+	RET spell_list
+		autogroup_index
+		spell_list_used
+	RET_ARRAY deolvynize_spell_lists
+BEGIN
+	OUTER_SET spell_list_used=0
+	OUTER_PATCH_SAVE kit_list "%kit_list%" BEGIN
+		REPLACE_TEXTUALLY " " ""
+	END
+	ACTION_CLEAR_ARRAY kit_include_array
+	OUTER_WHILE "%kit_list%" STR_CMP "" && "%kit_list%" STR_CMP ","  BEGIN
+		LAF return_first_entry STR_VAR list="%kit_list%" separator="," RET entry kit_list=list END
+		ACTION_PHP_EACH kitlist_rows AS row=>discard BEGIN
+			ACTION_IF IS_AN_INT $kitlist_array("%row%" KITIDS) && $kitlist_array("%row%" KITIDS)=entry && VARIABLE_IS_SET $no_standard_spells("%row%") BEGIN
+				OUTER_SPRINT $kit_include_array("%row%") ""
+				OUTER_SET spell_list_used=1
+			END
+		END
+	END
+	ACTION_SORT_ARRAY_INDICES kit_include_array LEXICOGRAPHICALLY
+	OUTER_SPRINT kit_include_id ""
+	ACTION_PHP_EACH kit_include_array AS kit=>discard BEGIN
+		ACTION_IF "%kit_include_id%" STR_EQ "" BEGIN
+			OUTER_SPRINT kit_include_id "%kit%"
+		END ELSE BEGIN
+			OUTER_SPRINT kit_include_id "%kit_include_id%-%kit%"
+		END
+	END
+	ACTION_IF VARIABLE_IS_SET $deolvynize_spell_lists("%kit_include_id%") BEGIN
+		OUTER_SPRINT spell_list $deolvynize_spell_lists("%kit_include_id%")
+	END ELSE BEGIN
+		ACTION_MATCH "%kit_include_id%" WITH
+		C0DHUNT BEGIN
+			OUTER_SPRINT spell_list "dw-dark_hunter"
+		END
+		C0SABARD-C0SACM-C0SADEPT-C0SAFM-C0SAFMC-C0SAFMT-C0SAMT-C0SASORC BEGIN
+			OUTER_SPRINT spell_list "dw-shadowmagic"
+		END
+		DEFAULT
+			OUTER_SPRINT spell_list "dw-autogroup-%autogroup_index%"
+			OUTER_SET ++autogroup_index		
+		END
+		OUTER_SPRINT $deolvynize_spell_lists("%kit_include_id%") "%spell_list%"
+	END
+END
+		
 
 
 

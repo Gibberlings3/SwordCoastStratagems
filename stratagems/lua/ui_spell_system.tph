@@ -191,6 +191,7 @@ INT_VAR chargen_choose_spells=0//boolean
 		update_scroll_usability=1//boolean
 		update_scrolls_later=0//boolean
 		silent=0//boolean
+		import_parent_blocks=1//boolean
 STR_VAR class="" 
 		kit="" 
 		kit_clastext="" 
@@ -228,7 +229,6 @@ BEGIN
 			END
 		END
 	BUT_ONLY
-	
 	// specialists, wildmages, barbarians need special treatment
 	ACTION_CLEAR_ARRAY spec_id_map
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY spec_id_map BEGIN
@@ -277,16 +277,48 @@ BEGIN
 	END
 
 	LAF load_spell_lists RET_ARRAY spell_lists END
-
 	OUTER_SPRINT add ""
 	// read in m_dw_ssd
 	COPY_EXISTING - m_dw_ssd.lua nowhere
 		READ_ASCII 0x0 lua_contents (BUFFER_LENGTH)
 		SPRINT lua_contents "%lua_contents%%WNL%"
 		SPRINT lua_contents_old "%lua_contents%"
+		
+	// if appropriate, get parent details
+	ACTION_CLEAR_ARRAY parent_data
+	ACTION_CLEAR_ARRAY var_map_parent
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY var_map_parent BEGIN
+		block_learn=>dwLearnedClassSpellBlock
+		block_priest=>dwPriestClassSpellBlock
+	END
+	ACTION_PHP_EACH var_map_parent AS weidu_var=>discard BEGIN
+		OUTER_SPRINT $parent_data("%weidu_var%") ""
+	END
+	ACTION_IF import_parent_blocks BEGIN
+		OUTER_PATCH "%lua_contents%" BEGIN
+			PHP_EACH var_map_parent AS weidu_var=>lua_var BEGIN
+				REPLACE_EVALUATE "%lua_var%\[%class_id%\] *= *{\([^}]*\)}" BEGIN
+					SPRINT entry "%MATCH1%"
+					INNER_PATCH_SAVE entry "%entry%" BEGIN
+						REPLACE_TEXTUALLY "'every_spell'" ""
+						REPLACE_TEXTUALLY "'" " "
+					END	
+					SPRINT $parent_data("%weidu_var%") "%entry%"
+				END
+				""
+			END
+			
+		END
+	END 
 	ACTION_PHP_EACH var_map AS weidu_var=>lua_var BEGIN
 		OUTER_SET no_change=0
 		OUTER_SPRINT list EVAL "%%weidu_var%%"
+		ACTION_PHP_EACH var_map_parent AS weidu_var_parent=>discard BEGIN
+			ACTION_IF "%weidu_var_parent%" STR_EQ "%weidu_var%" BEGIN
+				OUTER_SPRINT list_extra $parent_data("%weidu_var%")
+				OUTER_SPRINT list "%list% %list_extra%"
+			END
+		END
 		OUTER_PATCH_SAVE list "%list%" BEGIN
 			REPLACE_TEXTUALLY "," " " // we allow comma-separated lists as well as space-separated lists as input
 		END
@@ -347,38 +379,38 @@ BEGIN
 	
 	// scrolls
 	ACTION_IF kit_id>0 && !(kit_id=16384) && update_scroll_usability BEGIN
-	ACTION_MATCH "%class_id%" WITH
-		1 //mage
-		5 //bard
-		19 //sorcerer
-		7 // FM
-		10 // FMT 
-		13 // MT
-	BEGIN
-		LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
-	END
-		6 // paladin
-		12 // ranger
-		3 // cleric
-		11 // druid
-		21 // shaman
-		8 // FC
-		15 // CT
-		16 // FD
-		18 // CR
-	BEGIN
-		LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
-	
-	END
-		14 // CM
-		17 // FCM
-	BEGIN
-		LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
-		LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
-	
-	END
-	DEFAULT
-	END
+		ACTION_MATCH "%class_id%" WITH
+			1 //mage
+			5 //bard
+			19 //sorcerer
+			7 // FM
+			10 // FMT 
+			13 // MT
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
+		END
+			6 // paladin
+			12 // ranger
+			3 // cleric
+			11 // druid
+			21 // shaman
+			8 // FC
+			15 // CT
+			16 // FD
+			18 // CR
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
+		
+		END
+			14 // CM
+			17 // FCM
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
+		
+		END
+		DEFAULT
+		END
 	END
 		
 		
@@ -695,7 +727,6 @@ BEGIN
 	LAF get_spell_array STR_VAR list="%allow_priest%" root RET_ARRAY allow_priest_array=this_array END
 	LAF get_spell_array STR_VAR list="%block_learn%" root RET_ARRAY block_learn_array=this_array END
 	LAF get_spell_array STR_VAR list="%block_priest%" root RET_ARRAY block_priest_array=this_array END
-
 
 	ACTION_PHP_EACH allow_learn_array AS spell=>allow_learn BEGIN // we should be able to PHP_EACH through any of these 4, they all contain all spells
 		ACTION_IF 
