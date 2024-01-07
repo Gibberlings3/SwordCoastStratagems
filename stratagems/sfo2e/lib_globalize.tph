@@ -1,0 +1,117 @@
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+describe-library
+{
+Functions for saving arrays with global scope from within functions, and then loading them.
+(Takes advantage of the fact that function definitions are always global.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{globalize_array_save}
+{
+The associative array 'array' is saved, to be accessed later. If append=1, we append to an existing saved array.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION globalize_array_save
+	INT_VAR append=0
+	STR_VAR array=""
+BEGIN
+	OUTER_SPRINT fn_def "%TAB%DEFINE_ASSOCIATIVE_ARRAY array BEGIN%WNL%"
+	ACTION_PHP_EACH "%array%" AS k=>v BEGIN
+		OUTER_SPRINT fn_def "%fn_def%%TAB%%TAB%~~~~~%k%~~~~~=>~~~~~%v%~~~~~%WNL%"
+	END
+	OUTER_SPRINT fn_def "%fn_def%%TAB%END%WNL%"
+		
+<<<<<<<<.../stratagems-inline/globalize_array_include.tph
+DEFINE_PATCH_MACRO sfo_reserved_globalize_%array% BEGIN
+	CLEAR_ARRAY "%array%"
+%fn_def%
+END
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/globalize_array_append.tph
+DEFINE_PATCH_MACRO sfo_reserved_extra_globalize_%array%_%count% BEGIN
+%fn_def%
+END
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/globalize_array_count.tph
+DEFINE_PATCH_MACRO ~sfo_reserved_count_globalize_%array%~ BEGIN 
+	count=%count%
+END
+>>>>>>>>
+
+	ACTION_IF append BEGIN
+		OUTER_PATCH "" BEGIN
+			PATCH_TRY 
+				LPM "sfo_reserved_count_globalize_%array%"
+			WITH
+			".*Unknown macro.*" BEGIN
+				count="-1"
+			END
+			DEFAULT
+				PATCH_RERAISE
+			END			
+		END
+	END ELSE BEGIN
+		OUTER_SET count="-1"
+	END	
+	OUTER_SET ++count
+	ACTION_IF count=0 BEGIN
+		COPY + ".../stratagems-inline/globalize_array_include.tph" "weidu_external/workspace/globalize_array_include.tph" EVALUATE_BUFFER
+		REINCLUDE "weidu_external/workspace/globalize_array_include.tph"	
+	END ELSE BEGIN
+		COPY + ".../stratagems-inline/globalize_array_append.tph" "weidu_external/workspace/globalize_array_append.tph" EVALUATE_BUFFER
+		REINCLUDE "weidu_external/workspace/globalize_array_append.tph"	
+	END
+	COPY + ".../stratagems-inline/globalize_array_count.tph" "weidu_external/workspace/globalize_array_count.tph" EVALUATE_BUFFER
+	REINCLUDE "weidu_external/workspace/globalize_array_count.tph"
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{globalize_array_load}
+{
+The associative array 'array', which should previously have been saved, is loaded and returned as 'array'.
+'success' is returned as 1 if the array was previously saved or 0 otherwise. If success=0, we print a warning,
+unless silent=1.
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_DIMORPHIC_FUNCTION globalize_array_load 
+	INT_VAR silent=0//boolean
+	STR_VAR array=""
+	RET success
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+		CLEAR_ARRAY "array"
+		PATCH_TRY
+			LPM "sfo_reserved_globalize_%array%"
+			success=1
+		WITH
+		".*Unknown macro.*" BEGIN
+			PATCH_IF !silent BEGIN
+				PATCH_WARN "SFO warning: you tried to return the globalized array %array%, but it doesn't exist (returning empty array)"
+			END
+			success=0
+		END
+		DEFAULT
+			PATCH_RERAISE
+		END
+		LPM "sfo_reserved_count_globalize_%array%"
+		FOR (count_here=1;count_here<=count;++count_here) BEGIN
+			LPM "sfo_reserved_extra_globalize_%array%_%count_here%"
+		END
+	END
+END

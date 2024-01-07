@@ -18,11 +18,13 @@ DEFINE_ACTION_FUNCTION charset_wrapper
 	INT_VAR from_utf8=1//boolean // set to 0 if your tra files aren't in UTF8
 			overwrite=0//boolean	 // set to 1 if you want to regenerate the converted files every run
 			verbose=0//boolean	// set to 1 to get more feedback from HANDLE_CHARSETS
+			silent=0//boolean // set to 1 if you don't want to be warned when tra files from a folder in the extra_tra_folders list overlap with the main list
 	STR_VAR	tra_path="" // set to where your tra files are (with or without '%MOD_FOLDER%'
 						// if they're not in %MOD_FOLDER%/tra or %MOD_FOLDER%/lang
 			setup_tra="setup"	// set to whatever you're keeping your WEIDU installation strings in
 			load=""	// set to a space-separated list of any tra files you want loaded 
 			default_language="english" // set to whatever language you wrote the mod in
+			extra_tra_folders="" // set to a space-separated list of any additional folders (relative to %MOD_FOLDER%) containing TRA files
 	RET out_path
 BEGIN
 	// set out path
@@ -68,6 +70,14 @@ BEGIN
 			END
 			""
 		END
+		// get extra_tra into an array
+		OUTER_PATCH "%extra_tra_folders% " BEGIN
+			CLEAR_ARRAY extra_tra_array
+			REPLACE_EVALUATE "\([^ %TAB%]+\)[ %TAB%]+" BEGIN
+				SPRINT $extra_tra_array("%MOD_FOLDER%/%MATCH1%") ""
+			END
+			""
+		END
 		// are we on enhanced edition?
 		// later versions of EE have bgee.lua. Very early versions of BGEE have monkfist.2da
 		OUTER_SET enhanced_edition=( FILE_EXISTS_IN_GAME bgee.lua || FILE_EXISTS_IN_GAME monkfist.2da )
@@ -78,6 +88,7 @@ BEGIN
 			WARN "charset_wrapper warning: can't find iconv.exe"
 		END
 		ACTION_IF convert BEGIN
+			OUTER_SPRINT iconv_path "%tra_path%/iconv"
 			// run HANDLE_CHARSETS
 			LAF HANDLE_CHARSETS
 				INT_VAR from_utf8=from_utf8
@@ -89,34 +100,82 @@ BEGIN
 						reload_array = reload_array
 						default_language = EVAL "%default_language%"
 			END
-			// run it again for the default language
-			LAF HANDLE_CHARSETS
-				INT_VAR from_utf8=from_utf8
-						infer_charsets=1
-						verbose=verbose
-				STR_VAR tra_path = EVAL "%tra_path%" // I hate not being able to assume AUTO_EVAL_STRINGS
-						out_path = EVAL "%out_path%"
-						noconvert_array = noconvert_array
-						reload_array = reload_array
-						language = EVAL "%default_language%"
+			ACTION_PHP_EACH extra_tra_array AS extra_tra_path=>discard BEGIN
+				ACTION_IF !silent BEGIN
+					ACTION_BASH_FOR "%extra_tra_path%/%default_language%" ".*\.tra" BEGIN
+						ACTION_IF FILE_EXISTS "%tra_path%/%default_language%/%BASH_FOR_FILE%" BEGIN
+							WARN "charset_wrapper: namespace conflict (%BASH_FOR_FILE% exists in both %tra_path% and %extra_tra_path%)"
+						END
+					END
+				END
+				LAF HANDLE_CHARSETS
+					INT_VAR from_utf8=from_utf8
+							infer_charsets=1
+							verbose=verbose
+					STR_VAR tra_path = EVAL "%extra_tra_path%" 
+							out_path = EVAL "%out_path%"
+							iconv_path = EVAL "%iconv_path%"
+							default_language = EVAL "%default_language%"
+				END			
 			END
-			
+			// run it again for the default language
+			ACTION_IF !("%default_language%" STR_EQ "%LANGUAGE%") BEGIN
+				LAF HANDLE_CHARSETS
+					INT_VAR from_utf8=from_utf8
+							infer_charsets=1
+							verbose=verbose
+					STR_VAR tra_path = EVAL "%tra_path%" 
+							out_path = EVAL "%out_path%"
+							noconvert_array = noconvert_array
+							reload_array = reload_array
+							language = EVAL "%default_language%"
+				END
+				ACTION_PHP_EACH extra_tra_array AS extra_tra_path=>discard BEGIN
+					LAF HANDLE_CHARSETS
+						INT_VAR from_utf8=from_utf8
+								infer_charsets=1
+								verbose=verbose
+						STR_VAR tra_path = EVAL "%extra_tra_path%" 
+								out_path = EVAL "%out_path%"
+								iconv_path = EVAL "%iconv_path%"
+								language = EVAL "%default_language%"
+					END			
+				END
+			END			
 		END ELSE BEGIN
 			// do our own copies
 			MKDIR "%out_path%"
 			MKDIR "%out_path%/%LANGUAGE%"
 			MKDIR "%out_path%/%default_language%"
 			ACTION_BASH_FOR "%tra_path%/%default_language%" ".*\.tra$" BEGIN
-				ACTION_IF !"%BASH_FOR_RES%" STR_EQ "%setup" BEGIN // don't bother copying this
+				ACTION_IF !"%BASH_FOR_RES%" STR_EQ "%setup_tra%" BEGIN // don't bother copying this
 					COPY "%tra_path%/%default_language%/%BASH_FOR_FILE%" "%out_path%/%default_language%"
-					ACTION_IF FILE_EXISTS "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%" BEGIN
-						OUTER_SPRINT tra "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%"
-					END ELSE BEGIN
-						OUTER_SPRINT tra "%tra_path%/%default_language%/%BASH_FOR_FILE%"
+					ACTION_IF !("%default_language%" STR_EQ "%LANGUAGE%") BEGIN
+						ACTION_IF FILE_EXISTS "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%" BEGIN
+							OUTER_SPRINT tra "%tra_path%/%LANGUAGE%/%BASH_FOR_FILE%"
+						END ELSE BEGIN
+							OUTER_SPRINT tra "%tra_path%/%default_language%/%BASH_FOR_FILE%"
+						END
+						COPY "%tra%" "%out_path%/%LANGUAGE%"
 					END
-					COPY "%tra%" "%out_path%/%LANGUAGE%"
 				END
 			END	
+			ACTION_PHP_EACH extra_tra_array AS extra_tra_path=>discard BEGIN
+				ACTION_BASH_FOR "%extra_tra_path%/%default_language%" ".*\.tra" BEGIN
+					ACTION_IF !silent && FILE_EXISTS "%tra_path%/%default_language%/%BASH_FOR_FILE%" BEGIN
+						WARN "charset_wrapper: namespace conflict (%BASH_FOR_FILE% exists in both %tra_path% and %extra_tra_path%)"						
+					END
+					COPY "%extra_tra_path%/%default_language%/%BASH_FOR_FILE%" "%out_path%/%default_language%"
+					ACTION_IF !("%default_language%" STR_EQ "%LANGUAGE%") BEGIN
+						ACTION_IF FILE_EXISTS "%extra_tra_path%/%LANGUAGE%/%BASH_FOR_FILE%" BEGIN
+							OUTER_SPRINT tra "%extra_tra_path%/%LANGUAGE%/%BASH_FOR_FILE%"
+						END ELSE BEGIN
+							OUTER_SPRINT tra "%extra_tra_path%/%default_language%/%BASH_FOR_FILE%"
+						END
+						COPY "%tra%" "%out_path%/%LANGUAGE%"
+					END					
+				END
+			END
 			// do our own reloads
 			ACTION_PHP_EACH reload_array AS int=>tra BEGIN
 				ACTION_IF "%tra%" STRING_MATCHES_REGEXP ".+\.tra$" = 0 BEGIN

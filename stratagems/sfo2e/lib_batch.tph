@@ -1,0 +1,204 @@
+DEFINE_ACTION_MACRO batch_mode BEGIN
+	PRINT "starting macro"
+	ACTION_IF !VARIABLE_IS_SET SFO_batch_mode_component_number BEGIN
+		OUTER_SET SFO_batch_mode_component_number=0
+	END
+	ACTION_IF !IS_AN_INT SFO_batch_mode BEGIN
+		OUTER_SET SFO_batch_mode=0
+	END
+	ACTION_IF COMPONENT_NUMBER=SFO_batch_mode_component_number BEGIN
+		LAM batch_mode_initialize
+		PRINT "here at component number %COMPONENT_NUMBER%"
+	END ELSE
+	PATCH_PRINT "currently SFO_batch_mode=%SFO_batch_mode%"
+	ACTION_IF SFO_batch_mode BEGIN
+		PRINT "here we go!"
+		LAM batch_mode_initialize
+		COPY + ~%script_file%~ ~%script_file%~
+			REPLACE_TEXTUALLY ~\(components=["]?[0-9 ]*\)~ ~\1%COMPONENT_NUMBER% ~
+		ABORT "%abort_string%"	
+	END 
+	
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO batch_mode_initialize
+BEGIN
+	ACTION_IF !IS_AN_INT SFO_batch_mode || !SFO_batch_mode BEGIN
+		LAF batch_mode_initialize RET script_file abort_string END
+		OUTER_SET SFO_batch_mode=1
+	END
+	
+	// hiding the usual 'Abort' telemetry - do this for every component
+<<<<<<<<.../stratagems-inline/batch.tra
+@-1065="] for subsequent batch install"
+@-1064="Registering ["
+@-1063="REGISTERED FOR BATCH INSTALL"
+>>>>>>>>
+
+	LOAD_TRA ".../stratagems-inline/batch.tra"	
+
+	// final instruction
+	AT_EXIT ~%script_file%~
+END
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION batch_mode_initialize 
+	RET script_file abort_string
+BEGIN
+	// initialize variables
+	ACTION_IF !VARIABLE_IS_SET workspace BEGIN
+		OUTER_SPRINT workspace "weidu_external/workspace"
+	END
+	ACTION_IF !VARIABLE_IS_SET batch_loc BEGIN
+		OUTER_SPRINT batch_loc "weidu_external/batch/%MOD_FOLDER%"
+	END
+	ACTION_IF (~%WEIDU_OS%~ STR_EQ ~win32~) BEGIN
+	  OUTER_SPRINT script_file ~%batch_loc%/batch_run.bat~
+	END ELSE BEGIN
+	  OUTER_SPRINT script_file ~%batch_loc%/batch_run.sh~
+	END	
+	
+	// get the number for the language
+	LAF batch_find_language_numbers RET success RET_ARRAY language_numbers END
+	ACTION_IF success && VARIABLE_IS_SET $language_numbers("%LANGUAGE%") BEGIN
+		OUTER_SET batch_lang=$language_numbers("%LANGUAGE%")
+		OUTER_SPRINT lang_string "--language %batch_lang%"
+	END ELSE BEGIN
+		OUTER_SET batch_lang="-1"
+		OUTER_SPRINT lang_string ""
+	END
+	
+	// from here code is borrowed fairly directly from CDTweaks
+	// detecting auto-setup mode
+	OUTER_PATCH_SAVE bin_file ~%WEIDU_EXECUTABLE%~ BEGIN
+	  // stripping path elements from executable
+	  SET idx = RINDEX_BUFFER(~[/\\]~)
+	  PATCH_IF (idx >= 0) BEGIN
+		DELETE_BYTES 0 (idx + 1)
+	  END
+	END
+	ACTION_TO_LOWER ~bin_file~
+	OUTER_SET is_setup = (~%bin_file%~ STRING_MATCHES_REGEXP ~^setup-.*~ = 0) || (~%bin_file%~ STR_EQ ~weinstall~)
+	OUTER_SET is_unix = (NOT ~%WEIDU_OS%~ STR_EQ ~win32~)
+
+	// generating WeiDU installation script
+	OUTER_SPRINT run ~"%WEIDU_EXECUTABLE%" "%MOD_FOLDER%/%TP2_FILE_NAME%"~
+	ACTION_IF (is_setup) BEGIN
+	  OUTER_SPRINT run ~%run% --noautoupdate~
+	END ELSE BEGIN
+	  OUTER_SPRINT run ~%run% --log "setup-%TP2_BASE_NAME%.debug"~
+	END
+
+	ACTION_IF (is_unix) BEGIN
+	  // compatible with Linux and macOS
+	  OUTER_SPRINT script ~#!/bin/sh%LNL%~
+	  OUTER_SPRINT script ~%script%components=""%LNL%~
+	  OUTER_SPRINT script ~%script%if test -z "$components"; then exit; fi%LNL%~
+	  OUTER_SPRINT script ~%script%%run% %lang_string% --force-install-list ${components}%LNL%~
+	END ELSE BEGIN
+	  OUTER_PATCH_SAVE percent ~ ~ BEGIN WRITE_BYTE 0 37 END  // "%" needed as literal character
+	  OUTER_SPRINT script ~@echo off%WNL%~
+	  OUTER_SPRINT script ~%script%set components=%WNL%~
+	  OUTER_SPRINT script ~%script%if "%percent%components%percent%"=="" exit /b%WNL%~
+	  OUTER_SPRINT script ~%script%%run% %lang_string% --force-install-list %percent%components%percent%%WNL%~
+	END
+
+	//installing the script
+<<<<<<<<.../stratagems-inline/script
+%script%
+>>>>>>>>
+	COPY + ~.../stratagems-inline/script~ ~%script_file%~ EVALUATE_BUFFER
+
+	ACTION_IF (is_unix) BEGIN
+	  AT_NOW ~chmod +x "%script_file%"~
+	END
+
+	OUTER_PATCH_SAVE abort_string "" BEGIN
+		FOR (n=0;n<7;++n) BEGIN
+			INSERT_BYTES 0x0 1
+			WRITE_BYTE 0x0 8
+		END
+	END
+	OUTER_SPRINT abort_string "%abort_string%Component successfully registered for batch install, will be installed at end. (The uninstall message above is normal and expected.)"
+
+
+END
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION batch_find_language_numbers
+	RET success
+	RET_ARRAY language_numbers
+BEGIN
+	OUTER_SET success=0
+	ACTION_CLEAR_ARRAY language_numbers
+	// find the TP2 path
+	ACTION_IF FILE_EXISTS "%MOD_FOLDER%/%TP2_FILE_NAME%" BEGIN
+		OUTER_SPRINT tp2_path "%MOD_FOLDER%/%TP2_FILE_NAME%"
+	END ELSE 
+	ACTION_IF FILE_EXISTS "%TP2_FILE_NAME%" BEGIN
+		OUTER_SPRINT tp2_path "%TP2_FILE_NAME%"
+	END ELSE BEGIN
+		FAIL "batch_find_language_numbers can't find the tp2"
+	END
+	COPY - "%tp2_path%" "weidu_external/workspace"
+		// get rid of anything entirely commented out
+		ind_left=INDEX_BUFFER (EXACT_MATCH "/*")
+		WHILE (ind_left>=0) BEGIN
+			ind_right=INDEX_BUFFER (EXACT_MATCH "*/" ind_left)
+			DELETE_BYTES ind_left (ind_right - ind_left + 2)
+			ind_left=INDEX_BUFFER (EXACT_MATCH "/*")
+		END
+		// get the language data
+		lang_start=INDEX_BUFFER (CASE_SENSITIVE "LANGUAGE")
+		PATCH_IF lang_start>=0 BEGIN
+			success=1
+			count=0
+			lang_end=INDEX_BUFFER (CASE_SENSITIVE "BEGIN" lang_start)
+			WHILE (lang_start<lang_end) BEGIN
+				lang_next=INDEX_BUFFER (CASE_SENSITIVE "LANGUAGE" (lang_start+1) )
+				PATCH_IF lang_next<0 BEGIN
+					lang_next=lang_end
+				END
+				READ_ASCII lang_start data (lang_next - lang_start)
+				INNER_PATCH "%data%" BEGIN
+					SPRINT language "NOT_FOUND"
+					REPLACE_EVALUATE "LANGUAGE[ %TAB%%WNL%%MNL%%LNL%]+~[^~]+~[ %TAB%%WNL%%MNL%%LNL%]+\([^ %TAB%%WNL%%MNL%%LNL%]+\)" BEGIN
+						SPRINT language "%MATCH1%"
+					END
+					""
+					REPLACE_EVALUATE ~LANGUAGE[ %TAB%%WNL%%MNL%%LNL%]+"[^"]+"[ %TAB%%WNL%%MNL%%LNL%]+\([^ %TAB%%WNL%%MNL%%LNL%]+\)~ BEGIN
+						SPRINT language "%MATCH1%"
+					END
+					""
+					PATCH_MATCH "%language%" WITH
+					"NOT_FOUND" BEGIN END
+					DEFAULT
+						SET $language_numbers("%language%")=count
+						++count
+					END
+				END
+				lang_start=lang_next
+			END		
+		END ELSE BEGIN
+			success=0
+		END
+
+		
+END
+
+
+
+
+

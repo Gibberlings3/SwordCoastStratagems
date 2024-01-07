@@ -2,7 +2,7 @@
 /*
 describe-library
 {
-Files for manipulating 2d arrays via their (assumed uppercase) rows and columns. The
+Functions for manipulating 2d arrays via their (assumed uppercase) rows and columns. The
 main use case is reading these 2d arrays out of .2da game files and extracting data from
 them, and/or manipulating them and writing them back in. This is (hopefully) a much simpler
 and more transparent way to manipulate 2das than by READ_2DA_ENTRY and friends.</p>
@@ -126,6 +126,14 @@ BEGIN
 			DEFAULT
 				col_row=0
 				main_row=0
+				/* --- too many false positives on incomplete tables
+				PATCH_IF !allow_incomplete_lines BEGIN
+					COUNT_2DA_ROWS (colcount - 1) rowcount_with_title
+					PATCH_IF !(rowcount_with_title = rowcount + 1) BEGIN
+						PATCH_FAIL "2da_read error: the current file (probably %SOURCE_FILE%) is being edited as a 2DA file but is not a legal 2DA file (or, possibly, is a 2DA file with incomplete lines)"
+					END
+				END
+				*/
 			END
 			READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
 			FOR (col=1;col<colcount;++col) BEGIN
@@ -388,6 +396,8 @@ If you don't specify a path for the 2da file, it's assumed to be a game file.
 
 If 'number_rows' is set to 1, the row names are replaced by integers, counting upwards from 0.
 If 'reflect' is set to 1, rows and columns are swapped.
+
+If you don't specify the default element, we try to read it from the current file
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////
@@ -396,7 +406,7 @@ DEFINE_PATCH_FUNCTION 2da_write
 			number_rows=0//boolean
 	STR_VAR array=""//array
 			type=""//[2da|ids|table_header|table_noheader]
-			default="*"
+			default=""
 BEGIN
 	// get cols, rows
 	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
@@ -459,6 +469,13 @@ BEGIN
 
 	PATCH_MATCH "%type%" WITH
 	"2da" BEGIN
+		// try to find default, if not set already
+		PATCH_IF "%default%" STR_EQ "" BEGIN
+			LPF 2da_find_default RET default=value END
+			PATCH_IF "%default%" STR_EQ "NOT_2DA" BEGIN
+				SPRINT default "*"
+			END
+		END
 		// initialise
 		SPRINT data "2DA V1.0%WNL%%default%%WNL%"
 		// extract col data
@@ -1388,3 +1405,117 @@ END
 <<<<<<<<.../stratagems-inline/process_table_include.tpc
 LAF %function% INT_VAR %int_string% STR_VAR %str_string% END
 >>>>>>>>
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_sort}
+{
+Takes a 2da, sorts rows and/or columns.
+Set "rows" and/or "columns" to "lexicographically" or "numerically" (case-insensitive). Can use 'l' or 'n' as synonyms
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION 2da_sort 
+	STR_VAR rows=""
+			columns=""
+			array=""
+	RET_ARRAY array
+BEGIN
+	OUTER_PATCH "" BEGIN
+		LPF array_keys STR_VAR array="%array%" RET_ARRAY array_rows=keys1 array_columns=keys2 END
+		done_anything=0
+		PATCH_MATCH "%rows%" WITH
+		"lexicographically" "l" BEGIN
+			done_anything=1
+			SORT_ARRAY_INDICES array_rows LEXICOGRAPHICALLY
+		END
+		"numerically" "l" BEGIN
+			done_anything=1
+			SORT_ARRAY_INDICES array_rows NUMERICALLY
+		END
+		"" BEGIN
+		END
+		DEFAULT
+			done_anything=1
+			PATCH_WARN "2da_sort: illegal argument %rows%"
+		END
+		PATCH_MATCH "%columns%" WITH
+		"lexicographically" "l" BEGIN
+			done_anything=1
+			SORT_ARRAY_INDICES array_rows LEXICOGRAPHICALLY
+		END
+		"numerically" "l" BEGIN
+			done_anything=1
+			SORT_ARRAY_INDICES array_rows NUMERICALLY
+		END
+		"" BEGIN
+		END
+		DEFAULT
+			done_anything=1
+			PATCH_WARN "2da_sort: illegal argument %columns%"
+		END
+		PATCH_IF !done_anything BEGIN
+			PATCH_WARN "2da_sort called with no actual arguments"
+		END
+		CLEAR_ARRAY sfo_working_array // 'array' might be set to 'array'
+		PHP_EACH array_rows AS row=>discard BEGIN
+			PHP_EACH array_columns AS column=>discard BEGIN
+				SPRINT $sfo_working_array("%row%" "%column%") $"%array%"("%row%" "%column%")
+			END
+		END
+		CLEAR_ARRAY array
+		PHP_EACH array_rows AS row=>discard BEGIN
+			PHP_EACH array_columns AS column=>discard BEGIN
+				SPRINT $array("%row%" "%column%") $sfo_working_array("%row%" "%column%")
+			END
+		END
+	END
+END
+	
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_find_default}
+{
+In the current file, return the default 2da entry, or "NOT_2DA" if the file is not a 2da file.
+
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION 2da_find_default RET value
+BEGIN
+	SPRINT value "NOT_2DA"
+	PATCH_IF INDEX_BUFFER ("2DA[ %TAB%]+V1\.0")=0 BEGIN
+		READ_2DA_ENTRY 1 0 1 value
+		
+	END
+
+
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_prettier_print}
+{
+Like PRETTY_PRINT_2DA, but checks the file has >2 rows and doesn't treat "2DA V1.0" as two columns
+
+
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION 2da_prettier_print 
+BEGIN
+		COUNT_2DA_ROWS 0 rowcount
+		PATCH_IF rowcount>2 BEGIN
+			PRETTY_PRINT_2DA
+			REPLACE_TEXTUALLY "^2DA[ %TAB%]+V1.0" "2DA V1.0"
+		END
+END
+
+

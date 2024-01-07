@@ -593,9 +593,9 @@ DEFINE_ACTION_FUNCTION data_priest_spells_core//internal
 BEGIN
 	// load hidespl (note that 2.6 doesn't use the is_final thing)
 	ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
-		LAF 2da_read STR_VAR file=hidespl.2da RET_ARRAY rows array END
+		LAF 2da_read STR_VAR file=hidespl.2da RET_ARRAY rows hidden_array=array END
 		ACTION_IF enhanced_edition BEGIN
-			LAF 2da_extract_array STR_VAR array range=IS_HIDDEN RET_ARRAY hidden_spells=array END
+			LAF 2da_extract_array STR_VAR array=hidden_array range=IS_HIDDEN RET_ARRAY hidden_spells=array END
 		END ELSE BEGIN
 			ACTION_PHP_EACH rows AS k=>v BEGIN
 				OUTER_SET $hidden_spells("%k%")=1
@@ -739,6 +739,120 @@ BEGIN
 	END
 	
 	LAF 2da_read STR_VAR file=profsmax.2da RET_ARRAY profsmax=array rows END	
+
+END
+
+/*
+document{data_vanilla_high_spells}
+{
+This just loads a hardcoded (uppercased, resref=>discard) list of hidden spells in the 50-99 namespace. It allows for the Spell Revisions mod.
+}
+
+*/
+
+DEFINE_DIMORPHIC_FUNCTION data_vanilla_high_spells 
+	RET_ARRAY vanilla_high_spells 
+BEGIN
+	ACTION_CLEAR_ARRAY vanilla_high_spells
+	
+	// these are common to all games
+	ACTION_FOR_EACH spell IN 
+		SPPR150
+		SPPR250
+		SPPR350
+		SPPR450
+		SPPR550
+		SPPR599
+		SPPR650
+		SPPR698
+		SPPR699
+		SPPR750
+		SPPR751
+		SPWI298
+		SPWI299
+		SPWI399
+		SPWI853
+		SPWI888
+		SPWI897
+		SPWI898
+		SPWI899
+		SPWI975
+		SPWI985
+		SPWI995
+	BEGIN
+		OUTER_SET $vanilla_high_spells("%spell%")=1
+	END
+	// all the polymorph/enchanted-weapon stuff in SPW4xx
+	OUTER_FOR (n=480;n<=499;++n) BEGIN
+		ACTION_IF !(n=492) BEGIN // odd gap
+			OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+		END
+	END
+	// SI
+	OUTER_FOR (n=590;n<=597;++n) BEGIN
+		OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+	END
+	// IWD-only
+	ACTION_IF GAME_IS IWDEE BEGIN
+		OUTER_SET $vanilla_high_spells("SPPR199")=1
+	
+	END 
+	ACTION_IF GAME_IS "BGEE EET BG2EE" BEGIN
+		// on BG2, most of the SPWI9xx space is full
+		OUTER_FOR (n=950;n<=965;++n) BEGIN
+			OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+		END
+		OUTER_FOR (n=979;n<=999;++n) BEGIN
+			OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+		END
+	END
+	ACTION_IF GAME_IS "BGEE" BEGIN
+		OUTER_SET $vanilla_high_spells("SPWI975")=1
+	END
+	ACTION_IF GAME_IS "EET" BEGIN
+		OUTER_SET $vanilla_high_spells("SPWI966")=1
+	END		
+	// SR v4
+	ACTION_IF demivrgvs BEGIN
+		OUTER_FOR (n=461;n<=465;++n) BEGIN //polymorph
+			OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+		END
+		OUTER_FOR (n=971;n<=978;++n) BEGIN //shapechange
+			OUTER_SET $vanilla_high_spells("SPWI%n%")=1
+		END
+	END
+END
+
+
+///////////////////////////////////////////////////////////////////////
+/*
+document{data_priest_spells_by_type}
+{
+Goes through all spells in the SPPR namespace and returns a resref=>discard array of druid and cleric spells. We don't return spells in HIDESPL or in the hardcoded list of spells in the 50-99 namespace that aren't in use
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION data_priest_spells_by_type
+	RET_ARRAY druid_spells cleric_spells
+BEGIN
+	ACTION_CLEAR_ARRAY druid_spells
+	ACTION_CLEAR_ARRAY cleric_spells
+	LAF data_vanilla_high_spells RET_ARRAY vanilla_high_spells END
+	LAF 2da_read STR_VAR file=hidespl.2da RET_ARRAY hidespl_array=rows END
+	COPY_EXISTING_REGEXP - 
+	"SPPR[1-7][0-9A-Z][0-9A-Z].spl" nowhere
+			SPRINT resref "%SOURCE_RES%"
+			TO_UPPER resref // probably redundant
+			PATCH_IF !VARIABLE_IS_SET $vanilla_high_spells("%resref%") && !VARIABLE_IS_SET $hidespl_array("%resref%") BEGIN
+				PATCH_IF !((BYTE_AT 0x21) BAND BIT7) BEGIN
+					SPRINT $druid_spells("%resref%") ""
+				END
+				PATCH_IF !((BYTE_AT 0x21) BAND BIT6) BEGIN
+					SPRINT $cleric_spells("%resref%") ""
+				END
+			END
+
 
 END
 

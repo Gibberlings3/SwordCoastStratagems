@@ -1,0 +1,186 @@
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{3p_load_data}
+{
+Loads all the inis in the folder 'sfo_3p_folder' (by default weidu_external/data/dw_shared/%MOD_FOLDER%3p)
+Returns them as a series of arrays, labelled by ini sections - so all the entries in [sphere], across all the
+inis, get returned in $sfo_3p_sphere. If the key has the form firstbit:secondbit, instead we return a 2D array
+using secondbit as a key: so entries in [kit:dw_cleric_mask] would get returned as values of $sfo_3p_kit("dw_cleric_mask" [whatever])
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_MACRO 3p_load_data
+BEGIN
+	LOCAL_SET value=0
+	LOCAL_SPRINT k ""
+	LOCAL_SPRINT k_0 ""
+	LOCAL_SPRINT k_0a ""
+	LOCAL_SPRINT k_0b ""
+	LOCAL_SPRINT k_1 ""
+	LOCAL_SPRINT v ""
+
+	ACTION_IF !VARIABLE_IS_SET sfo_3p_data_loaded BEGIN
+		OUTER_SET sfo_3p_data_loaded=1
+		// get the data
+		ACTION_IF !VARIABLE_IS_SET "sfo_3p_folder" BEGIN
+			OUTER_SPRINT sfo_3p_folder "%MOD_FOLDER%_3p"
+		END
+		LAF 3p_load_data_helper STR_VAR sfo_3p_folder RET_ARRAY sfo_3p_data END
+		// filter it
+		ACTION_PHP_EACH sfo_3p_data AS k=>v BEGIN
+			ACTION_IF INDEX (":" "%k_0%")>=0 BEGIN
+				LAF return_first_entry STR_VAR list="%k_0%" separator=":" RET k_0a=entry k_0b=list END
+				OUTER_SPRINT $"sfo_3p_%k_0a%"("%k_0b%" "%k_1%") "%v%"
+			END ELSE BEGIN
+				OUTER_SPRINT $"sfo_3p_%k_0%"("%k_1%") "%v%"
+			END
+		END
+	
+	
+	END
+
+
+END
+
+
+DEFINE_ACTION_FUNCTION 3p_load_data_helper//internal
+	STR_VAR sfo_3p_folder="%data_loc_shared%/dw_tof3p"
+	RET_ARRAY
+		sfo_3p_data
+BEGIN
+	ACTION_CLEAR_ARRAY sfo_3p_data
+	ACTION_BASH_FOR "%data_loc_shared%/%sfo_3p_folder%" ".*\.ini" BEGIN
+		LAF ini_read STR_VAR file="%BASH_FOR_FILE%" path="%data_loc_shared%/%sfo_3p_folder%" RET_ARRAY temp_array=array END
+		ACTION_PHP_EACH temp_array AS k=>v BEGIN
+			OUTER_SPRINT $sfo_3p_data("%k_0%" "%k_1%") "%v%"
+		END
+	END
+END
+	
+	
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{3p_kit}
+{
+Goes through the array 'sfo_3p_kit', and for each cre=>kit assigns the kit 'kit' (from kit.ids), if it exists, to the cre file 'cre'.cre
+
+The kit is not enforced but can be picked up by other mods (e.g. SCS) and will apply normally to joinables.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION 3p_kit BEGIN
+	
+	LAM 3p_load_data
+	
+	ACTION_PHP_EACH sfo_3p_kit AS resref=>kit BEGIN
+		OUTER_SET kitnum=IDS_OF_SYMBOL (kit "%kit%")
+		ACTION_IF kitnum>=0 BEGIN
+			COPY_EXISTING "%resref%.cre" override
+				LPF cre_set_kit INT_VAR kitnum END
+			BUT_ONLY
+			IF_EXISTS
+		END
+	
+	END
+END
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{3p_kit_sphere}
+{
+Goes through the array 'sfo_3p_kit', and for each (kit,'spheres')=>spheres assigns those spheres to the kit. 
+Input can be either,
+(i) a comma-separated list of spheres 
+(ii) a comma-separated list of spheres prepended by + or -.
+
+In case (ii), the list is applied as modifiers to the class default.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION 3p_kit_sphere BEGIN
+
+	LAM 3p_load_data
+	OUTER_SET done_anything=0
+	ACTION_PHP_EACH sfo_3p_kit AS k=>sphere_list BEGIN
+		ACTION_IF "%k_1%" STR_EQ "spheres" BEGIN
+			OUTER_SPRINT kit "%k_0%"
+			ACTION_IF IDS_OF_SYMBOL (kit "%kit%")>=0 BEGIN
+			OUTER_SPRINT spheres ""
+				OUTER_SPRINT add ""
+				OUTER_SPRINT subtract ""
+				OUTER_SPRINT list "%sphere_list%"
+				OUTER_SET type2=0
+				OUTER_SET type1=0
+				OUTER_WHILE "%list%" STR_CMP "" BEGIN
+					LAF return_first_entry STR_VAR list separator="," RET entry list END
+					ACTION_IF INDEX ("\+" "%entry%")>=0 BEGIN
+						OUTER_PATCH_SAVE entry "%entry%" BEGIN
+							DELETE_BYTES 0x0 1
+						END
+						OUTER_SET type2=1
+						OUTER_SPRINT add "%add% %entry%"
+					END ELSE
+					ACTION_IF INDEX ("-" "%entry%")>=0 BEGIN
+						OUTER_PATCH_SAVE entry "%entry%" BEGIN
+							DELETE_BYTES 0x0 1
+						END
+						OUTER_SET type2=1
+						OUTER_SPRINT subtract "%subtract% %entry%"			
+					END ELSE BEGIN
+						OUTER_SET type1=1
+						OUTER_SPRINT spheres "%spheres% %entry%"
+					END			
+				END
+				ACTION_IF type1 && type2 BEGIN
+					LAF warning STR_VAR warning="SFO warning: 3p kit-sphere entry for kit %kit% is illegal (skipping)" END
+				END ELSE BEGIN
+					OUTER_SET done_anything=1
+					LAF assign_spheres INT_VAR update_scrolls_later=1 STR_VAR kit spheres add subtract END
+				END
+			END
+		END
+	END
+	ACTION_IF done_anything BEGIN
+		LAF process_scroll_usability_now END	
+	END
+
+END
+
+///////////////////////////////////////////////////////////////////////////////////
+/*
+document{3p_kit_bonus_spells}
+{
+Goes through the array 'sfo_3p_kit_spheres', and for each kit=>spheres assigns those spheres to the kit. 
+Input can be either,
+(i) a comma-separated list of spheres 
+(ii) a comma-separated list of spheres prepended by + or -.
+
+In case (ii), the list is applied as modifiers to the class default.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION 3p_kit_bonus_spells BEGIN
+	LAM 3p_load_data
+	ACTION_PHP_EACH sfo_3p_kit AS k=>spells BEGIN
+		ACTION_IF "%k_1%" STR_EQ "bonus_spells" BEGIN
+			OUTER_SPRINT kit "%k_0%"
+			ACTION_IF IDS_OF_SYMBOL (kit "%kit%")>=0 BEGIN
+				OUTER_PATCH_SAVE spells "%spells%" BEGIN
+					REPLACE_TEXTUALLY "," " "
+				END
+				LAF assign_bonus_spells STR_VAR kit spells END
+
+			END
+		END
+	END
+
+
+END

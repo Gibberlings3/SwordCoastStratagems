@@ -91,6 +91,8 @@ BEGIN
 		END
 	END
 	LAF trim_string STR_VAR string="%parent_class%" RET parent_class=string END
+	LAF trim_string STR_VAR string="%parent_class%" character="~" RET parent_class=string END
+	LAF trim_string STR_VAR string="%parent_class%" character=~"~ RET parent_class=string END
 	ACTION_IF "%filter%" STR_CMP "" BEGIN
 		LAF anon_check INT_VAR has_output=1 STR_VAR function="%filter%" RET filter=function SFO_anon_func_count END
 	END
@@ -142,6 +144,7 @@ DEFINE_ACTION_FUNCTION kit_copy
 			struct=k
 BEGIN
 	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
+		PRINT "copying %kit%"
 		LAF return_first_pair STR_VAR list="%kit%" RET old_kit=key new_kit=value kit=list END
 		ACTION_PHP_EACH sfo_vtable_kit_clastext_remap AS k=>v BEGIN
 			ACTION_IF "%v%" STR_EQ "%old_kit%" BEGIN
@@ -164,7 +167,21 @@ BEGIN
 		OUTER_PATCH "" BEGIN
 			LPF "%function%" END	
 		END
-		PRINT "...done"
+		LAF 2da_read STR_VAR file=clastext.2da RET_ARRAY clastext_rows=rows clastext_array=array END
+		ACTION_TO_UPPER new_kit 
+		ACTION_IF FILE_EXISTS_IN_GAME "campaign.2da" BEGIN
+			LAF 2da_read STR_VAR file=campaign.2da RET_ARRAY campaign_array=array campaign_rows=rows END
+			ACTION_PHP_EACH campaign_rows AS row=>discard BEGIN
+				OUTER_SPRINT clastext_here $campaign_array("%row%" "CLASTEXT")
+				LAF 2da_read STR_VAR file="%clastext_here%.2da" RET_ARRAY here_array=array here_rows=rows here_columns=columns END
+				ACTION_IF !VARIABLE_IS_SET $here_rows("%new_kit%") BEGIN
+					ACTION_PHP_EACH here_columns AS col=>discard BEGIN
+						OUTER_SPRINT $here_array("%new_kit%" "%col%") $clastext_array("%new_kit%" "%col%")
+					END
+					LAF 2da_write STR_VAR file="%clastext_here%.2da" array=here_array END
+				END
+			END
+		END
 	END
 END
 
@@ -1371,11 +1388,12 @@ ACTION_IF !value BEGIN
 		LATHANDER                       => Cl3
 	END
 	
-	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_array=array END
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_rows=rows kitlist_array=array END
 	
 
 	COPY_EXISTING "luabbr.2da" override
 		LPF 2da_read RET_ARRAY lua_array=array lua_rows=rows END
+
 		// first pass: set defaults
 		PHP_EACH lua_rows AS row=>discard BEGIN
 			PATCH_IF VARIABLE_IS_SET $class_abbrev("%row%") BEGIN
@@ -1397,6 +1415,18 @@ ACTION_IF !value BEGIN
 					END
 				END
 				SPRINT $lua_array("%row%" "ABBREV") "%lua_new%"			
+			END
+		END
+
+		// add any missing elements
+		PHP_EACH kitlist_rows AS row=>discard BEGIN
+			PATCH_IF !VARIABLE_IS_SET $lua_rows("%row%") BEGIN
+				SPRINT $lua_rows("%row%") "null"
+				SPRINT parent_class_num $kitlist_array("%row%" "CLASS")
+				PATCH_IF IS_AN_INT parent_class_num BEGIN
+					LOOKUP_IDS_SYMBOL_OF_INT parent_class class parent_class_num
+					SPRINT $lua_array("%row%" "ABBREV") $class_abbrev("%parent_class%")
+				END
 			END
 		END
 

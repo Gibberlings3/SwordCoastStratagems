@@ -13,13 +13,18 @@ END
 
 ACTION_TIME sfo_setup_libraries BEGIN
 	ACTION_BASH_FOR "%MOD_FOLDER%/%sfo_library_path%" ".*\.tph$" BEGIN
-		ACTION_TRY
-			INCLUDE "%BASH_FOR_FILESPEC%"
-		WITH DEFAULT
-			PRINT "fatal error installing library %BASH_FOR_FILESPEC%; attempting to give details."
-			VERBOSE
-			INCLUDE "%BASH_FOR_FILESPEC%"
-			ACTION_RERAISE
+		ACTION_MATCH "%BASH_FOR_RES%" WITH
+		lib_batch BEGIN //lib_batch is not autoloaded
+		END
+		DEFAULT
+			ACTION_TRY
+				INCLUDE "%BASH_FOR_FILESPEC%"
+			WITH DEFAULT
+				PRINT "fatal error installing library %BASH_FOR_FILESPEC%; attempting to give details."
+				VERBOSE
+				INCLUDE "%BASH_FOR_FILESPEC%"
+				ACTION_RERAISE
+			END
 		END
 	END
 END
@@ -50,31 +55,26 @@ END
 ////////////////////////////////////////////////////////////////////////////
 
 ACTION_TIME sfo_setup_charsets BEGIN
-	ACTION_IF VARIABLE_IS_SET "LANGUAGE" && !VARIABLE_IS_SET sfo_charset_wrapper_run BEGIN
+	ACTION_IF VARIABLE_IS_SET "LANGUAGE" && !(VARIABLE_IS_SET sfo_charset_wrapper_run && FILE_EXISTS "%workspace%/dw_this_run_tra.mrk") BEGIN
+		ACTION_IF FILE_EXISTS "%workspace%/dw_this_run_tra.mrk" BEGIN
+			DELETE + "%workspace%/dw_this_run_tra.mrk" // will persist even if component does not install
+		END
+		COPY_EXISTING "misc01.itm" "%workspace%/dw_this_run_tra.mrk"
 		OUTER_SET sfo_charset_wrapper_run=1
 		LAF charset_wrapper
 			INT_VAR from_utf8=sfo_from_utf8
 					overwrite=1
 			STR_VAR tra_path="%sfo_tra_path%"
-					setup_tra="NULL_SKIP_ME"
+					setup_tra="%sfo_setup_tra%"
+					load="%sfo_tra_load%"
+					extra_tra_folders="%sfo_extra_tra_folders%"
+					default_language="%sfo_default_language%"
 			RET out_path 
 		END
 		OUTER_SPRINT sfo_tra_loc "%out_path%"
 		OUTER_SPRINT scs_tra_loc "%out_path%"
 		OUTER_SET SFO_charsets_handled=1
 	END
-/* old version
-	
-	ACTION_IF VARIABLE_IS_SET "LANGUAGE" BEGIN
-		LAF sfo_handle_charsets 
-			INT_VAR sfo_from_utf8
-			STR_VAR sfo_tra_path
-					sfo_iconv_path
-			RET sfo_tra_loc scs_tra_loc
-		END
-		OUTER_SET SFO_charsets_handled=1
-	END
-*/ 
 END
 
 

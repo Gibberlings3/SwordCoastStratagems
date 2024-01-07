@@ -1,0 +1,2153 @@
+/*
+describe-library
+{
+Set up and add to SFO's externalized spell system. You can define any number of spell lists, labelled by a string (the 'key'). Each class
+and kit then has four lists of spell-list keys: allow_learn, block_learn, allow_priest and block_priest. A combination of UI editing
+and item alterations then enforces those lists on all classes and kits.
+}
+
+
+*/
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+
+document{define_spell_list}
+{
+Given a space-separated list of spells 'spells', and/or an array spell=>_ or spell=>spell_level of spells, and a string 'key',
+construct a spell list 'key' comprising those spells. If you use the spell=>spell_level format, it saves looking up the levels of the spells).</p>
+
+<p>Spells can be given either as resrefs or as IDS entries (if the latter, they need to have been loaded into memory using data_spell_resrefs).
+If a spell is missing, whine unless silent=1.</p>
+
+<p>If determine_empty_levels=1, also record which levels are empty in the lua output. (empty_level_max is the highest level at which this is done - default is 9.)</p>
+
+<p>Spell system is automatically set up if it isn't already.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+<<<<<<<<.../stratagems-inline/blank
+>>>>>>>>
+
+DEFINE_ACTION_FUNCTION define_spell_list
+INT_VAR determine_empty_levels=0 //boolean
+		empty_level_max=9 
+		silent=0 //boolean
+STR_VAR spells="" 
+		key="" 
+		list_name=""
+		spell_array=""
+BEGIN
+	ACTION_IF "%list_name%" STR_EQ "" BEGIN
+		OUTER_SPRINT list_name "[silent]%key%"
+	END
+	ACTION_IF !VARIABLE_IS_SET data_loc_shared BEGIN
+		OUTER_SPRINT data_loc_shared "weidu_external/data/dw_shared"
+	END
+	ACTION_IF !FILE_EXISTS "%data_loc_shared%/dw_spell_list_names.txt" BEGIN
+		COPY ".../stratagems-inline/blank" "%data_loc_shared%/dw_spell_list_names.txt"
+	END	
+	APPEND_OUTER "%data_loc_shared%/dw_spell_list_names.txt" ~%key%="%list_name%"~
+	LAF ui_spell_system_setup END
+	
+	// delete any previous occurrences
+	COPY_EXISTING "m_dw_ssd.lua" override
+		REPLACE_TEXTUALLY "dwSpellList\['%key%'\]={[^}]*}[%WNL%]?" ""
+		REPLACE_TEXTUALLY "dwSpellList\['%key%'\]\.empty={[^}]*}[%WNL%]?" ""
+	BUT_ONLY
+	
+	OUTER_SPRINT add "dwSpellList['%key%']={%WNL%"
+	ACTION_CLEAR_ARRAY spells_at_level
+	ACTION_IF "%spell_array%" STRING_EQUAL "" BEGIN
+		OUTER_SPRINT spell_array "temp_array"
+		ACTION_CLEAR_ARRAY temp_array
+	END
+	OUTER_WHILE "%spells%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%spells%" RET entry spells=list END
+		OUTER_SPRINT $"%spell_array%"("%entry%") ""
+	END
+	ACTION_PHP_EACH "%spell_array%" AS spell=>level BEGIN
+	  ACTION_IF "%spell%" STRING_COMPARE_CASE null BEGIN
+		ACTION_TO_UPPER spell
+		ACTION_IF VARIABLE_IS_SET "%spell%" BEGIN
+			OUTER_SPRINT resref EVAL "%%spell%%"
+		END ELSE BEGIN
+			OUTER_SPRINT resref "%spell%"
+		END
+		ACTION_TO_UPPER resref
+		ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" && !VARIABLE_IS_SET $spell_is_hidden("%resref%") && INDEX (CASE_INSENSITIVE "\(SPPR\|SPWI\)" "%resref%")>=0 BEGIN
+		 ACTION_IF determine_empty_levels BEGIN
+			ACTION_IF !IS_AN_INT level || level=0 BEGIN
+				COPY_EXISTING "%resref%.spl" override
+					READ_LONG 0x34 level
+				BUT_ONLY
+			END
+			OUTER_SET $spells_at_level("%level%")=1
+		 END
+		 OUTER_SPRINT add "%add%%TAB%%resref%=true,%WNL%"
+		END ELSE BEGIN
+			ACTION_IF !silent BEGIN
+				WARN "Unrecognised spell %resref%.spl included in spell list %key%"
+			END
+		END
+	  END
+	END
+	
+	ACTION_IF determine_empty_levels BEGIN
+		OUTER_SPRINT add_empty "dwSpellList['%key%'].empty={" //separate to help with later search-and-replace
+		OUTER_FOR (level=1;level<=empty_level_max;++level) BEGIN
+			ACTION_IF !VARIABLE_IS_SET $spells_at_level("%level%") BEGIN
+				OUTER_SPRINT add_empty "%add_empty%[%level%]=true,"
+			END
+		END
+		OUTER_SPRINT add_empty "%add_empty%}%WNL%%WNL%"
+	END ELSE BEGIN
+		OUTER_SPRINT add_empty "dwSpellList['%key%'].empty={}"
+	END
+
+
+	OUTER_WHILE "%spells%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list="%spells%" RET ids=entry spells=list END
+		ACTION_IF VARIABLE_IS_SET "%ids%" BEGIN
+			OUTER_SPRINT resref EVAL "%%ids%%"
+			OUTER_SPRINT add "%add%%TAB%%resref%=true,%WNL%"
+		END
+	END
+	APPEND "m_dw_ssd.lua" "%add%}%WNL%%WNL%%add_empty%%WNL%%WNL%" KEEP_CRLF
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION load_spell_lists//internal
+	RET_ARRAY spell_lists
+BEGIN
+	ACTION_CLEAR_ARRAY spell_lists
+		OUTER_SPRINT $spell_lists("no_change") ""
+		COPY_EXISTING - "m_dw_ssd.lua" nowhere
+			REPLACE_EVALUATE "dwSpellList\['\([^']+\)'\]" BEGIN
+				SPRINT $spell_lists("%MATCH1%") ""
+			END
+			""
+	BUT_ONLY
+	// get the spell-list names if the list exists
+	ACTION_CLEAR_ARRAY spell_list_names
+	ACTION_IF !VARIABLE_IS_SET data_loc_shared BEGIN
+		OUTER_SPRINT data_loc_shared "weidu_external/data/dw_shared"
+	END
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/dw_spell_list_names.txt" BEGIN
+		COPY - "%data_loc_shared%/dw_spell_list_names.txt" nowhere
+			REPLACE_EVALUATE ~\([^%WNL%%MNL%%LNL%=]+\)="\(.*\)"~ BEGIN
+				SPRINT $spell_lists("%MATCH1%") "%MATCH2%"
+			END
+			""
+	END
+	
+
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{set_spell_list}
+{
+Set the spell lists available to, or blocked for, a given class or kit (either set class to a class.ids entry, or kit to a 
+kitlist.2da rowname). Each of block_learn, allow_learn, block_priest, or allow_priest can be a space-separated or comma-separated
+list of spell-list keys, or 'no_change' (the default) in which case whatever it's currently set to will be unchanged.</p>
+
+<p>If chargen_choose_spells=1, the lua also sets dwChargenChooseSpells to 1 for that class or kit. That causes the UI to try to
+learn spells from the character's specialist list, if any. [This is an odd place to put this, on reflection.]</p>
+
+<p>If update_scroll_usability=1, we also go through all scrolls and mark them up as usable/unusable for that class/kit.</p>
+
+<p>If the spell system is not already set up, we set it up.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION set_spell_list
+INT_VAR chargen_choose_spells=0//boolean
+		update_scroll_usability=1//boolean
+		update_scrolls_later=0//boolean
+		silent=0//boolean
+		import_parent_blocks=1//boolean
+STR_VAR class="" 
+		kit="" 
+		kit_clastext="" 
+		block_learn="no_change" 
+		allow_learn="no_change" 
+		block_priest="no_change" 
+		allow_priest="no_change"
+BEGIN
+	LAF ui_spell_system_setup END
+	ACTION_TO_UPPER class
+	ACTION_TO_UPPER kit
+	ACTION_IF "%class%%kit%" STRING_EQUAL "" BEGIN
+		FAIL "set_spell_list requires either a class or a kit to be set"
+	END
+	ACTION_IF "%kit%" STRING_COMPARE "" && "%class%" STRING_COMPARE "" BEGIN
+		FAIL "set_spell_list cannot have both class and kit set"
+	END
+	ACTION_IF "%kit_clastext%" STRING_EQUAL "" BEGIN
+		OUTER_SPRINT kit_clastext "%kit%"
+	END
+
+	OUTER_SPRINT ids "%class%%kit%"
+	OUTER_SPRINT ids_clastext "%class%%kit_clastext%"
+
+	COPY_EXISTING - clastext.2da nowhere
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW clastext_data colcount
+		FOR (row=0;row<clastext_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER clastext_data row 0 ids_here
+			PATCH_IF "%ids_here%" STRING_EQUAL_CASE "%ids_clastext%" BEGIN
+				READ_2DA_ENTRY_FORMER clastext_data row 1 class_id
+				READ_2DA_ENTRY_FORMER clastext_data row 2 kit_id
+				READ_2DA_ENTRY_FORMER clastext_data row 5 name_strref
+				GET_STRREF name_strref name
+			END
+		END
+	BUT_ONLY
+	// specialists, wildmages, barbarians need special treatment
+	ACTION_CLEAR_ARRAY spec_id_map
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY spec_id_map BEGIN
+		ABJURER=>22
+		CONJURER=>23
+		DIVINER=>24
+		ENCHANTER=>25
+		ILLUSIONIST=>26
+		INVOKER=>27
+		NECROMANCER=>28
+		TRANSMUTER=>29
+		WILDMAGE=>30
+		BARBARIAN=>31
+	END
+	ACTION_IF VARIABLE_IS_SET $spec_id_map("%ids_clastext%") BEGIN
+		OUTER_SET kit_id=$spec_id_map("%ids_clastext%")
+	END
+	COPY_EXISTING kitlist.2da override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 ids_here
+			PATCH_IF "%ids_here%" STRING_EQUAL_CASE "%ids%" BEGIN
+				READ_2DA_ENTRY_FORMER kitlist_data row 9 kit_ids_entry
+			END
+		END
+	BUT_ONLY
+
+	ACTION_CLEAR_ARRAY var_map
+	ACTION_IF "%kit%" STRING_COMPARE "" BEGIN
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY var_map BEGIN
+			block_learn=>dwLearnedKitSpellBlock
+			allow_learn=>dwLearnedKitSpellAllow
+			block_priest=>dwPriestKitSpellBlock
+			allow_priest=>dwPriestKitSpellAllow
+		END
+		OUTER_SET id=kit_id
+	END ELSE BEGIN
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY var_map BEGIN
+			block_learn=>dwLearnedClassSpellBlock
+			allow_learn=>dwLearnedClassSpellAllow
+			block_priest=>dwPriestClassSpellBlock
+			allow_priest=>dwPriestClassSpellAllow
+		END
+		OUTER_SET id=class_id
+	END
+
+	LAF load_spell_lists RET_ARRAY spell_lists END
+	OUTER_SPRINT add ""
+	// read in m_dw_ssd
+	COPY_EXISTING - m_dw_ssd.lua nowhere
+		READ_ASCII 0x0 lua_contents (BUFFER_LENGTH)
+		SPRINT lua_contents "%lua_contents%%WNL%"
+		SPRINT lua_contents_old "%lua_contents%"
+		
+	// if appropriate, get parent details
+	ACTION_CLEAR_ARRAY parent_data
+	ACTION_CLEAR_ARRAY var_map_parent
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY var_map_parent BEGIN
+		block_learn=>dwLearnedClassSpellBlock
+		block_priest=>dwPriestClassSpellBlock
+	END
+	ACTION_PHP_EACH var_map_parent AS weidu_var=>discard BEGIN
+		OUTER_SPRINT $parent_data("%weidu_var%") ""
+	END
+	ACTION_IF import_parent_blocks BEGIN
+		OUTER_PATCH "%lua_contents%" BEGIN
+			PHP_EACH var_map_parent AS weidu_var=>lua_var BEGIN
+				REPLACE_EVALUATE "%lua_var%\[%class_id%\] *= *{\([^}]*\)}" BEGIN
+					SPRINT entry "%MATCH1%"
+					INNER_PATCH_SAVE entry "%entry%" BEGIN
+						REPLACE_TEXTUALLY "'every_spell'" ""
+						REPLACE_TEXTUALLY "'" " "
+					END	
+					SPRINT $parent_data("%weidu_var%") "%entry%"
+				END
+				""
+			END
+			
+		END
+	END 
+	ACTION_PHP_EACH var_map AS weidu_var=>lua_var BEGIN
+		OUTER_SET no_change=0
+		OUTER_SPRINT list EVAL "%%weidu_var%%"
+		ACTION_PHP_EACH var_map_parent AS weidu_var_parent=>discard BEGIN
+			ACTION_IF "%weidu_var_parent%" STR_EQ "%weidu_var%" BEGIN
+				OUTER_SPRINT list_extra $parent_data("%weidu_var%")
+				OUTER_SPRINT list "%list% %list_extra%"
+			END
+		END
+		OUTER_PATCH_SAVE list "%list%" BEGIN
+			REPLACE_TEXTUALLY "," " " // we allow comma-separated lists as well as space-separated lists as input
+		END
+		OUTER_SPRINT data ""
+		OUTER_WHILE "%list%" STRING_CONTAINS_REGEXP "^ *$" BEGIN
+			LAF return_first_entry STR_VAR list RET entry list END
+			ACTION_IF !silent && !VARIABLE_IS_SET $spell_lists("%entry%") && !("%entry%" STR_EQ "every_spell") BEGIN
+				WARN "You are trying to assign spell list %entry%, but it does not exist."
+			END
+			ACTION_IF "%entry%" STRING_EQUAL_CASE no_change BEGIN
+				OUTER_SET no_change=1
+			END ELSE BEGIN
+				OUTER_SPRINT data "%data%'%entry%',"
+			END
+		END
+		OUTER_SET already_present=0
+		OUTER_PATCH_SAVE lua_contents "%lua_contents%" BEGIN
+			REPLACE_EVALUATE "%lua_var%\[%id%\] *= *{\([^}]*\)}" BEGIN
+				SET already_present=1
+				PATCH_IF no_change BEGIN
+					SPRINT data "%MATCH1%"
+				END
+			END
+			"%lua_var%[%id%]={%data%}"
+		END
+		ACTION_IF !already_present BEGIN
+			ACTION_IF no_change BEGIN
+				ACTION_MATCH "%weidu_var%" WITH
+				allow_learn allow_priest BEGIN
+					OUTER_SPRINT data "'every_spell'"
+				END
+				DEFAULT END
+			END
+			OUTER_SPRINT lua_contents "%lua_contents%%lua_var%[%id%]={%data%}%WNL%" 		
+		END
+		// update the value itself for scroll usability purposes
+		OUTER_PATCH_SAVE "%weidu_var%" "%data%" BEGIN
+			REPLACE_TEXTUALLY "'" ""
+			REPLACE_TEXTUALLY "," " "
+		END
+
+	END	
+	ACTION_IF !already_present BEGIN
+			OUTER_SPRINT lua_contents "%lua_contents%%WNL%" 	
+		
+	END
+	ACTION_IF chargen_choose_spells BEGIN
+		OUTER_SPRINT lua_contents "%lua_contents%dwChargenChooseSpells[%id%]=true%WNL%%WNL%" 
+	END
+	
+	// write lua
+	ACTION_IF "%lua_contents%" STR_CMP "%lua_contents_old%" BEGIN
+		COPY_EXISTING "m_dw_ssd.lua" override
+			DELETE_BYTES 0x0 BUFFER_LENGTH
+			INSERT_BYTES 0x0 STRING_LENGTH "%lua_contents%"
+			WRITE_ASCII 0x0 "%lua_contents%"
+	END
+	
+	// scrolls
+	ACTION_IF kit_id>0 && !(kit_id=16384) && update_scroll_usability BEGIN
+		ACTION_MATCH "%class_id%" WITH
+			1 //mage
+			5 //bard
+			19 //sorcerer
+			7 // FM
+			10 // FMT 
+			13 // MT
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
+		END
+			6 // paladin
+			12 // ranger
+			3 // cleric
+			11 // druid
+			21 // shaman
+			8 // FC
+			15 // CT
+			16 // FD
+			18 // CR
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
+		
+		END
+			14 // CM
+			17 // FCM
+		BEGIN
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=mage allow_learn block_learn END
+			LAF scroll_usability INT_VAR class_id kit_ids_entry update_scrolls_later STR_VAR type=priest allow_priest block_priest END
+		
+		END
+		DEFAULT
+		END
+	END
+		
+		
+END
+
+
+
+////////////////////////////////////////////////////////////
+/// Setup main function
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{ui_spell_system_setup}
+{
+Set up the externalized spell system. (Idempotent.)
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION ui_spell_system_setup BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_ssf.lua" BEGIN // if it does, we're installed already
+	
+	// sort out class/kit detection
+	
+	LAF ui_detect_class_kit END
+	
+	// get a couple of strings used in the LUA
+	
+	LAF get_strrefs_for_lua RET cleric_strref druid_strref shaman_strref END
+	
+	// install LUA
+
+	COPY ".../stratagems-inline/spell_system_functions.lua" "override/m_dw_ssf.lua" EVALUATE_BUFFER
+	COPY ".../stratagems-inline/spell_system_data.lua" "override/m_dw_ssd.lua" EVALUATE_BUFFER
+
+	// input the scroll data 
+	
+	LAF spell_system_scroll_data END
+	
+	// make the UI edits
+
+	
+	COPY_EXISTING "ui.menu" override
+		// first extract the 'show specialist message' label from CHARGEN_CHOOSE_SPELLS, and build variants for the two memorized-spell labels
+		LPF UI_return_object STR_VAR object=CHARGEN_CHOOSE_SPELLS object_type=menu RET object_data END
+		INNER_PATCH "%object_data%" BEGIN
+			PATCH_IF INDEX_BUFFER ("shouldShowSpecialistMessage") >=0 BEGIN
+				LPF UI_return_object STR_VAR object="shouldShowSpecialistMessage()" object_type=label object_name_field=enabled RET message_label=object_data END
+				memo_label=1
+			END ELSE BEGIN
+				memo_label=0
+			END
+		END
+		PATCH_IF memo_label BEGIN
+			INNER_PATCH_SAVE priest_memo_label "label {%WNL%%message_label%%WNL%}%WNL%" BEGIN
+				REPLACE_TEXTUALLY "shouldShowSpecialistMessage()" "chargen.extraSpells==0 and not dwChargenSpecialistRequirementsSatisfied(priestSpells)"
+				REPLACE_TEXTUALLY "text lua.*" ~text lua "dwSpecialistMemoMessage()"~
+			END
+			INNER_PATCH_SAVE mage_memo_label "%priest_memo_label%" BEGIN
+				REPLACE_TEXTUALLY "priestSpells" "mageSpells"
+			END	
+		END
+	
+		// these are common to all menus
+		LPF UI_alter_object STR_VAR object=CHARGEN_MEMORIZE_PRIEST object_type=menu patch=memorize_priest_spells_edit END
+		LPF UI_alter_function STR_VAR function=itemDescRightButtonEnabled patch=edit_rightbuttonenabled END
+		LPF UI_alter_object STR_VAR object=CHARGEN_CHOOSE_SPELLS object_type=menu patch=choose_spells_edit END
+		LPF UI_alter_function STR_VAR function=specialistFrame patch=specialist_spell_edit END
+		LPF UI_alter_object STR_VAR object=CHARGEN_MEMORIZE_MAGE object_type=menu patch=chargen_memorize_mage_spells END
+		LPF UI_alter_object STR_VAR object=ITEM_DESCRIPTION object_type=menu patch=learn_spell_bonus_patch END
+		PATCH_IF memo_label BEGIN
+			LPF UI_alter_function STR_VAR function=shouldShowSpecialistMessage patch=edit_specialist_message_function END
+			LPF UI_insert_into_object STR_VAR object=CHARGEN_MEMORIZE_PRIEST object_type=menu insert_data="%priest_memo_label%" END
+			LPF UI_insert_into_object STR_VAR object=CHARGEN_MEMORIZE_MAGE object_type=menu insert_data="%mage_memo_label%" END
+		END
+		LPF UI_alter_object STR_VAR object=MAGE object_type=menu patch=mage_spellbook_hack END
+		LPF UI_alter_object STR_VAR object=PRIEST object_type=menu patch=priest_spellbook_hack END
+		
+		// these are specific to particular games
+		PATCH_IF GAME_IS IWDEE BEGIN
+			LPF UI_alter_object STR_VAR object=MAGE object_type=menu patch=patch_spec_iwd END
+			LPF UI_alter_object STR_VAR object=PRIEST object_type=menu patch=patch_spec_iwd_priest END
+			LPF UI_alter_function STR_VAR function=refreshPriestBook patch=refresh_priest_spells_edit END
+		
+		END ELSE BEGIN
+			LPF UI_alter_object STR_VAR object=MAGE object_type=menu patch=patch_spec_bg END
+			LPF UI_alter_object STR_VAR object=PRIEST object_type=menu patch=patch_spec_bg_priest END
+			LPF UI_alter_function STR_VAR function=refreshPriestBook patch=refresh_priest_book_edit END
+		
+		
+		END
+
+	BUT_ONLY
+	
+
+	END
+END
+
+
+DEFINE_ACTION_FUNCTION get_strrefs_for_lua//internal
+RET cleric_strref druid_strref shaman_strref BEGIN
+
+	COPY_EXISTING clastext.2da override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW clastext_data colcount
+		FOR (row=0;row<clastext_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER clastext_data row 0 id
+			READ_2DA_ENTRY_FORMER clastext_data row 5 strref
+			PATCH_MATCH "%id%" WITH 
+			CLERIC BEGIN
+				SET cleric_strref=strref
+			END
+			DRUID BEGIN
+				SET druid_strref=strref
+			END
+			SHAMAN BEGIN
+				SET shaman_strref=strref
+			END
+			DEFAULT
+			END
+		END
+	BUT_ONLY
+END
+
+
+DEFINE_ACTION_FUNCTION spell_system_scroll_data//internal
+BEGIN
+
+	OUTER_SPRINT data "dwScrollSpellMap={"
+	COPY_EXISTING_REGEXP - ".*\.itm" nowhere
+		PATCH_IF SHORT_AT 0x1c=11 BEGIN // is it a scroll?
+			SPRINT scroll "%SOURCE_RES%"
+			// check for illegal symbols that LUA can't handle
+			PATCH_IF "%scroll%" STRING_CONTAINS_REGEXP "#"  BEGIN			
+				GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+				PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+					GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						PATCH_IF SHORT_AT fx_off=147 BEGIN
+							READ_ASCII 0x14+fx_off spell
+							TO_UPPER spell
+							TO_UPPER scroll
+							SPRINT data "%data%%TAB%%scroll%='%spell%',%WNL%"
+						END
+					END
+				END	
+			END
+		END
+	BUT_ONLY
+	
+	ACTION_IF RESOURCE_CONTAINS "m_dw_ssd.lua" "dwScrollSpellMap" BEGIN
+		COPY_EXISTING "m_dw_ssd.lua" override
+			REPLACE_TEXTUALLY "dwScrollSpellMap={[^}]*}" "%data%}"
+	END ELSE BEGIN
+		APPEND "m_dw_ssd.lua" "%data%}%WNL%%WNL%"
+	END
+END
+
+
+
+////////////////////////////////////////////////////////////
+/// UI-edit patches
+////////////////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION memorize_priest_spells_edit//internal
+BEGIN
+
+	REPLACE_TEXTUALLY ~\([ %TAB%]*\)\(table.sort.*\)~ ~\1dwBuildChargenPriestChooseSpell()%WNL%\1\2~
+	REPLACE_TEXTUALLY ~clickable lua "createCharScreen:IsDoneButtonClickable()"~ ~clickable lua "createCharScreen:IsDoneButtonClickable() and dwChargenSpecialistRequirementsSatisfied(priestSpells)"~
+	REPLACE_TEXTUALLY ~currentChargenMemorizePriestSpell ?= ?nil~ ~currentChargenMemorizePriestSpell = nil%WNL%%TAB%%TAB%dwIsPriest=true~
+
+END
+
+DEFINE_PATCH_FUNCTION choose_spells_edit//internal
+BEGIN
+	REPLACE_TEXTUALLY ~\([ %TAB%]*\)\(table.sort.*\)~ ~\1dwLearnSpecialistSpells()%WNL%\1dwBuildChooseSpell()%WNL%\1\2~
+	REPLACE_TEXTUALLY EXACT_MATCH ~clickable lua "createCharScreen:IsDoneButtonClickable()"~ ~clickable lua "createCharScreen:IsDoneButtonClickable() and dwChargenSpecialistRequirementsSatisfied(spellBook)"~
+	REPLACE_TEXTUALLY EXACT_MATCH ~text lua "t('SPECIALIST_SPELL_REQ')"~ ~text lua "dwSpecialistSpellMessage()"~
+END
+
+DEFINE_PATCH_FUNCTION refresh_priest_spells_edit//internal
+BEGIN
+	REPLACE_TEXTUALLY EXACT_MATCH 
+		"bookSpells = characters[id].priestSpells[currentSpellLevel]"
+		"bookSpells = characters[id].priestSpells[currentSpellLevel]%WNL%bookSpells=build_dwPriestSpell(bookSpells)"
+	REPLACE_TEXTUALLY "bottomSpells *= *{}" "characters[id].priestSpells[currentSpellLevel]=build_dwPriestSpell(characters[id].priestSpells[currentSpellLevel])%WNL%%TAB%%TAB%bottomSpells = {}"
+
+		
+END
+DEFINE_PATCH_FUNCTION refresh_priest_book_edit//internal
+BEGIN
+	REPLACE_TEXTUALLY 
+		"if characters\[id\]\.hasClericBook +then"
+		"if characters[id].hasClericBook then%WNL%%TAB%%TAB%characters[id].priestSpells[currentSpellLevel]=build_dwPriestSpell(characters[id].priestSpells[currentSpellLevel])"
+	REPLACE_TEXTUALLY 
+		"if (characters\[id\]\.hasClericBook\([^)]*\)) +then"
+		"if (characters[id].hasClericBook\1) then%WNL%%TAB%%TAB%characters[id].priestSpells[currentSpellLevel]=build_dwPriestSpell(characters[id].priestSpells[currentSpellLevel])"
+	REPLACE_TEXTUALLY "bottomSpells *= *{}" "characters[id].priestSpells[currentSpellLevel]=build_dwPriestSpell(characters[id].priestSpells[currentSpellLevel])%WNL%%TAB%%TAB%bottomSpells = {}"
+
+END
+
+DEFINE_PATCH_FUNCTION edit_rightbuttonenabled//internal
+BEGIN
+
+	REPLACE_TEXTUALLY 
+		"itemDescRightButtonEnabled()"
+		"itemDescRightButtonEnabled()
+		res=itemDesc.item.res
+		if dwScrollSpellMap[res] then
+			allow=dwFindLearnedSpellAllow(false)
+			block=dwFindLearnedSpellBlock(false)
+			if not dwSpellAvailable(dwScrollSpellMap[res],allow,block) then
+				return false
+			end
+		end"
+END
+
+DEFINE_PATCH_FUNCTION patch_spec_iwd//internal
+BEGIN
+
+		REPLACE_TEXTUALLY ~bookSpells\[shownSpellOffset \* numberOfKnown\(Mage\|Priest\)SpellSlots \+ \([0-9]+\)\]"~
+						  ~bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2]" clickable lua "dwSpellEnabled(bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2].resref)" greyscale lua "not dwSpellEnabled(bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2].resref)"~
+		REPLACE_TEXTUALLY ~showMageMemorizationFlash ?= ?false~ ~showMageMemorizationFlash = false%WNL%%TAB%%TAB%dwIsPriest=nil~
+
+END
+
+DEFINE_PATCH_FUNCTION patch_spec_iwd_priest//internal
+BEGIN
+
+		REPLACE_TEXTUALLY ~bookSpells\[shownSpellOffset \* numberOfKnown\(Mage\|Priest\)SpellSlots \+ \([0-9]+\)\]"~
+						  ~bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2]" clickable lua "dwSpellEnabled(bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2].resref,true)" greyscale lua "not dwSpellEnabled(bookSpells[shownSpellOffset * numberOfKnown\1SpellSlots + \2].resref,true)"~
+		REPLACE_TEXTUALLY ~showPriestMemorizationFlash ?= ?false~ ~showPriestMemorizationFlash = false%WNL%%TAB%%TAB%dwIsPriest=true~
+
+END
+
+DEFINE_PATCH_FUNCTION patch_spec_bg//internal
+BEGIN
+
+		REPLACE_TEXTUALLY ~^\(.*\)bam[ %TAB%]+lua[ %TAB%]+"bookSpells\[rowNumber\]\.icon"~ ~\1bam	lua "bookSpells[rowNumber].icon"%WNL%\1greyscale lua "bookMode==0 and not dwSpellEnabled(bookSpells[rowNumber])"~
+		REPLACE_TEXTUALLY ~\(mageScreen:MemorizeSpell([ %TAB%]*bookSpells\[currentBookSpell\]\.level,[ %TAB%]*bookSpells\[currentBookSpell\]\.index )\)~ ~if dwSpellEnabled(bookSpells[currentBookSpell]) then \1 end~
+		REPLACE_TEXTUALLY ~#bottomSpells < #bottomSpellsPlaceHolder~ ~#bottomSpells < #bottomSpellsPlaceHolder and dwSpellEnabled(bookSpells[currentBookSpell])~
+		REPLACE_TEXTUALLY ~showMageMemorizationFlash ?= ?false~ ~showMageMemorizationFlash = false%WNL%%TAB%%TAB%dwIsPriest=nil~
+END
+
+DEFINE_PATCH_FUNCTION patch_spec_bg_priest//internal
+BEGIN
+
+		REPLACE_TEXTUALLY ~^\(.*\)bam[ %TAB%]+lua[ %TAB%]+"characters\[id\]\.priestSpells\[currentSpellLevel\]\[rowNumber\]\.icon"~ ~\1bam	lua "characters[id].priestSpells[currentSpellLevel][rowNumber].icon"%WNL%\1greyscale lua "not dwSpellEnabled(characters[id].priestSpells[currentSpellLevel][rowNumber],true)"~
+		REPLACE_TEXTUALLY ~\(priestScreen:MemorizeSpell([^)]*)\)~ ~if dwSpellEnabled(characters[id].priestSpells[currentSpellLevel][currentBookSpell],true) then \1 end~
+		REPLACE_TEXTUALLY ~#bottomSpells < #bottomSpellsPlaceHolder~ ~#bottomSpells < #bottomSpellsPlaceHolder and dwSpellEnabled(characters[id].priestSpells[currentSpellLevel][currentBookSpell],true)~
+		REPLACE_TEXTUALLY "\(#bottomSpells < characters\[id\]\.priestDetails\[currentSpellLevel\]\.maxMemorized and currentBookSpell ~= 0\)" ~\1 and dwSpellEnabled(characters[id].priestSpells[currentSpellLevel][currentBookSpell],true)~
+		REPLACE_TEXTUALLY ~showPriestMemorizationFlash ?= ?false~ ~showPriestMemorizationFlash = false%WNL%%TAB%%TAB%dwIsPriest=true~
+END
+
+
+DEFINE_PATCH_FUNCTION chargen_memorize_mage_spells//internal
+BEGIN
+
+	REPLACE_TEXTUALLY ~clickable lua "createCharScreen:IsDoneButtonClickable()"~ ~clickable lua "createCharScreen:IsDoneButtonClickable() and dwChargenSpecialistRequirementsSatisfied(mageSpells)"~
+	REPLACE_TEXTUALLY ~currentChargenMemorizeMageSpell ?= ?nil~ ~currentChargenMemorizeMageSpell = nil%WNL%%TAB%%TAB%dwIsPriest=nil~
+
+END
+
+DEFINE_PATCH_FUNCTION specialist_spell_edit//internal
+BEGIN
+
+	REPLACE_TEXTUALLY ~return 0~ ~return dwSpecialistSpellExtra(num)~
+
+END
+
+DEFINE_PATCH_FUNCTION learn_spell_bonus_patch//internal
+BEGIN
+
+	PATCH_IF INDEX_BUFFER ("onOpen") >=0 BEGIN
+		REPLACE_TEXTUALLY ~\(onOpen[^"]*"\)~ ~\1%WNL%%TAB%dwLearnChance()~
+	END ELSE BEGIN
+		REPLACE_TEXTUALLY "\(name +'ITEM_DESCRIPTION'\)" ~\1%WNL%OnOpen%WNL%"%WNL%%TAB%dwLearnChance()%WNL%"~
+	END
+	PATCH_IF INDEX_BUFFER ("onClose") >=0 BEGIN
+		REPLACE_TEXTUALLY ~\(onClose[^"]*"\)~ ~\1%WNL%%TAB%dwLearnChanceCancel()~
+	END ELSE BEGIN
+		REPLACE_TEXTUALLY ~\(onOpen[^"]*"[^"]*"\)~ ~\1%WNL%onClose%WNL%"%WNL%%TAB%dwLearnChanceCancel()%WNL%"~
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION edit_specialist_message_function//internal
+BEGIN
+	REPLACE_TEXTUALLY "createCharScreen:IsDoneButtonClickable()" "(createCharScreen:IsDoneButtonClickable() and dwChargenSpecialistRequirementsSatisfied(spellBook))"
+END
+
+DEFINE_PATCH_FUNCTION priest_spellbook_hack//internal
+BEGIN
+	REPLACE_TEXTUALLY EXACT_MATCH "priestName" "priestName..dwRefreshPriestHack()"
+	REPLACE_TEXTUALLY EXACT_MATCH "characters[id].name" "characters[id].name..dwRefreshPriestHack()"  //LEUI
+END
+
+DEFINE_PATCH_FUNCTION mage_spellbook_hack//internal
+BEGIN
+	REPLACE_TEXTUALLY EXACT_MATCH "mageBookTitle()" "mageBookTitle()..dwRefreshMageHack()" // in BG/BG2
+	REPLACE_TEXTUALLY EXACT_MATCH "mageName" "mageBookTitle()..dwRefreshMageHack()" // in IWD
+END
+
+////////////////////////////////////////////////////////////
+/*
+document{parse_spell_lists}
+{
+Given the 'allow_learn', 'block_learn', 'allow_priest', 'block_priest' values for some (actual or fictional)
+kit, and its type (either 'priest' or 'mage') return an array of all usable spells, in the format resref=>1
+
+}
+*/
+////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION parse_spell_lists
+	STR_VAR allow_learn=""
+			block_learn=""
+			allow_priest=""
+			block_priest=""
+			type="priest"
+	RET_ARRAY spell_array
+BEGIN
+	ACTION_IF "%type%" STRING_EQUAL_CASE priest BEGIN
+		OUTER_SPRINT root SPPR
+	END ELSE BEGIN
+		OUTER_SPRINT root SPWI
+	END
+	LAF get_spell_array STR_VAR list="%allow_learn%" root RET_ARRAY allow_learn_array=this_array END
+	LAF get_spell_array STR_VAR list="%allow_priest%" root RET_ARRAY allow_priest_array=this_array END
+	LAF get_spell_array STR_VAR list="%block_learn%" root RET_ARRAY block_learn_array=this_array END
+	LAF get_spell_array STR_VAR list="%block_priest%" root RET_ARRAY block_priest_array=this_array END
+
+	ACTION_PHP_EACH allow_learn_array AS spell=>allow_learn BEGIN // we should be able to PHP_EACH through any of these 4, they all contain all spells
+		ACTION_IF 
+			allow_learn &&
+			$allow_priest_array("%spell%")=1 &&
+			$block_learn_array("%spell%")=0 &&
+			$block_priest_array("%spell%")=0 
+		BEGIN
+			OUTER_SET $spell_array("%spell%")=1
+		END
+	END
+
+	
+END
+
+////////////////////////////////////////////////////////////
+/*
+document{get_spell_array}
+{
+Given 'root' either SPPR or SPWI, and 'list' a list of spell-list keys,
+return an array of all spells with that root, in the format resref=>[01],
+with the value being 1 iff the spell is in one of the lists.
+
+If list is 'cleric' or 'druid', instead parse the spell directly and check its
+usability fla
+
+}
+*/
+////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION get_spell_array
+	STR_VAR list="" root=""
+	RET_ARRAY this_array
+BEGIN
+	ACTION_TO_UPPER root
+	ACTION_CLEAR_ARRAY this_array
+		
+	ACTION_PHP_EACH sfo_spell_resrefs AS discard=>resref BEGIN
+		ACTION_IF !"%resref%" STRING_CONTAINS_REGEXP "%root%" BEGIN
+			OUTER_SET $this_array("%resref%")=0
+		END
+	END
+	COPY_EXISTING "m_dw_ssd.lua" "%workspace%"
+		WHILE "%list%" STRING_COMPARE "" BEGIN
+			LPF return_first_entry STR_VAR list RET entry list END
+			PATCH_IF "%entry%" STRING_EQUAL_CASE "every_spell" BEGIN
+			  PHP_EACH this_array AS k=>v BEGIN
+				SET $this_array("%k%")=1
+			  END
+			END ELSE BEGIN
+			  REPLACE_EVALUATE CASE_INSENSITIVE "dwSpellList\['%entry%'\]={\([^}]*\)}" BEGIN
+				INNER_PATCH "%MATCH1%" BEGIN
+					REPLACE_EVALUATE "\(%root%[0-9][0-9A-Z][0-9A-Z]\)" BEGIN
+						SET $this_array("%MATCH1%")=1
+					END
+					""
+				END
+			  END
+			  ""
+			END
+		END
+	BUT_ONLY
+
+
+
+
+END
+
+////////////////////////////////////////////////////////////
+/*
+document{scroll_usability}
+{
+Given the block_learn, allow_learn, block_priest, allow_priest entries for a kit, the (unused) class_id and kit_id for the 
+kit, and the type (mage or priest), go through every scroll in the game and issue 319s to any unusable scrolls.
+}
+*/
+////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION scroll_usability//internal
+	INT_VAR class_id=0 
+			kit_ids_entry=0
+			update_scrolls_later=0
+	STR_VAR block_learn="" 
+			allow_learn="every_spell" 
+			block_priest="" 
+			allow_priest="every_spell"  
+			type=priest 
+BEGIN
+	SILENT
+	OUTER_SPRINT later_list ""
+	LAF parse_spell_lists STR_VAR block_learn allow_learn block_priest allow_priest type RET_ARRAY spell_array END
+	LAF get_scroll_contents_map RET_ARRAY scroll_contents_map END
+	ACTION_PHP_EACH scroll_contents_map AS scroll=>contents BEGIN
+		OUTER_SET mage_scroll=!"%contents%" STRING_CONTAINS_REGEXP "SPWI"
+		ACTION_IF ("%type%" STR_EQ "mage" && mage_scroll) || ("%type%" STR_CMP "mage" &&!mage_scroll) BEGIN
+			ACTION_IF !VARIABLE_IS_SET $spell_array("%contents%") ||$spell_array("%contents%") STR_EQ "0" BEGIN
+				ACTION_IF update_scrolls_later BEGIN
+					OUTER_SPRINT later_list "%later_list%%scroll%%TAB%%kit_ids_entry%%WNL%"
+				END ELSE BEGIN
+					COPY_EXISTING "%scroll%.itm" override
+						LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter1=kit_ids_entry match_parameter2=9 END
+						LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 parameter1=kit_ids_entry parameter2=9 END
+				END
+			
+			END
+		END
+	END
+	ACTION_IF "%later_list%" STR_CMP "" BEGIN
+		ACTION_IF !FILE_EXISTS "%data_loc%/scroll_usability.txt" BEGIN
+			COPY ".../stratagems-inline/blank" "%data_loc%/scroll_usability.txt"
+		END
+		APPEND_OUTER "%data_loc%/scroll_usability.txt" "%later_list%" KEEP_CRLF
+	END
+	VERBOSE
+END
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION get_scroll_contents_map//internal
+RET_ARRAY scroll_contents_map 
+BEGIN
+	ACTION_IF FILE_EXISTS "%data_loc%/scroll_contents.txt" BEGIN
+		LAF array_read STR_VAR file=scroll_contents.txt path="%data_loc%" RET_ARRAY scroll_contents_map=array END
+	END ELSE BEGIN
+		COPY_EXISTING_REGEXP - ".*\.itm" nowhere
+			PATCH_IF SHORT_AT 0x1c=11 && !( ((BYTE_AT 0x1f) BAND BIT3) =0) BEGIN // it's a scroll not usable by single-classed fighters
+				GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+				PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+					GET_OFFSET_ARRAY2 fx_arr ab_off ITM_V10_HEAD_EFFECTS
+					PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+						READ_SHORT fx_off opcode
+						PATCH_IF (opcode=146 || opcode=147 || opcode=148) BEGIN
+							READ_ASCII 0x14+fx_off resource
+							TO_UPPER resource
+							SPRINT $scroll_contents_map("%SOURCE_RES%") "%resource%"
+						END
+					END
+				END
+			END	
+		LAF array_log STR_VAR file=scroll_contents.txt path="%data_loc%" array=scroll_contents_map END
+	END
+
+END
+
+////////////////////////////////////////////////////////////
+/*
+document{set_specialist_spells}
+{
+Given a kit 'kit' (a rowname entry in kitlist.2da), an optional integer 'number_required' (default=1) and a space-separated list of spell-list keys 'spell_list',
+require that kit to learn at least number_required spells from that list.</p>
+
+<p>The optional 'learn_more_line' and 'memorize_more_line' are displayed to players in character generation if they don't learn/memorize an appropriate number of speciality spells. (If not set, the component autogenerates a default warning.)</p>
+<p>The variables 'tra' and 'tra_path' specify where some standard strings are drawn from (the default assumption is that they're from %lua_loc%/lang/%LANGUAGE%/sfo_lua.tra").</p>
+
+
+<p>If update_description is set to 1, the function will attempt to update the kit description. (This only works with kits in a relatively standard format.)
+The various other variables control how this works:
+<ul>
+<li>'old_line' is by default 'May cast one additional spell per level.', but it can be any 'advantage' or 'disadvantage' line from the kit description. It is deleted from the kit description if present.
+<li>'school_string' is by default 'from the LISTNAME school', where LISTNAME is the name-string of the specialist list, or the last such list if there is more than one.
+<li>'new_line_1' is by default 'May cast one additional spell per level. This additional spell must be SCHOOL_PLACEHOLDER'; SCHOOL_PLACEHOLDER is swapped for 'string_school'. It is added to the top of the 'Advantages' list
+if number_required=1.
+<li>'new_line_2' is by default 'May cast one additional spell per level. At least NUMBER_PLACEHOLDER memorized spells of each level must be SCHOOL_PLACEHOLDER'; SCHOOL_PLACEHOLDER is swapped for 'string_school' and NUMBER_PLACEHOLDER is swapped for the value of 'number_required'. It is added to the top of the 'Advantages' list if number_required>1.
+<li>
+<li>list_spells, if set, includes a list of all spells from the preferred list. In this case, 'string_school2' (default value: the name-string of the specialist list, or the last such list if there is more than one) is substituted into the string 'The full list of SCHOOL_PLACEHOLDER_2 spells is:'.</li>
+</ul>
+}
+*/
+////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION set_specialist_spells 
+	INT_VAR number_required=1 
+			list_spells=1 //boolean
+			update_description=0//boolean
+	STR_VAR learn_more_line=""
+			memorize_more_line=""
+			old_line="" 
+			new_line_1=""
+			new_line_2=""
+			string_school="" 
+			string_school2="" 
+			kit="" 
+			spell_list="" 
+			tra="sfo_lua" 
+			tra_path="" 
+BEGIN
+ OUTER_SET chargen_choose_spells=1 // I don't recall why this was once an option
+ ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
+	OUTER_SPRINT lua_loc lua
+ END
+ ACTION_IF "%tra_path%" STR_EQ "" BEGIN
+	OUTER_SPRINT tra_path "%MOD_FOLDER%/%lua_loc%/lang"
+ END
+ WITH_TRA "%tra_path%/english/%tra%.tra" "%tra_path%/%LANGUAGE%/%tra%.tra" BEGIN
+	 // find the kit and its data
+	 COPY_EXISTING "kitlist.2da" override
+		kit_id="-1"
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 kit_here
+			PATCH_IF "%kit_here%" STRING_EQUAL_CASE "%kit%" BEGIN
+				READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_id
+				READ_2DA_ENTRY_FORMER kitlist_data row 4 desc_strref
+				GET_STRREF desc_strref desc
+			END
+		END
+	 BUT_ONLY
+	 ACTION_IF kit_id<0 BEGIN
+		FAIL "Failed to find kit %kit% in set_specialist_spells"
+	 END
+	 
+	 LAF load_spell_lists RET_ARRAY spell_lists END
+	 // process the core LUA edits
+	 OUTER_SPRINT list "%spell_list%" 
+	 OUTER_SPRINT add ""
+     OUTER_SPRINT must_learn_string ""
+	 OUTER_WHILE "%list%" STRING_COMPARE_CASE "" BEGIN
+		LAF return_first_entry STR_VAR list RET entry list END
+		OUTER_SPRINT add "%add%'%entry%',"
+		// this is for the 'you must memorize at least' string
+		OUTER_SPRINT name $spell_lists("%entry%")
+		ACTION_MATCH "%name%" WITH 
+		"\[silent\].*" BEGIN END
+		DEFAULT
+			ACTION_IF "%must_learn_string%" STR_EQ "" BEGIN
+				OUTER_SPRINT must_learn_string "%name%"
+			END ELSE BEGIN
+				OUTER_SPRINT must_learn_string "%must_learn_string%/%name%"
+			END
+		END
+	 END
+	 // set the default strings for the desc if necessary
+	 ACTION_IF "%string_school%" STR_EQ "" BEGIN
+		OUTER_SPRINT string_school @100015
+		OUTER_PATCH_SAVE string_school "%string_school%" BEGIN
+			REPLACE_TEXTUALLY LISTNAME "%must_learn_string%"
+		END
+	 END
+	 ACTION_IF "%string_school2%" STR_EQ "" BEGIN
+		OUTER_SPRINT string_school2 "%must_learn_string%"
+	 END
+	 ACTION_IF chargen_choose_spells BEGIN
+		OUTER_SPRINT choose_str "dwChargenChooseSpells[%kit_id%]=true%WNL%%WNL%"
+	 END ELSE BEGIN
+		OUTER_SPRINT choose_str ""
+	 END
+	 // set the 'you must learn at least one' line
+	 ACTION_IF "%learn_more_line%" STR_EQ "" BEGIN
+		 COPY_EXISTING - "L_%EE_LANGUAGE%.lua" nowhere
+			REPLACE_EVALUATE ~SPECIALIST_SPELL_REQ = "\(.*\)"~ BEGIN
+				SPRINT line_template "%MATCH1%"
+			END
+			""
+		 OUTER_PATCH_SAVE line "%line_template%" BEGIN
+			REPLACE_TEXTUALLY "<SCHOOLTOKEN>" "%must_learn_string%"
+		 END
+		 OUTER_SET line_strref=RESOLVE_STR_REF("%line%")
+	 END ELSE BEGIN
+		OUTER_SET line_strref=RESOLVE_STR_REF("%learn_more_line%")
+	 END
+	 ACTION_IF "%memorize_more_line%" STR_EQ "" BEGIN
+		ACTION_IF number_required>1 BEGIN
+			OUTER_SPRINT line_template @100022
+		END ELSE BEGIN
+			OUTER_SPRINT line_template @100021
+		END
+		OUTER_PATCH_SAVE line "%line_template%" BEGIN
+			REPLACE_TEXTUALLY NUMBER_PLACEHOLDER "%number_required%"
+			REPLACE_TEXTUALLY SCHOOL_PLACEHOLDER "%must_learn_string%"
+		END
+		OUTER_SET memo_line_strref=RESOLVE_STR_REF("%line%")
+	 END ELSE BEGIN
+		OUTER_SET memo_line_strref=RESOLVE_STR_REF("%memorize_more_line%")
+	 END
+	 OUTER_SPRINT data "dwKitSpecMap[%kit_id%]={%add%}%WNL%dwSpecRequire[%kit_id%]=%number_required%%WNL%%WNL%%choose_str%%WNL%dwKitSpecMemoLine[%kit_id%]=%memo_line_strref%%WNL%"
+	 ACTION_IF kit_id<22 || kit_id>29 BEGIN
+		OUTER_SPRINT data "%data%dwKitSpecLearnLine[%kit_id%]=%line_strref%%WNL%" 
+	 END
+	 APPEND "m_dw_ssd.lua" "%data%" 
+	 // if appropriate, get the relevant spells
+	 ACTION_IF list_spells BEGIN
+		LAF list_spec_spells STR_VAR list="%spell_list%" RET spell_list_string END
+		OUTER_SPRINT list_top @100019
+		OUTER_PATCH_SAVE list_top "%list_top%" BEGIN
+			REPLACE_TEXTUALLY "SCHOOL_PLACEHOLDER_2" "%string_school2%"
+		END
+		OUTER_SPRINT spell_list_string "%list_top%%WNL%%spell_list_string%" 
+	 END ELSE BEGIN
+		OUTER_SPRINT spell_list_string ""
+	 END
+	 // update the description
+	 ACTION_IF update_description BEGIN
+		 // get the no-spell-level string
+		 LAF get_no_spell_level_string STR_VAR list="%spell_list%" RET no_spell_level_string END
+		 OUTER_PATCH_SAVE desc "%desc%" BEGIN
+			// wipe the old line
+			PATCH_IF "%old_line%" STR_EQ "" BEGIN
+				SPRINT old_line @100010
+			END
+			REPLACE_TEXTUALLY
+			"^[^A-Za-z0-9+-]+%old_line%.*[%WNL%%LNL%%MNL%]" ""
+			// add the new line
+			PATCH_IF "%new_line_1%" STR_EQ "" BEGIN
+				SPRINT new_line_1 @100012
+			END
+			PATCH_IF "%new_line_2%" STR_EQ "" BEGIN
+				SPRINT new_line_2 @100013
+			END			
+			PATCH_IF number_required=1 BEGIN
+				SPRINT new_line "%new_line_1%"
+			END ELSE BEGIN
+				SPRINT new_line "%new_line_2%"
+			END
+			INNER_PATCH_SAVE new_line "%new_line%" BEGIN
+				REPLACE_TEXTUALLY SCHOOL_PLACEHOLDER "%string_school%"
+				REPLACE_TEXTUALLY NUMBER_PLACEHOLDER "%number_required%"
+			END
+			SPRINT new_line "%new_line%%no_spell_level_string%. %spell_list_string%"
+			SPRINT advantage_string @100020
+			REPLACE_TEXTUALLY 
+			"^\([^A-Za-z]*%advantage_string%.*\)\([^A-Za-z0-9+]+\)\([A-Za-z0-9+].*\)"
+			"\1\2%new_line%\2\3"
+		 END
+		STRING_SET_EVALUATE desc_strref "%desc%"
+	 END
+
+
+ END // end of WITH_TRA
+ 
+ 
+END
+
+DEFINE_ACTION_FUNCTION list_spec_spells//internal
+	STR_VAR list="" 
+	RET spell_list_string 
+BEGIN
+	OUTER_SPRINT level_string @100018
+	ACTION_CLEAR_ARRAY spec_lists
+	OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+		LAF return_first_entry STR_VAR list RET entry list END
+		OUTER_SPRINT $spec_lists("%entry%") ""
+	END
+	COPY_EXISTING "m_dw_ssd.lua" "%workspace%"
+		REPLACE_EVALUATE "dwSpellList\['\([^']*\)']={\([^}]*\)}" BEGIN
+			PATCH_IF VARIABLE_IS_SET $spec_lists("%MATCH1%") BEGIN
+				INNER_PATCH_SAVE resref "%MATCH2%" BEGIN
+					REPLACE_TEXTUALLY "=true," ""
+					REPLACE_TEXTUALLY "[ %TAB%%WNL%%LNL%%MNL%]+" " "
+				END
+				PATCH_MATCH "%resref%" WITH // handle empty lists
+				" +" BEGIN
+					SPRINT resref ""
+				END
+				DEFAULT
+				END
+				SPRINT $spec_lists("%MATCH1%") "%resref%"
+			END
+		END
+		""
+	BUT_ONLY
+	ACTION_PHP_EACH spec_lists AS null=>list BEGIN
+		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET entry list END
+			ACTION_MATCH "%entry%" WITH "SP\(PR\|WI\)[1-9][0-9A-Z][0-9A-Z]" BEGIN
+			  ACTION_IF FILE_EXISTS_IN_GAME "%entry%.spl" BEGIN
+				COPY_EXISTING "%entry%.spl" "%workspace%"
+					PATCH_IF LONG_AT 0x8>=0 BEGIN
+						READ_STRREF 0x8 spellname
+						READ_LONG 0x34 level
+						PATCH_IF (level>0 && level<10) BEGIN
+							SPRINT array_name "spell_list_%level%" 
+							SPRINT $"%array_name%"("%spellname%") ""
+						END
+					END
+				BUT_ONLY
+			  END
+			END
+			DEFAULT
+			END
+		END
+	END
+	OUTER_SPRINT spell_list_string ""
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		OUTER_SPRINT these_spells ""
+		OUTER_SPRINT array "spell_list_%level%"
+		ACTION_SORT_ARRAY_INDICES "%array%" LEXICOGRAPHICALLY
+		ACTION_PHP_EACH "%array%" AS name=>null BEGIN
+			ACTION_IF "%these_spells%" STRING_EQUAL_CASE "" BEGIN
+				OUTER_SPRINT these_spells "%name%"
+			END ELSE BEGIN
+				OUTER_SPRINT these_spells "%these_spells%, %name%"
+			END
+		END
+		ACTION_IF "%these_spells%" STRING_COMPARE_CASE "" BEGIN
+			OUTER_SPRINT spell_list_string "%spell_list_string%   -Level %level%: %these_spells%%WNL%"
+		END
+	END
+
+END
+
+
+DEFINE_ACTION_FUNCTION get_no_spell_level_string//internal
+	STR_VAR list="" 
+	RET no_spell_level_string 
+BEGIN
+		ACTION_CLEAR_ARRAY is_empty 
+		ACTION_CLEAR_ARRAY spec_lists
+		OUTER_WHILE "%list%" STRING_COMPARE "" BEGIN
+			LAF return_first_entry STR_VAR list RET entry list END
+			OUTER_SPRINT $spec_lists("%entry%") ""
+		END
+		COPY_EXISTING "m_dw_ssd.lua" "%workspace%"
+			REPLACE_EVALUATE "dwSpellList\['\([^']*\)'\]\.empty={\([^}]*\)}" BEGIN
+				PATCH_IF VARIABLE_IS_SET $spec_lists("%MATCH1%") BEGIN
+					FOR (level=1;level<=9;++ level) BEGIN
+						PATCH_IF INDEX ("\[%level%\]=true" "%MATCH2%" )<0 BEGIN
+							SET $spell_at_level("%level%")=1
+						END
+					END			
+				END
+			END
+			""
+		BUT_ONLY
+		OUTER_SPRINT str ""
+		OUTER_SET on=0
+		OUTER_SET range=0
+		OUTER_FOR (level=1;level<=9;++level) BEGIN
+			ACTION_IF !VARIABLE_IS_SET $spell_at_level("%level%") && !on BEGIN
+				OUTER_SPRINT str "%str%%level%"
+				OUTER_SET on=1
+			END ELSE
+			ACTION_IF !VARIABLE_IS_SET $spell_at_level("%level%") && on BEGIN
+				OUTER_SET on=1
+				OUTER_SET range=1
+			END ELSE
+			ACTION_IF VARIABLE_IS_SET $spell_at_level("%level%") && on BEGIN
+				OUTER_SET lastlevel=level - 1
+				ACTION_IF range BEGIN
+					OUTER_SPRINT str "%str%-%lastlevel%"
+				END
+				OUTER_SPRINT str "%str%, "
+				OUTER_SET on=0
+				OUTER_SET range=0
+			END
+		END
+		ACTION_IF "%str%" STRING_COMPARE "" BEGIN
+			OUTER_PATCH_SAVE str "%str%" BEGIN
+				PATCH_IF !on BEGIN
+					REPLACE_TEXTUALLY ", $" ""
+				END ELSE BEGIN
+					PATCH_IF range BEGIN
+						INSERT_BYTES (BUFFER_LENGTH) 2
+						WRITE_ASCII (BUFFER_LENGTH - 2) "-9"
+					END
+				END
+			END
+		END
+		ACTION_IF "%str%" STRING_EQUAL "" BEGIN
+			OUTER_SPRINT no_spell_level_string ""
+		END ELSE BEGIN
+			OUTER_SPRINT base @100014
+			OUTER_PATCH_SAVE no_spell_level_string "%base%" BEGIN
+				REPLACE_TEXTUALLY LEVEL_PLACEHOLDER "%str%"
+			END
+		END
+		
+
+END
+		
+		
+DEFINE_ACTION_FUNCTION no_int_max_spells BEGIN
+
+	LAF check_label STR_VAR label=dw#remove_int_max_spells RET value END
+	ACTION_IF !value BEGIN
+	
+		LAF make_label STR_VAR label=dw#remove_int_max_spells END
+		
+		// wipe the constraints from INTMOD
+		COPY_EXISTING "intmod.2da" override
+			COUNT_2DA_COLS colcount
+			COUNT_2DA_ROWS colcount rowcount
+			FOR (row=0;row<rowcount;++row) BEGIN
+				READ_2DA_ENTRY row 2 colcount max_level
+				PATCH_IF max_level>0 BEGIN
+					SET_2DA_ENTRY row 2 colcount 9
+				END
+				READ_2DA_ENTRY row 3 colcount max_number
+				PATCH_IF max_number>0 BEGIN
+					SET_2DA_ENTRY row 3 colcount 99
+				END
+			END
+		BUT_ONLY
+		
+		// edit the UI so as not to display the maxima
+
+		LAF hide_this_displayed_ability STR_VAR string="STRREF_GUI_MAX_SPELL_LEVEL STRREF_GUI_MAX_SPELLS_PER_LEVEL" END
+	
+		// remove the Erase button
+		
+		LAF check_ini STR_VAR ini=retain_erase_for_exploit_purposes RET value END
+		ACTION_IF !value BEGIN
+		  
+		  COPY_EXISTING "ui.menu" override
+		    PATCH_IF INDEX_BUFFER (~"SPELL_DESCRIPTION"~)>=0 BEGIN // IWD or LEUI
+				LPF UI_alter_object STR_VAR object=SPELL_DESCRIPTION patch=remove_erase_iwd END
+			END ELSE BEGIN
+				LPF UI_alter_object STR_VAR object=MAGE patch=remove_erase_bg END	  
+		    END
+		  BUT_ONLY
+		END
+	END
+END
+
+DEFINE_PATCH_FUNCTION remove_erase_iwd //internal
+BEGIN
+	REPLACE_TEXTUALLY ~isWizSpellMode() and showEraseButton~ ~false~
+END
+
+DEFINE_PATCH_FUNCTION remove_erase_bg //internal
+BEGIN
+	REPLACE_TEXTUALLY ~actionalt[^"]*"[^"]*"~ ~~
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{set_spell_learn_modifiers}
+{
+Set the externalized modifications to the chance of learning a spell. Specify 'kit' (a rowname from kitlist) and 'modifiers' (the actual LUA list of modifiers).
+'modifiers' should be a comma-separated list with elements of form 'list=integer', where 'list' is either a spell list or 'default' (applies to all spell lists not called out.)
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION set_spell_learn_modifiers
+STR_VAR kit="" modifiers="" BEGIN
+	
+	LAF scroll_spec_bonus_setup END
+	COPY_EXISTING kitlist.2da override
+		COUNT_2DA_COLS colcount
+		READ_2DA_ENTRIES_NOW kitlist_data colcount
+		FOR (row=0;row<kitlist_data;++row) BEGIN
+			READ_2DA_ENTRY_FORMER kitlist_data row 1 kit_here
+			PATCH_IF "%kit_here%" STRING_EQUAL_CASE "%kit%" BEGIN
+				READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_id
+			END
+		END
+	BUT_ONLY
+	APPEND "m_dw_ssd.lua" "dwModifyLearnChance[%kit_id%]={%modifiers%}%WNL%%WNL%"
+	
+	
+END
+
+////////////////////////////////////////////////////////////////////
+/*
+document{scroll_spec_bonus_setup}
+{
+Build the various resources needed for the externalized bonus-spell setup.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+DEFINE_ACTION_FUNCTION scroll_spec_bonus_setup //internal
+BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "%spl_int_minus_1%.spl" BEGIN
+
+		LAF resolve_splprot_entry INT_VAR stat=38 value="-1" STR_VAR relation=equal RET splprot=value END
+
+		// remove MAX_SPELL_LEVEL and MAX_SPELLS_PER_LEVEL constraints from INTMOD
+		
+		LAF no_int_max_spells END
+
+		// make the spells that modify INT
+
+		ACTION_FOR_EACH type IN plus_2 plus_3 plus_4 plus_5 minus_1 minus_2 minus_3 set_to_18 set_to_25 BEGIN
+			OUTER_SPRINT spl EVAL "%spl_int_%type%%"
+			OUTER_PATCH "%type%" BEGIN
+				REPLACE_EVALUATE "\(.*\)_\([0-9]+\)" BEGIN
+					SPRINT mod "%MATCH1%"
+					SPRINT val "%MATCH2%"
+				END
+				""
+				PATCH_MATCH "%mod%" WITH
+				plus BEGIN
+					parameter1=val
+					parameter2=0
+				END
+				minus BEGIN
+					parameter1=0 - val
+					parameter2=0
+				END
+				set_to BEGIN
+					parameter2=2
+					parameter1=val
+				END
+				DEFAULT
+					PATCH_FAIL "shouldn't happen"
+				END
+			END
+			CREATE spl "%spl%"
+				LPF add_basic_spell_ability END
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=19 target=2 duration=1 parameter1 parameter2 END
+		
+		END
+
+		// make the +25% spell
+		
+		CREATE spl "%spl_spell_learning_plus_25%"
+			LPF add_basic_spell_ability END		
+			PATCH_CLEAR_ARRAY int_map
+			PATCH_DEFINE_ASSOCIATIVE_ARRAY int_map BEGIN
+				9=>5
+				10=>5
+				11=>5
+				12=>5
+				13=>5
+				14=>4
+				15=>4
+				16=>3
+			END
+			PHP_EACH int_map AS parameter1=>plus BEGIN
+				SPRINT resource EVAL "%spl_int_plus_%plus%%"
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1 parameter2=splprot STR_VAR resource END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=17 parameter2=128 STR_VAR resource="%spl_int_set_to_25%" END
+		
+
+		// make the +15% spell
+
+		CREATE spl "%spl_spell_learning_plus_15%"
+			LPF add_basic_spell_ability END		
+			PATCH_CLEAR_ARRAY int_map
+			PATCH_DEFINE_ASSOCIATIVE_ARRAY int_map BEGIN
+				9=>3
+				10=>3
+				11=>3
+				12=>3
+				13=>3
+				14=>3
+				15=>3
+				16=>2
+				17=>2
+			END
+			PHP_EACH int_map AS parameter1=>plus BEGIN
+				SPRINT resource EVAL "%spl_int_plus_%plus%%"
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1 parameter2=splprot STR_VAR resource END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=18 parameter2=128 STR_VAR resource="%spl_int_set_to_25%" END
+
+		// make the -15% spell
+
+		CREATE spl "%spl_spell_learning_minus_15%"
+			LPF add_basic_spell_ability END		
+			PATCH_CLEAR_ARRAY int_map
+			PATCH_DEFINE_ASSOCIATIVE_ARRAY int_map BEGIN
+				10=>1
+				11=>2
+				12=>3
+				13=>3
+				14=>3
+				15=>3
+				16=>2
+				17=>2
+				18=>2
+			END
+			PHP_EACH int_map AS parameter1=>plus BEGIN
+				SPRINT resource EVAL "%spl_int_minus_%plus%%"
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1 parameter2=splprot STR_VAR resource END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=19 parameter2=128 STR_VAR resource="%spl_int_set_to_18%" END
+
+		// make the reset-to-normal spell
+		
+		CREATE spl "%spl_spell_learning_reset%"
+			LPF add_basic_spell_ability END
+			PATCH_FOR_EACH resource IN "%spl_int_plus_2%" "%spl_int_plus_3%" "%spl_int_plus_4%" "%spl_int_plus_5%" "%spl_int_minus_1%" "%spl_int_minus_2%" "%spl_int_minus_3%" "%spl_int_set_to_18%" "%spl_int_set_to_25%" BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=1 STR_VAR resource END
+			END				
+
+
+	END
+
+
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{ui_read_spell_lists}
+{
+Read in the spell lists associated with a given kit. If literal=1, leave in the commas and quote marks; otherwise remove them.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION ui_read_spell_lists 
+	INT_VAR literal=0//boolean
+	STR_VAR kit="" 
+	RET learn priest block_learn block_priest
+BEGIN
+	LAF kit_get_id STR_VAR kit RET kit_id END
+	COPY_EXISTING - "m_dw_ssd.lua" nowhere
+		CLEAR_ARRAY lua_map
+		PATCH_DEFINE_ASSOCIATIVE_ARRAY lua_map BEGIN
+			learn=>dwLearnedKitSpellAllow
+			block_learn=>dwLearnedKitSpellBlock
+			priest=>dwPriestKitSpellAllow
+			block_priest=>dwPriestKitSpellBlock
+		END
+		PHP_EACH lua_map AS var=>lua_var BEGIN
+			SPRINT "%var%" "NOT_SET"
+			REPLACE_EVALUATE "%lua_var%\[%kit_id%\]={\([^}]*\)}" BEGIN
+				INNER_PATCH_SAVE "%var%" "%MATCH1%" BEGIN
+					PATCH_IF !literal BEGIN
+						REPLACE_TEXTUALLY "'" ""
+						REPLACE_TEXTUALLY "," " "
+					END
+				END
+			END
+			""
+		END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{ui_copy_spell_lists}
+{
+Read in the spell lists associated with a given kit, and copy it to a different kit
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION ui_copy_spell_lists 
+	STR_VAR from=""
+			to=""
+BEGIN
+	LAF ui_read_spell_lists INT_VAR literal=1 STR_VAR kit="%from%" RET learn priest block_learn block_priest END
+	LAF kit_get_id STR_VAR kit="%to%" RET kit_id END
+	APPEND "m_dw_ssd.lua" 
+	"dwLearnedKitSpellBlock[%kit_id%]={%block_learn%}%WNL%dwLearnedKitSpellAllow[%kit_id%]={%learn%}%WNL%dwPriestKitSpellBlock[%kit_id%]={%block_priest%}%WNL%dwPriestKitSpellAllow[%kit_id%]={%priest%}%WNL%"
+	KEEP_CRLF
+	
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{ui_read_all_spell_lists}
+{
+Read in all the spell lists, and store them in arrays block_learn, block_priest, allow_learn, allow_priest, in this format:
+$allow_priest(OHTEMPUS combat)=1. Also return a k=>_ array of all list names, and a k=> array of all kit names.
+}
+
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_DIMORPHIC_FUNCTION ui_read_all_spell_lists
+	RET_ARRAY block_learn block_priest allow_learn allow_priest list_names kit_names
+BEGIN
+	ACTION_IF FILE_EXISTS_IN_GAME "m_dw_ssd.lua" BEGIN
+		// initialize
+		ACTION_FOR_EACH array IN block_learn allow_learn block_priest allow_priest list_names kit_names BEGIN
+			ACTION_CLEAR_ARRAY "%array%"
+		END
+		// get the relation between kit numbers and kit names
+		LAF 2daq_extract STR_VAR resref=kitlist column=ROWNAME RET_ARRAY kits=array END
+		// get the data
+		COPY_EXISTING - "m_dw_ssd.lua" nowhere
+			REPLACE_EVALUATE "dw\(Learned\|Priest\)\(Kit\|Class\)Spell\(Block\|Allow\)\[\([0-9]+\)\]={\([^}]*\)}" BEGIN
+				PATCH_MATCH "%MATCH1%%MATCH3%" WITH
+					LearnedBlock BEGIN
+						SPRINT array block_learn
+					END
+					LearnedAllow BEGIN
+						SPRINT array allow_learn
+					END
+					PriestBlock BEGIN
+						SPRINT array block_priest
+					END
+					PriestAllow BEGIN
+						SPRINT array allow_priest
+					END
+					DEFAULT
+						PATCH_FAIL "Shouldn't happen"
+					END
+					PATCH_IF "%MATCH2%" STR_EQ "Kit" BEGIN
+						SPRINT kit $kits("%MATCH4%")
+						SPRINT $kit_names("%kit%") ""
+					END ELSE BEGIN
+						LOOKUP_IDS_SYMBOL_OF_INT kit class "%MATCH4%"
+					END
+					INNER_PATCH_SAVE list "%MATCH5%" BEGIN
+						REPLACE_TEXTUALLY "'" ""
+					END
+					WHILE "%list%" STR_CMP "" BEGIN
+						LPF return_first_entry STR_VAR list separator="," RET entry list END
+						SET $"%array%"("%kit%" "%entry%")=1
+						SPRINT $list_names("%entry%") ""
+					END
+			
+			END
+			""
+	END
+END
+
+DEFINE_ACTION_FUNCTION process_scroll_usability_now BEGIN
+
+	ACTION_IF FILE_EXISTS "%data_loc%/scroll_usability.txt" BEGIN
+		COPY - "%data_loc%/scroll_usability.txt" nowhere
+			READ_2DA_ENTRIES_NOW scroll_usability 2
+			CLEAR_ARRAY scroll_usability_data
+			CLEAR_ARRAY scroll_usability_tracker
+			CLEAR_ARRAY scroll_usability_count
+			FOR (row=0;row<scroll_usability;++row) BEGIN
+				READ_2DA_ENTRY_FORMER scroll_usability row 0 resref
+				TO_UPPER resref
+				READ_2DA_ENTRY_FORMER scroll_usability row 1 ids_entry
+				PATCH_IF !VARIABLE_IS_SET $scroll_usability_tracker("%resref%" "%ids_entry%") BEGIN
+					SPRINT $scroll_usability_tracker("%resref%" "%ids_entry%") ""
+					PATCH_IF !VARIABLE_IS_SET $scroll_usability_count("%resref%") BEGIN
+						SET $scroll_usability_count("%resref%")=0
+						SPRINT $scroll_usability_data("%resref%") ""
+					END
+					INNER_PATCH_SAVE data "" BEGIN
+						INSERT_BYTES 0x0 0x30
+						WRITE_SHORT 0x0 319
+						WRITE_BYTE 0x2 2
+						WRITE_LONG 0x4 ids_entry
+						WRITE_LONG 0x8 9
+						WRITE_BYTE 0xc 2
+						WRITE_BYTE 0x12 100
+					END
+					SPRINT temp $scroll_usability_data("%resref%")
+					SPRINT  $scroll_usability_data("%resref%") "%temp%"^"%data%"
+					SET $scroll_usability_count("%resref%") +=1				
+				END
+			END
+			PHP_EACH scroll_usability_count AS resref=>count BEGIN
+				SPRINT data $scroll_usability_data("%resref%")
+				INNER_ACTION BEGIN
+					COPY_EXISTING "%resref%.itm" override
+						// update indices in abilities
+						GET_OFFSET_ARRAY ab_arr ITM_V10_HEADERS
+						PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+							WRITE_SHORT (0x20+ab_off) (THIS + count)
+						END
+						// add new block number
+						WRITE_SHORT 0x70 (THIS + count)
+						// insert bytes
+						INSERT_BYTES (LONG_AT 0x6a) 0x30*count
+						// write data
+						WRITE_ASCII (LONG_AT 0x6a) "%data%"
+				END
+			END
+		DELETE "%data_loc%/scroll_usability.txt"
+	END
+
+END
+
+
+
+////////////////////////////////////////////////////////////
+//// Inlined LUA content
+////////////////////////////////////////////////////////////
+
+<<<<<<<< .../stratagems-inline/spell_system_functions.lua
+
+
+-- general functions to find spell lists
+
+
+
+function dwFindLearnedSpellAllow()
+	class,kit=dwFindClassKit()
+	if dwLearnedKitSpellAllow[kit] then
+		return dwLearnedKitSpellAllow[kit]
+	else
+		return dwLearnedClassSpellAllow[class]
+	end
+end
+function dwFindPriestSpellAllow()
+	class,kit=dwFindClassKit()
+	if dwPriestKitSpellAllow[kit] then
+		return dwPriestKitSpellAllow[kit]
+	else
+		return dwPriestClassSpellAllow[class]
+	end
+end
+function dwFindLearnedSpellBlock()
+	class,kit=dwFindClassKit()
+	blocklist_temp={}
+	count=0
+	if dwLearnedKitSpellBlock[kit] then
+		for k,v in pairs(dwLearnedKitSpellBlock[kit]) do
+			count=count+1
+			blocklist_temp[count]=v
+		end
+	end
+	if dwLearnedClassSpellBlock[class] then
+		for k,v in pairs(dwLearnedClassSpellBlock[class]) do
+			count=count+1
+			blocklist_temp[count]=v
+		end
+	end
+	if dwLearnedKitSpellAllow[kit] then
+		blocklist={}
+		count=0
+		for k,v in pairs(blocklist_temp) do
+			include=true
+			for k2,v2 in pairs(dwLearnedKitSpellAllow[kit]) do
+				if v==v2 then include=false end			
+			end
+			if include then
+				count=count+1
+				blocklist[count]=v
+			end
+		end
+		return blocklist
+	else
+		return blocklist_temp
+	end
+end
+function dwFindPriestSpellBlock()
+	class,kit=dwFindClassKit()
+	blocklist_temp={}
+	count=0
+	if dwPriestKitSpellBlock[kit] then
+		for k,v in pairs(dwPriestKitSpellBlock[kit]) do
+			count=count+1
+			blocklist_temp[count]=v
+		end
+	end
+	if dwPriestClassSpellBlock[class] then
+		for k,v in pairs(dwPriestClassSpellBlock[class]) do
+			count=count+1
+			blocklist_temp[count]=v
+		end
+	end
+	if dwPriestKitSpellAllow[kit] then
+		blocklist={}
+		count=0
+		for k,v in pairs(blocklist_temp) do
+			include=true
+			for k2,v2 in pairs(dwPriestKitSpellAllow[kit]) do
+				if v==v2 then include=false end			
+			end
+			if include then
+				count=count+1
+				blocklist[count]=v
+			end
+		end
+		return blocklist
+	else
+		return blocklist_temp
+	end
+end
+
+function dwSpellAvailable(spell,allow,block)
+
+  if not spell then return false end -- ensure against nil-entry cruft in original system
+  if not (string.find(spell,"SPWI") or string.find(spell,"SPPR")) then -- non-SPWI/SPPR spells are assumed supposed to be there
+	return true
+  end
+  available=false
+  if allow==nil then
+	allow={'every_spell'}
+  end
+  if allow then
+	for _,v in pairs(allow) do
+		if v=='every_spell' then
+			available=true
+		else
+			if dwSpellList[v][spell] then
+				available=true
+			end
+		end
+	end
+  end
+  if block then
+	for _,w in pairs(block) do
+		if w=='every_spell' then
+			available=false
+		else
+			if dwSpellList[w][spell] then
+				available=false
+			end
+		end
+	end
+  end
+  return available
+
+
+end
+
+
+-- spell choice menu
+
+function dwBuildChooseSpell()
+
+	is_chargen=not chargen.levelingUp
+	allow=dwFindLearnedSpellAllow(is_chargen)
+	block=dwFindLearnedSpellBlock(is_chargen)
+	list={}
+	ind=1
+	for k,v in pairs (chargen.choose_spell) do
+		resref=spellBook[chargen.currentSpellLevelChoice][v.key].resref
+		if dwSpellAvailable(resref,allow,block) then
+			list[ind]=v
+			ind=ind+1
+			if dwSpecialistSpellExtra(resref) then
+				spellBook[chargen.currentSpellLevelChoice][v.key].specialist = true
+			end
+		else
+			if (v.enabled) then
+				createCharScreen:OnLearnMageSpellButtonClick(k)
+			end
+		end
+	end
+	chargen.choose_spell=list
+end
+
+
+-- priest spell memorization menu
+
+function dwBuildChargenPriestChooseSpell()
+
+	allow=dwFindPriestSpellAllow(true)
+	block=dwFindPriestSpellBlock(true)
+
+	list={}
+	ind=1
+	for k,v in pairs (chargen.choose_spell) do
+		resref=priestSpells[chargen.currentSpellLevelChoice][v.key].resref
+		if dwSpellAvailable(resref,allow,block) then
+			list[ind]=v
+			ind=ind+1
+		end
+	end
+	chargen.choose_spell=list
+	
+end
+
+
+-- in-game priest spellbook
+
+
+function build_dwPriestSpell(book)
+	currentID=id
+	list={}
+	allow=dwFindPriestSpellAllow(false)
+	block=dwFindPriestSpellBlock(false)
+
+	workingBook={}
+	new_ind=0
+	for k,v in pairs(book) do
+		res=v.resref
+		if dwSpellAvailable(res,allow,block) then
+			new_ind=new_ind+1
+			workingBook[new_ind]=v
+		end
+	end
+	return workingBook
+end
+
+--- functions to handle specialist mages
+
+function dwSpellEnabled(spell_resref,is_priest)
+
+	currentID=id
+	-- sanity check
+	if not spell_resref then
+		return true
+	end
+	
+	-- we can handle being sent either the spell object or the resref
+	
+	if spell_resref.resref then
+		spell_resref=spell_resref.resref
+	end
+
+	-- get the character's kit
+
+	class,kit=dwFindClassKit()
+
+	-- return true for cleric/mages on the priest screen
+
+	if (class==14 or class==17) and dwIsPriest then
+		return true
+	end
+
+	-- find required number of spells
+
+	required_num=dwSpecRequire[kit]
+	if not required_num then
+		return true
+	end
+
+	-- if there are at least (required_num + 1) empty slots, don't grey anything out
+	
+	if is_priest then
+		if #bottomSpells+required_num < characters[id].priestDetails[currentSpellLevel].maxMemorized then
+			return true
+		end
+	else
+		if #bottomSpells+required_num < characters[id].mageDetails[currentSpellLevel].maxMemorized then
+			return true
+		end
+	end
+
+	-- get assigned specialities
+
+	speclist=dwKitSpecMap[kit]
+	if not speclist then
+		return true
+	end
+
+	-- if level is empty, return true
+
+	empty=true
+	for _,s in pairs(speclist) do
+		if not dwSpellList[s].empty or not dwSpellList[s].empty[currentSpellLevel] then
+			empty=false
+		end
+	end
+	if empty then
+		return true
+	end
+
+	-- if you've learned a speciality spell already, return true
+	
+	if dwBonusSpellLearned(speclist)>=required_num then
+		return true
+	end
+
+	-- that exhausts all reasons not to care about the spell's type.
+	-- at this point it needs to be a speciality spell
+
+	return dwIsSpecSpell(spell_resref,speclist)
+
+end
+
+function dwIsSpecSpell(spell_resref,speclist)
+	enabled=false
+	for _,v in pairs(speclist) do
+		if dwSpellList[v][spell_resref] then
+			enabled=true
+		end
+	end
+	return enabled
+end
+
+function dwBonusSpellLearned(speclist)	
+	count=0
+	for k,spell in pairs (bottomSpells) do
+		if dwIsSpecSpell(spell.resref,speclist) then
+			count=count+1
+		end
+	end
+	return count	
+end
+
+function dwLearnSpecialistSpells()
+
+	_,k=dwFindClassKit()
+		
+	if not dwChargenChooseSpells[k] then
+		return nil
+	end
+
+	-- unlearn all spells
+	for k,v in pairs(chargen.choose_spell) do
+		if v.enabled then
+			createCharScreen:OnLearnMageSpellButtonClick(k)
+		end	
+	end
+		-- get specialist list
+	
+	speclist=dwKitSpecMap[kit]
+	if not speclist then
+		return nil
+	end	
+		-- learn as many spec spells as you can
+	for k,v in pairs(chargen.choose_spell) do
+		res=spellBook[chargen.currentSpellLevelChoice][v.key].resref
+		if dwIsSpecSpell(res,speclist) then
+			createCharScreen:OnLearnMageSpellButtonClick(k)
+		end
+	end
+end
+
+function dwChargenSpecialistRequirementsSatisfied(spells)
+
+	-- get the character's kit
+
+	class,kit=dwFindClassKit()
+
+	if not dwChargenChooseSpells[kit] then
+		return true 
+	end
+
+	-- return true for cleric/mages on the priest screen
+
+	if (class==14 or class==17) and dwIsPriest then
+		return true
+	end
+
+	-- find required number of spells
+
+	required_num=dwSpecRequire[kit]
+	if not required_num then
+		return true
+	end
+
+	-- get assigned specialities
+
+	speclist=dwKitSpecMap[kit]
+	if not speclist then
+		return true
+	end
+
+	-- if level is empty, return true
+
+	empty=true
+	for _,s in pairs(speclist) do
+		if not dwSpellList[s].empty[chargen.currentSpellLevelChoice] then
+			empty=false
+		end
+	end
+	if empty then
+		return true
+	end
+	count=0
+	for k,v in pairs (chargen.choose_spell) do
+		res=spells[chargen.currentSpellLevelChoice][v.key].resref
+		if dwIsSpecSpell(res,speclist) then
+			if (v.count) then
+				count=count+v.count
+			elseif (v.enabled) then
+				count=count+99
+			end
+		end
+	end
+	return (count>=required_num)
+end
+
+function dwSpecialistSpellExtra(resref)
+
+	_,kit=dwFindClassKit()
+	if not dwChargenChooseSpells[kit] then
+		return false
+	end
+	speclist=dwKitSpecMap[kit]
+	if not speclist then
+		return false
+	end
+	return dwIsSpecSpell(resref,speclist) 
+end
+
+function dwSpecialistSpellMessage()
+
+	_,kit=dwFindClassKit()
+	if dwKitSpecLearnLine[kit] then
+		return Infinity_FetchString(dwKitSpecLearnLine[kit])
+	end
+	if kit==22 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('ABJURATION_SCHOOL_TOKEN'))
+	elseif kit==23 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('CONJURATION_SCHOOL_TOKEN'))
+	elseif kit==24 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('DIVINATION_SCHOOL_TOKEN'))
+	elseif kit==25 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('ENCHANTMENT_SCHOOL_TOKEN'))
+	elseif kit==26 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('ILLUSION_SCHOOL_TOKEN'))
+	elseif kit==27 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('EVOCATION_SCHOOL_TOKEN'))
+	elseif kit==28 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('NECROMANCY_SCHOOL_TOKEN'))
+	elseif kit==29 then
+		setStringTokenLua('<SCHOOLTOKEN>',t('TRANSMUTATION_SCHOOL_TOKEN'))
+	end
+	return t('SPECIALIST_SPELL_REQ')
+end
+
+function dwSpecialistMemoMessage()
+
+	_,kit=dwFindClassKit()
+	if dwKitSpecMemoLine[kit] then
+		return Infinity_FetchString(dwKitSpecMemoLine[kit])
+	end
+
+	return ''
+end
+
+function dwLearnChance()
+
+	_,kit=dwFindClassKit()
+	if not dwModifyLearnChance[kit] then
+		return nil
+	end
+	res=dwScrollSpellMap[itemDesc.item.res]
+	mod_found=nil
+	for list,mod in pairs(dwModifyLearnChance[kit]) do
+		if not mod_found then
+			if not (list=='default') then
+				if dwSpellList[list][res]  then
+					mod_found=mod
+				end
+			end
+		end
+	end
+	if not mod_found then 
+		mod_found=dwModifyLearnChance[kit].default 
+	end
+	if mod_found==25 then
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player1)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player2)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player3)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player4)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player5)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_25%",Player6)')
+		return nil
+	end
+	if mod_found==15 then
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player1)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player2)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player3)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player4)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player5)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_plus_15%",Player6)')
+		return nil
+	end	
+	if mod_found==-15 then
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player1)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player2)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player3)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player4)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player5)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_minus_15%",Player6)')
+		return nil
+	end
+end
+
+function dwLearnChanceCancel()
+	if not dwDebugModifyLearn then
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player1)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player2)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player3)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player4)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player5)')
+		C:Eval('ApplySpellRES("%spl_spell_learning_reset%",Player6)')
+	end
+end
+
+-- hacks to work around the fact that changing character when on the spellbook page doesn't automatically refresh it
+
+function dwRefreshPriestHack()
+
+	if dwCurrentID~=currentID then
+		currentID=id
+		dwCurrentID=currentID
+		refreshPriestBook()
+	end
+
+
+	return ''
+
+end
+
+function dwRefreshMageHack()
+
+	if dwCurrentID~=currentID then
+		currentID=id
+		dwCurrentID=currentID
+	end
+
+
+	return ''
+
+end
+
+
+
+>>>>>>>>
+<<<<<<<< .../stratagems-inline/spell_system_data.lua
+
+dwLearnedKitSpellAllow={}
+dwPriestKitSpellAllow={}
+dwLearnedKitSpellBlock={}
+dwPriestKitSpellBlock={}
+
+dwLearnedClassSpellAllow={}
+dwPriestClassSpellAllow={}
+dwLearnedClassSpellBlock={}
+dwPriestClassSpellBlock={}
+
+dwSpellList={}
+
+dwKitSpecMap={}
+dwChargenChooseSpells={}
+dwSpecRequire={}
+dwModifyLearnChance={}
+dwScrollSpellMap={}
+dwKitSpecLearnLine={}
+dwKitSpecMemoLine={}
+
+
+>>>>>>>>

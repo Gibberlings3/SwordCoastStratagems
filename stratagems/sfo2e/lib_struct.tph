@@ -514,6 +514,7 @@ BEGIN
 		// get the header	
 		PATCH_IF open_header BEGIN
 		  SPRINT $struct("header") ""
+		  // ad hoc management of ARE bitmask
 		  PATCH_IF VARIABLE_IS_SET "SFO_%strtype%_offsets_header_length" BEGIN
 			var_index="SFO_%strtype%_offsets_header_length"
 		  END ELSE BEGIN
@@ -1259,6 +1260,7 @@ BEGIN
 			// firstly we want to get the index and count data
 			CLEAR_ARRAY write_index
 			CLEAR_ARRAY working_index
+			
 			// count parent and parent/child arrays
 			PHP_EACH "SFO_%strtype%_extended_types" AS parent=>discard BEGIN
 				PATCH_IF "%parent%" STR_CMP "null" BEGIN
@@ -1295,7 +1297,7 @@ BEGIN
 					parent_count=$write_index("%parent%" "count")
 					FOR (parent_ind=0;parent_ind<parent_count;++parent_ind) BEGIN
 						PHP_EACH "SFO_%strtype%_parent_child_id" AS pc_id=>discard2 BEGIN
-							PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN		
+							PATCH_IF $"SFO_%strtype%_parent_child_data"("%pc_id%" "parent") STR_EQ "%parent%" BEGIN	
 								SPRINT child $"SFO_%strtype%_parent_child_data"("%pc_id%" "child")
 								index=$working_index("%child%") 
 								SET $write_index("%parent%" "%parent_ind%" "%pc_id%" "index") = index
@@ -1304,12 +1306,14 @@ BEGIN
 									PATCH_PRINT "%parent% %pc_id% %parent_ind%: %index% %count%"  
 								END
 								index += count
+								SET $working_index("%child%") = index
 							END
-							SET $working_index("%child%") = index
+							//SET $working_index("%child%") = index
 						END
 					END
 				END
 			END
+			
 			PATCH_IF telemetry BEGIN
 				PATCH_PRINT "Contents of write_index:"
 				LPF array_echo STR_VAR array=write_index END
@@ -1566,10 +1570,12 @@ DEFINE_PATCH_FUNCTION struct_write_postprocess//internal
 BEGIN
 	PATCH_MATCH "%strtype%" WITH
 	"are_v1" BEGIN
+		WRITE_LONG 0x9c 0 // occasional files have crufty bitmap data
 		WRITE_LONG 0xa0 (LONG_AT 0xbc) // explored bitmap apparently precedes songs
 		WRITE_LONG 0xb8 (LONG_AT 0x7c) // tiled objects apparently precede vertices
 	END
 	"are_v9_1" BEGIN
+		WRITE_LONG 0xac 0 // occasional files have crufty bitmap data
 		WRITE_LONG 0xb0 (LONG_AT 0xcc) // explored bitmap apparently precedes songs
 		WRITE_LONG 0xc8 (LONG_AT 0x8c) // tiled objects apparently precede vertices
 	END	
@@ -2399,7 +2405,6 @@ BEGIN
 	PATCH_IF "%patch%" STR_CMP "" BEGIN
 		LPF anon_check STR_VAR function="%patch%" append RET patch=function SFO_anon_func_count END	
 	END 
-
 	
 	// iterate through parent
 	parent_blockcount=$"%struct%"("%parent%" blockcount)
@@ -2466,7 +2471,6 @@ BEGIN
 		++parent_index	
 		END
 	END
-		
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3371,6 +3375,7 @@ BEGIN
 						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
 					END
 					LPF "%edit_function%" END
+				BUT_ONLY
 			END ELSE BEGIN
 				ACTION_IF !allow_missing BEGIN
 					WARN "WARNING: supposed in-game object %source_file% is missing, aborting struct_edit operation"
@@ -3384,6 +3389,7 @@ BEGIN
 						LPF struct_debug STR_VAR strtype struct=m function="%edits%" END
 					END
 					LPF "%edit_function%" END
+				BUT_ONLY
 			END ELSE BEGIN
 				ACTION_IF !allow_missing BEGIN
 					WARN "WARNING: supposed file %path%/%source_file% is missing, aborting struct_copy operation"
@@ -3582,6 +3588,11 @@ BEGIN
 		END
 		strref BEGIN
 			READ_STRREF offset value
+		END
+		flag BEGIN
+			n=$"SFO_%strtype%_flags"("%label%")
+			READ_BYTE offset byte
+			value = (byte BAND (2**n)) >> n
 		END
 		DEFAULT
 			PATCH_WARN "unrecognized type %type% in struct_get"
@@ -4148,5 +4159,32 @@ BEGIN
 										PHP_EACH s AS k=>v BEGIN
 											SPRINT $s("%k%" "old") "%v%"
 										END
+
+END
+
+/*
+document{struct_test}
+{Process a fraction of all are/cre/itm/spl/sto files through struct_read/struct_write and see which ones change. The fraction is one in (INT_VAR fraction). }
+
+
+*/
+
+DEFINE_ACTION_FUNCTION struct_test 
+	INT_VAR fraction=20 
+BEGIN
+
+	COPY_EXISTING_REGEXP - ".*\.\(are\|cre\|itm\|spl\|sto\)" override
+		PATCH_IF (RANDOM (1 fraction)=1 && !("%SOURCE_EXT%" STR_EQ "cre" && BYTE_AT 0x33=0)) BEGIN
+			READ_ASCII 0x0 data_old (BUFFER_LENGTH)
+			LPF struct_read RET_ARRAY m=struct END
+			LPF struct_write STR_VAR struct=m END
+			READ_ASCII 0x0 data_new (BUFFER_LENGTH)
+			PATCH_IF "%data_old%" STR_CMP "%data_new%" BEGIN
+				PATCH_PRINT "%SOURCE_FILE%"
+			END
+		END
+		SPRINT $test_array("%SOURCE_FILE%") ""
+	BUT_ONLY
+
 
 END

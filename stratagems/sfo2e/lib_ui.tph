@@ -15,12 +15,13 @@ document{UI_alter_object}
 */
 
 DEFINE_PATCH_FUNCTION UI_alter_object
-    STR_VAR object="" 
+    INT_VAR silent=0
+	STR_VAR object="" 
             object_type=""
             object_name_field="name"
             patch=""//function
 BEGIN
-   LPF UI_patch_object_master STR_VAR object object_type object_name_field patch type=alter END
+   LPF UI_patch_object_master INT_VAR silent STR_VAR object object_type object_name_field patch type=alter END
 END
 
 /*
@@ -31,7 +32,7 @@ this is to extract information from ui.menu. You can use the anonymous function 
 */
 
 DEFINE_PATCH_FUNCTION UI_analyze_object
-    STR_VAR object=""
+	STR_VAR object=""
             object_type=""
             object_name_field="name"
             patch=""//function
@@ -111,7 +112,8 @@ BEGIN
 END
 
 DEFINE_PATCH_FUNCTION UI_patch_object_master//internal
-    STR_VAR object=""
+    INT_VAR silent=0
+	STR_VAR object=""
             object_type=""
             object_name_field="name"
             patch=""
@@ -149,12 +151,18 @@ BEGIN
              READ_ASCII start+1 data (end - start - 1)
              SET change=0
              INNER_PATCH_SAVE data "%data%" BEGIN
+				
                 PATCH_IF ( INDEX_BUFFER (~%object_name_field%\( \|%TAB%\)*['"]?%object%['"]?~) > 0 || "%object%" STRING_EQUAL "") BEGIN
                    PATCH_MATCH "%type%" WITH
                    alter BEGIN
                        SET change=1
-                       LPF "%patch%" END
-                   END
+                       READ_ASCII 0x0 data_old (BUFFER_LENGTH)
+					   LPF "%patch%" END
+					   READ_ASCII 0x0 data_new (BUFFER_LENGTH)
+					   PATCH_IF "%data_old%" STR_EQ "%data_new%" && !silent BEGIN
+							PATCH_WARN "SFO warning: UI edit to %SOURCE_FILE% (object=%object%, object_type=%object_type%, patch=%patch%) has made no change"
+						END
+					END
                    analyze BEGIN
                       LPF "%patch%" RET_ARRAY patch_output END
                    END
