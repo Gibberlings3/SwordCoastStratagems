@@ -43,6 +43,8 @@ do, the spl will be read into the struct 'm' beforehand and written back afterwa
 <p>If the dest file is an ids entry (determined heuristically unless is_ids is set) then we add it to spell.ids, use it as a resref, 
 add icons in the standard format (unless standard_icons=0) and (unless create_scroll=0) build a scroll. In this case, we use icon_path, icon_location, icon_locbase (if set)
 to determine where the spell icons are, and copy them over if they're in the format <icon_base_name>[ABC].bam. (If icon_base_name is unset, we use the ids name.)</p>
+<p>By default, if the dest file is an IDS entry we put the spell in the SPWI, SPPR or SPIN namespace based on the type in the copied spell. You can override this by setting 'type' to 'wizard','priest','innate' or 'class'.
+(But this only determines where the spell ends up; it doesn't change its internal type.</p>
 <p>If tv=1, we prepend "_" onto each k and v on BGTUTU installs. </p>
 <p>If debug=1, we try to debug the anonymous function to detect any nonexistent field writes.</p>
 <p>Returns the resref of the last spell created (value; synonym:spell_resref), and its scroll (scroll; synonym:scroll_resref) if any. (Only really useful if you're copying to an ids, and only if you're only doing it once.)
@@ -60,7 +62,6 @@ DEFINE_ACTION_FUNCTION spl_copy
 			overwrite=0//boolean
 			overwrite_on_mismatch=0//boolean
 			force_extended=0//boolean
-			force_class=0//boolean
 	STR_VAR spl=""
 			path=""
 			location=""
@@ -73,6 +74,7 @@ DEFINE_ACTION_FUNCTION spl_copy
 			icon_location=""
 			icon_locbase=""
 			edits=""//function
+			type=""
 	RET value
 		scroll
 		spell_resref
@@ -94,31 +96,26 @@ BEGIN
 			LAF struct_copy INT_VAR tv allow_missing debug STR_VAR file="%key%=>sfo_temp_spl" ext=spl source_path source_location source_locbase path="%workspace%" edits END
 			COPY - "%workspace%/sfo_temp_spl.spl" nowhere
 				LPF struct_get STR_VAR arguments=level RET level=value END
-				LPF struct_get STR_VAR arguments=type RET type=value END
-				PATCH_IF force_class BEGIN
-					PATCH_IF "%type%" STR_EQ "innate" BEGIN
-						SPRINT type "class"
-					END ELSE BEGIN
-						PATCH_WARN "spl_copy warning: you set force_class=1, but this spell is type %type%"
-					END
+				PATCH_IF "%type%" STR_EQ "" BEGIN
+					LPF struct_get STR_VAR arguments=type RET type=value END
 				END
 			BUT_ONLY
 			LAF spl_resolve_ids INT_VAR level force_extended STR_VAR type ids RET spell_resref=resref mismatch already_present lua_line_needed END
 			OUTER_SET proceed=1
 			ACTION_IF already_present BEGIN
 				ACTION_IF overwrite BEGIN
-					LAF warning STR_VAR warning="%spl% is already present; overwriting." END
+					LAF warning STR_VAR warning="%ids% is already present; overwriting." END
 				END ELSE
 				ACTION_IF mismatch BEGIN
 					ACTION_IF overwrite_on_mismatch BEGIN
 						LAF spl_resolve_ids INT_VAR level force_extended replace_on_mismatch=1 STR_VAR type ids RET spell_resref=resref END
-						LAF warning STR_VAR warning="%spl% is already present, but at the wrong level/the wrong type; overwriting." END
+						LAF warning STR_VAR warning="%ids% is already present, but at the wrong level/the wrong type; overwriting." END
 					END ELSE BEGIN
-						LAF warning STR_VAR warning="%spl% is already present, although at at the wrong level/the wrong type; aborting spl_copy." END	
+						LAF warning STR_VAR warning="%ids% is already present, although at at the wrong level/the wrong type; aborting spl_copy." END	
 						OUTER_SET proceed=0
 					END				
 				END ELSE BEGIN
-					LAF warning STR_VAR warning="%spl% is already present; aborting spl_copy." END
+					LAF warning STR_VAR warning="%ids% is already present; aborting spl_copy." END
 					OUTER_SET proceed=0
 				END
 			END
@@ -1346,7 +1343,8 @@ document{spl_hide_spells}
 {
 Given a list of spells (as IDS), removes those spells entirely from the game: the spells themselves hidden in HIDESPL; all copies of the scrolls
 are removed from stores, creatures, areas and 2da rndtres/rndscrol; the scroll itself is replaced by a minor gem. The actual spells are still present.</p>
-<p>You can also specify the spells as a k=>blank array
+<p>You can also specify the spells as a k=>blank array. If you set the INT_VAR scrolls_only to 1, the scrolls are removed but the spells are still available
+to select at chargen and at sorcerer/shaman levelup, and are still given to priests.
 }
 
 */
@@ -1355,6 +1353,7 @@ are removed from stores, creatures, areas and 2da rndtres/rndscrol; the scroll i
 
 
 DEFINE_ACTION_FUNCTION spl_hide_spells
+	INT_VAR scrolls_only=0
 	STR_VAR spells="" spell_array=""
 BEGIN
 	ACTION_CLEAR_ARRAY sfo_internal_spell_array
@@ -1378,21 +1377,23 @@ BEGIN
 	
 	// put the spells in hidespl
 	
-	ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
-		COPY_EXISTING "hidespl.2da" override
-			LPF 2da_read RET_ARRAY hidespl_array=array END
-			PHP_EACH sfo_internal_spell_array AS ids=>resref BEGIN
-				PATCH_IF !enhanced_edition BEGIN
-					SPRINT $hidespl_array("%resref%" "UNUSED") "****"
-				END ELSE BEGIN
-					SPRINT $hidespl_array("%resref%" "IS_HIDDEN") 1
-					SPRINT $hidespl_array("%resref%" "IS_FINAL") 0
-					SPRINT $hidespl_array("%resref%" "IS_REMOVED") 0
+	ACTION_IF !scrolls_only BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "hidespl.2da" BEGIN
+			COPY_EXISTING "hidespl.2da" override
+				LPF 2da_read RET_ARRAY hidespl_array=array END
+				PHP_EACH sfo_internal_spell_array AS ids=>resref BEGIN
+					PATCH_IF !enhanced_edition BEGIN
+						SPRINT $hidespl_array("%resref%" "UNUSED") "****"
+					END ELSE BEGIN
+						SPRINT $hidespl_array("%resref%" "IS_HIDDEN") 1
+						SPRINT $hidespl_array("%resref%" "IS_FINAL") 0
+						SPRINT $hidespl_array("%resref%" "IS_REMOVED") 0
+					END
 				END
-			END
-			LPF 2da_write STR_VAR array=hidespl_array default="0" END
-	END ELSE BEGIN
-		WARN "spl_remove_spells_from_game cannot fully remove spells, since you are on non-EE without ToBEx"
+				LPF 2da_write STR_VAR array=hidespl_array default="0" END
+		END ELSE BEGIN
+			WARN "spl_remove_spells_from_game cannot fully remove spells, since you are on non-EE without ToBEx"
+		END
 	END
 	
 	// get an array of scrolls

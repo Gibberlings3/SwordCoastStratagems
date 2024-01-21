@@ -328,6 +328,7 @@ IDS V1.0
 		PHP_EACH subrace_rows AS ident=>discard BEGIN
 			SPRINT $output_array("%ident%" race_id) $subrace_data("%ident%" final_id)
 			SPRINT $output_array("%ident%" subrace_id) $subrace_data("%ident%" id)
+			SPRINT $output_array("%ident%" original_race) $subrace_data("%ident%" parent_real_id)
 		END
 		LPF 2da_write STR_VAR array=output_array END
 
@@ -479,8 +480,10 @@ DEFINE_ACTION_FUNCTION add_subraces_lua_setup BEGIN
 	ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
 		OUTER_SPRINT lua_loc lua
 	END
+
+	LAF ui_detect_class_kit END // unsure if it's needed, but it's helpful to control install order (and dk has no visible effects)
 	LAF shared_color_changes END
-	
+
 	LAF UI_install_function STR_VAR new_function_path="%MOD_FOLDER%/%lua_loc%/code/adjust_abilities.lua" lua_file="m_dw_shr" search_string=dwGetAbilityValue END
 
 	// install relevant functions and the the 'subrace' objects
@@ -543,7 +546,7 @@ DEFINE_ACTION_FUNCTION add_subraces_lua_setup BEGIN
 			end"
 
 		// edit the UI to hide race-transmission icons and to show the race itself
-			REPLACE_TEXTUALLY "chargen.information" "dwChargenInformation()"
+			REPLACE_TEXTUALLY "chargen\.information" "dwChargenInformation()"
 			REPLACE_TEXTUALLY ~addCharacterDetail(v\.bam,v\.current,Infinity_FetchString(v\.strRef))~ ~dwAddCharacterIcon(v.bam,v.current,v.strRef)~ // IWDEE
 			REPLACE_TEXTUALLY ~Infinity_FetchString(statusEffects\[rowNumber\]\.strRef)~ ~Infinity_FetchString(dwAddCharacterIcon2(statusEffects[rowNumber].strRef))~
 			REPLACE_TEXTUALLY ~Infinity_FetchString(char\.race)~ ~dwDisplayRace(char)~
@@ -1472,6 +1475,118 @@ END
 
 
 END
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION assign_npc_subraces BEGIN
+
+
+	OUTER_SET subrace_stat=134
+	LAF 2da_read STR_VAR file=dw_subrace_ids.2da path="%data_loc_shared%" case=lower RET_ARRAY subrace_id_array=array END
+
+/*
+	LAF array_read STR_VAR file=npc_subraces.txt location=data RET_ARRAY npc_array=array END
+	ACTION_CLEAR_ARRAY npc_subraces 
+	ACTION_PHP_EACH npc_array AS dv=>subrace BEGIN
+		ACTION_TO_LOWER dv
+		ACTION_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN
+			OUTER_SPRINT $npc_subraces("%dv%") "%subrace%"
+		END	
+	END
+*/	
+	LAM 3p_load_data
+	ACTION_PHP_EACH sfo_3p_npc_subrace AS dv=>subrace BEGIN
+		ACTION_TO_LOWER dv
+		ACTION_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN
+			OUTER_SPRINT $npc_subraces("%dv%") "%subrace%"
+		END
+	END
+
+	COPY_EXISTING_REGEXP ".*\.cre" override
+		READ_ASCII 0x280 dv
+		TO_LOWER dv
+		PATCH_IF VARIABLE_IS_SET $npc_subraces("%dv%") BEGIN
+			SPRINT subrace_ident $npc_subraces("%dv%")
+			TO_LOWER subrace_ident
+			PATCH_IF VARIABLE_IS_SET $subrace_id_array("%subrace_ident%" "subrace_id") BEGIN
+				SET parameter1=$subrace_id_array("%subrace_ident%" "subrace_id")
+				LPF ADD_CRE_EFFECT INT_VAR opcode=233 target=2 timing=9 parameter1 parameter2=subrace_stat END
+				WRITE_BYTE 0x272 $subrace_id_array("%subrace_ident%" "original_race")
+				PATCH_MATCH "%subrace_ident%" WITH 
+				GNOME_DEEP ELF_DROW BEGIN
+					WRITE_BYTE 0x5d 0 // no hardcoded MR
+					LPF DELETE_EFFECT INT_VAR match_opcode=166 END
+				END
+				AASIMAR BEGIN
+					WRITE_BYTE 0x59 0 // no hardcoded fire resistance
+					WRITE_BYTE 0x5e 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=30 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=84 END
+					WRITE_BYTE 0x5a 0 // no hardcoded cold resistance
+					WRITE_BYTE 0x5f 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=28 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=85 END
+				END
+				TIEFLING BEGIN
+					PATCH_PRINT "tioef"
+					WRITE_BYTE 0x59 0 // no hardcoded fire resistance
+					WRITE_BYTE 0x5e 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=30 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=84 END
+					WRITE_BYTE 0x5a 0 // no hardcoded cold resistance
+					WRITE_BYTE 0x5f 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=28 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=85 END
+					WRITE_BYTE 0x5c 0 // no hardcoded acid resistance
+					LPF DELETE_EFFECT INT_VAR match_opcode=27 END
+				END
+				GENASI_FIRE BEGIN
+					WRITE_BYTE 0x59 0 // no hardcoded fire resistance
+					WRITE_BYTE 0x5e 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=30 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=84 END
+					WRITE_BYTE 0x5a 0 // no hardcoded cold vulnerability
+					WRITE_BYTE 0x5f 0	
+					LPF DELETE_EFFECT INT_VAR match_opcode=28 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=85 END			
+				END
+				GENASI_WATER BEGIN
+					WRITE_BYTE 0x60 0 // no hardcoded physical resistance
+					WRITE_BYTE 0x61 0
+					WRITE_BYTE 0x62 0
+					WRITE_BYTE 0x63 0
+					LPF DELETE_EFFECT INT_VAR match_opcode=86 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=87 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=88 END
+					LPF DELETE_EFFECT INT_VAR match_opcode=89 END				
+				END
+				DEFAULT
+				END
+			END
+		END
+	BUT_ONLY
+
+	// also remove from CLABs any 3p redundant effects
+
+	LAM 3p_load_data
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_array=array END
+	
+	ACTION_PHP_EACH sfo_3p_kit AS k=>list BEGIN
+		ACTION_IF "%k_1%" STR_EQ "subrace_delete" BEGIN
+			OUTER_SPRINT kit "%k_0%"
+			ACTION_TO_UPPER kit
+			OUTER_SPRINT clab $kitlist_array("%kit%" ABILITIES)
+			COPY_EXISTING "%clab%.2da" override
+				WHILE "%list%" STR_CMP "" BEGIN
+					LPF return_first_entry STR_VAR list separator="," RET entry list END
+					REPLACE_TEXTUALLY "\(GA\|AP\)_%entry%" "****"
+				END
+			IF_EXISTS
+		END
+	END
+
+END
+
 
 
 

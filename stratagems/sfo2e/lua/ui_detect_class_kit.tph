@@ -10,53 +10,76 @@ Detection algorithm (non-chargen version)
 - either way, sub the kit name for its parent-class name in the class string
 - look up that string (watching for <MAGESCHOOL>-type problems)
 
-TRY TO KEEP DEPENDENCIES TO A MINIMUM HERE!
 
 */
 
 
 DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1 is debug
 
-	// install the detect_chargen_status function
+	// UI edits, only do once
 	
-	LAF detect_chargen_status_localcopy END
+	LAF check_label STR_VAR label=dw#detect_class_kit_ui_edits RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label=dw#detect_class_kit_ui_edits END	
 
-	// install the function
-	COPY ".../stratagems-inline/m_dw_dkf.lua" override
+		// find the 'inactive' string
+		
+		LAF 2da_read STR_VAR file=enginest.2da RET_ARRAY enginest_array=array END
+		OUTER_SET inactive_strref_long=$enginest_array(STRREF_GUI_MIXED_UNUSABLEEXPERIENCEENTRY STRREF)
+		ACTION_GET_STRREF inactive_strref_long inactive_string_long 
+		OUTER_PATCH_SAVE inactive_string "%inactive_string_long%" BEGIN
+			REPLACE_TEXTUALLY "<EXPERIENCE>[%WNL%%LNL%%MNL%]" ""
+		END
+		OUTER_SET inactive_strref=RESOLVE_STR_REF ("%inactive_string%")
 
-	// edit the menu to keep currentID up-to-date
-	// (it's updated when you hit the character screen, but for some reason the inventory and mage/priest spell screens use id, not currentID)
-	// likewise id gets updated when you use the select portrait but currentID doesn't
-	
-	ACTION_IF !FILE_EXISTS "weidu_external/markers/dw-update-currentID.mrk" BEGIN
-		COPY_EXISTING "spwi304.spl" "weidu_external/markers/dw-update-currentID.mrk" 
-		COPY_EXISTING "ui.menu" override
-			PATCH_FOR_EACH object IN MAGE PRIEST INVENTORY BEGIN
-				LPF UI_alter_object STR_VAR object object_type=menu patch=update_currentID END
-			END
-			REPLACE_TEXTUALLY "Infinity_OnPortraitLClick(\([0-9]\))" "Infinity_OnPortraitLClick(\1); currentID=id"
-		BUT_ONLY
+		// install the detect_chargen_status function
+		
+		LAF detect_chargen_status END
+		
+		// patch character screen display to hide the {} (and also put some virtual-class infrastructure in for later)
+		
+		LAF patch_character_screen_display END
+
+		// install the functions
+		COPY ".../stratagems-inline/m_dw_dkf.lua" override EVALUATE_BUFFER
+
+		// edit the menu to keep currentID up-to-date
+		// (it's updated when you hit the character screen, but for some reason the inventory and mage/priest spell screens use id, not currentID)
+		// likewise id gets updated when you use the select portrait but currentID doesn't
+		
+		ACTION_IF !FILE_EXISTS "weidu_external/markers/dw-update-currentID.mrk" BEGIN
+			COPY_EXISTING "spwi304.spl" "weidu_external/markers/dw-update-currentID.mrk" 
+			COPY_EXISTING "ui.menu" override
+				PATCH_FOR_EACH object IN MAGE PRIEST INVENTORY BEGIN
+					LPF UI_alter_object STR_VAR object object_type=menu patch=update_currentID END
+				END
+				REPLACE_TEXTUALLY "Infinity_OnPortraitLClick(\([0-9]\))" "Infinity_OnPortraitLClick(\1); currentID=id"
+			BUT_ONLY
+		END
+		
+		// also edit the menu to record original class/kit on dual-classing, and alignment on chargen
+		
+		ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwOriginalClass,dwOriginalKit" BEGIN
+			COPY_EXISTING "ui.menu" override
+				REPLACE_TEXTUALLY EXACT_MATCH 
+					"characterScreen:OnDualClassButtonClick()" 
+					"dwOriginalClass,dwOriginalKit=dwFindClassKit(2);characterScreen:OnDualClassButtonClick()"
+				REPLACE_TEXTUALLY EXACT_MATCH
+					"createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
+					"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
+				// this last one for Lefreut
+				REPLACE_TEXTUALLY EXACT_MATCH
+					"createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
+					"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
+
+			BUT_ONLY
+		END
+
+
+
 	END
-	
-	// also edit the menu to record original class/kit on dual-classing, and alignment on chargen
-	
-	ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwOriginalClass,dwOriginalKit" BEGIN
-		COPY_EXISTING "ui.menu" override
-			REPLACE_TEXTUALLY EXACT_MATCH 
-				"characterScreen:OnDualClassButtonClick()" 
-				"dwOriginalClass,dwOriginalKit=dwFindClassKit(2);characterScreen:OnDualClassButtonClick()"
-			REPLACE_TEXTUALLY EXACT_MATCH
-				"createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
-				"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
-			// this last one for Lefruet
-			REPLACE_TEXTUALLY EXACT_MATCH
-				"createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
-				"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
 
-		BUT_ONLY
-	END
 
-	
 
 	// if proficiency signalling is installed, edit the epf function to use vcf class detection
 	// (idempotent)
@@ -77,99 +100,107 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 
 	//install the data
 	
+
+	// parse CLASTEXT to install the IDs on all class and kit names, first handling any duplicates (i.e. cases where 2 kits reference the same strref)
 	
-	// parse CLASTEXT to get dwClassByName (and, while you're at it, make a list of FALLEN data)
-	
-	OUTER_SPRINT class_by_name "%WNL%"
-	COPY_EXISTING "clastext.2da" override
-		COUNT_2DA_COLS colcount
-		READ_2DA_ENTRIES_NOW clastext_data colcount
-		// get 'fallen' data
-		FOR (row=0;row<clastext_data;++row) BEGIN
-			READ_2DA_ENTRY_FORMER clastext_data row 0 class_label
-			PATCH_MATCH "%class_label%" WITH
-			FALLEN_CLERIC FALLEN_GODLATHANDER BEGIN // these are unused dummies
+	ACTION_CLEAR_ARRAY kit_id_sig
+	ACTION_CLEAR_ARRAY kit_id_class
+	LAF 2da_read STR_VAR file=clastext.2da RET_ARRAY clastext_array=array clastext_rows=rows END
+	// first pass for duplicates
+	OUTER_SET duplicates=0
+	ACTION_PHP_EACH clastext_rows AS row=>discard BEGIN
+		ACTION_IF IS_AN_INT $clastext_array("%row%" "MIXED") BEGIN
+			OUTER_SET strref=$clastext_array("%row%" "MIXED")
+			ACTION_IF !VARIABLE_IS_SET $sfo_reserved_dk_duplicate_check("%strref%") BEGIN
+				OUTER_SPRINT $sfo_reserved_dk_duplicate_check("%strref%") ""
+			END ELSE BEGIN
+				OUTER_SET duplicates=1
+				ACTION_GET_STRREF strref string
+				OUTER_SET $clastext_array("%row%" "MIXED")=RESOLVE_STR_REF ("%string%{%row%}") // just has to be unique, the {} will be stripped off again in a moment
 			END
-			"FALLEN_.*" BEGIN
-				READ_2DA_ENTRY_FORMER clastext_data row 5 fallen_strref
-				GET_STRREF fallen_strref fallen_name
-				SPRINT $fallen_strrefs("%class_label%") "%fallen_name%"
+		END
+	END
+	// if there are duplicates, write them back
+	ACTION_IF duplicates BEGIN
+		LAF 2da_write STR_VAR file=clastext.2da array=clastext_array END
+		// write them back into any campaign-specific version too (in principle we could handle campaign-specific titles but I'm not sure it's worth the hassle since AFAIK they're unused)
+		ACTION_IF FILE_EXISTS_IN_GAME campaign.2da BEGIN
+			LAF 2da_read STR_VAR file=campaign.2da RET_ARRAY campaign_array=array campaign_rows=rows END
+			ACTION_PHP_EACH campaign_rows AS row=>discard BEGIN
+				OUTER_SPRINT clastext_local $campaign_array("%row%" "CLASTEXT")
+				COPY_EXISTING "%clastext_local%.2da" override
+					LPF 2da_read RET_ARRAY clastext_local_array=array clastext_local_rows=rows END
+					PHP_EACH clastext_local_rows AS row2=>discard2 BEGIN
+						SPRINT $clastext_local_array("%row2%" "MIXED") $clastext_array("%row2%" "MIXED")
+					END
+					LPF 2da_write STR_VAR array=clastext_local_array END
+				BUT_ONLY
+				IF_EXISTS
+			END
+		END
+	END
+	
+	ACTION_PHP_EACH clastext_rows AS row=>discard BEGIN
+		ACTION_IF IS_AN_INT $clastext_array("%row%" "MIXED") && IS_AN_INT $clastext_array("%row%" "CLASSID") BEGIN
+			OUTER_SET strref=$clastext_array("%row%" "MIXED")
+			OUTER_SPRINT kit_ident $clastext_array("%row%" "KITID") // some are out of bounds
+			OUTER_SET class_ident=$clastext_array("%row%" "CLASSID")
+			ACTION_MATCH "%kit_ident%" WITH
+			"16384" BEGIN // class
+				OUTER_SET kit_ident=0
+			END
+			"64" BEGIN // abjurer
+				OUTER_SET kit_ident=22
+			END
+			"128" BEGIN // conjurer
+				OUTER_SET kit_ident=23
+			END
+			"256" BEGIN // diviner
+				OUTER_SET kit_ident=24
+			END
+			"512" BEGIN // enchanter
+				OUTER_SET kit_ident=25
+			END	
+			"1024" BEGIN // illusionist
+				OUTER_SET kit_ident=26
+			END		
+			"2048" BEGIN // invoker
+				OUTER_SET kit_ident=27
+			END	
+			"4096" BEGIN // necromancer
+				OUTER_SET kit_ident=28
+			END	
+			"8192" BEGIN // transmuter
+				OUTER_SET kit_ident=29
+			END	f
+			"2147483648" BEGIN // wild mage
+				OUTER_SET kit_ident=30
+			END
+			"1073741824" BEGIN //barbarian
+				OUTER_SET kit_ident=31
 			END
 			DEFAULT
 			END
-		END		
-		// get class data
-		FOR (row=0;row<clastext_data;++row) BEGIN
-			READ_2DA_ENTRY_FORMER clastext_data row 0 label
-			READ_2DA_ENTRY_FORMER clastext_data row 2 kit
-			READ_2DA_ENTRY_FORMER clastext_data row 7 fallen
-			PATCH_IF "%kit%" STRING_EQUAL_CASE 16384 && "%fallen%" STRING_EQUAL_CASE 0 BEGIN
-				READ_2DA_ENTRY_FORMER clastext_data row 1 id
-				READ_2DA_ENTRY_FORMER clastext_data row 5 name_strref
-				GET_STRREF name_strref name
-				PATCH_IF INDEX ("'" "%name%")<0 BEGIN
-					SPRINT class_by_name "%class_by_name%%TAB%['%name%']=%id%,%WNL%"
-				END ELSE
-				PATCH_IF INDEX (~"~ "%name%")<0 BEGIN
-					SPRINT class_by_name ~%class_by_name%%TAB%["%name%"]=%id%,%WNL%~				
-				END ELSE BEGIN
-					PATCH_FAIL ~class name %name% contains both " and ' (seriously?...). ui_detect_class_kit can't handle that.~
+			ACTION_IF strref>=0 BEGIN
+				ACTION_GET_STRREF strref string_old
+				OUTER_PATCH_SAVE string "%string_old%" BEGIN
+					REPLACE_TEXTUALLY "{.*}" ""
 				END
-				PATCH_IF VARIABLE_IS_SET $fallen_strrefs("FALLEN_%label%") BEGIN
-					SPRINT fallen_name $fallen_strrefs("FALLEN_%label%")
-					SPRINT class_by_name "%class_by_name%%TAB%['%fallen_name%']=%id%,%WNL%"
+				OUTER_SPRINT string "%string%{K=%kit_ident%,C=%class_ident%}"
+				ACTION_IF "%string%" STR_CMP "%string_old%" BEGIN
+					STRING_SET_EVALUATE strref "%string%"
 				END
-				SPRINT $classname("%id%") "%name%"
-			END
-		END	
-	BUT_ONLY
-	
-	// parse KITLIST to get dwKitByName and dwKitParentName
-	
-	OUTER_SPRINT kit_by_name "%WNL%"
-	OUTER_SPRINT kit_parent "%WNL%"
-	COPY_EXISTING "kitlist.2da" override
-		COUNT_2DA_COLS colcount
-		READ_2DA_ENTRIES_NOW kitlist_data colcount
-		FOR (row=0;row<kitlist_data;++row) BEGIN
-			READ_2DA_ENTRY_FORMER kitlist_data row 0 id
-			READ_2DA_ENTRY_FORMER kitlist_data row 1 label
-			READ_2DA_ENTRY_FORMER kitlist_data row 3 name_strref
-			PATCH_IF IS_AN_INT name_strref && "%label%" STR_CMP "LATHANDER_X" BEGIN
-				GET_STRREF name_strref name
-				READ_2DA_ENTRY_FORMER kitlist_data row 8 parent
-				PATCH_IF INDEX ("'" "%name%")<0 BEGIN
-					SPRINT kit_by_name "%kit_by_name%%TAB%['%name%']=%id%,%WNL%"
-				END ELSE
-				PATCH_IF INDEX (~"~ "%name%")<0 BEGIN
-					SPRINT kit_by_name ~%kit_by_name%%TAB%["%name%"]=%id%,%WNL%~				
-				END ELSE BEGIN
-					PATCH_FAIL ~kit name %name% contains both " and ' (seriously?...). ui_detect_class_kit can't handle that.~
-				END
-				PATCH_IF VARIABLE_IS_SET $fallen_strrefs("FALLEN_%label%") BEGIN
-					SPRINT name $fallen_strrefs("FALLEN_%label%")
-					PATCH_IF INDEX ("'" "%name%")<0 BEGIN
-						SPRINT kit_by_name "%kit_by_name%%TAB%['%name%']=%id%,%WNL%"
-					END ELSE
-					PATCH_IF INDEX (~"~ "%name%")<0 BEGIN
-						SPRINT kit_by_name ~%kit_by_name%%TAB%["%name%"]=%id%,%WNL%~				
-					END ELSE BEGIN
-						PATCH_FAIL ~kit name %name% contains both " and ' (seriously?...). ui_detect_class_kit can't handle that.~
-					END	
-				END
-				SPRINT parentname $classname("%parent%")
-				PATCH_IF INDEX ("'" "%parentname%")<0 BEGIN
-					SPRINT kit_parent "%kit_parent%%TAB%[%id%]='%parentname%',%WNL%"
-				END ELSE
-				PATCH_IF INDEX (~"~ "%name%")<0 BEGIN
-					SPRINT kit_parent ~%kit_parent%%TAB%[%id%]="%parentname%",%WNL%~			
-				END ELSE BEGIN
-					PATCH_FAIL ~class name %parent_name% contains both " and ' (seriously?...). ui_detect_class_kit can't handle that.~
-				END				
+				// record for later use in handling name changes
+				// currently defunct
+				/*
+				OUTER_SET $kit_id_class("%row%")=class_ident
+				OUTER_SET $kit_id_kit("%row%")=kit_ident
+				*/
 			END
 		END
-	BUT_ONLY
+	END
 	
+
 	// parse RACETEXT to get dwRaceByStrref
 	
 	OUTER_SPRINT race_by_strref "%WNL%"
@@ -188,32 +219,18 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 	
 	COPY ".../stratagems-inline/m_dw_dkd.lua" override EVALUATE_BUFFER
 
-	//handle <FIGHTERTYPE> and <MAGESCHOOL>
-
-	COPY_EXISTING "enginest.2da" "%workspace%"
-		REPLACE_EVALUATE "STRREF_GUI_MIXED_NORMAL_FIGHTER[^0-9]+\([0-9]+\)" BEGIN
-			SET fighter_strref="%MATCH1%"
-		END
-		""
-		REPLACE_EVALUATE "STRREF_GUI_MIXED_KIT_MAGESCHOOL_GENERALIST[^0-9]+\([0-9]+\)" BEGIN
-			SET mage_strref="%MATCH1%"
-		END
-		""
-	BUT_ONLY
-
-	ACTION_GET_STRREF fighter_strref fighter_name 
-	ACTION_GET_STRREF mage_strref mage_name 
-	COPY_EXISTING "m_dw_dkd.lua" override
-		REPLACE_TEXTUALLY "<FIGHTERTYPE>" "%fighter_name%"
-		REPLACE_TEXTUALLY "<MAGESCHOOL>" "%mage_name%"
-	BUT_ONLY
+	// previously I supported the 'great druid' title change but I think my method was a bit unrobust (didn't cover multiclass, didn't handle stronghold-quest mods, etc. To be on the safe side for now we're just going to disable it
 	
-	// handle title change spells
-	// List is hardcoded. In vanilla, only two spells use opcode 290 to change a title: SPIN722 (Great Druid)
-	// and OHBTITLE (changes blackguard to fallen blackguard). We don't need to worry about OHBTITLE, since 
-	// 'fallen blackguard' is taken care of by our general 'fallen x' code.
-	// (as a corollary, we only need to worry about this on BG2.)
+	LAF check_label STR_VAR label=dw#great_druid_title_change_disabled RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label=dw#great_druid_title_change_disabled END
+		COPY_EXISTING "spin722.spl" override
+			LPF DELETE_EFFECT END
+		BUT_ONLY
+	
+	END
 
+	/*
 	
 	ACTION_IF GAME_IS "BG2EE EET" BEGIN
 		LAF clear_out_title_change_subspells END
@@ -225,6 +242,8 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 			LAF sfo_compliant_change_title STR_VAR class master_spell END
 		END
 	END
+	
+	*/
 	// debug
 	
 	ACTION_IF "%version%" STRING_EQUAL_CASE "debug" BEGIN
@@ -244,23 +263,29 @@ END
 
 ////////////////////////////////////////////////////////////////
 /// This gives you a class-dependent, kit-dependent title change
-///
 /// (classic application: Great Druid)
+///
+/// assumes it's being run within the ui_detect_class_kit environment
 /////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION sfo_compliant_change_title
+DEFINE_ACTION_FUNCTION sfo_compliant_change_title//internal
 	STR_VAR class=""
 			prefix="dwcct"
 			master_spell=""
 BEGIN
-	LAF resolve_splprot_entry_localcopy INT_VAR stat=152 value="-1" STR_VAR relation=equal RET stat_ind=value END
-
+	LAF resolve_splprot_entry INT_VAR stat=152 value="-1" STR_VAR relation=equal RET stat_ind=value END
+	ACTION_TO_UPPER class
+	
 	// find the first unused index
 	OUTER_SET index=1
 	OUTER_WHILE FILE_EXISTS_IN_GAME "%prefix%%index%.spl" BEGIN
 		OUTER_SET index +=1
 	END
 	
+	//load in kitlist
+	
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_array=array END // for once we're not reading it in via ROWNAME
+		
 	// if the master spell is stashed, restore stashed version. If not, stash it. (This helps make the function idempotent.)
 	
 	MKDIR "%data_loc_shared%/dw_title_change_spells"
@@ -270,58 +295,34 @@ BEGIN
 		COPY_EXISTING "%master_spell%.spl" "%data_loc_shared%/dw_title_change_spells"
 	END
 	
-	// make the various subspells from the master spell
+	// copy of spell for later use
+	COPY_EXISTING "%master_spell%.spl" "%workspace%/rename_template.spl"
 	
-	COPY_EXISTING - "clastext.2da" nowhere
-		LPF 2daq_extract_localcopy STR_VAR row="%class%" column=classid RET class_id=value END 
-	ACTION_CLEAR_ARRAY title_array
-	COPY_EXISTING "clastext.2da" override
-		COUNT_2DA_COLS colcount
-		READ_2DA_ENTRIES_NOW clastext_data colcount
-		FOR (row=0;row<clastext_data;++row) BEGIN
-			READ_2DA_ENTRY_FORMER clastext_data row 1 class_id_here 
-			PATCH_IF class_id_here=class_id BEGIN
-				READ_2DA_ENTRY_FORMER clastext_data row 0 kit_label
-				READ_2DA_ENTRY_FORMER clastext_data row 2 kit_id
-				READ_2DA_ENTRY_FORMER clastext_data row 5 kit_name_strref
-				PATCH_IF kit_id=0x4000 BEGIN // trueclass
-					GET_STRREF kit_name_strref class_name
-				END ELSE BEGIN
-					PATCH_IF kit_id<0x4000 BEGIN
-						kit_id += 0x4000
-					END
-					
+	// main loop 
+	
+	COPY_EXISTING "%master_spell%.spl" override
+		classnum=IDS_OF_SYMBOL (class "%class%")
+		SPRINT dk_sig "{K=0,C=%classnum%}"
+		LPF ALTER_EFFECT STR_VAR function="make_title_change_spell_helper" END
+		PHP_EACH kit_id_class AS kit=>classid BEGIN
+			PATCH_IF classnum=classid BEGIN				
+				SPRINT kitid $kit_id_kit("%kit%")
+				PATCH_IF !(kitid=0) && VARIABLE_IS_SET $kitlist_array("%kitid%" KITIDS) BEGIN
+					kit_lookup_id=$kitlist_array("%kitid%" KITIDS)
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=kit_lookup_id parameter2=stat_ind STR_VAR resource="%prefix%%index%" END
+					SPRINT dk_sig "{K=%kitid%,C=%classid%}"
 					INNER_ACTION BEGIN
-						LAF make_title_change_spell INT_VAR kit_name_strref index STR_VAR prefix template="%master_spell%" END
+						COPY "%workspace%/rename_template.spl" "override/%prefix%%index%.spl"		
+							LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 target=2 timing=1 STR_VAR resource="%master_spell%" END
+							LPF ALTER_EFFECT STR_VAR function="make_title_change_spell_helper" END
 					END
-					SPRINT $title_array("%kit_id%") "%prefix%%index%"
-					index+=1
+					++index
 				END
+				
 			END
 		END
-	BUT_ONLY
-	//edit the master spell
-	COPY_EXISTING "%master_spell%.spl" override
-		SPRINT old_title "%class_name%"
-		LPF ALTER_EFFECT STR_VAR function="make_title_change_spell_helper(0)" END
-		PHP_EACH title_array AS kit_id=>resource BEGIN
-			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=kit_id parameter2=stat_ind STR_VAR resource END
-		END
-	BUT_ONLY
-END
-
-DEFINE_ACTION_FUNCTION make_title_change_spell
-	INT_VAR kit_name_strref=0
-			index=""
-	STR_VAR prefix=""
-			template=""
-BEGIN
-	ACTION_GET_STRREF kit_name_strref old_title
-	COPY_EXISTING "%template%.spl" "override/%prefix%%index%.spl"		
-		LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=321 target=2 timing=1 STR_VAR resource="%template%" END
-		LPF ALTER_EFFECT STR_VAR function="make_title_change_spell_helper(1)" END
-	BUT_ONLY
 	
+
 END
 
 
@@ -329,20 +330,9 @@ DEFINE_PATCH_FUNCTION make_title_change_spell_helper STR_VAR arguments="" BEGIN
 	PATCH_IF SHORT_AT 0x0 = 290 BEGIN
 		READ_LONG 0x4 title_strref
 		GET_STRREF title_strref title
-		PATCH_IF arguments=1 BEGIN
-			SPRINT new_title "(%old_title%)%title%"
-			strref=RESOLVE_STR_REF ("%new_title%")
-			WRITE_LONG 0x4 strref
-		END ELSE BEGIN
-			SPRINT new_title "%title%"
-		END
-		INNER_ACTION BEGIN
-			COPY_EXISTING "m_dw_dkd.lua" override
-				REPLACE_TEXTUALLY 
-					"\(.*\)\['%old_title%']=\([0-9]+\),"
-					"\1['%old_title%']=\2,%WNL%\1['%new_title%']=\2,"
-			BUT_ONLY
-		END
+		SPRINT new_title "%title%{%dk_sig%}"
+		strref=RESOLVE_STR_REF ("%new_title%")
+		WRITE_LONG 0x4 strref
 	END
 END
 
@@ -361,23 +351,113 @@ DEFINE_ACTION_FUNCTION clear_out_title_change_subspells STR_VAR prefix=dwcct BEG
 END
 
 
+DEFINE_ACTION_FUNCTION patch_character_screen_display BEGIN
+
+
+	
+	ACTION_IF lefreut_ui BEGIN
+
+		COPY_EXISTING "ui.menu" override
+
+		// in-game
+		// on LeUI, the main (RHS) help screen builds on the table recordInfos, the relevant bit of which is built by the function getClassString().
+		// the character class also appears on the inventory screen as a direct call to characters[id].class
+
+			LPF UI_alter_function STR_VAR function=getClassString patch="REPLACE_TEXTUALLY ~characters\[currentID\]\.classlevel\.\(first\|second\|third\)\.details~  ~dwFilterKitDesc(characters[currentID].classlevel.\1.details)~" END
+			LPF UI_alter_object STR_VAR object=INVENTORY object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[id\]\.class\)~ ~dwFilterKitDesc(\1)~" END
+			
+		// chargen
+		// on LeUI, the class name is displayed by Infinity_FetchString(chargen.class[rowNumber].name) in CHARGEN_CLASS
+		// and by Infinity_FetchString(chargen.kit[rowNumber].name) in CHARGEN_KIT. It also gets displayed as part of the engine-set chargen.information 
+		// which tracks your character's progression, inside the main CHARGEN menu
+	
+			LPF UI_alter_object STR_VAR object=CHARGEN_CLASS object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.class\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN_KIT object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.kit\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch="REPLACE_TEXTUALLY ~\(chargen\.information\)~ ~dwFilterKitDesc(\1)~" END
+	
+	
+	
+	
+	END ELSE 
+	ACTION_IF GAME_IS IWDEE BEGIN
+		COPY_EXISTING "ui.menu" override
+			// on unmodded IWDEE, the class name is displayed by characters[currentID].class in the CHARACTER menus
+			// the table of character details is built by the buildCharacterDetails() function but we can just hijack the addCharacterDetail() function
+			// the character class also appears on the inventory screen as a direct call to characters[id].class
+
+			LPF UI_alter_object STR_VAR object=INVENTORY object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[id\]\.class\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARACTER object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[currentID\]\.class\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_function STR_VAR function=addCharacterDetail patch="REPLACE_TEXTUALLY ~data[ %TAB%]+=[ %TAB%]+addData~ ~data = dwFilterKitDesc(addData)~" END
+
+		// chargen
+		// on unmodded IWDEE, the class name is displayed by Infinity_FetchString(chargen.class[rowNumber].name) in CHARGEN_CLASS 
+		// and by Infinity_FetchString(chargen.kit[rowNumber].name) in CHARGEN_KIT. It also gets displayed as part of the engine-set chargen.information 
+		// which tracks your character's progression, inside the main CHARGEN menu
+
+			LPF UI_alter_object STR_VAR object=CHARGEN_CLASS object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.class\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN_KIT object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.kit\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch="REPLACE_TEXTUALLY ~\(chargen\.information\)~ ~dwFilterKitDesc(\1)~" END
+
+
+
+
+
+
+	END ELSE BEGIN
+		COPY_EXISTING "ui.menu" override
+
+		// in-game
+		// on unmodded SoD, BG2EE, BGEE [check], the help screens are defined by the UpdateAttrTable function, which outputs 'helpTextString'.
+		// there is also a secondary callout to the 'getClassString() function for the 'class' screen, which returns a string
+		// and the small box displaying gender/race/class is the output of characterDescString()
+	// the character class also appears on the inventory screen as a direct call to characters[id].class
+	
+			LPF UI_alter_function STR_VAR function=UpdateAttrTable patch=alter_update_attr_table_vanilla END
+			LPF UI_alter_function STR_VAR function=getClassString patch="REPLACE_TEXTUALLY ~return[ %TAB%]+out~ ~return dwFilterKitDesc(out)~" END
+			LPF UI_alter_function STR_VAR function=characterDescString patch="REPLACE_TEXTUALLY ~return[ %TAB%]+\(.*\)~ ~return dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=INVENTORY object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[id\]\.class\)~ ~dwFilterKitDesc(\1)~" END
+	
+		// chargen
+		// on unmodded SoD, BG2EE, BGEE, the class name is displayed by Infinity_FetchString(chargen.class[rowNumber].name) in CHARGEN_CLASS 
+		// and by Infinity_FetchString(chargen.kit[rowNumber].name) in CHARGEN_KIT. It also gets displayed as part of the engine-set chargen.information 
+		// which tracks your character's progression, inside the main CHARGEN menu
+		
+			LPF UI_alter_object STR_VAR object=CHARGEN_CLASS object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.class\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN_KIT object_type=menu patch="REPLACE_TEXTUALLY ~\(Infinity_FetchString(chargen\.kit\[rowNumber\]\.name)\)~ ~dwFilterKitDesc(\1)~" END
+			LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch="REPLACE_TEXTUALLY ~\(chargen\.information\)~ ~dwFilterKitDesc(\1)~" END
+		
+	
+	END
+
+
+
+END
+
+DEFINE_PATCH_FUNCTION alter_update_attr_table_vanilla BEGIN
+	endpoint=RINDEX_BUFFER ("end")
+	DELETE_BYTES endpoint 3
+	SPRINT insert "%TAB%helpTextString=dwFilterKitDesc(helpTextString)%WNL%end"
+	INSERT_BYTES endpoint STRING_LENGTH "%insert%"
+	WRITE_ASCII endpoint "%insert%"
+
+END
+
 
 <<<<<<<< .../stratagems-inline/m_dw_dkf.lua
 
-
+-- exposed functions
 
 function dwFindClassKit(var)
 
 
--- optional arguments, override defaults
+-- optional arguments, override defaults. 1=chargen method, 2=from-name method
 
+  local class,kit=0,0
  if (dwIsChargen or dwIsDualClassing or var==1) and not (var==2) then
 	if dwChargenClassId then -- if we're using the virtual-class functions
 		class=dwChargenClassId
 	elseif currentChargenClass then
 		class=chargen.class[currentChargenClass].id
-	else 
-		class=0
 	end
 	if dwChargenKitId then
 		kit=dwChargenKitId
@@ -387,10 +467,7 @@ function dwFindClassKit(var)
 		else
 			kit=chargen.kit[currentChargenKit].id
 		end
-	else
-		kit=0
 	end
-	classtext='IN_CHARGEN'
  else
 	if not characters[currentID] then
 		-- try toggling character screen on and off
@@ -400,42 +477,21 @@ function dwFindClassKit(var)
 			return 0,0 -- fail gracefully
 		end
 	end
-	kittext=characters[currentID].class
+	local kittext=characters[currentID].class
 	if kittext then
-		kit=dwKitByName[kittext]	
-		if kit then
-			classtext=dwKitParentName[kit]
-		else
-			for name,charid in pairs(dwKitByName) do
-				if string.find(kittext,name) then
-					kit=charid
-					classtext=string.gsub(kittext,name,dwKitParentName[charid])
-				end
-			end
-		end
-		if not kit then
-			kit=0
-			classtext=kittext
-		end
-		class=dwClassByName[classtext]		
-		if not class then -- fail gracefully
-			class=0
-		end
+		class,kit=dwClassKitByName(kittext)
 		-- if we've found a kit, we're done now
 		if kit==0 then
-			char2=characters[currentID].classlevel.second
+			local char2=characters[currentID].classlevel.second
 			if char2 then
 				-- look for dual-class leftover kit
 				_,_,data=string.find(char2.details,"^(.-):")
-				kit=dwKitByName[data]
+				_,kit=dwClassKitByName(data)
 				if not kit then
 					kit=0
 				end
 			end
 		end
-	else
-		kit=0
-		class=0
 	end
  end
  return class,kit
@@ -444,17 +500,61 @@ function dwFindClassKit(var)
 end
 
 
-function dwDisplayClassKit()
+function dwClassLevelOld()  -- return class and kit before level-up
+							-- only used by ui_externalize_hlas, but as a matter of coding practice the method
+							-- by which we detect classes ought to be localized to this library
 
-	c,k=dwFindClassKit()
-	return c.."|"..k
+	local class,level,class2,level2,class3,level3
+	local data=characters[currentID].classlevel
+	if not data then return 1,1 end -- fail gracefully
+	_,_,class,level=string.find(data.first.details,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)")
+	class=tonumber(class)
+	level=tonumber(level)
+	if data.second then
+		_,_,class2,level2=string.find(data.second.details,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)")
+		class2=tonumber(class2)
+		level2=tonumber(level2)
+	end
+	if data.third then
+		_,_,class3,level3=string.find(data.third.details,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)")
+		class3=tonumber(class3)
+		level3=tonumber(level3)
+	end	
+	return class,level,class2,level2,class3,level3
+end
+
+
+
+function dwClassLevelNew() -- return class and kit after level-up
+							-- only used by ui_externalize_hlas, but as a matter of coding practice the method
+							-- by which we detect classes ought to be localized to this library
+
+
+	local class,level,class2,level2,class3,level3
+	local data=chargen.charInfo
+	if not data then return 1,1 end -- fail gracefully
+	local _,next,class,level=string.find(data,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)")
+	class=tonumber(class)
+	level=tonumber(level)	
+	_,next2,class2,level2=string.find(data,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)",next)
+	if class2 then
+		class2=tonumber(class2)
+		level2=tonumber(level2)
+		_,_,class3,level3=string.find(data,"{K=[0-9]+,C=([0-9]+)}[^0-9]*([0-9]+)",next2)
+		if class3 then
+			class3=tonumber(class3)
+			level3=tonumber(level3)		
+		end		
+	end
+	return class,level,class2,level2,class3,level3
+
 end
 
 function dwFindAlignment()
 
 	if (dwIsChargen or dwIsDualClassing or var==1) and not (var==2) then
 	
-		alignmap={
+		local alignmap={
 					[0x11]='L_G',
 					[0x12]='L_N',
 					[0x13]='L_E',
@@ -468,7 +568,7 @@ function dwFindAlignment()
 		return alignmap[dwChargenAlignment]
 	else
 
-		alignmap={
+		local alignmap={
 					[15729722]='L_G', 
 					[15729723]='L_N', 
 					[15729721]='L_E', 
@@ -513,7 +613,7 @@ function dwFindDualClassData()
 		return false,0,0,0
 	end
 	if dwIsDualClassing then
-		c,k=dwFindClassKit()
+		local c,k=dwFindClassKit()
 		if k==0 then
 			return true,c,0,dwOriginalKit
 		else
@@ -522,7 +622,7 @@ function dwFindDualClassData()
 	end
 	-- from here on we must be in-game
 	
-	char=characters[currentID]
+	local char=characters[currentID]
 
 	if not char then
 		return false,0,0 -- fail gracefully
@@ -534,30 +634,40 @@ function dwFindDualClassData()
 	if char.classlevel.second.active then
 		return false,0,0
 	end
-	_,_,class_str=string.find(char.classlevel.first.details,"^(.-):")
-	if dwKitByName[class_str] then
-		class_str=dwKitParentName[dwKitByName[class_str]]
-	end
-	first_class=dwClassByName[class_str]
-	_,_,class_str=string.find(char.classlevel.second.details,"^(.-):")
-	oc_kit=dwKitByName[class_str] 
-	if oc_kit then
-		class_str=dwKitParentName[oc_kit]
+	local class_str=""
+	local _,_,first_class=string.find(char.classlevel.first.details,"{K=%d+,C=(%d+)}")
+	first_class=tonumber(first_class)
+	local _,_,oc_kit,second_class=string.find(char.classlevel.first.details,"{K=(%d+),C=(%d+)}")
+	oc_kit=tonumber(oc_kit)
+	second_class=tonumber(second_class)
+	inactive_string=Infinity_GetString(%inactive_strref%)
+	if string.find(char.classlevel.second.details,inactive_string) then  --inactive
+		local second_class=0
 	else
-		oc_kit=0
-	end
-	if string.find(char.classlevel.second.details,".*:.*:.*[a-z]") then  --inactive
-		second_class=0
-	else
-		second_class=dwClassByName[class_str]
+		local second_class=dwClassByName[class_str]
 	end
 	return true,first_class,second_class,oc_kit
 
 end
 
-function dwDisplayDualClassData()
 
-	is_dc,c1,c2=dwFindDualClassData()
+function dwFilterKitDesc(str)
+	if str then
+		return string.gsub(str,"{[^}]*}","")
+	else
+		return nil
+	end
+end
+
+function dwDisplayClassKit() -- for debugging
+	local c,k=0,0
+	c,k=dwFindClassKit()
+	return c.."|"..k
+end
+
+function dwDisplayDualClassData() -- for debugging
+
+	local is_dc,c1,c2=dwFindDualClassData()
 	if is_dc then
 		return "first class is "..c1.."; second class is "..c2.."; kit is "..oc_kit
 	else
@@ -566,159 +676,56 @@ function dwDisplayDualClassData()
 
 end
 
+function dwDisplayClassLevelOld() -- for debugging
+	
+	local c1,l1,c2,l2,c3,l3=dwClassLevelOld()
+	
+	local string=c1..": "..l1.."\n"
+	if c2 then
+		string=string..c2..": "..l2.."\n"
+	end
+	if c3 then
+		string=string..c3..": "..l3.."\n"
+	end
+	return string
+
+end
+
+function dwDisplayClassLevelNew() -- for debugging
+	
+	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	
+	string=c1..": "..l1.."\n"
+	if c2 then
+		string=string..c2..": "..l2.."\n"
+	end
+	if c3 then
+		string=string..c3..": "..l3.."\n"
+	end
+	return string
+
+end
+
+
+
+-- local functions
+
+function dwClassKitByName(kittext)
+
+	local class,kit=0,0
+	if kittext then
+		_,_,kit,class=string.find(kittext,"K=(%d+),C=(%d+)")
+	end
+	return tonumber(class),tonumber(kit)
+
+end
+
+
+
 >>>>>>>>
 
 <<<<<<<< .../stratagems-inline/m_dw_dkd.lua
-dwKitByName={%kit_by_name%} 
-dwClassByName={%class_by_name%} 
-dwKitParentName={%kit_parent%} 
 dwRaceByStrref={%race_by_strref%}
 >>>>>>>>
 
-
-//////// local copies of some SFO functions, to make more self-contained
-
-DEFINE_PATCH_FUNCTION 2daq_extract_localcopy
-	INT_VAR rowname_column=0
-			data_read=0
-	STR_VAR row=""
-			column=""
-	RET value
-	RET_ARRAY array
-BEGIN
-	SPRINT value ""
-	COUNT_2DA_COLS colcount
-	PATCH_MATCH "%colcount%" WITH
-	2 BEGIN
-		col_row=2
-		main_row=1
-	END
-	3 BEGIN
-		col_row=1
-		main_row=0
-	END
-	DEFAULT
-		col_row=0
-		main_row=0
-	END
-	PATCH_IF !data_read BEGIN
-		READ_2DA_ENTRIES_NOW "sfo_2daq_data" colcount 
-		READ_2DA_ENTRIES_NOW "sfo_2daq_data_cols" ( colcount - 1)
-	END
-	PATCH_IF "%column%" STR_CMP "" BEGIN
-		FOR (col_number=1;col_number<colcount;++col_number) BEGIN
-			READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
-			PATCH_IF "%col_header%" STR_EQ "%column%" BEGIN
-			// then the rows
-				FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
-					READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
-					PATCH_IF "%row_header%" STR_EQ "%row%" || "%row%" STR_EQ ""BEGIN
-						READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
-						SPRINT $array("%row_header%") "%value%"
-						PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN // if we're just getting 'row'/'col', terminate
-							row_number=sfo_2daq_data
-						END
-					END 
-				END
-				col=colcount
-			END		
-		END	
-	END ELSE BEGIN
-		FOR (row_number=main_row;row_number<sfo_2daq_data;++row_number) BEGIN
-			READ_2DA_ENTRY_FORMER sfo_2daq_data row_number rowname_column row_header
-			PATCH_IF "%row_header%" STR_EQ "%row%" BEGIN
-				FOR (col_number=1;col_number<colcount;++col_number) BEGIN
-					READ_2DA_ENTRY_FORMER "sfo_2daq_data_cols" col_row (col_number - 1) col_header
-					READ_2DA_ENTRY_FORMER sfo_2daq_data row_number col_number value
-					SPRINT $array("%col_header%") "%value%"
-				END
-				row_number=sfo_2daq_data
-			END
-		END
-	END
-END
-
-DEFINE_ACTION_FUNCTION detect_chargen_status_localcopy BEGIN
-
-	ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwIsLevelling=true" BEGIN
-		COPY_EXISTING "ui.menu" override
-			LPF UI_alter_object STR_VAR object=CHARGEN_GENDER object_type=menu patch=label_chargen END 
-			LPF UI_alter_object STR_VAR object=CHARGEN_DUALCLASS object_type=menu patch=dual_on_done END 
-			LPF UI_alter_object STR_VAR object=LEVELUP_PROFICIENCIES object_type=menu patch=levelling_on_done END
-			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnLevelUpButtonClick()~ ~dwIsChargen=false;dwIsLevelling=true;dwIsDualClassing=false;characterScreen:OnLevelUpButtonClick()~
-			REPLACE_TEXTUALLY EXACT_MATCH ~characterScreen:OnDualClassButtonClick()~ ~dwIsChargen=false;dwIsLevelling=false;dwIsDualClassing=true;characterScreen:OnDualClassButtonClick()~
-			REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:AcceptCharacter~ ~dwIsChargen=false;createCharScreen:AcceptCharacter~
-		BUT_ONLY
-	END
-END
-
-DEFINE_PATCH_FUNCTION label_chargen BEGIN
-	REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ ~onOpen\1"%WNL%dwIsChargen=true;dwIsLevelling=false;dwIsDualClassing=false%WNL%~
-END
-
-DEFINE_PATCH_FUNCTION dual_on_done BEGIN
-	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsDualClassing=false;createCharScreen:OnDoneButtonClick()~
-END
-
-DEFINE_PATCH_FUNCTION levelling_on_done BEGIN
-	REPLACE_TEXTUALLY ~createCharScreen:OnDoneButtonClick()~ ~dwIsLevelling=false;createCharScreen:OnDoneButtonClick()~
-END
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_DIMORPHIC_FUNCTION resolve_splprot_entry_localcopy
-      INT_VAR 	stat=0
-				val=0
-				value=0
-				relation_number=0
-      STR_VAR 	relation=""
-      RET value
-BEGIN
-      ACTION_IF !(value=0) BEGIN
-		OUTER_SET val=value
-	  END
-      ACTION_MATCH "%relation%" WITH
-         equals equal BEGIN 
-            OUTER_SET relation_number=1
-         END
-         greater greater_than BEGIN
-            OUTER_SET relation_number=3
-         END
-         less less_than BEGIN
-            OUTER_SET relation_number=2
-         END
-         greater_equal greater_equals BEGIN
-            OUTER_SET relation_number= 4
-         END
-         less_than_equal less_equal less_than_equals BEGIN
-            OUTER_SET relation_number=0
-         END
-         not_equal BEGIN
-            OUTER_SET relation_number=5
-         END
-         "" BEGIN END
-      DEFAULT
-         WARN "unrecognised relation %relation% in resolve_splprot_entry; defaulting to 0"
-         OUTER_SET relation_number=0
-      END
-      COPY_EXISTING "splprot.2da" override
-            READ_2DA_ENTRIES_NOW splprot_array 4
-            SET value="-1"
-            FOR (i=0;i<splprot_array;i+=1) BEGIN
-                   READ_2DA_ENTRY_FORMER splprot_array i 1 this_stat
-                   READ_2DA_ENTRY_FORMER splprot_array i 2 this_val
-                   READ_2DA_ENTRY_FORMER splprot_array i 3 this_relation
-                   PATCH_IF (IS_AN_INT this_stat && IS_AN_INT this_val && IS_AN_INT this_relation) BEGIN
-                     PATCH_IF (stat=this_stat && val=this_val && relation_number=this_relation) BEGIN
-                      SET value=i
-                      SET i=splprot_array
-                     END
-                   END
-            END
-            PATCH_IF value<0 BEGIN
-               INSERT_2DA_ROW splprot_array 4 "%splprot_array%%TAB%%stat%%TAB%%val%%TAB%%relation_number%"
-               SET value=splprot_array
-            END
-      BUT_ONLY
-END
 

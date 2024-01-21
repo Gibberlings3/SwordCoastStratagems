@@ -117,6 +117,12 @@ BEGIN
 				LPF "%filter%" STR_VAR arguments="%kit%" RET proceed=value END
 			END
 		END
+		ACTION_MATCH "%kit%" WITH
+		"LATHANDERX" "OHTYR_OLD" "DW_DUMMY" "FAKIE" BEGIN
+			OUTER_SET proceed=0
+		END
+		DEFAULT
+		END
 		ACTION_IF proceed BEGIN
 			LAF kit_edit INT_VAR clab_only edit_strrefs_in_place STR_VAR kit edits struct END
 		END 
@@ -208,6 +214,7 @@ BEGIN
 				PHP_EACH weap_rows AS row=>discard BEGIN
 					SPRINT key "prof_%row%"
 					TO_LOWER key
+					TO_UPPER kit
 					SET $struct("%key%")=$weap_array("%row%" "%kit%")
 				END
 			BUT_ONLY
@@ -541,6 +548,7 @@ DEFINE_DIMORPHIC_FUNCTION kit_edit_clab
 BEGIN
 	// get the data from the clab
 	COPY_EXISTING "%clab%.2da" override
+		// may as well do deletions by direct substitution
 		WHILE "%delete_powers%" STR_CMP "" BEGIN
 			LPF return_first_entry STR_VAR list="%delete_powers%" RET entry delete_powers=list END
 			PATCH_IF "%entry%" STR_EQ "all" BEGIN
@@ -549,43 +557,73 @@ BEGIN
 				REPLACE_TEXTUALLY CASE_INSENSITIVE "\(GA\|AP\)_%entry%" "****"		
 			END
 		END		
-		CLEAR_ARRAY working_array
-		level_max=0
-		REPLACE_EVALUATE "^[%TAB% ]*ABILITY[0-9]+[ %TAB%]+\([^%WNL%%MNL%%LNL%]*\)" BEGIN	
-			INNER_PATCH "%MATCH1%" BEGIN
-				level=1
-				REPLACE_EVALUATE "\([^ %TAB%]+\)[%WNL%%MNL%%LNL%]?" BEGIN
-					PATCH_IF !VARIABLE_IS_SET $working_array_count("%level%") BEGIN
-						SET $working_array_count("%level%")=1
-						SPRINT $working_array("ABILITY1" "%level%") "****"			
-					END
-					PATCH_MATCH "%MATCH1%" WITH
-					"****" BEGIN
-					END
-					DEFAULT
-						count=$working_array_count("%level%")
-						SPRINT $working_array("ABILITY%count%" "%level%") "%MATCH1%"
-						SET $working_array_count("%level%") +=1
-					END
-					++level
+		CLEAR_ARRAY "sfo_reserved_clab_working_array"
+		COUNT_2DA_COLS colcount
+		LPF 2da_read RET_ARRAY input_array=array input_rows=rows input_cols=columns END
+		free_row=0
+
+		// first the 'existing content in 'ability' rows should get written in, exactly where it currently occurs
+		PHP_EACH input_rows AS row=>discard BEGIN
+			PATCH_MATCH "%row%" WITH 
+			"ABILITY[0-9]+" BEGIN
+				++ free_row
+				PHP_EACH input_cols AS col=>discard2 BEGIN
+					SPRINT $sfo_reserved_clab_working_array("ABILITY%free_row%" "%col%") $input_array("%row%" "%col%")
 				END
-				""
 			END
-			level_max=level>level_max?level:level_max
+			DEFAULT
+			// do the other entries later so as not to mess up file order 
+			END
 		END
-		""
-		// add the abilities from the array
+		// now add the new abilities
 		PHP_EACH "%power_array%" AS level=>list BEGIN
-			PATCH_IF level<level_max BEGIN
-				count=$working_array_count("%level%")
+			PATCH_IF VARIABLE_IS_SET $input_cols("%level%") BEGIN
 				WHILE "%list%" STR_CMP "" BEGIN
 					LPF return_first_entry STR_VAR list RET entry list END
-					SPRINT $working_array("ABILITY%count%" "%level%") "%entry%"
-					++count		
+					found_slot=0
+					FOR (n=1;n<=free_row;++n) BEGIN
+						SPRINT temp $sfo_reserved_clab_working_array("ABILITY%n%" "%level%")
+						PATCH_IF !VARIABLE_IS_SET $sfo_reserved_clab_working_array("ABILITY%n%" "%level%") || $sfo_reserved_clab_working_array("ABILITY%n%" "%level%") STR_EQ "****" BEGIN
+							found_slot=1
+							SPRINT $sfo_reserved_clab_working_array("ABILITY%n%" "%level%") "%entry%"
+							n=free_row
+						END
+					END
+					PATCH_IF !found_slot BEGIN
+						++free_row
+						SPRINT $sfo_reserved_clab_working_array("ABILITY%free_row%" "%level%") "%entry%"
+					END					
 				END
 			END
 		END
-		LPF 2da_write STR_VAR array=working_array default="****" END
+		// now add any remaining rows
+		PHP_EACH input_rows AS row=>discard BEGIN
+			PATCH_MATCH "%row%" WITH
+			"ABILITY[0-9]+" BEGIN
+			END
+			DEFAULT
+				/* for now let's allow empty rows
+				// first pass to check if it's empty
+				empty=1
+				PHP_EACH input_cols AS col=>discard BEGIN
+					PATCH_IF $input_array("%row%" "%col%") STR_CMP "****" BEGIN
+						empty=0
+					END
+				END
+				*/
+				empty=0
+				// main pass
+				PATCH_IF !empty BEGIN
+					PHP_EACH input_cols AS col=>discard BEGIN
+						SPRINT $sfo_reserved_clab_working_array("%row%" "%col%") $input_array("%row%" "%col%")
+					END
+				
+				END
+			END		
+		END
+		
+		// write it all back out
+		LPF 2da_write STR_VAR array=sfo_reserved_clab_working_array default="****" END
 	BUT_ONLY
 
 END

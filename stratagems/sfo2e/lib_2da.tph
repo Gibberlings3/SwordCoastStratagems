@@ -37,10 +37,9 @@ If you don't specify a path for the 2da file, it's assumed to be a game file.
 In action context, if the file doesn't exist return 0; otherwise, return 1. Also
 whine if it doesn't exist, unless silent=1.
 
-If the file is a 2da, and 'reflect' is set, reverse rows and columns. If it's a 2da, and 'allow_incomplete_lines'
-is set, don't require that all lines are complete. If it's a 2da, and "rowname_column" is set, use that column
+If the file is a 2da, and 'reflect' is set, reverse rows and columns.  If it's a 2da, and "rowname_column" is set, use that column
 (if it's present) for the row names instead of the usual entries. In the latter case, we add a new 'ROWNUMBER' column
-containing column zero. (This is not compatible with 'reflect'.)
+containing column zero. (This is not compatible with 'reflect'.)s
 
 If 'rowmap' and/or 'colmap' are set, they get applied to the row and column entries before the array is constructed.
 
@@ -52,7 +51,7 @@ If the file contains WEIDU-style // comments, they are removed. (You can overrid
 DEFINE_PATCH_FUNCTION "2da_read"
 	INT_VAR silent=0//boolean
 			reflect=0//boolean
-			allow_incomplete_lines=0//boolean
+			allow_incomplete_lines=0//obsolete
 			remove_comments=1//boolean
 	STR_VAR type=""//[2da|ids|table_header|table_no_header]
 			rowmap=""//function
@@ -102,73 +101,42 @@ BEGIN
 	COUNT_2DA_ROWS colcount rowcount
 	PATCH_MATCH "%type%" WITH
 	"2da" BEGIN
-		// get the default
-		READ_2DA_ENTRY 1 0 1 default
-		SPRINT default "%default%"
-		// check if it's empty
-		COUNT_2DA_ROWS 1 empty_check
-		is_empty=(empty_check=3)
-		is_blank=(empty_check=2)
-		// get the col headers (& also the lookup column if appropriate)
-		PATCH_IF !is_blank BEGIN
-			lookup_col_num=0
-			COUNT_2DA_COLS colcount
-			COUNT_2DA_ROWS colcount rowcount
-			PATCH_MATCH "%colcount%" WITH
-			2 BEGIN
-				col_row=2
-				main_row=1
-			END
-			3 BEGIN
-				col_row=1
-				main_row=0
-			END
-			DEFAULT
-				col_row=0
-				main_row=0
-				/* --- too many false positives on incomplete tables
-				PATCH_IF !allow_incomplete_lines BEGIN
-					COUNT_2DA_ROWS (colcount - 1) rowcount_with_title
-					PATCH_IF !(rowcount_with_title = rowcount + 1) BEGIN
-						PATCH_FAIL "2da_read error: the current file (probably %SOURCE_FILE%) is being edited as a 2DA file but is not a legal 2DA file (or, possibly, is a 2DA file with incomplete lines)"
+		LPF 2da_fix INT_VAR apply_to_file=0 RET fixed_file END
+		INNER_PATCH "%fixed_file%" BEGIN
+			// get the default
+			READ_2DA_ENTRY 1 0 1 default
+			SPRINT default "%default%"
+			// check if it's empty
+			COUNT_2DA_ROWS 1 empty_check
+			is_empty=(empty_check=3)
+			is_blank=(empty_check=2)
+			// get the col headers (& also the lookup column if appropriate)
+			PATCH_IF !is_blank BEGIN
+				lookup_col_num=0
+				COUNT_2DA_COLS colcount
+				COUNT_2DA_ROWS colcount rowcount
+				PATCH_MATCH "%colcount%" WITH
+				2 BEGIN
+					col_row=2
+					main_row=1
+				END
+				3 BEGIN
+					col_row=1
+					main_row=0
+				END
+				DEFAULT
+					col_row=0
+					main_row=0
+				END
+				READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
+				FOR (col=1;col<colcount;++col) BEGIN
+					READ_2DA_ENTRY_FORMER 2da_coldata col_row (col - 1) value
+					PATCH_MATCH "%value%" WITH 
+					"%rowname_column%" BEGIN
+						lookup_col_num=col
 					END
-				END
-				*/
-			END
-			READ_2DA_ENTRIES_NOW 2da_coldata (colcount - 1)
-			FOR (col=1;col<colcount;++col) BEGIN
-				READ_2DA_ENTRY_FORMER 2da_coldata col_row (col - 1) value
-				PATCH_MATCH "%value%" WITH 
-				"%rowname_column%" BEGIN
-					lookup_col_num=col
-				END
-				DEFAULT
-				END
-				PATCH_MATCH "%case%" WITH
-				lower BEGIN
-					TO_LOWER value 
-				END
-				upper BEGIN
-					TO_UPPER value
-				END	
-				mixed BEGIN
-				END
-				DEFAULT
-					TO_UPPER value
-				END
-				PATCH_IF !reflect BEGIN
-					SET $columns("%value%")=col
-				END ELSE BEGIN
-					SET $rows("%value%")=col			
-				END
-			END
-			PATCH_IF is_empty BEGIN
-				LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
-			END ELSE BEGIN
-				// get the rows
-				READ_2DA_ENTRIES_NOW 2da_data colcount
-				FOR (rownum=main_row;rownum<2da_data;++rownum) BEGIN
-					READ_2DA_ENTRY_FORMER 2da_data rownum lookup_col_num value
+					DEFAULT
+					END
 					PATCH_MATCH "%case%" WITH
 					lower BEGIN
 						TO_LOWER value 
@@ -180,61 +148,44 @@ BEGIN
 					END
 					DEFAULT
 						TO_UPPER value
-					END		
-					PATCH_IF !reflect BEGIN	
-						SET $rows("%value%")=rownum
+					END
+					PATCH_IF !reflect BEGIN
+						SET $columns("%value%")=col
 					END ELSE BEGIN
-						SET $columns("%value%")=rownum
+						SET $rows("%value%")=col			
 					END
 				END
-				// if we're using rowname_column, store the actual row labels
-				// map rows and columns if needed
-				LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
-				LPF array_map STR_VAR array=rows keymap="%rowmap%" RET_ARRAY rows=array END
-				
-				PATCH_IF allow_incomplete_lines BEGIN
-					// get the data into a working array
-					READ_ASCII 0x0 data (BUFFER_LENGTH)		
-					LPF data_lines STR_VAR data RET_ARRAY lines END
-					PHP_EACH lines AS ind=>line BEGIN
-						PATCH_IF ind>=3 BEGIN
-
-							// main read
-							LPF array_values_from_string INT_VAR quick=1 STR_VAR string="%line%" RET_ARRAY temparray=array END
-							LPF array_length STR_VAR array=temparray RET length END
-							SPRINT row $temparray(0)
-							row_int=ind - 3 +main_row
-							PATCH_IF !reflect BEGIN
-								SPRINT columns_or_rows columns
-							END ELSE BEGIN
-								SPRINT columns_or_rows rows
-							END
-							PHP_EACH "%columns_or_rows%" AS col=>int BEGIN
-								PATCH_IF int<=length BEGIN
-									SPRINT $working_array("%row_int%" "%int%") $temparray("%int%")
-								END ELSE BEGIN
-									SPRINT $working_array("%row_int%" "%int%") "%default%"
-								END
-							END
-						END			
-					END
-					// get it into the final array
-					PHP_EACH rows AS row=>row_int BEGIN
-						// get rownumbers if we're using rowname_column
-						PATCH_IF lookup_col_num>0 BEGIN
-							READ_2DA_ENTRY_FORMER 2da_data row_int 0 rownumber
-							SPRINT $array("%row%" "ROWNUMBER") "%rownumber%"	
-						END	
-						// main data				
-						PHP_EACH columns AS col=>col_int BEGIN
-							PATCH_IF !reflect BEGIN
-								SPRINT $array("%row%" "%col%") $working_array("%row_int%" "%col_int%")
-							END ELSE BEGIN
-								SPRINT $array("%row%" "%col%") $working_array("%col_int%" "%row_int%")				
-							END
-						END		
-					END
+				PATCH_IF is_empty BEGIN
+					LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
 				END ELSE BEGIN
+					// get the rows
+					READ_2DA_ENTRIES_NOW 2da_data colcount
+					FOR (rownum=main_row;rownum<2da_data;++rownum) BEGIN
+						READ_2DA_ENTRY_FORMER 2da_data rownum lookup_col_num value
+						PATCH_MATCH "%case%" WITH
+						lower BEGIN
+							TO_LOWER value 
+						END
+						upper BEGIN
+							TO_UPPER value
+						END	
+						mixed BEGIN
+						END
+						DEFAULT
+							TO_UPPER value
+						END		
+						PATCH_IF !reflect BEGIN	
+							SET $rows("%value%")=rownum
+						END ELSE BEGIN
+							SET $columns("%value%")=rownum
+						END
+					END
+					// if we're using rowname_column, store the actual row labels
+					// map rows and columns if needed
+					LPF array_map STR_VAR array=columns keymap="%colmap%" RET_ARRAY columns=array END
+					LPF array_map STR_VAR array=rows keymap="%rowmap%" RET_ARRAY rows=array END
+					
+
 					PHP_EACH rows AS row=>row_int BEGIN
 						// get rownumbers if we're using rowname_column
 						PATCH_IF lookup_col_num>0 BEGIN
@@ -336,7 +287,7 @@ DEFINE_ACTION_FUNCTION "2da_read"
 	INT_VAR silent=0//boolean
 			inline=0//boolean
 			reflect=0//boolean
-			allow_incomplete_lines=0//boolean
+			allow_incomplete_lines=0//obsolete
 	STR_VAR file="" 
 			case=""//[upper|lower|mixed]
 			path=""
@@ -1518,4 +1469,123 @@ BEGIN
 		END
 END
 
+//////////////////////////////////////////////////////////////////////////////////////
+/*
+document{2da_fix}
+{
+Turns the current file (assumed to be a 2da file) into a legal 2da file with no incomplete entries, by
+<ol>
+<li>forcing the first line to be '2DA V1.0'</li>
+<li>removing any entry beyond the first on the second line</li>
+<li>truncating any entries that lie beyond the range defined by the columns on the third line</li>
+<li>filling in any incomplete entries with the array's default character.</li>
+</ol>
+Returns 'legal', which is 1 or 0, and 'fixed_file', which is just a 
+string containing the full contents of the file. Optional argument: 'apply_to_file' 
+(can be 1 or 0, default is 1); if set to 1, the changes are actually carried out on the file being patched; if set to 0, they're discarded
 
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+DEFINE_PATCH_FUNCTION 2da_fix
+	INT_VAR apply_to_file=1//boolean
+	RET legal
+		fixed_file
+BEGIN
+	COUNT_2DA_COLS colcount
+	COUNT_2DA_ROWS 1 rowcount_one
+	COUNT_2DA_ROWS 2 rowcount_two
+	COUNT_2DA_ROWS colcount rowcount_max
+	COUNT_2DA_ROWS (colcount - 1) rowcount_max_minus_one
+	PATCH_IF rowcount_one>=4 BEGIN
+	PATCH_MATCH colcount WITH
+	1 BEGIN // no salvageable 2da file has colcount=1
+		PATCH_FAIL "2da_sanity_check: current file (probably %SOURCE_FILE%) is unfixable"
+	END
+	2 BEGIN // all rows should have 2 columns except the default and the column labels
+		legal = (rowcount_one = rowcount_two + 2)
+	END
+	3 BEGIN // there should be one 1-column row (the default), two 2-column rows (the sig and the column labels) and the rest 3-column
+		legal = (rowcount_one = rowcount_max + 3) && (rowcount_two = rowcount_max + 2)
+	END
+	DEFAULT // there should be one 1-column row, 1 2-column row, 1 (N-1)-column row, and the rest N columns
+		legal = (rowcount_one = rowcount_max + 3) && (rowcount_two = rowcount_max +2) && (rowcount_max_minus_one = rowcount_max + 1)
+	END
+	END ELSE BEGIN
+		legal=1  // we can't fix problems in empty 2DAs
+	END
+	PATCH_IF legal BEGIN
+		READ_ASCII 0x0 fixed_file (BUFFER_LENGTH)
+	END ELSE BEGIN
+		// get the contents
+		READ_ASCII 0x0 data (BUFFER_LENGTH)
+		// break into lines
+		INNER_PATCH "%data%" BEGIN
+			CLEAR_ARRAY lines
+			count=0
+			REPLACE_EVALUATE "^\([^%WNL%%MNL%%LNL%]+\)" BEGIN
+				SPRINT $lines("%count%") "%MATCH1%"
+				++count
+			END	
+			""
+		END
+		// fix first line if necessary
+		SPRINT $lines(0) "2DA V1.0"
+		// get default character and fix if needed
+		SPRINT default_line $lines(1)
+		INNER_PATCH "%default_line%" BEGIN
+			REPLACE_EVALUATE "^\([^ %TAB%]+\)" BEGIN
+				SPRINT default_entry "%MATCH1%"
+			END
+			""
+		END
+		SPRINT $lines(1) "%default_entry%"
+		// get the column count
+		SPRINT column_line $lines(2)
+		INNER_PATCH " %column_line%" BEGIN // extra space just in case
+			count=0
+			REPLACE_EVALUATE "[ %TAB%]+[^ %TAB%]+" BEGIN
+				++count
+			END
+			""
+		END
+		real_colcount=count
+		// fix the remaining lines
+		PHP_EACH lines AS line_num=>line BEGIN
+			PATCH_IF line_num>2 BEGIN
+				SPRINT line_new ""
+				INNER_PATCH " %line%" BEGIN // extra space just in case
+					count=0
+					REPLACE_EVALUATE "[ %TAB%]+\([^ %TAB%]+\)" BEGIN
+						PATCH_IF count<=real_colcount BEGIN
+							SPRINT line_new "%line_new%%MATCH1% "
+						END
+						++count						
+					END
+					""
+				END		
+				FOR (n=count;n<=real_colcount;++n) BEGIN
+					SPRINT line_new "%line_new%%default_entry% "
+				END
+				SPRINT $lines("%line_num%") "%line_new%"
+			END
+		END
+		// make the file
+		SPRINT fixed_file ""
+		PHP_EACH lines AS line_num=>line BEGIN
+			SPRINT fixed_file "%fixed_file%%line%%WNL%"
+		END
+		// apply fix if required
+		PATCH_IF apply_to_file BEGIN
+			DELETE_BYTES 0x0 BUFFER_LENGTH
+			INSERT_BYTES 0x0 STRING_LENGTH "%fixed_file%"
+			WRITE_ASCII 0x0 "%fixed_file%"
+			PRETTY_PRINT_2DA
+			REPLACE_TEXTUALLY "2DA[ %TAB%]+V1\.0" "2DA V1.0"
+		END
+	END
+END
