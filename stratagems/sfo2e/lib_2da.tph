@@ -358,6 +358,7 @@ DEFINE_PATCH_FUNCTION 2da_write
 	STR_VAR array=""//array
 			type=""//[2da|ids|table_header|table_noheader]
 			default=""
+			case="mixed"//[mixed|upper|lower]
 BEGIN
 	// get cols, rows
 	LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
@@ -465,6 +466,19 @@ BEGIN
 				END
 				SPRINT data "%data%%val%%TAB%"
 			END
+		END
+		// impose case
+		PATCH_MATCH "%case%" WITH
+		upper BEGIN
+			TO_UPPER data
+		END
+		lower BEGIN
+			TO_LOWER data
+			INNER_PATCH_SAVE data "%data%" BEGIN
+				WRITE_ASCII 0x0 "2DA V1.0"
+			END
+		END
+		DEFAULT
 		END
 		// write to file and justify
 		DELETE_BYTES 0x0 BUFFER_LENGTH
@@ -1533,19 +1547,36 @@ BEGIN
 			END	
 			""
 		END
-		// fix first line if necessary
-		SPRINT $lines(0) "2DA V1.0"
-		// get default character and fix if needed
-		SPRINT default_line $lines(1)
-		INNER_PATCH "%default_line%" BEGIN
-			REPLACE_EVALUATE "^\([^ %TAB%]+\)" BEGIN
-				SPRINT default_entry "%MATCH1%"
+		// fix first lines if necessary
+		SPRINT line0 $lines(0)
+		SPRINT line1 $lines(1)
+		PATCH_MATCH "%line0%" WITH
+		"2DA[ %TAB%]+V1.0" BEGIN // line 0 basically okay
+			SPRINT $lines(0) "2DA V1.0"
+			PATCH_MATCH "%line1%" WITH
+			"[^ %TAB%]+" BEGIN // line 1 also okay
+				SPRINT extra_start ""
+				column_line_num=2
+				SPRINT default_entry "%line1%"
 			END
-			""
+			DEFAULT // more than one character on line 1, so assume it's the column row
+				SPRINT extra_start "*%WNL%"
+				column_line_num=1	
+				SPRINT default_entry "*"
+			END
 		END
-		SPRINT $lines(1) "%default_entry%"
+		"[^ %TAB%]+" BEGIN //line 0 has one character, so assume it's the default and that the sig is missing
+			SPRINT extra_start "2DA V1.0%WNL%"
+			SPRINT default_entry "%line0%"
+			column_line_num=1
+		END
+		DEFAULT // line 0 has 2+characters, so assume both default and sig are missing and we start straight away with cols
+			SPRINT extra_start "2DA V1.0%WNL%*%WNL%"
+			SPRINT default_entry "*"
+			column_line_num=0
+		END
 		// get the column count
-		SPRINT column_line $lines(2)
+		SPRINT column_line $lines("%column_line_num%")
 		INNER_PATCH " %column_line%" BEGIN // extra space just in case
 			count=0
 			REPLACE_EVALUATE "[ %TAB%]+[^ %TAB%]+" BEGIN
@@ -1556,7 +1587,7 @@ BEGIN
 		real_colcount=count
 		// fix the remaining lines
 		PHP_EACH lines AS line_num=>line BEGIN
-			PATCH_IF line_num>2 BEGIN
+			PATCH_IF line_num>column_line_num BEGIN
 				SPRINT line_new ""
 				INNER_PATCH " %line%" BEGIN // extra space just in case
 					count=0
@@ -1575,7 +1606,7 @@ BEGIN
 			END
 		END
 		// make the file
-		SPRINT fixed_file ""
+		SPRINT fixed_file "%extra_start%"
 		PHP_EACH lines AS line_num=>line BEGIN
 			SPRINT fixed_file "%fixed_file%%line%%WNL%"
 		END
