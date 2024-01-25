@@ -40,17 +40,20 @@ VERBOSE
 	
 	LAF ui_detect_class_kit END
 		
-	// get the 'Level' string
+	// get the 'Level' strings
 	
-	COPY_EXISTING "enginest.2da" "%workspace%"
-		REPLACE_EVALUATE "STRREF_GUI_MIXED_LEVEL[ %TAB][^0-9]*\([0-9]+\)" BEGIN
-			GET_STRREF "%MATCH1%" levelstring
-			INNER_PATCH_SAVE levelstring "%levelstring%" BEGIN
-				REPLACE_TEXTUALLY "[ %TAB%]<LEVEL>.*" ""
-			END
+	COPY_EXISTING - "enginest.2da" nowhere
+		REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRYBRIEF[ %TAB][^0-9]*\([0-9]+\)" BEGIN
+			level_line_strref_brief="%MATCH1%"		
+		END
+		""
+		REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRY[ %TAB][^0-9]*\([0-9]+\)" BEGIN
+			level_line_strref="%MATCH1%"		
 		END
 		""
 	BUT_ONLY
+	OUTER_SET class_token_strref=RESOLVE_STR_REF ("<CLASS>")
+	OUTER_SET level_token_strref=RESOLVE_STR_REF ("<LEVEL>")
 
 	// install functions and data file
 	
@@ -517,48 +520,7 @@ dwHLANotEpic={}
 
 <<<<<<<< .../stratagems-inline/m_dw_hlf.lua
 
-function dwIsHLAAllowed(resref,level_array,kit)
-
-	-- check the hidden list
-	if dwHideHLA[resref] then
-		return false
-	end	
-	-- check if we pass the epic check
-	if not dwHLANotEpic[resref] and not dwHLAThresholdCheck() then
-		return false
-	end
-	-- check if we pass the alignment check
-	if dwHLAAlignmentRequirement[resref] and not dwHLAAlignmentRequirement[resref][dwFindAlignment(2)] then
-		return false
-	end
-	
-	-- check if there's a 'dwHLAClassLevel' entry; if not, we're good
-	if not dwHLAClassLevel[resref] then
-		return true
-	end
-	-- check if there's a class exclusion
-	if dwHLAExcludeByClass[resref] then
-		if dwHLAClassLevel[resref][dwHLAExcludeByClass[resref]] then
-			return false
-		end
-	end
-	-- check if there's a kit override
-	if dwHLAClassLevel[resref].kit[kit] then
-		allow_array=dwHLAClassLevel[resref].kit[kit]
-	else
-		allow_array=dwHLAClassLevel[resref]
-	end
-	-- go through the allow_array seeing if we have a permitted class
-	for class,level in pairs (level_array) do
-		if allow_array[class] and allow_array[class]<=level then
-			return true
-		end
-	end
-	-- if we get this far, it's blocked
-	return false
-
-end
-
+-- exposed functions
 
 function dwBuildHLATable()
 
@@ -566,12 +528,14 @@ function dwBuildHLATable()
 	_,kit=dwFindClassKit()
 	mytable={}
 	row=1
+	any_hlas_at_all=false
 	for k,v in pairs (chargen.HLAs) do
 		if dwIsHLAAllowed(v.resref,level_array,kit) then
 			mytable[row]={}
 			mytable[row].index=k
 			mytable[row].name=Infinity_FetchString(dwHLAName(v))
 			row=row+1
+			any_hlas_at_all=true
 		end	
 		if v.resref=="DW-NULL" then
 			discard_row=k
@@ -579,8 +543,11 @@ function dwBuildHLATable()
 	end
 	
 	table.sort(mytable,function(a,b) return a.name<b.name end)
-	
-	needed = dwNumberHLAs(true) - dwHLANumberOld
+	if any_hlas_at_all then
+		needed = dwNumberHLAs(true) - dwHLANumberOld
+	else
+		needed = 0
+	end
 	delta = chargen.numHLAs - needed
 	while (delta>0) do
 		createCharScreen:OnHLAButtonClick(discard_row, 1)
@@ -594,139 +561,6 @@ function dwBuildHLATable()
 	return mytable
 end
 
-
-function dwHLAClickDoneButton()
-
-	if (not dwIsChargen) and createCharScreen:IsHighLevelAbilitiesButtonClickable() then
-		createCharScreen:OnHighLevelAbilitiesButtonClick()
-	else
-		createCharScreen:OnDoneButtonClick()
-	end
-end
-
-function dwClassLevelOld()
-
-	data=characters[currentID].classlevel
-	if not data then return 1,1 end -- fail gracefully
-	_,_,class,level=string.find(data.first.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
-	c1=dwParentClassByName(class)
-	if data.second then
-		_,_,class2,level2=string.find(data.second.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
-		c2=dwParentClassByName(class2)
-	else
-		return c1,tonumber(level)
-	end
-	if data.third then
-		_,_,class3,level3=string.find(data.second.details,"(%a[%a ]*): %levelstring% ([0-9]+)")
-		c3=dwParentClassByName(class3)
-		return c1,tonumber(level),c2,tonumber(level2),c3,tonumber(level3)
-	else
-		return c1,tonumber(level),c2,tonumber(level2)
-	end
-end
-
-
-function dwDisplayClassLevelOld()
-	
-	c1,l1,c2,l2,c3,l3=dwClassLevelOld()
-	
-	string=c1..": "..l1.."\n"
-	if c2 then
-		string=string..c2..": "..l2.."\n"
-	end
-	if c3 then
-		string=string..c3..": "..l3.."\n"
-	end
-	return string
-
-end
-
-function dwClassLevelNew()
-
-	data=chargen.charInfo
-	if not data then return 1,1 end -- fail gracefully
-	start,stop,class,level=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)")
-	c1=dwParentClassByName(class)
-	start,stop,class2,level2=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)",stop)
-	if start then
-		c2=dwParentClassByName(class2)
-		start,stop,class3,level3=string.find(data,"(%a[%a ]*): %levelstring% ([0-9]+)",stop)
-		if class3 then
-			c3=dwParentClassByName(class3)
-		end
-	end
-	level=tonumber(level)
-	if level2 then level2=tonumber(level2) end
-	if level3 then level3=tonumber(level3) end
-	return c1,level,c2,level2,c3,level3
-
-end
-
-function dwClassLevelArray()
-
-	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
-	array={[c1]=l1}
-	if c2 then
-		array[c2]=l2
-	end
-	if c3 then
-		array[c3]=l3
-	end
-	return array
-end
-
-function dwDisplayClassLevelNew()
-	
-	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
-	
-	string=c1..": "..l1.."\n"
-	if c2 then
-		string=string..c2..": "..l2.."\n"
-	end
-	if c3 then
-		string=string..c3..": "..l3.."\n"
-	end
-	return string
-
-end
-
-function dwHLAThresholdCheck()
-
-	
-	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
-	if c3 then
-		classtype="triple"
-	elseif c2 then
-		if characters[currentID].classlevel.second.active then
-			classtype="double"
-		else
-			classtype="dual"
-		end
-	else
-		classtype="single"
-	end
-	
-	if classtype=='single' then
-		val= l1>=dwHLAThreshold[c1].single
-	end
-	
-	if classtype=='double' then
-		val= ((l1>=dwHLAThreshold[c1].double) or (l2>=dwHLAThreshold[c2].double))
-	end
-	
-	if classtype=='triple' then
-		val= ((l1>=dwHLAThreshold[c1].triple) or (l2>=dwHLAThreshold[c2].triple) or (l3>=dwHLAThreshold[c3].triple))
-	end	
-	
-	if classtype=='dual' then
-		val= ((l1>=dwHLAThreshold[c1].single) or (l2>=dwHLAThreshold[c2].single))
-	end
-	
-	return val
-
-
-
-end
 
 function dwNumberHLAs(is_new)
 
@@ -782,6 +616,8 @@ function dwNumberHLAs(is_new)
 		end
 		number=high+dwHLABasicProgression[lmax]
 		
+
+				
 	end
 	
 	if classtype=='triple' then
@@ -834,6 +670,16 @@ function dwNumberHLAs(is_new)
 		number=high+dwHLABasicProgression[lmax]
 	
 	end
+		if not is_new then
+		print('classtype is '..classtype)
+		print('class 1 is '..c1..' and level 1 is '..l1)
+		if c2 and l2 then
+			print('class 2 is '..c2..' and level 2 is '..l2)
+		end
+		if c3 and l3 then
+			print('class 3 is '..c3..' and level 3 is '..l3)
+		end
+	end
 	
 	return number
 
@@ -841,16 +687,13 @@ function dwNumberHLAs(is_new)
 
 end
 
-function dwParentClassByName(name)
+function dwHLAClickDoneButton()
 
-	if dwKitByName[name] then
-		return dwClassByName[dwKitParentName[dwKitByName[name]]]
+	if (not dwIsChargen) and (not dwIsDualClassing) and createCharScreen:IsHighLevelAbilitiesButtonClickable() then
+		createCharScreen:OnHighLevelAbilitiesButtonClick()
+	else
+		createCharScreen:OnDoneButtonClick()
 	end
-	if dwClassByName[name] then
-		return dwClassByName[name]
-	end
-	return 0 -- fail gracefully
-	
 end
 
 function dwHLAName(hla)
@@ -861,8 +704,107 @@ function dwHLAName(hla)
 		return hla.name
 	end
 
+end
+
+
+-- local functions
+
+
+function dwIsHLAAllowed(resref,level_array,kit)
+
+	-- check the hidden list
+	if dwHideHLA[resref] then
+		return false
+	end	
+	-- check if we pass the epic check
+	if not dwHLANotEpic[resref] and not dwHLAThresholdCheck() then
+		return false
+	end
+	-- check if we pass the alignment check
+	if dwHLAAlignmentRequirement[resref] and not dwHLAAlignmentRequirement[resref][dwFindAlignment(2)] then
+		return false
+	end
+	
+	-- check if there's a 'dwHLAClassLevel' entry; if not, we're good
+	if not dwHLAClassLevel[resref] then
+		return true
+	end
+	-- check if there's a class exclusion
+	if dwHLAExcludeByClass[resref] then
+		if dwHLAClassLevel[resref][dwHLAExcludeByClass[resref]] then
+			return false
+		end
+	end
+	-- check if there's a kit override
+	if dwHLAClassLevel[resref].kit[kit] then
+		allow_array=dwHLAClassLevel[resref].kit[kit]
+	else
+		allow_array=dwHLAClassLevel[resref]
+	end
+	-- go through the allow_array seeing if we have a permitted class
+	for class,level in pairs (level_array) do
+		if allow_array[class] and allow_array[class]<=level then
+			return true
+		end
+	end
+	-- if we get this far, it's blocked
+	return false
 
 end
+
+function dwClassLevelArray()
+
+	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	array={[c1]=l1}
+	if c2 then
+		array[c2]=l2
+	end
+	if c3 then
+		array[c3]=l3
+	end
+	return array
+end
+
+
+
+function dwHLAThresholdCheck()
+
+	
+	c1,l1,c2,l2,c3,l3=dwClassLevelNew()
+	if c3 then
+		classtype="triple"
+	elseif c2 then
+		if characters[currentID].classlevel.second.active then
+			classtype="double"
+		else
+			classtype="dual"
+		end
+	else
+		classtype="single"
+	end
+	
+	if classtype=='single' then
+		val= l1>=dwHLAThreshold[c1].single
+	end
+	
+	if classtype=='double' then
+		val= ((l1>=dwHLAThreshold[c1].double) or (l2>=dwHLAThreshold[c2].double))
+	end
+	
+	if classtype=='triple' then
+		val= ((l1>=dwHLAThreshold[c1].triple) or (l2>=dwHLAThreshold[c2].triple) or (l3>=dwHLAThreshold[c3].triple))
+	end	
+	
+	if classtype=='dual' then
+		val= ((l1>=dwHLAThreshold[c1].single) or (l2>=dwHLAThreshold[c2].single))
+	end
+	
+	return val
+
+
+
+end
+
 
 >>>>>>>>
 

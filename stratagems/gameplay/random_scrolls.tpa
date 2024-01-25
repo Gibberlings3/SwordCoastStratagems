@@ -38,7 +38,7 @@ END
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///   Goes through all arcane spells with scrolls, organises them by level. Adds a row for each level to rndtres and
-///   creates a rndtres item for the row. Pads with an appropriate treasure item
+///   creates a rndtres item for the row. 
 ///
 ///   levels are on a 0-8 convention, the items are dwrnscr%level%
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,47 +66,28 @@ DEFINE_ACTION_FUNCTION make_random_scrolls BEGIN
 		END
    END
 
+	OUTER_FOR (level=1;level<=level_max;++level) BEGIN
+		OUTER_SET $level_count("%level%")=1
+		COPY_EXISTING "rndtre01.itm" "override/dwrnscr%level%.itm"
+	END
 
-    OUTER_FOR (level=0;level<=level_max;level+=1) BEGIN
-       OUTER_SPRINT $scrolls_by_level("%level%") ""
-       OUTER_SET $scroll_list_length("%level%")=0
-    END
-    ACTION_PHP_EACH sfo_arcane_scrolls AS spell=>file BEGIN
-        ACTION_IF !VARIABLE_IS_SET $spell_is_absent("%spell%") BEGIN
-            OUTER_SPRINT level_name  "%spell%_LEVEL"
-            OUTER_SET level = "%level_name%"
-            ACTION_IF level<=level_max BEGIN
-              OUTER_SET $scroll_list_length("%level%") +=1
-              ACTION_IF $scroll_list_length("%level%") >40 BEGIN
-                LAF warning STR_VAR warning="More than 40 spells at level %level%; skipping any new ones" END
-              END ELSE BEGIN
-                OUTER_SPRINT temp $scrolls_by_level("%level%")
-                OUTER_SPRINT $scrolls_by_level("%level%") "%temp% %file%"
-              END
-            END
-        END
-    END
-    
     ACTION_IF !FILE_EXISTS_IN_GAME "rndtres.2da" BEGIN
        COPY ".../stratagems-inline/rndtres.2da" override
     END
-    COPY_EXISTING "rndtres.2da" override	
-       FOR (level=0;level<=level_max;level+=1) BEGIN
-			SPRINT filler "*"
-            SET length=$scroll_list_length("%level%")
-            SPRINT temp $scrolls_by_level("%level%")
-            SPRINT temp "dwrnscr%level% %temp%"
-            WHILE length<40 BEGIN
-               length +=1
-               SPRINT temp "%temp% %filler%"
-            END
-            INSERT_2DA_ROW 0 41 "%temp%"
-            INNER_ACTION BEGIN
-               COPY_EXISTING "rndtre01.itm" "override/dwrnscr%level%.itm"
-            END
-       END
-       PRETTY_PRINT_2DA
-    BUT_ONLY
+	COPY_EXISTING "rndtres.2da" override
+		LPF 2da_read RET_ARRAY rndtres_array=array END
+		PHP_EACH sfo_arcane_scrolls AS spell=>file BEGIN
+			PATCH_IF !VARIABLE_IS_SET $spell_is_absent("%spell%") BEGIN
+				level=EVAL "%%spell%_LEVEL%"
+				PATCH_IF level<=level_max BEGIN
+					count=$level_count("%level%")
+					TO_UPPER file
+					SPRINT $rndtres_array("DWRNSCR%level%" "%count%") "%file%"
+					SET $level_count("%level%") +=1
+				END
+			END
+		END
+		LPF 2da_write STR_VAR array=rndtres_array END
 
 END
 

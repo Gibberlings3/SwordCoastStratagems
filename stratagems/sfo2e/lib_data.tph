@@ -341,7 +341,7 @@ END
 document{data_thac0}
 {
 Read in thac0 for all classes and store in a 2da, in the form 
-$sfo_thac0("class" "level")=n
+$sfo_thac0("class" "level")=n up to level 50, padding out if necessary
 }
 */
 ///////////////////////////////////////////////////////////////////////////////
@@ -350,19 +350,44 @@ DEFINE_ACTION_MACRO data_thac0
 
 BEGIN
 	ACTION_IF !VARIABLE_IS_SET sfo_thac0_read || !sfo_thac0_read BEGIN
-		LAF 2da_read STR_VAR file=thac0.2da case=lower RET_ARRAY sfo_thac0=array END
+		LAF data_thac0_helper RET_ARRAY sfo_thac0 END
 		OUTER_SET sfo_thac0_read=1
 	END
 END
 
+///////////////////////////////////////////////////////////////////////////////
+/*
+document{data_thac0_helper}
+{
+Encapsulated innards of the data_thac0 macro.
+}
+*/
+///////////////////////////////////////////////////////////////////////////////
 
+
+DEFINE_ACTION_FUNCTION data_thac0_helper//internal 
+RET_ARRAY sfo_thac0 
+BEGIN
+
+	LAF 2da_read STR_VAR file=thac0.2da case=lower RET_ARRAY rows sfo_thac0=array END
+	ACTION_PHP_EACH rows AS row=>discard BEGIN
+		OUTER_SET val=20
+		OUTER_FOR (level=1;level<=50;++level) BEGIN
+			ACTION_IF !VARIABLE_IS_SET $sfo_thac0("%row%" "%level%") BEGIN
+				OUTER_SET $sfo_thac0("%row%" "%level%")=val
+			END ELSE BEGIN
+				OUTER_SET val=$sfo_thac0("%row%" "%level%")
+			END
+		END
+	END
+END
 
 ///////////////////////////////////////////////////////////////////////////////
 /*
 document{data_saving_throws}
 {
 Read in saving throws for all classes and store in a 3da struct, in the form 
-sfo_saves_%class%_%level%_%type%=n
+sfo_saves_%class%_%level%_%type%=n, up to level 50 (padding out if necessary)
 
 Here type is 'death','wands','polymorph','breath', or 'spells', and class is lowercased.
 }
@@ -405,9 +430,16 @@ BEGIN
 		END
 		VERBOSE
 		ACTION_PHP_EACH class_map AS class=>type BEGIN
-			ACTION_PHP_EACH SFO_reserved_columns AS n=>discard BEGIN
-				ACTION_PHP_EACH SFO_reserved_rows AS savetype=>discard2 BEGIN
-					OUTER_SET "sfo_saves_%class%_%n%_%savetype%" = $"SFO_reserved_array_%type%"("%savetype%" "%n%")
+			
+			ACTION_PHP_EACH SFO_reserved_rows AS savetype=>discard2 BEGIN
+				OUTER_SET min=20
+				OUTER_FOR (n=1;n<=50;++n) BEGIN
+					ACTION_IF VARIABLE_IS_SET $"SFO_reserved_array_%type%"("%savetype%" "%n%") BEGIN
+						OUTER_SET "sfo_saves_%class%_%n%_%savetype%" = $"SFO_reserved_array_%type%"("%savetype%" "%n%")
+						OUTER_SET min="sfo_saves_%class%_%n%_%savetype%"
+					END ELSE BEGIN
+						OUTER_SET "sfo_saves_%class%_%n%_%savetype%" = min
+					END
 				END
 			END
 		END
