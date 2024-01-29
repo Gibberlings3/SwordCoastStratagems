@@ -15,62 +15,66 @@ BEGIN
 
     OUTER_SET counter1=0
     OUTER_SET counter2=0
-	
-	ACTION_IF is_iwd BEGIN
-		LAF array_read STR_VAR file=creatures_with_potions.txt path="%data_loc%" RET_ARRAY potion_cre_array=array END
-		ACTION_PHP_EACH potion_cre_array AS resref=>discard BEGIN
-			COPY_EXISTING "%resref%.cre" override
-				SPRINT filename "%resref%"
-				potions=0
-				LPF potion_race_check RET value END
-				PATCH_IF value BEGIN
-					LPF no_potions RET value END
-					potions=!value
-				END
-				PATCH_IF potions BEGIN
+	OUTER_SET skip_alloc=0 // set to 1 in testing to skip the give out potion stage
+	ACTION_IF !skip_alloc BEGIN
+		ACTION_IF is_iwd BEGIN
+			LAF array_read STR_VAR file=creatures_with_potions.txt path="%data_loc%" RET_ARRAY potion_cre_array=array END
+			ACTION_PHP_EACH potion_cre_array AS resref=>discard BEGIN
+				COPY_EXISTING "%resref%.cre" override
+					SPRINT filename "%resref%"
+					potions=0
+					LPF potion_race_check RET value END
+					PATCH_IF value BEGIN
+						LPF no_potions RET value END
+						potions=!value
+					END
+					PATCH_IF potions BEGIN
+						LPF allocate_potions STR_VAR arguments= ~version=>%version% backup=>%backup%~ END
+					END
+				BUT_ONLY
+				IF_EXISTS
+			END
+		END ELSE BEGIN
+			COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
+				PATCH_TRY
+				 SPRINT filename ~%SOURCE_RES%~
+				 potions=0
+				 LPF potion_race_check RET value=value END
+				 PATCH_IF value BEGIN
+					LPF CRE_is_dead RET value=value END
+					PATCH_IF !value BEGIN
+					   LPF CRE_is_PC RET value=value END
+					   PATCH_IF !value BEGIN
+						  LPF no_potions RET value END
+						  PATCH_IF !value BEGIN
+							 SET potions=1
+						  END
+					   END
+					END
+				 END
+				 PATCH_IF potions BEGIN
 					LPF allocate_potions STR_VAR arguments= ~version=>%version% backup=>%backup%~ END
+				 END
+				 SET counter1+=1
+				 PATCH_IF counter1=100 BEGIN
+					SET counter1=0
+					SET counter2+=100
+					PATCH_PRINT ~patched %counter2% files~
+				 END
+				WITH DEFAULT
+					LPF regexp_warning STR_VAR parent=potion END
 				END
 			BUT_ONLY
-			IF_EXISTS
+		END
+
+		// special cases
+
+		ACTION_IF is_bg1 BEGIN
+		   LAF edit_creature INT_VAR tv=1 STR_VAR creature=zargal editstring=~add_items=>"potn08(x2)"~ END
 		END
 	END ELSE BEGIN
-		COPY_EXISTING_REGEXP GLOB ~.*\.cre~ ~override~
-			PATCH_TRY
-			 SPRINT filename ~%SOURCE_RES%~
-			 potions=0
-			 LPF potion_race_check RET value=value END
-			 PATCH_IF value BEGIN
-				LPF CRE_is_dead RET value=value END
-				PATCH_IF !value BEGIN
-				   LPF CRE_is_PC RET value=value END
-				   PATCH_IF !value BEGIN
-					  LPF no_potions RET value END
-					  PATCH_IF !value BEGIN
-						 SET potions=1
-					  END
-				   END
-				END
-			 END
-			 PATCH_IF potions BEGIN
-				LPF allocate_potions STR_VAR arguments= ~version=>%version% backup=>%backup%~ END
-			 END
-			 SET counter1+=1
-			 PATCH_IF counter1=100 BEGIN
-				SET counter1=0
-				SET counter2+=100
-				PATCH_PRINT ~patched %counter2% files~
-			 END
-			WITH DEFAULT
-				LPF regexp_warning STR_VAR parent=potion END
-			END
-		BUT_ONLY
+		WARN "You are testing; potion allocation is disabled"
 	END
-
-    // special cases
-
-    ACTION_IF is_bg1 BEGIN
-       LAF edit_creature INT_VAR tv=1 STR_VAR creature=zargal editstring=~add_items=>"potn08(x2)"~ END
-    END
 
 END
 

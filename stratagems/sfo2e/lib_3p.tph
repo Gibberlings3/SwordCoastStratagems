@@ -2,7 +2,7 @@
 /*
 document{3p_load_data}
 {
-Loads all the inis in the folder 'sfo_3p_folder' (by default weidu_external/data/dw_shared/%MOD_FOLDER%3p)
+Loads all the inis in the folders '%MOD_FOLDER%/sfo_3p_folder_internal' (by default '%MOD_FOLDER%/3p') and '%data_loc_shared%/sfo_3p_folder' (by default weidu_external/data/dw_shared/%MOD_FOLDER%3p), with the latter overriding the former.
 Returns them as a series of arrays, labelled by ini sections - so all the entries in [sphere], across all the
 inis, get returned in $sfo_3p_sphere. If the key has the form firstbit:secondbit, instead we return a 2D array
 using secondbit as a key: so entries in [kit:dw_cleric_mask] would get returned as values of $sfo_3p_kit("dw_cleric_mask" [whatever])
@@ -23,11 +23,14 @@ BEGIN
 
 	ACTION_IF !VARIABLE_IS_SET sfo_3p_data_loaded BEGIN
 		OUTER_SET sfo_3p_data_loaded=1
-		// get the data
+		// get the ata
+		ACTION_IF !VARIABLE_IS_SET "sfo_3p_folder_internal" BEGIN
+			OUTER_SPRINT sfo_3p_folder_internal "3p"
+		END
 		ACTION_IF !VARIABLE_IS_SET "sfo_3p_folder" BEGIN
 			OUTER_SPRINT sfo_3p_folder "%MOD_FOLDER%_3p"
 		END
-		LAF 3p_load_data_helper STR_VAR sfo_3p_folder RET_ARRAY sfo_3p_data END
+		LAF 3p_load_data_helper RET_ARRAY sfo_3p_data END
 		// filter it
 		ACTION_PHP_EACH sfo_3p_data AS k=>v BEGIN
 			ACTION_IF INDEX (":" "%k_0%")>=0 BEGIN
@@ -46,11 +49,21 @@ END
 
 
 DEFINE_ACTION_FUNCTION 3p_load_data_helper//internal
-	STR_VAR sfo_3p_folder="%data_loc_shared%/dw_tof3p"
+	STR_VAR folder=""
+			folder_internal=""
+			path=""
 	RET_ARRAY
 		sfo_3p_data
 BEGIN
 	ACTION_CLEAR_ARRAY sfo_3p_data
+	// internal data
+	ACTION_BASH_FOR "%MOD_FOLDER%/%sfo_3p_folder_internal%" ".*\.ini" BEGIN
+		LAF ini_read STR_VAR file="%BASH_FOR_FILE%" path="%MOD_FOLDER%/%sfo_3p_folder_internal%" RET_ARRAY temp_array=array END
+		ACTION_PHP_EACH temp_array AS k=>v BEGIN
+			OUTER_SPRINT $sfo_3p_data("%k_0%" "%k_1%") "%v%"
+		END
+	END
+	// external data - load second, should override
 	ACTION_BASH_FOR "%data_loc_shared%/%sfo_3p_folder%" ".*\.ini" BEGIN
 		LAF ini_read STR_VAR file="%BASH_FOR_FILE%" path="%data_loc_shared%/%sfo_3p_folder%" RET_ARRAY temp_array=array END
 		ACTION_PHP_EACH temp_array AS k=>v BEGIN
@@ -76,7 +89,7 @@ DEFINE_ACTION_FUNCTION 3p_kit BEGIN
 	
 	LAM 3p_load_data
 	
-	ACTION_PHP_EACH sfo_3p_kit AS resref=>kit BEGIN
+	ACTION_PHP_EACH sfo_3p_npc_kit AS resref=>kit BEGIN
 		OUTER_SET kitnum=IDS_OF_SYMBOL (kit "%kit%")
 		ACTION_IF kitnum>=0 BEGIN
 			COPY_EXISTING "%resref%.cre" override
