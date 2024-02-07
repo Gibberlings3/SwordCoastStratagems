@@ -681,56 +681,59 @@ BEGIN
 		END	
 		DEFAULT
 		END
-		LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
-		LPF array_contains STR_VAR array=columns key="%domain%" RET found_domain=value END
-		LPF array_contains STR_VAR array=columns key="%range%" RET found_range=value END
-		PATCH_IF "%domain%" STR_EQ "" && found_range BEGIN // we're using the column entries as lookup
-			PHP_EACH rows AS row=>discard BEGIN
-				SPRINT v $"%array%"("%row%" "%range%")
-				PATCH_IF !("%v%" STR_EQ "*") BEGIN
-					PATCH_IF !"%map%" STR_EQ "" BEGIN
-						LPF "%map%" STR_VAR arguments="%v%" RET v=value END
+		LPF array_contains STR_VAR array RET non_empty=value END
+		PATCH_IF non_empty BEGIN
+			LPF array_keys STR_VAR array RET_ARRAY rows=keys1 columns=keys2 END
+			LPF array_contains STR_VAR array=columns key="%domain%" RET found_domain=value END
+			LPF array_contains STR_VAR array=columns key="%range%" RET found_range=value END
+			PATCH_IF "%domain%" STR_EQ "" && found_range BEGIN // we're using the column entries as lookup
+				PHP_EACH rows AS row=>discard BEGIN
+					SPRINT v $"%array%"("%row%" "%range%")
+					PATCH_IF !("%v%" STR_EQ "*") BEGIN
+						PATCH_IF !"%map%" STR_EQ "" BEGIN
+							LPF "%map%" STR_VAR arguments="%v%" RET v=value END
+						END
+						SPRINT $lookup_array("%row%") "%v%"
+						found_range=1
+					END			
+				END	
+			END ELSE 
+			PATCH_IF "%range%" STR_EQ "" && found_domain BEGIN
+				PHP_EACH rows AS row=>discard BEGIN
+					SPRINT k $"%array%"("%row%" "%domain%")
+					PATCH_IF !("%k%" STR_EQ "*") BEGIN
+						PATCH_IF !"%keymap%" STR_EQ "" BEGIN
+							LPF "%keymap%" STR_VAR arguments="%k%" RET k=value END
+						END
+						SPRINT $lookup_array("%k%") "%row%"
+						found_domain=1
+					END			
+				END	
+			END ELSE
+			PATCH_IF found_domain && found_range BEGIN
+				SPRINT row_label ""
+				SPRINT d "*"
+				SPRINT r "*"
+				PHP_EACH rows AS row=>discard BEGIN
+					SPRINT d $"%array%"("%row%" "%domain%")
+					SPRINT r $"%array%"("%row%" "%range%")
+					PATCH_IF "%d%" STR_CMP "*" && "%r%" STR_CMP "*" BEGIN
+						PATCH_IF !"%map%" STR_EQ "" BEGIN
+								LPF "%map%" STR_VAR arguments="%r%" RET r=value END
+						END
+						PATCH_IF !"%keymap%" STR_EQ "" BEGIN
+							LPF "%keymap%" STR_VAR arguments="%d%" RET d=value END
+						END
+						SPRINT $lookup_array("%d%") "%r%"
 					END
-					SPRINT $lookup_array("%row%") "%v%"
-					found_range=1
-				END			
-			END	
-		END ELSE 
-		PATCH_IF "%range%" STR_EQ "" && found_domain BEGIN
-			PHP_EACH rows AS row=>discard BEGIN
-				SPRINT k $"%array%"("%row%" "%domain%")
-				PATCH_IF !("%k%" STR_EQ "*") BEGIN
-					PATCH_IF !"%keymap%" STR_EQ "" BEGIN
-						LPF "%keymap%" STR_VAR arguments="%k%" RET k=value END
-					END
-					SPRINT $lookup_array("%k%") "%row%"
-					found_domain=1
-				END			
-			END	
-		END ELSE
-		PATCH_IF found_domain && found_range BEGIN
-			SPRINT row_label ""
-			SPRINT d "*"
-			SPRINT r "*"
-			PHP_EACH rows AS row=>discard BEGIN
-				SPRINT d $"%array%"("%row%" "%domain%")
-				SPRINT r $"%array%"("%row%" "%range%")
-				PATCH_IF "%d%" STR_CMP "*" && "%r%" STR_CMP "*" BEGIN
-					PATCH_IF !"%map%" STR_EQ "" BEGIN
-							LPF "%map%" STR_VAR arguments="%r%" RET r=value END
-					END
-					PATCH_IF !"%keymap%" STR_EQ "" BEGIN
-						LPF "%keymap%" STR_VAR arguments="%d%" RET d=value END
-					END
-					SPRINT $lookup_array("%d%") "%r%"
+				END		
+			END ELSE BEGIN
+				PATCH_IF !found_domain && !silent BEGIN
+					PATCH_WARN "warning: domain %domain% in 2da_lookup apparently does not exist. Returning empty array."
 				END
-			END		
-		END ELSE BEGIN
-			PATCH_IF !found_domain && !silent BEGIN
-				PATCH_WARN "warning: domain %domain% in 2da_lookup apparently does not exist. Returning empty array."
-			END
-			PATCH_IF !found_range && !silent BEGIN
-				PATCH_WARN "warning: range %range% in 2da_lookup apparently does not exist. Returning empty array."
+				PATCH_IF !found_range && !silent BEGIN
+					PATCH_WARN "warning: range %range% in 2da_lookup apparently does not exist. Returning empty array."
+				END
 			END
 		END
 		CLEAR_ARRAY array

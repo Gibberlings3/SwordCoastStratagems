@@ -12,6 +12,7 @@ DEFINE_ACTION_FUNCTION random_scrolls BEGIN
     // make the rndtres entries and items; remove old part
     LAF make_random_scrolls END
     LAF nuke_extant_rndscr END
+	LAF make_rndtre_spells END
   
 	// patch creatures
   
@@ -102,136 +103,225 @@ DEFINE_PATCH_FUNCTION ARE_patch_random_scroll BEGIN
           GET_OFFSET_ARRAY itm_arr 0x78 2 0x76 2 0 0 0x14
           PHP_EACH itm_arr AS ind=>offset BEGIN
              READ_ASCII offset resref
-			 PATCH_MATCH "%resref%" WITH
-			 "rndtre0.*" BEGIN
-					rng=RANDOM (1 scroll_drop_fraction)
-					PATCH_IF rng=1 BEGIN
-						LPF determine_scroll_swap STR_VAR rndtre="%resref%" RET scroll_item END
-						PATCH_IF "%scroll_item%" STR_CMP "null" BEGIN
-							WRITE_ASCIIE offset "%scroll_item%" (8)
-						END
-					END
-			 END
-			 DEFAULT END
+			LPF determine_scroll_swap STR_VAR rndtre="%resref%" RET scroll_item END
+			PATCH_IF "%scroll_item%" STR_CMP "null" BEGIN
+				WRITE_ASCIIE offset "%scroll_item%" (8)
+			END
           END
        END
 END
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///  Patches creature's items to swap RNDTRE for scrolls
+///  Patches creature's items to cast scroll spell if RNDTRE is present
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION CRE_patch_random_scroll BEGIN
-       PATCH_IF INDEX_BUFFER ("RNDTRE")>=0 BEGIN // initial filter
-		// sort out duplicates
-			LPF CRE_deduplicate_items END
-        // some items are hidden cruft; start by collecting list of actually-present arguments
-           CLEAR_ARRAY slot_arr
-           READ_LONG 0x2b8 slot_off
-           FOR (i=0;i<37;i+=1) BEGIN
-              READ_SHORT (slot_off+i*2) slot_num
-              SPRINT $slot_arr("%slot_num%") ""
-           END
-        // now get the item set and do swaps
-           GET_OFFSET_ARRAY itm_array CRE_V10_ITEMS
-           PHP_EACH itm_array AS ind=>offset BEGIN
-            PATCH_IF VARIABLE_IS_SET $slot_arr("%ind%") BEGIN
-              READ_ASCII offset resref
-              PATCH_MATCH "%resref%" WITH
-              "rndtre0.*" BEGIN
-					rng=RANDOM (1 scroll_drop_fraction)
-					PATCH_IF rng=1 BEGIN
-						LPF determine_scroll_swap STR_VAR rndtre="%resref%" RET scroll_item END
-						PATCH_IF "%scroll_item%" STR_CMP "null" BEGIN
-							WRITE_ASCIIE offset "%scroll_item%" (8)
-							WRITE_SHORT (offset+0xa) 0
-						END
-						
-					END
-              END
-              DEFAULT END			  
-			  
-            END
-           END
+       PHP_EACH resref_array AS k=>v BEGIN
+		SET $resref_array("%k%")=0
+	   END
+	   PATCH_IF INDEX_BUFFER ("RNDTRE")>=0 BEGIN // initial filter
+			REPLACE_EVALUATE "\(RNDTRE0[1-9]\)" BEGIN
+				SPRINT resref "%MATCH1%"
+				PATCH_IF IS_AN_INT $resref_array("%resref%") BEGIN
+					SET $resref_array("%resref%")+=1
+				END ELSE BEGIN
+					SET $resref_array("%resref%")=1
+				END
+			END
+			"%resref%"
+			PHP_EACH resref_array AS resref=>count BEGIN
+				WHILE count>0 BEGIN
+					count -= 1
+					LPF ADD_CRE_EFFECT INT_VAR opcode=326 target=2 timing=1 STR_VAR resource="%resref%" END
+
+				END
+			END
        END
 END
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///  Takes as input the name of the rndtre item; returns the scroll item to swap
+///  (used for ARE items)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_PATCH_FUNCTION determine_scroll_swap
 	STR_VAR rndtre=""
 	RET scroll_item
 BEGIN
+	SPRINT scroll_item "null"
 	PATCH_IF is_bg2 BEGIN
 		PATCH_MATCH "%rndtre%" WITH
-			rndtre03 BEGIN
-				rng=RANDOM (1 4)
-				PATCH_MATCH "%rng%" WITH
-				1 BEGIN
-					SPRINT scroll_item dwrnscr0
-				END
-				2 BEGIN
-					SPRINT scroll_item dwrnscr1				
-				END
-				3 BEGIN
-					SPRINT scroll_item dwrnscr2				
-				END
-				4 BEGIN
-					SPRINT scroll_item dwrnscr3				
-				END
-				DEFAULT END // never arises
+		rndtre01 rndtre02 BEGIN
+			PATCH_MATCH RANDOM (1 60) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1				
 			END
-			rndtre04 BEGIN
-				rng=RANDOM (1 2)
-				PATCH_MATCH "%rng%" WITH
-				1 BEGIN
-					SPRINT scroll_item dwrnscr4
-				END
-				2 BEGIN
-					SPRINT scroll_item dwrnscr5			
-				END
-				DEFAULT END // never arises			
+			2 BEGIN
+				SPRINT scroll_item dwrnscr2				
 			END
-			rndtre05 BEGIN
-				rng=RANDOM (1 2)
-				PATCH_MATCH "%rng%" WITH
-				1 BEGIN
-					SPRINT scroll_item dwrnscr6
-				END
-				2 BEGIN
-					SPRINT scroll_item dwrnscr7			
-				END
-				DEFAULT END // never arises	
+			3 BEGIN
+				SPRINT scroll_item dwrnscr3				
 			END
-			// these ones only apply on EET
-			rndtre07 BEGIN 
-				SPRINT scroll_item dwrnscr0
-			END
-			rndtre08 BEGIN 
+			DEFAULT
+			END			
+		END
+		rndtre03 BEGIN
+			PATCH_MATCH RANDOM (1 40) WITH
+			1 BEGIN
 				SPRINT scroll_item dwrnscr1
 			END
-			rndtre09 BEGIN 
+			2 BEGIN
+				SPRINT scroll_item dwrnscr2				
+			END
+			3 BEGIN
+				SPRINT scroll_item dwrnscr3				
+			END
+			4 BEGIN
+				SPRINT scroll_item dwrnscr4				
+			END
+			DEFAULT 
+			END
+		END
+		rndtre04 BEGIN
+			PATCH_MATCH RANDOM (1 30) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr5
+			END
+			2 BEGIN
+				SPRINT scroll_item dwrnscr6			
+			END
+			3 BEGIN
+				SPRINT scroll_item dwrnscr7		
+			END
+			DEFAULT 
+			END
+		END
+		rndtre05 BEGIN
+			PATCH_MATCH RANDOM (1 30) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr6
+			END
+			2 BEGIN
+				SPRINT scroll_item dwrnscr7			
+			END
+			3 BEGIN
+				SPRINT scroll_item dwrnscr8		
+			END
+			DEFAULT 
+			END
+		END
+		// these ones only apply on EET
+		rndtre06 BEGIN 
+			PATCH_MATCH RANDOM (1 20) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			DEFAULT
+			END
+		END
+		rndtre07 BEGIN 
+			PATCH_MATCH RANDOM (1 30) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			2 BEGIN
 				SPRINT scroll_item dwrnscr2
 			END
-			
 			DEFAULT
-				SPRINT scroll_item null
 			END
+		END	
+		rndtre08 BEGIN 
+			PATCH_MATCH RANDOM (1 30) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			2 BEGIN
+				SPRINT scroll_item dwrnscr2
+			END
+			3 BEGIN
+				SPRINT scroll_item dwrnscr3
+			END
+			DEFAULT
+			END
+		END		
+		rndtre09 BEGIN 
+			PATCH_MATCH RANDOM (1 60) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			2 3 BEGIN
+				SPRINT scroll_item dwrnscr2
+			END
+			4 5 BEGIN
+				SPRINT scroll_item dwrnscr3
+			END
+			6 BEGIN
+				SPRINT scroll_item dwrnscr4
+			END			
+			7 BEGIN
+				SPRINT scroll_item dwrnscr5
+			END
+			DEFAULT
+			END
+		END		
+		DEFAULT
+		END
 	END ELSE BEGIN
 		PATCH_MATCH "%rndtre%" WITH
-			rndtre03 BEGIN 
-				SPRINT scroll_item dwrnscr0
-			END
-			rndtre04 BEGIN 
+		rndtre01 rndtre02 BEGIN 
+			PATCH_MATCH RANDOM (1 20) WITH
+			1 BEGIN
 				SPRINT scroll_item dwrnscr1
 			END
-			rndtre05 BEGIN 
+			DEFAULT
+			END
+		END
+		rndtre03 BEGIN 
+			PATCH_MATCH RANDOM (1 30) WITH
+			1 2 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			3 BEGIN
 				SPRINT scroll_item dwrnscr2
+			END		
+			DEFAULT
+			END
+		END
+		rndtre04 BEGIN 
+			PATCH_MATCH RANDOM (1 40) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			2 3 BEGIN
+				SPRINT scroll_item dwrnscr2
+			END				
+			4 BEGIN
+				SPRINT scroll_item dwrnscr3
 			END
 			DEFAULT
-			SPRINT scroll_item null
+			END
+		END
+		rndtre05 BEGIN 
+			PATCH_MATCH RANDOM (1 60) WITH
+			1 BEGIN
+				SPRINT scroll_item dwrnscr1
+			END
+			2 BEGIN
+				SPRINT scroll_item dwrnscr2
+			END				
+			3 4 5 6 BEGIN
+				SPRINT scroll_item dwrnscr3
+			END
+			7 BEGIN
+				SPRINT scroll_item dwrnscr4
+			END
+			8 BEGIN
+				SPRINT scroll_item dwrnscr5
+			END
+			DEFAULT
+			END
+		END
+		DEFAULT 
 		END
 
 	END
@@ -282,6 +372,107 @@ BEGIN
    END
 
 END
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Make random spells
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_rndtre_spells BEGIN
+
+	ACTION_IF is_bg2 BEGIN
+		ACTION_FOR_EACH resref IN rndtre01 rndtre02 rndtre03 rndtre04 rndtre05 rndtre06 rndtre07 rndtre08 rndtre09 BEGIN
+			CREATE spl "%resref%"
+				LPF add_basic_spell_ability END	
+				PATCH_MATCH "%resref%" WITH
+				rndtre01 rndtre02 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=1 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=3 probability2=2 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=5 probability2=4 STR_VAR resource=dwrnscr3 END
+				END
+				rndtre03 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=1 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=4 probability2=2 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=7 probability2=5 STR_VAR resource=dwrnscr3 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=8 STR_VAR resource=dwrnscr4 END
+				END
+				rndtre04 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=3 probability2=0 STR_VAR resource=dwrnscr5 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=6 probability2=4 STR_VAR resource=dwrnscr6 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=7 STR_VAR resource=dwrnscr7 END
+				END
+				rndtre05 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=3 probability2=0 STR_VAR resource=dwrnscr6 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=6 probability2=4 STR_VAR resource=dwrnscr7 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=7 STR_VAR resource=dwrnscr8 END
+				END
+				rndtre06 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=4 probability2=0 STR_VAR resource=dwrnscr1 END
+				END
+				rndtre07 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=4 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=5 STR_VAR resource=dwrnscr2 END
+				END
+				rndtre08 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=2 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=6 probability2=3 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=7 STR_VAR resource=dwrnscr3 END
+				END
+				rndtre09 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=1 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=4 probability2=2 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=7 probability2=5 STR_VAR resource=dwrnscr3 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=8 STR_VAR resource=dwrnscr4 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=11 probability2=10 STR_VAR resource=dwrnscr5 END
+				END
+				DEFAULT
+				END
+		END
+	END ELSE BEGIN
+		ACTION_FOR_EACH resref IN rndtre01 rndtre02 rndtre03 rndtre04 rndtre05 BEGIN
+			CREATE spl "%resref%"
+				LPF add_basic_spell_ability END	
+				PATCH_MATCH "%resref%" WITH
+				rndtre01 rndtre02 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=4 probability2=0 STR_VAR resource=dwrnscr1 END
+				END
+				rndtre03 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=6 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=7 STR_VAR resource=dwrnscr2 END
+				END
+				rndtre04 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=3 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=7 probability2=4 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=8 STR_VAR resource=dwrnscr3 END
+				END
+				rndtre05 BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=1 probability2=0 STR_VAR resource=dwrnscr1 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=3 probability2=2 STR_VAR resource=dwrnscr2 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=7 probability2=4 STR_VAR resource=dwrnscr3 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=9 probability2=8 STR_VAR resource=dwrnscr4 END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=122 target=1 timing=1 parameter1=1 probability1=11 probability2=10 STR_VAR resource=dwrnscr5 END
+				END	
+				DEFAULT
+				END
+		END
+	
+	END
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+END
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
