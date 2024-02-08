@@ -252,7 +252,8 @@ END
 /*
 document{build_subraces}
 {
-operate on the subrace tables toactually construct the subraces
+operate on the subrace tables to actually construct the subraces
+if delay_mode=1, introduce a 1-second delay into the spells (for HoW compatibility)
 }
 */
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -265,6 +266,7 @@ operate on the subrace tables toactually construct the subraces
 
 DEFINE_ACTION_FUNCTION build_subraces 
 	INT_VAR tlk_signal_start=900000
+			delay_mode=0//boolean
 BEGIN
 
 	// set names for some internally-used spells
@@ -328,7 +330,7 @@ BEGIN
 		INT_VAR tlk_signal_start
 		STR_VAR subrace_2da="%data_loc_shared%/dw_subrace_data.2da"
 		RET max_count 
-		RET_ARRAY subrace_data subrace_rows real_races_used default_subrace
+		RET_ARRAY subrace_data subrace_rows real_races_used default_subrace extra_race_map
 	END
 
 	// dump the final-race and subrace allocations
@@ -375,7 +377,7 @@ IDS V1.0
 	LAF add_subraces_write_lua_tables END
 	// build the various spells and patch them into CLAB entries
 	
-	LAF add_subraces_build_spells END
+	LAF add_subraces_build_spells INT_VAR delay_mode END
 	
 	
 END
@@ -387,8 +389,13 @@ DEFINE_ACTION_FUNCTION load_subrace_2da_table
 	INT_VAR tlk_signal_start=0
 	STR_VAR subrace_2da="" icon_path=""
 	RET max_count
-	RET_ARRAY subrace_data subrace_rows default_subrace real_races_used
+	RET_ARRAY subrace_data subrace_rows default_subrace real_races_used extra_race_map
 BEGIN
+	ACTION_CLEAR_ARRAY extra_race_map
+	ACTION_CLEAR_ARRAY subrace_rows
+	ACTION_CLEAR_ARRAY real_races_used
+	ACTION_CLEAR_ARRAY subrace_data
+	ACTION_CLEAR_ARRAY default_subrace
 	COPY - "%subrace_2da%" nowhere	
 		max_count=0
 		max_extra_prof=0
@@ -484,7 +491,14 @@ BEGIN
 	BUT_ONLY
 	// add extra profs to max count
 	OUTER_SET max_count += max_extra_prof
-		
+	// generate final race=>chargen race lookup table
+	ACTION_PHP_EACH subrace_rows AS subrace=>discard BEGIN
+		OUTER_SET final_race=$subrace_data("%subrace%" "final_id")
+		OUTER_SET chargen_race=$subrace_data("%subrace%" "parent_real_id")
+		ACTION_IF !(final_race=chargen_race) BEGIN
+			OUTER_SET $extra_race_map("%final_race%")=chargen_race
+		END
+	END
 
 END
 
@@ -1047,6 +1061,7 @@ DEFINE_ACTION_FUNCTION add_subraces_write_lua_tables BEGIN
 	
 	// the default subrace table
 	
+	
 
 	COPY_EXISTING - "racetext.2da" nowhere
 		COUNT_2DA_COLS colcount
@@ -1061,14 +1076,57 @@ DEFINE_ACTION_FUNCTION add_subraces_write_lua_tables BEGIN
 				INNER_ACTION BEGIN
 					APPEND "m_dw_sbd.lua" "defaultSubrace[%race_name%]={strref=%strref%,id=%id%, race=%race%,finalrace=%race_id%}" KEEP_CRLF
 				END
+			END ELSE BEGIN
+				done=0
+				PHP_EACH subrace_rows AS ind=>discard BEGIN
+					PATCH_IF !done BEGIN
+						SPRINT race $subrace_data("%ind%" "final_id")
+						PATCH_IF race_id=race BEGIN
+							done=1
+							SPRINT id $subrace_data("%ind%" "id")
+							SPRINT race $subrace_data("%ind%" "parent_id")
+							SPRINT strref $subrace_data("%ind%" "name")
+						END
+					END
+				END				
+				PATCH_IF done BEGIN
+					INNER_ACTION BEGIN
+						APPEND "m_dw_sbd.lua" "defaultSubrace[%race_name%]={strref=%strref%,id=%id%, race=%parent_id%,finalrace=%race_id%}" KEEP_CRLF
+					END					
+				END
 			END
 		END
 	BUT_ONLY
 	APPEND "m_dw_sbd.lua" "%WNL%%WNL%" KEEP_CRLF
 	
+	
+	// the lookup table that determines the from count from the race and id
+	
+	OUTER_SPRINT data "dwSubraceProfLookup={%WNL%"
+	ACTION_CLEAR_ARRAY race_array
+	ACTION_CLEAR_ARRAY lookup_array
+	ACTION_PHP_EACH subrace_rows AS ind=>discard BEGIN
+		OUTER_SPRINT race $subrace_data("%ind%" "parent_id")
+		OUTER_SPRINT id $subrace_data("%ind%" "id")
+		OUTER_SPRINT extraprof $subrace_data("%ind%" "extra_prof")
+		OUTER_SPRINT $race_array("%race%") ""
+		OUTER_SET $lookup_array("%race%" "%id%")=extraprof
+	END
+	ACTION_SORT_ARRAY_INDICES race_array NUMERICALLY
+	ACTION_PHP_EACH race_array AS race=>discard BEGIN
+		OUTER_SPRINT data "%data%%TAB%[%race%]={"
+		ACTION_PHP_EACH lookup_array AS k=>v BEGIN
+			ACTION_IF "%k_0%" STR_EQ "%race%" BEGIN
+				OUTER_SPRINT data "%data%[%k_1%]=%v%,"
+			END
+		END
+		OUTER_SPRINT data "%data%},%WNL%"
+	END
+	OUTER_SPRINT data "%data%}%WNL%%WNL%"
+	
 	// the value of the dwMaxCount variable
 	
-	APPEND "m_dw_sbd.lua" "dwMaxCount=%max_count%" KEEP_CRLF
+	APPEND "m_dw_sbd.lua" "%data%dwMaxCount=%max_count%" KEEP_CRLF
 
 END
 
@@ -1078,6 +1136,7 @@ END
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION add_subraces_build_spells
+	INT_VAR delay_mode=0
 BEGIN
 
 	// get needed splprot entries
@@ -1100,8 +1159,20 @@ BEGIN
 		FOR (race=1;race<=7;++race) BEGIN
 			SPRINT resource "dwsubrc%race%"
 			// the 1-second duration is because sometimes in chargen (specifically in HoW) the CLAB powers seem to get applied before the proficiences
-			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=race parameter2=splprot_race timing=4 duration=1 STR_VAR resource END
+			PATCH_IF delay_mode BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=race parameter2=splprot_race timing=4 duration=1 STR_VAR resource END
+			END ELSE BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=race parameter2=splprot_race timing=1 duration=0 STR_VAR resource END
+			END
 			LPF build_subrace_secondary_spell INT_VAR race STR_VAR spell="%resource%" END
+		END
+		// it may be unnecessary to cover final races too, but I'm concerned about dual-classing and similar edge cases
+		PHP_EACH extra_race_map AS final_race=>chargen_race BEGIN
+			PATCH_IF delay_mode BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=final_race parameter2=splprot_race timing=4 duration=1 STR_VAR resource="dwsubrc%chargen_race%" END
+			END ELSE BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=final_race parameter2=splprot_race timing=1 duration=0 STR_VAR resource="dwsubrc%chargen_race%" END
+			END
 		END
 		LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=1 duration=0 STR_VAR resource="%spl_subrace_master%" END
 	
@@ -1130,13 +1201,23 @@ BEGIN
 			OUTER_SPRINT primary_spell "dwsbr%level%a"
 			CREATE spl "%outer_spell%"
 				LPF add_basic_spell_ability END
-				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=4 duration=1 STR_VAR resource="%primary_spell%" END
+				PATCH_IF delay_mode BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=4 duration=1 STR_VAR resource="%primary_spell%" END
+				END ELSE BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 duration=0 STR_VAR resource="%primary_spell%" END
+				END
 			CREATE spl "%primary_spell%"
 				LPF add_basic_spell_ability END
 				FOR (race=1;race<=7;++race) BEGIN
 					SPRINT resource "dwsubrr%race%"
 					PATCH_IF VARIABLE_IS_SET $needed("%resource%") BEGIN
 						LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=race parameter2=splprot_race STR_VAR resource END
+					END 
+				END
+				PHP_EACH extra_race_map AS final_race=>chargen_race BEGIN
+					SPRINT resource "dwsubrr%chargen_race%"
+					PATCH_IF VARIABLE_IS_SET $needed("%resource%") BEGIN
+						LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=final_race parameter2=splprot_race STR_VAR resource END
 					END 
 				END
 				LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=4 duration=1 STR_VAR resource="%outer_spell%" END
@@ -1306,27 +1387,15 @@ BEGIN
 		END
 		// main edit
 			COPY_EXISTING "%clab%.2da" override
-						COUNT_2DA_COLS colcount_clab
-						ab_max=0
-						REPLACE_EVALUATE "ABILITY\([0-9]+\)\([%TAB% ]\)" BEGIN
-							SET ab_here="%MATCH1%"
-							SET ab_max = (ab_here>ab_max)? ab_here : ab_max
-						END
-						"ABILITY%MATCH1%%MATCH2%"
-						++ab_max
-						SPRINT working "ABILITY%ab_max% %initial%"
-						FOR (i=2;i<colcount_clab;++i) BEGIN
-							PATCH_IF "%recur%" STRING_EQUAL "" BEGIN
-								SPRINT working "%working% %recur%"	
-							END ELSE BEGIN
-								SPRINT working "%working% %recur%%i%"
-							END							
-						END
-			BUT_ONLY
-			APPEND "%clab%.2da" "%working%" KEEP_CRLF
-			COPY_EXISTING "%clab%.2da" override 
-						PRETTY_PRINT_2DA
-	
+				LPF 2da_read RET_ARRAY clab_cols=columns clab_array=array END
+				SPRINT $clab_array("DW_SUBRACE" "1") "%initial%"
+				PHP_EACH clab_cols AS column=>discard BEGIN
+					PATCH_IF column>1 BEGIN
+						SPRINT $clab_array("DW_SUBRACE" "%column%") "%recur%%column%"
+					END
+				END
+				LPF 2da_write STR_VAR array=clab_array END
+
 	
 	END
 END
@@ -1753,14 +1822,29 @@ end
 
 function dwPassSubraceData()
 
-	if dwIsChargen or dwIsDualClassing or characters[currentID].level.xp==0 then
+	if not dw_first_level_profs then -- if we haven't received it from dwGrantDefaultProficiencies()
+		if (dwIsChargen or dwIsDualClassing ) then
+			dw_first_level_profs=true
+		else
+			dw_first_level_profs=true
+			for	k,prof in pairs (chargen.proficiency) do
+				if (prof.value>0) and (prof.id>=89) and (prof.id<=109) then
+					dw_first_level_profs=false
+				end
+			end	
+		end
+	end
+
+
+	if dw_first_level_profs then
 
 		signal=0
 		extraprof=0
 		subrace_number=#chargen.proficiency
 		discard_number=subrace_number - 1
 		if currentChargenRace then -- character creation
-			race=dwRaces[currentChargenRace]
+			local race=dwRaces[currentChargenRace]
+			local subrace=nil
 			if subraceList(race.id) then
 				subrace=subraceList(race.id)[currentChargenSubrace]
 			end
@@ -1768,8 +1852,10 @@ function dwPassSubraceData()
 				signal=subrace.id
 				extraprof=subrace.extraprof
 			end
-		else -- dual-classing
-			signal=dwFindSubraceData(characters[currentID]).subrace
+		else -- dual-classing or zero-level creatures
+			local subrace=dwFindSubraceData(characters[currentID])
+			signal=0 -- no need to pass a signal, indeed it's actively problematic to do so
+			extraprof=subrace.extraprof
 		end
 	
 
@@ -1788,6 +1874,7 @@ function dwPassSubraceData()
 			end
 	--	end
 	end
+
 end
 
 subraceButtonSequences = {}
@@ -1833,23 +1920,54 @@ function dwFindSubraceData(char)
 	subrace=false
 	if next(char.statusEffects) ~= nil then
 		for k, v in pairs(char.statusEffects) do
-			 if v.strRef>%tlk_signal_start% then
+			 if v.strRef>900000 then
 				subrace=true
-				id= v.strRef - %tlk_signal_start%
+				id= v.strRef - 900000
 			 end
 		end
 	end
-	if subrace then
-		return {race=subraceIcons[id].race,subrace=subraceIcons[id].subrace,strref=subraceIcons[id].subraceStrRef,finalrace=subraceIcons[id].finalrace}
+	if subrace then -- if we found a subrace icon, we're fine
+		local r=subraceIcons[id].race
+		local s=subraceIcons[id].subrace
+		return {race=r,subrace=s,strref=subraceIcons[id].subraceStrRef,finalrace=subraceIcons[id].finalrace,extraprof=dwFindSubraceExtraProf(r,s)}
 	else
-		fallback=char.race
+		-- if not, find the race
+		local fallback=char.race
+		-- if the race has a default subrace (i.e. one with no icon) return that
 		if defaultSubrace[fallback] then
-			return {race=defaultSubrace[fallback].race,subrace=defaultSubrace[fallback].id,strref=defaultSubrace[fallback].strref,finalrace=defaultSubrace[fallback].finalrace}
+			local r=defaultSubrace[fallback].race
+			local s=defaultSubrace[fallback].id
+			return {race=r,subrace=s,strref=defaultSubrace[fallback].strref,finalrace=defaultSubrace[fallback].finalrace,extraprof=dwFindSubraceExtraProf(r,s)}
+		-- if not, can we find the race by lookup? if so, return the zero kit, if not return the race itself, with no bonus profs
+		elseif dwRaceByStrref[fallback] then
+			local r=dwRaceByStrref[fallback]
+			local e=dwFindSubraceExtraProf(r,0)
+			if e then 
+				return {race=r,subrace=0,strref=fallback,finalrace=r,extraprof=dwFindSubraceExtraProf(r,0)}
+			else
+				return {race=r,subrace=0,strref=fallback,finalrace=1,extraprof=0}
+			end
 		else
-		    return {race=1,subrace=0,strref=fallback,finalrace=1}
+		-- as a fallback, just return humans
+		    return {race=1,subrace=0,strref=fallback,finalrace=1,extraprof=dwFindSubraceExtraProf(1,0)}
 		end
 	    
 	end
+end
+
+function dwFindSubraceExtraProf(race,subrace)
+	local extraprof=nil
+	if dwSubraceProfLookup[race] then
+		extraprof=dwSubraceProfLookup[race][subrace]
+		if not extraprof then 
+			extraprof=dwSubraceProfLookup[race][0]
+		end
+	end
+	if not extraprof then 
+		extraprof=0
+	end
+	return extraprof
+
 end
 
 
