@@ -99,7 +99,7 @@ Determined as follows:
 	</ul>
 <li>if not, and 'locbase' is set, use '%MOD_FOLDER%/locbase'
 <li>otherwise, just use ""
-	
+</ul>	
 }
 
 */
@@ -868,8 +868,28 @@ IDS
 		////////////////////////////////////////////////////////////////////////////////
 
 		COPY_EXISTING weapprof.2da override
+			READ_2DA_ENTRIES_NOW weapprof_data 4
+			SET_2DA_ENTRY_LATER weapprof_fix 1 0 LARGE_SWORD_BG1
+			SET_2DA_ENTRY_LATER weapprof_fix 2 0 SMALL_SWORD_BG1
+			SET_2DA_ENTRY_LATER weapprof_fix 3 0 BOW_BG1
 			SET_2DA_ENTRY_LATER weapprof_fix 4 0 SPEAR_BG1
+			SET_2DA_ENTRY_LATER weapprof_fix 5 0 BLUNT_BG1
+			SET_2DA_ENTRY_LATER weapprof_fix 6 0 SPIKED_BG1
 			SET_2DA_ENTRY_LATER weapprof_fix 7 0 AXE_BG1
+			SET_2DA_ENTRY_LATER weapprof_fix 8 0 MISSILE_BG1
+			FOR (row=9;row<weapprof_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER weapprof_data row 0 rowname
+				PATCH_IF VARIABLE_IS_SET $sfo_reserved_weapprof_fix("%rowname%") BEGIN
+					id=2
+					WHILE VARIABLE_IS_SET $sfo_reserved_weapprof_fix("%rowname%%id%") BEGIN
+						++id
+					END
+					SET_2DA_ENTRY_LATER weapprof_fix row 0 "%rowname%%id%"
+					SPRINT $sfo_reserved_weapprof_fix("%rowname%%id%") ""
+				END ELSE BEGIN
+					SPRINT $sfo_reserved_weapprof_fix("%rowname%") ""
+				END
+			END
 			SET_2DA_ENTRIES_NOW weapprof_fix 4
 
 		////////////////////////////////////////////////////////////////////////////////
@@ -878,6 +898,51 @@ IDS
 
 		COPY_EXISTING xplevel.2da override
 			LPF 2da_fix END
+
+		////////////////////////////////////////////////////////////////////////////////
+		//on games using campaign.2da, make sure the clastext row entries are all labeled
+		//the same way
+		////////////////////////////////////////////////////////////////////////////////
+
+
+		ACTION_IF FILE_EXISTS_IN_GAME "campaign.2da" BEGIN 
+			// get clastext data
+			LAF 2da_read STR_VAR file=clastext.2da RET_ARRAY clastext_rows=rows clastext_array=array END
+			//individuate clastext entries by CLASSID, KITID, FALLEN
+			ACTION_PHP_EACH clastext_rows AS row=>discard BEGIN
+				OUTER_SPRINT classid $clastext_array("%row%" CLASSID)
+				OUTER_SPRINT kitid $clastext_array("%row%" KITID)
+				OUTER_SPRINT fallen $clastext_array("%row%" FALLEN)
+				OUTER_SPRINT $clastext_row_id("%classid%" "%kitid%" "%fallen%") "%row%"
+			END
+			// get localized clastext files
+			LAF 2da_read STR_VAR file=campaign.2da RET_ARRAY campaign_array=array campaign_rows=rows END
+			ACTION_PHP_EACH campaign_rows AS row=>discard BEGIN
+				OUTER_SPRINT clastext_here $campaign_array("%row%" "CLASTEXT")
+				ACTION_IF "%clastext_here%" STR_CMP "*" && FILE_EXISTS_IN_GAME "%clastext_here%.2da" BEGIN
+					COPY_EXISTING "%clastext_here%.2da" override
+						COUNT_2DA_COLS colcount
+						READ_2DA_ENTRIES_NOW clastext_here_entries colcount
+						FOR (row=0;row<clastext_here_entries;++row) BEGIN
+							READ_2DA_ENTRY_FORMER clastext_here_entries row 0 rowid_here
+							READ_2DA_ENTRY_FORMER clastext_here_entries row 1 classid
+							READ_2DA_ENTRY_FORMER clastext_here_entries row 2 kitid
+							READ_2DA_ENTRY_FORMER clastext_here_entries row 7 fallen
+							PATCH_IF VARIABLE_IS_SET $clastext_row_id("%classid%" "%kitid%" "%fallen%") BEGIN
+								SPRINT rowid $clastext_row_id("%classid%" "%kitid%" "%fallen%")
+								PATCH_IF "%rowid%" STR_CMP "%rowid_here%" BEGIN
+									SET_2DA_ENTRY row 0 colcount "%rowid%"
+								END
+							END ELSE BEGIN
+								LPF warning STR_VAR warning="SFO warning: row id %rowid_here% in %clastext_here%.2da (ID %classid%,%kitid%,%fallen%) does not seem to correspond to an entry in main clastext file" END
+							END
+						END
+					BUT_ONLY
+				END
+			END
+		END
+
+
 
 		////////////////////////////////////////////////////////////////////////////////
 		//on EE, fix a couple of UI errors

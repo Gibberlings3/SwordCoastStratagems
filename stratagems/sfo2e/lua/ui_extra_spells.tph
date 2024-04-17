@@ -1,14 +1,18 @@
 DEFINE_ACTION_FUNCTION spell_system_extension_setup
 BEGIN
-
-	LAF deolvynize RET value END
+	LAF ui_deolvynize RET value END
 	ACTION_IF !value BEGIN // if we've just deolvynized, we've just run ui_detect_class_kit; no need to do it again
 		LAF ui_detect_class_kit END
 	END
+	LAF ui_on_open_setup END
+	LAF ui_system_call_setup END
+	
+	
 	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_sxf.lua" BEGIN
 		LAF process_extended_spells END
 		LAF install_extended_spell_functions END
 	END
+	
 
 END
 
@@ -140,10 +144,11 @@ DEFINE_ACTION_FUNCTION process_extended_spells BEGIN
 				END
 		END
 		// plug the alignment-based applicators into the ALL one
+		LAF resolve_splprot_entry INT_VAR stat=0x110 val="-1" STR_VAR relation=equal RET alignment_stat=value END
 		COPY_EXISTING "%parent_resref_base%ALL.SPL" override
 			PHP_EACH align_code_map AS align=>align_num BEGIN
 				PATCH_IF "%align%" STR_CMP "ALL" BEGIN
-					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=align_num parameter2=108 STR_VAR resource="%parent_resref_base%%align%" END
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=align_num parameter2=alignment_stat STR_VAR resource="%parent_resref_base%%align%" END
 				END
 			END
 		BUT_ONLY
@@ -389,7 +394,7 @@ document{extended_add_spell}
 */
 
 DEFINE_ACTION_FUNCTION extended_add_spell
-	INT_VAR force_extended=1
+	INT_VAR force_extended=0
 			replace=0
 	STR_VAR id=""
 			file=""
@@ -406,9 +411,6 @@ BEGIN
 	END
 	ACTION_IF !VARIABLE_IS_SET data_loc_shared BEGIN
 		OUTER_SPRINT data_loc_shared "weidu_external/data/dw_shared"
-	END
-	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_sxf.lua" BEGIN
-		LAF spell_system_extension_setup END
 	END
 	// sanity
 	ACTION_IF "%id%" STR_EQ "" BEGIN
@@ -502,6 +504,9 @@ DEFINE_ACTION_FUNCTION extended_add_spell_helper
 RET resref
 	lua_line_needed
 BEGIN
+	ACTION_IF force_extended && !FILE_EXISTS_IN_GAME "m_dw_sxf.lua" BEGIN
+		LAF spell_system_extension_setup END
+	END
 	ACTION_MATCH "%type_num%" WITH
 	1 BEGIN
 		OUTER_SPRINT file_prefix SPWI
@@ -553,7 +558,8 @@ END
 /*
 document{install_extended_spell_functions}
 {
-Add the LUA functions and menu edits to enable extended spells. (We're going to chance doing this just by REPLACE_TEXTUALLY.)
+Add the LUA functions and menu edits to enable extended spells. 
+Most of this is now externalized to the onOpen and systemcall libraries.
 }
 
 */
@@ -563,21 +569,13 @@ BEGIN
 	COPY ".../stratagems-inline/m_dw_sxf.lua" override
 	
 	COPY_EXISTING "ui.menu" "override"
-		LPF UI_alter_object STR_VAR object=CHARGEN_CHOOSE_SPELLS object_type=menu patch=ext_choose_spells_edit END
 		LPF UI_alter_function STR_VAR function=refreshPriestBook patch=ext_priest_book_edit END
 END
 
-DEFINE_PATCH_FUNCTION ext_choose_spells_edit//internal
-BEGIN
-	PATCH_IF INDEX_BUFFER ("dwLearnSpecialistSpells")>=0 BEGIN
-		REPLACE_TEXTUALLY "dwLearnSpecialistSpells" "dwUpdateChooseSpells()%WNL%dwLearnSpecialistSpells"
-	END ELSE BEGIN
-		REPLACE_TEXTUALLY "\([ %TAB%]*\)table\.sort(chargen\.choose_spell, sortBySpellName)" "\1dwUpdateChooseSpells()%WNL%\1table.sort(chargen.choose_spell, sortBySpellName)"
-	END
-END
 
 DEFINE_PATCH_FUNCTION ext_priest_book_edit//internal
 BEGIN
+	REPLACE_TEXTUALLY EXACT_MATCH ~if currentSpellLevel == nil~ ~if currentSpellLevel == nil or not characters[id].priestDetails[currentSpellLevel]~
 	REPLACE_TEXTUALLY EXACT_MATCH ~if characters[id].hasClericBook~ ~if (characters[id].hasClericBook and characters[id].priestDetails[currentSpellLevel].maxMemorized>0)~
 END
 
@@ -585,7 +583,7 @@ END
 document{extended_spell_test}
 {
 This just copies 10 spells of each level into the 51-55 and extended namespaces, for testing. 
-It also makes the Sunscorch copy (SPPR1A5) good-only
+It also makes the Doom copy (SPPR1A3) good-only
 }
 
 */
@@ -611,8 +609,8 @@ BEGIN
 	
 		END
 	END
-	COPY_EXISTING "SPPR1A5.spl" override
-		WRITE_BYTE 0x1e 0b00000010
+	COPY_EXISTING "SPPR1A3.spl" override
+		WRITE_BYTE 0x1e BIT1
 END
 
 DEFINE_PATCH_FUNCTION extended_spell_test_helper//internal 

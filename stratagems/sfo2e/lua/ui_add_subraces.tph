@@ -1,8 +1,16 @@
+/* describe-library
+{Functions to add races, subraces and pseudoraces to the game. EE-only (edits the UI).}
+
+*/
+
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /*   
 document{add_to_subrace_tables}
 {
-Take a mod's subrace, race, pseudorace tables and add them to the main tables
+Take a bunch of tables defining race, subrace and pseudorace and add them to SFO's master tables. 
+(This only updates the <b>tables</b>; the game itself is not updated.)
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -34,13 +42,15 @@ BEGIN
 	
 	ACTION_IF "%race_table%" STR_CMP "" BEGIN
 		ACTION_PHP_EACH race_array AS file=>discard BEGIN
-			ACTION_IF !FILE_EXISTS "override/%file%.2da" BEGIN
-				COPY_EXISTING "%file%.2da" override
-			END
-			LAF add_to_subrace_tables_helper
-				INT_VAR warn_of_repeats=0
-				STR_VAR to_read="%table_path%/%race_table%.2da"
-						to_add_to="override/%file%.2da"
+			ACTION_IF "%file%" STR_CMP "*" && FILE_EXISTS_IN_GAME "%file%.2da" BEGIN
+				ACTION_IF !FILE_EXISTS "override/%file%.2da" BEGIN
+					COPY_EXISTING "%file%.2da" override
+				END
+				LAF add_to_subrace_tables_helper
+					INT_VAR warn_of_repeats=0
+					STR_VAR to_read="%table_path%/%race_table%.2da"
+							to_add_to="override/%file%.2da"
+				END
 			END
 		END
 	END
@@ -98,7 +108,12 @@ BEGIN
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////
-//// Interfaces into main function that allow one-off additions
+/*
+document{add_subrace}
+{
+Add a single subrace to SFO's master table of subraces. (This only updates the <b>tables</b>; the game itself is not updated.)
+}
+*/
 //////////////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_ACTION_FUNCTION add_subrace
@@ -150,6 +165,16 @@ BEGIN
 	LAF add_to_subrace_tables STR_VAR subrace_table="temp_table.2da" table_path="%workspace%" END
 END
 
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{add_race}
+{
+Add a single race to SFO's master table of races. (This only updates the <b>tables</b>; the game itself is not updated.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
 DEFINE_ACTION_FUNCTION add_race
 	INT_VAR
 	STR_VAR
@@ -176,6 +201,16 @@ BEGIN
 
 END
 
+/////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{add_pseudorace}
+{
+Add a single race to SFO's master table of pseudoraces. (This only updates the <b>tables</b>; the game itself is not updated.)
+}
+*/
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
 DEFINE_ACTION_FUNCTION add_pseudorace
 	INT_VAR
 	STR_VAR
@@ -199,6 +234,18 @@ BEGIN
 	LAF add_to_subrace_tables STR_VAR pseudorace_table="temp_table.2da" table_path="%workspace%" END
 
 END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+document{disable_subrace}
+{
+Disable the listed subrace (assumed to be installed) from the list of subraces offered to the player
+in character generation.
+
+}
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 DEFINE_ACTION_FUNCTION disable_subrace
 	STR_VAR subrace=""
@@ -252,8 +299,8 @@ END
 /*
 document{build_subraces}
 {
-operate on the subrace tables to actually construct the subraces
-if delay_mode=1, introduce a 1-second delay into the spells (for HoW compatibility)
+Operate on the subrace tables to actually construct the subraces
+if delay_mode=1, introduce a 1-second delay into the spells (for experimental HoW compatibility, though we haven't got this stable yet).
 }
 */
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -385,7 +432,7 @@ END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION load_subrace_2da_table
+DEFINE_ACTION_FUNCTION load_subrace_2da_table//internal
 	INT_VAR tlk_signal_start=0
 	STR_VAR subrace_2da="" icon_path=""
 	RET max_count
@@ -504,14 +551,16 @@ END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION add_subraces_lua_setup BEGIN
+DEFINE_ACTION_FUNCTION add_subraces_lua_setup//internal 
+BEGIN
 
 	ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
 		OUTER_SPRINT lua_loc lua
 	END
 
-	LAF ui_detect_class_kit END // unsure if it's needed, but it's helpful to control install order (and dk has no visible effects)
 	LAF shared_color_changes END
+	LAF ui_on_open_setup END
+	LAF ui_system_call_setup END
 
 	LAF UI_install_function STR_VAR new_function_path="%MOD_FOLDER%/%lua_loc%/code/adjust_abilities.lua" lua_file="m_dw_shr" search_string=dwGetAbilityValue END
 
@@ -557,9 +606,6 @@ DEFINE_ACTION_FUNCTION add_subraces_lua_setup BEGIN
 			LPF UI_alter_object STR_VAR object=CHARGEN_RACE object_type=menu patch=ui_pseudoraces END 
 		// fix the raceOrGeneralHelp() function to display pseudoraces correctly and to skip through to the subrace description if only one is available
 			LPF UI_replace_function INT_VAR inline=1 STR_VAR function=raceOrGeneralHelp new_function_path="race_or_general_help.lua" END
-		// transmit data to the new character, and hide proficiency entries used to transmit data
-			LPF UI_alter_object STR_VAR object=CHARGEN_PROFICIENCIES object_type=menu patch=pass_subrace_data END
-			LPF UI_alter_object STR_VAR object=LEVELUP_PROFICIENCIES object_type=menu patch=pass_subrace_data END
 		// add the subrace ability modifiers in the ability-roller menu	
 			LPF UI_alter_object STR_VAR object=CHARGEN_ABILITIES object_type=menu patch=ui_ability_roller END 
 			LPF UI_replace_function INT_VAR inline=1 STR_VAR function=abilityOrGeneralHelp new_function_path="ability_or_general_help.lua" END
@@ -585,9 +631,6 @@ DEFINE_ACTION_FUNCTION add_subraces_lua_setup BEGIN
 			PATCH_IF GAME_IS ~eet bgee~ BEGIN
 				LPF ui_edit_biography END
 			END
-		// record the race to display on the character screen once it's determined
-		// (why? Mostly to hide momentary race changes when we dual-class)
-			LPF UI_alter_object STR_VAR object=CHARACTER object_type=menu patch=ui_record_race END
 
 	END
 
@@ -595,7 +638,8 @@ END
 
 /////////////////////////////////////////////// Build the new subrace menu ///////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION build_subrace_menu BEGIN
+DEFINE_ACTION_FUNCTION build_subrace_menu//internal
+BEGIN
 
 	// extract the CHARGEN_RACE menu from the existing ui.menu
 
@@ -632,7 +676,8 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_PATCH_FUNCTION edit_race_menu BEGIN
+DEFINE_PATCH_FUNCTION edit_race_menu//internal
+BEGIN
 	
 	// reset the Subrace variable as well as the Race one when we get here dw
 	
@@ -652,30 +697,22 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///	Change the info display to replace 'race' with 'subrace
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-DEFINE_ACTION_FUNCTION chargen_display_subrace BEGIN
+DEFINE_ACTION_FUNCTION chargen_display_subrace//internal 
+BEGIN
 COPY_EXISTING "ui.menu" override
 	
 END
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///	 insert our default proficiency edits
-///	Working assumption we want to add to/insert enable()
-/// entries in each Column entry
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-DEFINE_PATCH_FUNCTION pass_subrace_data BEGIN
-	REPLACE_TEXTUALLY ~\(onopen[%TAB%%WNL%%LNL%%MNL% ]*\)"~  ~\1"dwPassSubraceData()%WNL%~
-END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///	Plug pseudoraces into UI (patch function operating on CHARGEN_RACES)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ui_pseudoraces BEGIN
+DEFINE_PATCH_FUNCTION ui_pseudoraces//internal
+BEGIN
 
 	REPLACE_TEXTUALLY "chargen.races" "dwRaces"
-	REPLACE_TEXTUALLY ~\(onOpen\([^"]*\)"\)~ ~\1%WNL%dwRaces={}%WNL%dwRaces=dwMakeRaceList(chargen.races)%WNL%~
 
 END
 
@@ -684,11 +721,10 @@ END
 /// Also enforce legal minima
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ui_ability_roller BEGIN
+DEFINE_PATCH_FUNCTION ui_ability_roller//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY "chargen\.ability\[\([^]]+\)\]\.roll" "dwShowAdjustedAbilityValue(\1,dwSubraceAbilityModifier(\1))"
-	REPLACE_TEXTUALLY ~OnOpen\([^"]\)*"~ ~OnOpen%WNL%\1"%WNL%\1dwImposeLegalAbilityMinimums()%WNL%~
-	REPLACE_TEXTUALLY ~createCharScreen:OnAbilityReRollButtonClick()~ ~createCharScreen:OnAbilityReRollButtonClick()dwImposeLegalAbilityMinimums()~
 
 
 END
@@ -697,7 +733,8 @@ END
 ///	Plug skill adjustments into skill screen (patch function acting on CHARGEN_SKILLS)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ui_skill_adjusts BEGIN
+DEFINE_PATCH_FUNCTION ui_skill_adjusts//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY "chargen\.thief_skill\[rowNumber\]\.value" "dwSubraceSkillAdjust(chargen.thief_skill[rowNumber])"
 
@@ -708,35 +745,18 @@ END
 ///	Plug in biography-editor 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION ui_edit_biography BEGIN
+DEFINE_PATCH_FUNCTION ui_edit_biography//internal 
+BEGIN
 
 	PATCH_IF !is_eet BEGIN
-		LPF UI_alter_object STR_VAR object=CHARGEN_BIO object_type=menu patch=ui_edit_biography_helper END
-		LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch=ui_edit_biography_helper_2 END
+		LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch=ui_edit_biography_helper END
 	END
 
 END
 
-DEFINE_PATCH_FUNCTION ui_edit_biography_helper BEGIN // applies to CHARGEN_BIO
 
-
-	SPRINT payload "createBioEdit=dwSubraceBioSwap(createBioEdit)
-		dwUpdatedBio=true
-		if dwAutoBioSet then
-			createCharScreen:OnDoneButtonClick()
-			createCharScreen:AcceptCharacter(-1)
-		end"
-	
-	PATCH_IF INDEX_BUFFER ("onOpen")>=0 BEGIN
-		REPLACE_TEXTUALLY ~^\([%TAB% ]+\)onOpen.*[%WNL%%MNL%%LNL%]\([%TAB% ]+\)"~ ~\1onOpen%WNL%\2"%WNL%%payload%~	
-	END ELSE BEGIN
-		REPLACE_TEXTUALLY ~^\([%TAB% ]+\)ignoreesc~ ~\1ignoreesc%WNL%\1onOpen%WNL%\1"%WNL%%payload%%WNL%\1"~
-	END
-
-
-END
-
-DEFINE_PATCH_FUNCTION ui_edit_biography_helper_2 BEGIN  // applies to CHARGEN
+DEFINE_PATCH_FUNCTION ui_edit_biography_helper//internal 
+BEGIN  // applies to CHARGEN
 
 
 //	READ_ASCII 0x0 data (BUFFER_LENGTH)
@@ -754,18 +774,11 @@ DEFINE_PATCH_FUNCTION ui_edit_biography_helper_2 BEGIN  // applies to CHARGEN
 END
 
 
-DEFINE_PATCH_FUNCTION ui_record_race BEGIN
-
-	REPLACE_TEXTUALLY ~onopen\([^"]*"\)~ ~onopen\1%WNL%%TAB%%TAB%dwRecordedRace[currentID]=dwFindSubraceData(characters[currentID])~
-
-END
-
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////	setup the 2das used by the subrace code
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION add_subraces_2da_prof_setup
+DEFINE_ACTION_FUNCTION add_subraces_2da_prof_setup//internal
 BEGIN
 
 
@@ -843,7 +856,7 @@ BEGIN
 END
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-DEFINE_ACTION_FUNCTION add_subraces_desc_modifiers
+DEFINE_ACTION_FUNCTION add_subraces_desc_modifiers//internal
 BEGIN
 	ACTION_DEFINE_ASSOCIATIVE_ARRAY desc_abil_map
 	BEGIN
@@ -942,7 +955,7 @@ END
 // reach STR=19, will). But if every subrace of a given race has a STR bonus, we may as well use the main abracead
 // system.
 
-DEFINE_ACTION_FUNCTION add_subraces_handle_strength
+DEFINE_ACTION_FUNCTION add_subraces_handle_strength//internal
 	RET_ARRAY subrace_data
 BEGIN
 	// first pass through to work out the lowesr value
@@ -988,7 +1001,8 @@ END
 
 
 
-DEFINE_ACTION_FUNCTION add_subraces_write_lua_tables BEGIN
+DEFINE_ACTION_FUNCTION add_subraces_write_lua_tables//internal 
+BEGIN
 
 	// the pseudorace table
 	
@@ -1135,7 +1149,7 @@ END
 // build spells and plug into CLAB
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION add_subraces_build_spells
+DEFINE_ACTION_FUNCTION add_subraces_build_spells//internal
 	INT_VAR delay_mode=0
 BEGIN
 
@@ -1235,8 +1249,9 @@ BEGIN
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// applies subrace-stat-dependent tertiary spell
 
-DEFINE_PATCH_FUNCTION build_subrace_secondary_spell // applies subrace-stat-dependent tertiary spell
+DEFINE_PATCH_FUNCTION build_subrace_secondary_spell//internal 
 	INT_VAR race=0
 	STR_VAR spell=""
 BEGIN
@@ -1258,8 +1273,8 @@ END
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_ACTION_FUNCTION build_subrace_secondary_recurring_spell // applies subrace-stat-dependent payload
+// applies subrace-stat-dependent payload
+DEFINE_ACTION_FUNCTION build_subrace_secondary_recurring_spell//internal
 	INT_VAR race=0
 	STR_VAR spell=""
 	RET needed
@@ -1282,9 +1297,11 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION build_subrace_tertiary_spell
-	INT_VAR id=0 race=0
-	STR_VAR spell="" ind=""
+DEFINE_PATCH_FUNCTION build_subrace_tertiary_spell//internal
+	INT_VAR id=0 
+			race=0
+	STR_VAR spell="" 
+			ind=""
 BEGIN
 	INNER_ACTION BEGIN
 	
@@ -1339,7 +1356,7 @@ BEGIN
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-DEFINE_ACTION_FUNCTION ability_opcode_map 
+DEFINE_ACTION_FUNCTION ability_opcode_map//internal 
 	RET_ARRAY ability_opcode_map
 BEGIN
 	ACTION_CLEAR_ARRAY ability_opcode_map
@@ -1355,7 +1372,7 @@ END
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-DEFINE_ACTION_FUNCTION skill_opcode_map 
+DEFINE_ACTION_FUNCTION skill_opcode_map//internal 
 	RET_ARRAY skill_opcode_map
 BEGIN
 	ACTION_CLEAR_ARRAY skill_opcode_map
@@ -1374,7 +1391,7 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_ACTION_FUNCTION subrace_clab_patch 
+DEFINE_ACTION_FUNCTION subrace_clab_patch//internal 
 	STR_VAR initial="****"
 			recur=""
 BEGIN
@@ -1400,7 +1417,7 @@ BEGIN
 	END
 END
 
-DEFINE_ACTION_FUNCTION all_clabs
+DEFINE_ACTION_FUNCTION all_clabs//internal
 	RET_ARRAY clab_array
 BEGIN
 	// start with the trueclass ones
@@ -1436,7 +1453,8 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION subrace_label_joinable_npcs BEGIN
+DEFINE_ACTION_FUNCTION subrace_label_joinable_npcs//internal 
+BEGIN
 
 	COPY_EXISTING "pdialog.2da" "%workspace%"
 		COUNT_2DA_ROWS 3 rowcount
@@ -1462,14 +1480,17 @@ DEFINE_ACTION_FUNCTION subrace_label_joinable_npcs BEGIN
 			FOR (row=0;row<rowcount;++row) BEGIN
 				READ_2DA_ENTRY row pdialog_col rowcount pdialog_file
 				INNER_ACTION BEGIN
-				  COPY_EXISTING "%pdialog_file%.2da" "%workspace%"
-					COUNT_2DA_ROWS 3 rowcount
-					FOR (row=0;row<rowcount;++row) BEGIN
-						READ_2DA_ENTRY row 0 3 dv
-						TO_LOWER dv
-						SPRINT $npc_dv("%dv%") ""
-					END
-                  BUT_ONLY
+			      ACTION_IF "%pdialog_file%" STR_CMP "*" BEGIN
+					  COPY_EXISTING - "%pdialog_file%.2da" nowhere
+						COUNT_2DA_ROWS 3 rowcount
+						FOR (row=0;row<rowcount;++row) BEGIN
+							READ_2DA_ENTRY row 0 3 dv
+							TO_LOWER dv
+							SPRINT $npc_dv("%dv%") ""
+						END
+					  BUT_ONLY
+					  IF_EXISTS
+				  END
 				END
 			END
       END
@@ -1491,7 +1512,8 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_ACTION_FUNCTION build_str_ex_spell BEGIN
+DEFINE_ACTION_FUNCTION build_str_ex_spell//internal 
+BEGIN
 
 		OUTER_SPRINT spell "%spl_set_str_ex_to_100%"
 		OUTER_SPRINT effect "%eff_set_str_ex_to_100%"
@@ -1505,7 +1527,8 @@ END
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_ACTION_FUNCTION build_subrace_id_function BEGIN
+DEFINE_ACTION_FUNCTION build_subrace_id_function//internal 
+BEGIN
 
 	// build a function to report on them
 	
@@ -1522,7 +1545,7 @@ DEFINE_ACTION_FUNCTION build_subrace_id_function BEGIN
 	END
 
 <<<<<<<<.../stratagems-inline/subrace_ids.tpa
-DEFINE_DIMORPHIC_FUNCTION subrace_ids
+DEFINE_DIMORPHIC_FUNCTION subrace_ids//dynamical
 	STR_VAR subrace=""
 	RET race_id subrace_id success
 BEGIN
@@ -1562,7 +1585,8 @@ END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION assign_npc_subraces BEGIN
+DEFINE_ACTION_FUNCTION assign_npc_subraces//internal 
+BEGIN
 
 
 	OUTER_SET subrace_stat=134
@@ -1682,6 +1706,32 @@ END
 
 
 <<<<<<<<.../stratagems-inline/subrace_functions.lua
+
+function dwSubraceChargenBio()
+
+	createBioEdit=dwSubraceBioSwap(createBioEdit)
+	dwUpdatedBio=true
+	if dwAutoBioSet then
+		createCharScreen:OnDoneButtonClick()
+		createCharScreen:AcceptCharacter(-1)
+	end
+
+
+end
+
+function dwCharacterScreenRecordRace()
+
+	dwRecordedRace[currentID]=dwFindSubraceData(characters[currentID])
+
+end
+
+function dwSubraceOnOpen()
+
+	dwRaces={}
+	dwRaces=dwMakeRaceList(chargen.races)
+	currentChargenSubrace=nil
+
+end
 
 function dwOnRaceSelectButtonClick(index)
 
@@ -2145,4 +2195,6 @@ function abilityOrGeneralHelp()
 		return Infinity_FetchString(17247)
 	end
 end
+
+
 >>>>>>>>

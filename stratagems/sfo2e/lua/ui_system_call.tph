@@ -1,0 +1,186 @@
+DEFINE_ACTION_FUNCTION ui_system_call_setup BEGIN
+
+	// install functions if not already present
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_osf.lua" BEGIN
+		COPY ".../stratagems-inline/m_dw_osf.lua" override
+	END
+	
+	// get data
+	
+	LAF ini_read STR_VAR file=systemcall.ini path="%MOD_FOLDER%/%lua_loc%/data" RET_ARRAY systemcall_array=array systemcall_functions=section_array END
+	
+	// externalize system calls
+	
+	COPY_EXISTING "ui.menu" override
+		PHP_EACH systemcall_functions AS function=>discard BEGIN
+			SPRINT menu "none"
+			INNER_PATCH_SAVE function "%function%" BEGIN
+				REPLACE_EVALUATE "{\(.*\)}" BEGIN
+					SPRINT menu "%MATCH1%"
+				END
+				""
+			END
+			PATCH_IF "%menu%" STR_CMP "none" BEGIN
+				LPF UI_alter_object INT_VAR silent=1 STR_VAR object="%menu%" object_type=menu patch=systemcall_patch END
+			END ELSE BEGIN
+				PATCH_IF INDEX_BUFFER ("dwSystemCall('%function%'")<0 BEGIN
+					REPLACE_TEXTUALLY "%function%(\([^,)]*\),\([^,)]*\),\([^,)]*\))" "dwSystemCall('%function%',nil,\1,\2,\3)"
+					REPLACE_TEXTUALLY "%function%(\([^,)]*\),\([^,)]*\))" "dwSystemCall('%function%',nil,\1,\2)"
+					REPLACE_TEXTUALLY "%function%(\([^,)]+\))" "dwSystemCall('%function%',nil,\1)"
+					REPLACE_TEXTUALLY "%function%()" "dwSystemCall('%function%')"
+				END
+			END
+		END
+	BUT_ONLY
+	
+	// build lua tables
+	
+	OUTER_SPRINT data ""
+	ACTION_PHP_EACH systemcall_functions AS function=>discard BEGIN
+		ACTION_IF VARIABLE_IS_SET $systemcall_array("%function%" "main") BEGIN
+			OUTER_SPRINT list $systemcall_array("%function%" "main")
+			OUTER_SET counter=0
+			OUTER_PATCH_SAVE function_stripped "%function%" BEGIN
+				localize=0
+				REPLACE_EVALUATE "{\(.*\)}" BEGIN
+					localize=1
+					SPRINT menu "%MATCH1%"
+				END
+				""
+			END
+			ACTION_IF localize BEGIN
+				ACTION_IF INDEX ("dwSystemCallMainByMenu\['%function_stripped%" "%data%")<0 BEGIN
+					OUTER_SPRINT data "%data%dwSystemCallMainByMenu['%function_stripped%']={}%WNL%%WNL%"
+				END
+				OUTER_SPRINT data "%data%dwSystemCallMainByMenu['%function_stripped%']['%menu%']=%WNL%{%WNL%"
+			END ELSE BEGIN
+				OUTER_SPRINT data "%data%dwSystemCallMain['%function%']=%WNL%{%WNL%"
+			END
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list separator="," RET entry list END
+				OUTER_SET ++ counter 
+				OUTER_SPRINT data "%data%%TAB%[%counter%]='%entry%',%WNL%"				
+			END
+			OUTER_SPRINT data "%data%}%WNL%%WNL%"
+			ACTION_IF VARIABLE_IS_SET $systemcall_array("%function%" "bypass") BEGIN
+				OUTER_SPRINT list $systemcall_array("%function%" "bypass")
+				OUTER_SET counter=0
+				ACTION_IF localize BEGIN
+					ACTION_IF INDEX ("dwSystemCallBypassByMenu\['%function_stripped%" "%data%")<0 BEGIN
+						OUTER_SPRINT data "%data%dwSystemCallBypassByMenu['%function_stripped%']={}%WNL%%WNL%"
+					END
+					OUTER_SPRINT data "%data%dwSystemCallBypassByMenu['%function_stripped%']['%menu%']=%WNL%{%WNL%"
+				END ELSE BEGIN
+					OUTER_SPRINT data "%data%dwSystemCallBypass['%function%']=%WNL%{%WNL%"
+				END
+				OUTER_WHILE "%list%" STR_CMP "" BEGIN
+					LAF return_first_pair STR_VAR list separator="," RET key value list END
+					OUTER_SET ++ counter 
+					OUTER_SPRINT data "%data%%TAB%[%counter%]={test='%key%',payload='%value%'},%WNL%"				
+				END
+				OUTER_SPRINT data "%data%}%WNL%%WNL%"
+			END
+		END ELSE BEGIN
+			FAIL "ui_system_call_setup: no main action list defined for function %function%"
+		END
+		ACTION_IF INDEX ("dwSystemCallDefault\['%function_stripped%'\]" "%data%")<0 BEGIN
+			OUTER_SPRINT data "%data%dwSystemCallDefault['%function_stripped%']=function (arg1,arg2,arg3)%WNL%"
+			OUTER_SET args=$systemcall_array("%function%" "args")
+			ACTION_MATCH args WITH
+			3 BEGIN
+				OUTER_SPRINT data "%data%%TAB%%function_stripped%(arg1,arg2,arg3)%WNL%"
+			END
+			2 BEGIN
+				OUTER_SPRINT data "%data%%TAB%%function_stripped%(arg1,arg2)%WNL%"
+			END
+			1 BEGIN
+				OUTER_SPRINT data "%data%%TAB%%function_stripped%(arg1)%WNL%"
+			END
+			0 BEGIN
+				OUTER_SPRINT data "%data%%TAB%%function_stripped%()%WNL%"		
+			END
+			DEFAULT
+				FAIL "ui_system_call_setup: does not support %args% arguments"
+			END
+			OUTER_SPRINT data "%data%end%WNL%%WNL%"
+		END
+	END
+	
+	COPY ".../stratagems-inline/m_dw_osd.lua" override EVALUATE_BUFFER
+
+END
+
+DEFINE_PATCH_FUNCTION systemcall_patch BEGIN
+	PATCH_IF INDEX_BUFFER ("dwSystemCall('%function%'")<0 BEGIN
+		REPLACE_TEXTUALLY "%function%(\([^,)]*\),\([^,)]*\),\([^,)]*\))" "dwSystemCall('%function%','%menu%',\1,\2,\3)"
+		REPLACE_TEXTUALLY "%function%(\([^,)]*\),\([^,)]*\))" "dwSystemCall('%function%','%menu%',\1,\2)"
+		REPLACE_TEXTUALLY "%function%(\([^,)]+\))" "dwSystemCall('%function%','%menu%',\1)"
+		REPLACE_TEXTUALLY "%function%()" "dwSystemCall('%function%','%menu%')"
+	END
+
+
+END
+
+
+<<<<<<<<.../stratagems-inline/m_dw_osd.lua
+dwSystemCallMain={}
+dwSystemCallMainByMenu={}
+dwSystemCallBypass={}
+dwSystemCallBypassByMenu={}
+dwSystemCallDefault={}
+
+%data%
+>>>>>>>>
+
+
+<<<<<<<<.../stratagems-inline/m_dw_osf.lua
+function dwSystemCall(fn,menu,arg1,arg2,arg3)
+
+	local bypasslist=nil
+	if dwSystemCallBypass[fn] then
+		bypasslist=dwSystemCallBypass[fn]
+	elseif dwSystemCallBypassByMenu[fn] and dwSystemCallBypassByMenu[fn][menu] then
+		bypasslist=dwSystemCallBypassByMenu[fn][menu]
+	else
+		bypasslist=nil
+	end
+	local proceed=true
+	if bypasslist then
+		for k,v in ipairs (bypasslist) do
+			if proceed then
+				test=_G[v.test]
+				if (type(test)=='function') then
+					match=test()
+				else
+					match=test
+				end
+				if match then
+					_G[v.payload]()
+					proceed=false
+				end
+			end
+		end
+	end
+	if proceed then
+		local actionlist=nil
+		if dwSystemCallMain[fn] then
+			actionlist=dwSystemCallMain[fn]
+		else
+			actionlist=dwSystemCallMainByMenu[fn][menu]
+		end
+		for k,v in ipairs (actionlist) do
+			if v=='DEFAULT' then
+				dwSystemCallDefault[fn](arg1,arg2,arg3)
+			elseif type(_G[v])=='function' then
+				_G[v](arg1,arg2,arg3)
+			else
+				print('Not running function '..v..' as it is not installed')
+			end
+		end
+	end
+end
+
+
+
+>>>>>>>>

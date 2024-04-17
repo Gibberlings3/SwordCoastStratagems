@@ -1,0 +1,184 @@
+/*
+describe-library{
+
+Part of sfo-lua's core structure, this library hijacks the onOpen command of many menus to run a bunch of functions if they are installed. (I do this in part so as to control
+function run order, irrespective of component install order.)</p>
+}
+
+*/
+
+/*
+document{ui_on_open_setup}
+{
+Sets up the ui_on_open library's systematic hijacking of ui.menu's onOpen command. This function is called automatically by other sfo-lua libraries: it is highly unlikely that any mod will need to call it directly.
+}
+
+
+*/
+
+
+
+DEFINE_ACTION_FUNCTION ui_on_open_setup BEGIN
+
+	// copy over baseline files if they're not there already
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_oof.lua" BEGIN
+	
+	// copy over files
+	
+		COPY ".../stratagems-inline/m_dw_ood.lua" override
+		COPY ".../stratagems-inline/m_dw_oof.lua" override
+	
+		// if necessary, add any missing onOpen here (this needs to be done case-by-case)
+	
+		LAF ui_add_missing_on_opens END
+		
+	END
+	
+	// load data (we do this every time, it's very quick and avoids awkwardnesses when updating)
+	
+	LAF ini_read STR_VAR file=onopen.ini path="%MOD_FOLDER%/%lua_loc%/data" RET_ARRAY on_open_array=array on_open_menus=section_array END
+	
+	
+	// externalize the menu
+	
+	COPY_EXISTING "ui.menu" override
+		PHP_EACH on_open_menus AS on_open_object=>discard BEGIN
+			PATCH_IF INDEX_BUFFER (~dwOnOpen('%on_open_object%')~) <0 BEGIN
+				LPF UI_alter_object STR_VAR object="%on_open_object%" object_type=menu patch=ui_on_open_patch END
+			END
+		END
+	BUT_ONLY	
+	
+	// build the lua data
+	
+	OUTER_SPRINT data ""
+	ACTION_PHP_EACH on_open_menus AS menu=>discard BEGIN
+		ACTION_IF VARIABLE_IS_SET $on_open_array("%menu%" "main") BEGIN
+			OUTER_SPRINT list $on_open_array("%menu%" "main") 
+			OUTER_SET counter=0
+			OUTER_SPRINT data "%data%dwOnOpenMain['%menu%']=%WNL%{%WNL%"
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list separator="," RET entry list END
+				OUTER_SET ++counter
+				OUTER_SPRINT data "%data%%TAB%[%counter%]='%entry%',%WNL%"
+			END
+			OUTER_SPRINT data "%data%}%WNL%%WNL%"
+		END ELSE BEGIN
+			FAIL "ui_on_open_setup: no defined 'main' entry for menu %menu%"
+		END
+		ACTION_IF VARIABLE_IS_SET $on_open_array("%menu%" "bypass") BEGIN
+			OUTER_SPRINT list $on_open_array("%menu%" "bypass")
+			OUTER_SET counter=0
+			OUTER_SPRINT data "%data%dwOnOpenBypass['%menu%']=%WNL%{%WNL%"
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_pair STR_VAR list separator="," RET key value list END
+				OUTER_SET ++counter
+				OUTER_SPRINT data "%data%%TAB%[%counter%]={test='%key%', payload='%value%'},%WNL%"
+			END
+			OUTER_SPRINT data "%data%}%WNL%%WNL%"
+		END
+	END
+	
+	COPY ".../stratagems-inline/m_dw_ooe.lua" override EVALUATE_BUFFER
+
+
+
+END
+
+
+DEFINE_PATCH_FUNCTION ui_on_open_patch//internal
+BEGIN
+
+	READ_ASCII 0x0 data (BUFFER_LENGTH)
+	REPLACE_EVALUATE CASE_INSENSITIVE ~[ %TAB%]*\(onopen\)[^"]*"\([^"]*\)"~ BEGIN
+		SPRINT on_open_contents "%MATCH2%"
+	END
+	~%TAB%%MATCH1%%WNL%%TAB%"%WNL%%TAB%%TAB%dwOnOpen('%on_open_object%')%WNL%%TAB%"%WNL%~
+	INNER_ACTION BEGIN
+		APPEND "m_dw_ood.lua" "dwOnOpenDefault['%on_open_object%']=function()%WNL%%on_open_contents%%WNL%end%WNL%%WNL%" KEEP_CRLF
+	END
+	
+END
+
+DEFINE_ACTION_FUNCTION ui_add_missing_on_opens//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		// general
+		PATCH_FOR_EACH object IN CHARGEN CHARGEN_KIT START START_MAIN START_SP START_MP IMPORTPARTY ITEM_DESCRIPTION BEGIN
+			LPF UI_alter_object INT_VAR silent=1 STR_VAR object object_type=menu patch=add_generic_onopen END	
+		END		
+		//CHARGEN_BIO
+		LPF UI_alter_object INT_VAR silent=1 STR_VAR object=CHARGEN_BIO object_type=menu patch=add_chargen_bio_onopen END
+
+
+
+
+END
+
+DEFINE_PATCH_FUNCTION add_generic_onopen//internal 
+BEGIN
+	PATCH_IF INDEX_BUFFER ("onOpen")<0 BEGIN
+		REPLACE_TEXTUALLY "name[ %TAB%]+'\([^']+\)'" ~name '\1'%WNL%%TAB%onOpen "%WNL%%WNL%%TAB%"~
+	END
+
+END
+
+DEFINE_PATCH_FUNCTION add_chargen_bio_onopen//internal 
+BEGIN
+
+	PATCH_IF INDEX_BUFFER ("onOpen")<0 BEGIN
+		REPLACE_TEXTUALLY ~^\([%TAB% ]+\)ignoreesc~ ~\1ignoreesc%WNL%\1onOpen%WNL%\1"%WNL%%WNL%\1"~
+	END
+END
+
+<<<<<<<<.../stratagems-inline/m_dw_ood.lua
+dwOnOpenDefault={}
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/m_dw_ooe.lua
+dwOnOpenMain={}
+dwOnOpenBypass={}
+
+%data%
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/m_dw_oof.lua
+
+-- general handling function
+
+function dwOnOpen(menu)
+
+	local proceed=true
+	if dwOnOpenBypass[menu] then
+		for k,v in ipairs (dwOnOpenBypass[menu]) do
+			if proceed then
+				test=_G[v.test]
+				if (type(test)=='function') then
+					match=test()
+				else
+					match=test
+				end
+				if match then
+					_G[v.payload]()
+					proceed=false
+				end
+			end
+		end	
+	end
+	if proceed and dwOnOpenMain[menu] then
+		for k,v in ipairs (dwOnOpenMain[menu]) do
+			if v=='DEFAULT' then
+				dwOnOpenDefault[menu]()
+			elseif type(_G[v])=='function' then
+				_G[v]()
+			else
+				print('Not running function '..v..' as it is not installed')
+			end
+		end
+	end
+end
+
+>>>>>>>>
+
+
+

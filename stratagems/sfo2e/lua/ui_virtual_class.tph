@@ -44,7 +44,9 @@ BEGIN
 				SPRINT $kit_name_map("%kit_ident%") "%name_here%"
 				PATCH_IF "%kit_ident%" STR_EQ "%kit%" BEGIN
 					found=1
-					SPRINT name "%name_here%"
+					INNER_PATCH_SAVE name "%name_here%" BEGIN
+						REPLACE_TEXTUALLY "{[^}]*}" ""
+					END
 				END
 			END
 		END
@@ -94,7 +96,13 @@ BEGIN
 			ACTION_TO_UPPER new
 			ACTION_IF VARIABLE_IS_SET $kit_name_map("%new%") BEGIN
 				OUTER_SPRINT new_name $kit_name_map("%new%")
-				OUTER_SPRINT data "%data%['%old_name%']='%new_name%',"
+				OUTER_PATCH_SAVE old_name "%old_name%" BEGIN
+					REPLACE_TEXTUALLY "{[^}]*}" ""
+				END
+				OUTER_PATCH_SAVE new_name "%new_name%" BEGIN
+					REPLACE_TEXTUALLY "{[^}]*}" ""
+				END
+				OUTER_SPRINT data ~%data%["%old_name%"]="%new_name%",~
 			END			
 		END
 	END
@@ -304,7 +312,7 @@ DEFINE_ACTION_FUNCTION override_class_kit_menu_setup BEGIN
 	ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwChargenClassKitTitle" BEGIN
 	
 		COPY_EXISTING "ui.menu" override
-		LPF UI_alter_object STR_VAR object=CHARGEN_KIT object_type=menu patch=chargen_kit_title_sub END
+			LPF UI_alter_object STR_VAR object=CHARGEN_KIT object_type=menu patch=chargen_kit_title_sub END
 			
 		BUT_ONLY
 	
@@ -571,7 +579,6 @@ BEGIN
 				LPF UI_alter_function STR_VAR function patch=chardesc_sub END
 			END
 		END
-		LPF UI_alter_object STR_VAR object=CHARGEN_GENDER object_type=menu patch=chargen_gender_sub END
   // setup dual-classing kits if not already present (we share some functions)
   
   ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_duf.lua" BEGIN
@@ -637,7 +644,6 @@ BEGIN
 		REPLACE_TEXTUALLY "classOrGeneralHelp" "multiclassOrGeneralHelp"
 		REPLACE_TEXTUALLY "chargen\.class" "dwMultiClassList"	
 		REPLACE_TEXTUALLY "createCharScreen:OnCancelButtonClick()" "currentChargenClass=nil;"
-		REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ ~onOpen%WNL%\1"%WNL%\1dwMultiClassList=dwMakeMultiClassList(chargen.class)~
 	END
 	
 	// glue it back on
@@ -671,7 +677,6 @@ BEGIN
 		END
 		REPLACE_TEXTUALLY "chargen\.kit" "dwKitSecList"	
 		REPLACE_TEXTUALLY "createCharScreen:OnCancelButtonClick()" "currentChargenKitSec=nil;"
-		REPLACE_TEXTUALLY ~onOpen\([^"]*\)"~ ~onOpen%WNL%\1"%WNL%\1dwKitSecList=dwMakeKitSecList(chargen.kit,currentChargenKit)~
 		REPLACE_TEXTUALLY ~text "CLASS_KIT_TITLE"~ ~text lua "Infinity_FetchString(dwMenu.title)"~
 		REPLACE_TEXTUALLY ~createCharScreen:IsDoneButtonClickable()~ ~createCharScreen:IsDoneButtonClickable() and currentChargenKit~
 		REPLACE_TEXTUALLY ~"Infinity_FetchString(dwKitSecList\[rowNumber\]\.name)"~ ~"dwChargenKitName(dwKitSecList[rowNumber])"~
@@ -691,24 +696,11 @@ END
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION chargen_gender_sub//internal
-BEGIN
-
-	REPLACE_TEXTUALLY ~createCharScreen:OnGenderSelectButtonClick(1)~ ~dwGender='male'; createCharScreen:OnGenderSelectButtonClick(1)~
-	REPLACE_TEXTUALLY ~createCharScreen:OnGenderSelectButtonClick(2)~ ~dwGender='female'; createCharScreen:OnGenderSelectButtonClick(2)~
-	// for leUI
-	REPLACE_TEXTUALLY EXACT_MATCH 
-		~createCharScreen:OnGenderSelectButtonClick(gender)~
-		~if gender==1 then dwGender='male' else dwGender='female' end; createCharScreen:OnGenderSelectButtonClick(gender)~
-
-END
 
 DEFINE_PATCH_FUNCTION chargen_class_sub//internal 
 BEGIN
 
 	REPLACE_TEXTUALLY "chargen\.class" "dwSingleClassList"
-//	REPLACE_TEXTUALLY ~onOpen.*[%WNL%%LNL%%MNL%]\([^"]\)*"~ ~onOpen%WNL%\1"%WNL%\1dwSingleClassList=dwMakeSingleClassList(chargen.class)%WNL%~
-	REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ ~onOpen%WNL%\1"%WNL%\1dwMulticlassSelect=nil%WNL%\1dwSingleClassList=dwMakeSingleClassList(chargen.class)%WNL%~
 	REPLACE_TEXTUALLY ~createCharScreen:OnClassSelectButtonClick(dwSingleClassList\[currentChargenClass\]\.id)~ ~dwChargenClassId,dwMulticlassSelect=dwOnClassSelectButtonClick(currentChargenClass)~ 
 	// this next line is for LeUI
 	REPLACE_TEXTUALLY ~createCharScreen:OnClassSelectButtonClick(allChargenClasses\[currentChargenClass\]\.id)~ ~dwChargenClassId,dwMulticlassSelect=dwOnClassSelectButtonClick(currentChargenClass)~ 
@@ -733,27 +725,6 @@ DEFINE_PATCH_FUNCTION chargen_kit_sub//internal
 
 	REPLACE_TEXTUALLY EXACT_MATCH ~createCharScreen:OnKitSelectButtonClick(chargen.kit[currentChargenKit].id)~ ~dwChargenKitId,dwMenu=dwOnSelectKitButtonClick(currentChargenKit)~
 	REPLACE_TEXTUALLY "chargen\.kit" "dwKitList"
-	PATCH_IF INDEX_BUFFER ("onOpen")<0 BEGIN
-		REPLACE_TEXTUALLY ~name 'CHARGEN_KIT'~ ~name 'CHARGEN_KIT'%WNL%%TAB%OnOpen ""~
-	END
-	REPLACE_TEXTUALLY ~onOpen\([^"]\)*"~ 
-~onOpen
-\1"
-\1dwMenu=nil
-\1dwKitList=dwMakeKitList(chargen.kit)
-\1if #dwKitList==1 then
-\1	createCharScreen:OnKitSelectButtonClick(dwKitList[1].id)
-\1  currentChargenKit=1
-\1	dwChargenKitId=dwKitList[1].id
-\1	Infinity_PopMenu()
-\1	createCharScreen:OnDoneButtonClick()
-\1else
-\1	dwChargenKitId=nil
-\1  if not (dwKitList[1].id==0) then
-\1  %TAB%	currentChargenKit=nil
-\1  end
-\1end
-~
 	REPLACE_TEXTUALLY ~"Infinity_FetchString(dwKitList\[rowNumber\]\.name)"~ ~"dwChargenKitName(dwKitList[rowNumber])"~
 	REPLACE_TEXTUALLY ~createCharScreen:IsDoneButtonClickable()~ ~(createCharScreen:IsDoneButtonClickable() and currentChargenKit)~
 	REPLACE_TEXTUALLY ~Infinity_PopMenu(); +createCharScreen:OnDoneButtonClick()~
@@ -783,6 +754,52 @@ BEGIN
 	REPLACE_TEXTUALLY ~text "CLASS_KIT_TITLE"~ ~text lua "dwChargenClassKitTitle()"~
 END
 
+
+///////////////////////////////////////////////////////////////////////////////////////////
+// Return virtual parent classes (returns the first kit to be added to each virtual class)
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION get_virtual_parent_classes
+RET_ARRAY virtual_parent_classes 
+BEGIN
+	ACTION_CLEAR_ARRAY virtual_parent_classes
+	ACTION_IF FILE_EXISTS_IN_GAME "m_dw_vcd.lua" BEGIN
+		COPY_EXISTING - "kitlist.2da" nowhere
+			COUNT_2DA_COLS colcount
+			READ_2DA_ENTRIES_NOW kitlist_data colcount
+			FOR (row=0;row<kitlist_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_id
+				READ_2DA_ENTRY_FORMER kitlist_data row 1 kit_label
+				SPRINT $sfo_reserved_kit_id_map("%kit_id%") "%kit_label%"		
+			END
+		BUT_ONLY
+		COPY_EXISTING - "m_dw_vcd.lua" nowhere
+			REPLACE_EVALUATE "dwVirtualKitClass\[\([0-9]+\)\]='\([^']*\)'" BEGIN
+				PATCH_IF !VARIABLE_IS_SET $sfo_reserved_virtual_parent_kit("%MATCH2%") BEGIN
+					PATCH_MATCH "%MATCH2%" WITH
+					"favored_soul" BEGIN
+						SPRINT $sfo_reserved_virtual_parent_kit("%MATCH2%") "FAVORED_SOUL"
+					END
+					DEFAULT
+						SPRINT $sfo_reserved_virtual_parent_kit("%MATCH2%") $sfo_reserved_kit_id_map("%MATCH1%")
+					END
+				END
+				SPRINT virtual_parent $sfo_reserved_virtual_parent_kit("%MATCH2%") 
+				TO_UPPER virtual_parent
+				SPRINT kit $sfo_reserved_kit_id_map("%MATCH1%")
+				SPRINT $virtual_parent_classes("%kit%") "%virtual_parent%"
+			END
+			""	
+		BUT_ONLY
+	END ELSE BEGIN
+		// if no virtual classes, hardcode Barbarian and Blackguard
+		OUTER_SPRINT $virtual_parent_classes("BARBARIAN") "BARBARIAN"
+		OUTER_SPRINT $virtual_parent_classes("BLACKGUARD") "BLACKGUARD"
+	END
+
+
+END
+
 /////////////////////////////////////////////////////////////////////////////////////
 /// LUA add-ons
 /////////////////////////////////////////////////////////////////////////////////////
@@ -802,6 +819,37 @@ function isMulticlass(classid)
 	else
 		return false
 	end
+end
+
+function dwVirtualKitOnOpen()
+
+	dwMenu=nil
+	dwKitList=dwMakeKitList(chargen.kit)
+	if #dwKitList==1 then
+		createCharScreen:OnKitSelectButtonClick(dwKitList[1].id)
+		currentChargenKit=1
+		dwChargenKitId=dwKitList[1].id
+		Infinity_PopMenu()
+		createCharScreen:OnDoneButtonClick()
+	else
+		dwChargenKitId=nil
+		if not (dwKitList[1].id==0) then
+			currentChargenKit=nil
+		end
+	end
+
+end
+
+function dwVirtualMulticlassOnOpen()
+
+	dwMultiClassList=dwMakeMultiClassList(chargen.class)
+
+end
+
+function dwVirtualKitSecOnOpen()
+
+	dwKitSecList=dwMakeKitSecList(chargen.kit,currentChargenKit)
+
 end
 
 -- general sorter
@@ -827,6 +875,23 @@ end
 
 function dwSortClass(a,b)
 		return dwClassTrueName(a)<dwClassTrueName(b) 
+end
+
+function dwRecordChargenGender(gender)
+	if gender==1 then 
+		dwGender='male' 
+	else 
+		dwGender='female' 
+	end
+
+end
+
+function dwVirtualClassOnOpen()
+
+	dwMulticlassSelect=nil
+	dwSingleClassList=dwMakeSingleClassList(chargen.class)
+
+
 end
 
 function dwClassTrueName(a)
@@ -857,7 +922,7 @@ function dwMakeSingleClassList(classlist)
 		end
 	end
 		
-	-- add relevant virtual classes (only in chargen, not when dual-classing)
+	-- add relevant virtual classes 
 	
 	if not dwIsDualClassing then
 		if dwRaces then
@@ -871,6 +936,13 @@ function dwMakeSingleClassList(classlist)
 				table.insert(dwClassList,v)
 			end	
 		end
+	else
+		for _,v in pairs(dwVirtualClass) do
+			if dwDualClassToVirtualClassAllowed and dwDualClassToVirtualClassAllowed(v) then
+				table.insert(dwClassList,v)
+			end
+		end
+	
 	end
 	
 	-- alphabetise
@@ -999,15 +1071,17 @@ function dwSubraceAllowed(kit_id)
 end
 
 function dwMakeKitList(kitlist)
-
- if not dwIsDualClassing then 
-	dwKitList={}
-	dwKitListTemp={}
-	dwKitMenuList={}
-	for k,v in pairs(kitlist) do
-		if dwVirtualKitClass[v.id] then
-			if dwCurrentVirtualClass then
-				if dwCurrentVirtualClass.ident==dwVirtualKitClass[v.id] then
+	if dwIsDualClassing then
+		if dwDualClassKitList then
+			dwKitList=dwDualClassKitList()
+		end
+	else
+		dwKitList={}
+		dwKitListTemp={}
+		dwKitMenuList={}
+		for k,v in pairs(kitlist) do
+			if dwVirtualKitClass[v.id] then
+				if (dwCurrentVirtualClass and dwCurrentVirtualClass.ident==dwVirtualKitClass[v.id]) then
 					if dwKitMenu[dwChargenClassId][v.id] then
 						menu=dwKitMenu[dwChargenClassId][v.id]
 						if not dwKitMenuList[menu] then
@@ -1020,29 +1094,25 @@ function dwMakeKitList(kitlist)
 						end
 					end
 				end
-			end
-		else
-			if dwCurrentVirtualClass==nil then
-					if dwKitMenu[dwChargenClassId][v.id] then
-						menu=dwKitMenu[dwChargenClassId][v.id]
-						if not dwKitMenuList[menu] then
-							dwKitMenuList[menu]=true
-							table.insert(dwKitList,dwKitMenuEntry[menu])
+			else
+				if dwCurrentVirtualClass==nil then
+						if dwKitMenu[dwChargenClassId][v.id] then
+							menu=dwKitMenu[dwChargenClassId][v.id]
+							if not dwKitMenuList[menu] then
+								dwKitMenuList[menu]=true
+								table.insert(dwKitList,dwKitMenuEntry[menu])
+							end
+						else
+							if dwGenderAllowed(v.id) and dwSubraceAllowed(v.id) then
+								table.insert(dwKitList,v)
+							end
 						end
-					else
-						if dwGenderAllowed(v.id) and dwSubraceAllowed(v.id) then
-							table.insert(dwKitList,v)
-						end
-					end
+				end
 			end
 		end
 	end
- else
-	dwKitList=dwDualClassKitList()
- end
- table.sort(dwKitList,dwSortKit)
-
- return dwKitList
+	table.sort(dwKitList,dwSortKit)
+	return dwKitList
 end
 
 -- hijack the select option for kits
@@ -1113,16 +1183,17 @@ end
 -- fake the class names for a multiclass kit
 
 function dwOverrideClassNames(text,class_name)
-
-if dwClassNameSwaps[class_name] then
-	for old,new in pairs(dwClassNameSwaps[class_name]) do
-		text=string.gsub(text,old..':',new..':')
+	class_name=string.gsub(class_name,"{[^}]*}","")
+	text=string.gsub(text,"{[^}]*}","")
+	if dwClassNameSwaps[class_name] then
+		for old,new in pairs(dwClassNameSwaps[class_name]) do
+			text=string.gsub(text,old..':',new..':')
+		end
+	else
+		text=string.gsub(text,"^%([^)]*%)",'')
 	end
-else
-	text=string.gsub(text,"^%([^)]*%)",'')
-end
 
-return text
+	return text
 
 end
 

@@ -142,7 +142,8 @@ BEGIN
 		LPF funlib_get_functions_defined RET_ARRAY functions_defined END
 		PHP_EACH functions_defined AS function=>comment BEGIN
 			SPRINT $function_locations("%function%" "%file%") ""
-			PATCH_MATCH "%comment%" WITH "internal" BEGIN
+			PATCH_MATCH "%comment%" WITH 
+			"internal" BEGIN
 				SPRINT $internal_functions("%function%") ""
 			END
 			DEFAULT
@@ -364,7 +365,7 @@ END
 
 /*
 document{funlib_get_function_descriptions}
-{Process the given file to get an 3d array of form (function_name,function_type,comment)->nicely_processed_description_of_spec.}
+{Process the given file to get an 4d array of form (function_name,function_type,comment,library)->nicely_processed_description_of_spec.}
 */
 
 DEFINE_ACTION_FUNCTION funlib_get_function_descriptions//internal
@@ -379,9 +380,9 @@ BEGIN
 			SPRINT function_name "%k_0%"
 			SPRINT function_type "%k_1%"
 			SPRINT function_comment "%k_2%"
+			SPRINT function_library "%k_3%"
 			CLEAR_ARRAY lines
-			LPF data_lines STR_VAR data RET_ARRAY lines END
-			
+			LPF data_lines INT_VAR default_to_current_file=0 STR_VAR data RET_ARRAY lines END
 			SPRINT vars ""
 			SPRINT returns ""
 			PHP_EACH lines AS ind=>line BEGIN
@@ -404,7 +405,7 @@ BEGIN
 					END
 					""
 				END
-				WHILE ("%line%" STR_CMP "") BEGIN
+				WHILE ("%line%" STRING_MATCHES_REGEXP "^[ %TAB%]*$") BEGIN
 					LPF return_first_entry STR_VAR list="%line%" RET entry line=list END
 					PATCH_MATCH "%entry%" WITH
 					" +" BEGIN END
@@ -559,6 +560,7 @@ END
 
 
 
+
 /*
 document{funlib_document_libraries}
 {Given either  an array of libraries in the form file=>path, or a path to a directory of libraries (assumed to be all and only the tph/tpa files)
@@ -601,6 +603,9 @@ BEGIN
 	LAF array_2d_to_list STR_VAR array=internal_map separator=", " RET_ARRAY internal_list=list END
 	// iterate through the libraries
 	ACTION_PHP_EACH "%library_array%" AS file=>path BEGIN
+		OUTER_PATCH_SAVE textfile "%file%" BEGIN
+			REPLACE_TEXTUALLY "\..*" ""
+		END
 		OUTER_SPRINT dep_text ""
 		ACTION_IF VARIABLE_IS_SET $dependency_list("%file%") BEGIN
 			OUTER_SPRINT dep $dependency_list("%file%")
@@ -620,7 +625,12 @@ BEGIN
 		ACTION_CLEAR_ARRAY function_descriptions
 		LAF funlib_get_function_descriptions STR_VAR file path RET_ARRAY function_descriptions END
 		ACTION_PHP_EACH function_descriptions AS k=>v BEGIN
-			OUTER_SPRINT $all_function_descriptions("%k_0%" "%k_1%" "%k_2%") "%v%"
+			ACTION_MATCH "%k_2%" WITH
+			internal deprecated dynamical BEGIN
+			END
+			DEFAULT
+				OUTER_SPRINT $all_function_descriptions("%k_0%" "%k_1%" "%k_2%" "%textfile%") "%v%"
+			END
 		END	
 		ACTION_CLEAR_ARRAY function_docs
 		LAF funlib_get_functions_documented STR_VAR file path RET library_doc technical_note RET_ARRAY function_docs END
@@ -645,9 +655,7 @@ BEGIN
 		END		
 		LAF funlib_process_document_lines STR_VAR type="" RET data_external=data END
 		LAF funlib_process_document_lines STR_VAR type="internal" RET data_internal=data END
-		OUTER_PATCH_SAVE textfile "%file%" BEGIN
-			REPLACE_TEXTUALLY "\..*" ""
-		END
+
 		
 		ACTION_IF "%data_internal%" STR_CMP "" BEGIN
 			OUTER_SPRINT internal_title ~
@@ -684,9 +692,23 @@ BEGIN
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3!!!---" "%technical_text%"
 			
 	END
-	PRINT "all funcs"
-	LAF funlib_process_document_lines STR_VAR type="" documentations=all_function_docs descriptions=all_function_descriptions RET data END
-	PRINT "%data%"
+	LAF funlib_process_document_lines INT_VAR include_origin=1 STR_VAR type="" documentations=all_function_docs descriptions=all_function_descriptions RET data END
+
+	// make the combined file
+	COPY + "%template_path%" "%doc_path%/all_sfo_functions.html"
+			REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
+			REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "All SFO functions"
+			REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "All SFO functions"
+			REPLACE_TEXTUALLY "---!!!SFO_DEPENDENCY_TEXT!!!---" ""
+			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" ""
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS1!!!---" "%data%"
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2_TITLE!!!---" ""
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2!!!---" ""
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3_TITLE!!!---" ""
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3!!!---" ""
+
+
+
 END
 
 /*
@@ -720,6 +742,7 @@ END
 
 
 DEFINE_DIMORPHIC_FUNCTION funlib_process_document_lines//internal
+	INT_VAR include_origin=0
 	STR_VAR type=""
 			descriptions="function_descriptions"
 			documentations="function_docs"
@@ -727,8 +750,10 @@ DEFINE_DIMORPHIC_FUNCTION funlib_process_document_lines//internal
 BEGIN
 	ACTION_CLEAR_ARRAY lines
 	ACTION_PHP_EACH "%descriptions%" AS k=>v BEGIN
+		ACTION_IF include_origin BEGIN
+			OUTER_SPRINT v ~%v% (<a href="%k_3%.html">%k_3%</a>)~
+		END 
 		ACTION_IF "%k_2%" STR_EQ "%type%" BEGIN
-			PRINT "%k_0% %k_1% %k_2%: %v%"
 			ACTION_IF !VARIABLE_IS_SET $lines("%k_0%") BEGIN
 				OUTER_SPRINT $lines("%k_0%") "%v%<br>"
 			END ELSE BEGIN
@@ -737,7 +762,7 @@ BEGIN
 		END
 	END
 	ACTION_PHP_EACH lines AS k=>v BEGIN
-			OUTER_SPRINT $lines("%k_0%") EVAL "<p>%lines_%k_0%%</p>"
+		OUTER_SPRINT $lines("%k_0%") EVAL "<p>%lines_%k_0%%</p>"
 	END
 	ACTION_PHP_EACH "%documentations%" AS k=>v BEGIN
 		OUTER_PATCH_SAVE v "%v%" BEGIN
@@ -748,7 +773,8 @@ BEGIN
 		END 
 	END
 	OUTER_SPRINT data ""
-	ACTION_SORT_ARRAY_INDICES lines LEXICOGRAPHICALLY
+	//ACTION_SORT_ARRAY_INDICES lines LEXICOGRAPHICALLY
+	LAF array_sort STR_VAR array=lines function=tolower RET_ARRAY lines=array END
 	ACTION_PHP_EACH lines AS ind=>line BEGIN
 		OUTER_SPRINT data "%data%%line%%WNL%"
 	END

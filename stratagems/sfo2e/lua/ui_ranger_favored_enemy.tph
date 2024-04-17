@@ -1,0 +1,475 @@
+DEFINE_ACTION_FUNCTION ui_ranger_favored_enemy_setup//internal 
+BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_fef.lua" BEGIN
+		
+		LAF ui_detect_class_kit END // also does on_open and system_call
+		//install the new menu
+		
+		LAF build_favored_enemy_menu END
+
+		// generate the lua version of haterace
+		
+		LAF externalize_haterace END
+
+		// copy over the resources
+		
+		COPY_EXISTING - "enginest.2da" nowhere
+			REPLACE_EVALUATE "STRREF_GUI_MIXED_HATED_RACE[ %TAB%]+\([0-9]+\)" BEGIN
+				hated_race_strref=MATCH1
+			END
+			""
+		
+		COPY ".../stratagems-inline/m_dw_fee.lua" override EVALUATE_BUFFER
+		COPY ".../stratagems-inline/m_dw_fef.lua" override EVALUATE_BUFFER
+		
+		// install externalizing spell
+		
+		LAF kit_edit_all INT_VAR clab_only=1 STR_VAR parent_class=ranger edits="k.kit_apply_powers{dw-rine 1}" END
+	END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION sort_haterace//internal 
+BEGIN
+	
+	LAF 2da_read STR_VAR file=haterace.2da RET_ARRAY haterace_array=array END
+	LAF 2da_sort STR_VAR array=haterace_array rows=~GET_STRREF $haterace_array("%arguments%" "STRREF") value~ RET_ARRAY haterace_array=array END
+	LAF 2da_write STR_VAR file=haterace.2da array=haterace_array END
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+DEFINE_ACTION_FUNCTION externalize_haterace//internal
+BEGIN
+	LAF 2da_read STR_VAR file=haterace.2da RET_ARRAY haterace_rows=rows haterace_array=array END
+	OUTER_SPRINT haterace_data ""
+	OUTER_SET number=0
+	ACTION_PHP_EACH haterace_rows AS row=>discard BEGIN
+		OUTER_SET ++number
+		OUTER_SET name=$haterace_array("%row%" STRREF)
+		OUTER_SET desc=$haterace_array("%row%" STRREF_HELP)
+		OUTER_SET id=$haterace_array("%row%" IDS)
+		OUTER_SPRINT haterace_data "%haterace_data%dwHatedRace[%number%]={name=%name%, desc=%desc%,id=%id%}%WNL%"
+	END
+	OUTER_SPRINT haterace_data "%haterace_data%%WNL%"
+	COPY ".../stratagems-inline/m_dw_fed.lua" override EVALUATE_BUFFER
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION rechoose_ranger_favored_enemy
+	STR_VAR levels=""
+BEGIN
+	LAF ui_ranger_favored_enemy_setup END
+	OUTER_SPRINT data ""
+	OUTER_WHILE "%levels%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%levels%" RET entry levels=list END
+		OUTER_SPRINT data "%data%dwRangerChooseRace[%entry%]=true%WNL%"
+	END
+	APPEND "m_dw_fee.lua" "%data%" KEEP_CRLF
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION define_favored_enemy_effect//internal
+	INT_VAR id=1
+			hit=4
+			damage=4
+			name=0
+			desc=0
+	STR_VAR spell=""
+			race=""
+			class=""
+			general=""
+			label=""
+BEGIN
+	LAF ui_ranger_favored_enemy_setup END
+	ACTION_IF "%label%" STR_EQ "" BEGIN
+		FAIL "define_favored_enemy_effect must have a nonempty value of 'label'"
+	END
+	ACTION_IF id=1 BEGIN
+		OUTER_SET proceed=1
+		OUTER_WHILE proceed BEGIN
+			OUTER_PATCH "" BEGIN
+				LOOKUP_IDS_SYMBOL_OF_INT var race id
+				PATCH_IF IS_AN_INT var BEGIN
+					proceed=0
+				END ELSE BEGIN
+					++id
+				END
+			END			
+		END
+	END 
+	LAF 2da_read STR_VAR file=haterace.2da RET_ARRAY haterace_array=array haterace_rows=rows END
+	OUTER_SPRINT old_row "none"
+	ACTION_PHP_EACH haterace_rows AS row=>discard BEGIN
+		ACTION_IF $haterace_array("%row%" IDS)=id BEGIN
+			OUTER_SPRINT old_row "%row%"
+		END
+	END
+	ACTION_IF "%old_row%" STR_CMP "none" BEGIN
+		LAF 2da_delete_row STR_VAR array=haterace_array row="%old_row%" RET_ARRAY haterace_array=array END
+	END
+	OUTER_SET$haterace_array("%label%" STRREF)=RESOLVE_STR_REF ((AT name))
+	OUTER_SET $haterace_array("%label%" IDS)=id
+	OUTER_SET $haterace_array("%label%" STRREF_HELP)=RESOLVE_STR_REF ((AT desc))
+	LAF 2da_write STR_VAR file=haterace.2da array=haterace_array END
+	ACTION_IF "%spell%" STR_CMP "" BEGIN
+		COPY "%spell%.spl" "override/dwhaa%id%.spl"
+	END ELSE BEGIN
+		CREATE spl "dwhaa%id%"
+			LPF add_basic_spell_ability END	
+			LPF ALTER_SPELL_HEADER INT_VAR target=5 END
+	END
+	ACTION_CLEAR_ARRAY eff_array
+	OUTER_WHILE "%race%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%race%" separator="," RET entry race=list END
+		OUTER_SET id_here=IDS_OF_SYMBOL (race "%entry%")
+		ACTION_IF id_here>=0 BEGIN
+			COPY_EXISTING "demhit3.eff" "override/dwhah%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x60 hit
+			COPY_EXISTING "demdam3.eff" "override/dwhad%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x60 damage
+			OUTER_SPRINT $eff_array("dwhah%id_here%") ""
+			OUTER_SPRINT $eff_array("dwhad%id_here%") ""
+		END ELSE BEGIN
+			LAF warning STR_VAR warning="failed to resolve favored enemy type %entry%: not in race.ids" END
+		END
+	END
+	OUTER_WHILE "%class%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%class%" RET entry class=list END
+		OUTER_SET id_here=IDS_OF_SYMBOL (class "%entry%")
+		ACTION_IF id_here>=0 BEGIN
+			COPY_EXISTING "demhit3.eff" "override/dwhch%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x20 5
+					WRITE_LONG 0x60 hit
+			COPY_EXISTING "demdam3.eff" "override/dwhcd%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x20 5
+					WRITE_LONG 0x60 damage
+			OUTER_SPRINT $eff_array("dwhch%id_here%") ""
+			OUTER_SPRINT $eff_array("dwhcd%id_here%") ""
+		END ELSE BEGIN
+			LAF warning STR_VAR warning="failed to resolve favored enemy type %entry%: not in class.ids" END		
+		END
+	END
+	OUTER_WHILE "%general%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%general%" RET entry general=list END
+		OUTER_SET id_here=IDS_OF_SYMBOL (general "%entry%")
+		ACTION_IF id_here>=0 BEGIN
+			COPY_EXISTING "demhit3.eff" "override/dwhgh%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x20 3
+					WRITE_LONG 0x60 hit
+			COPY_EXISTING "demdam3.eff" "override/dwhgd%id_here%.eff"
+					WRITE_LONG 0x1c id_here
+					WRITE_LONG 0x20 3
+					WRITE_LONG 0x60 damage
+			OUTER_SPRINT $eff_array("dwhgh%id_here%") ""
+			OUTER_SPRINT $eff_array("dwhgd%id_here%") ""
+		END ELSE BEGIN
+			LAF warning STR_VAR warning="failed to resolve favored enemy type %entry%: not in general.ids" END				
+		END
+	END
+	COPY_EXISTING "dwhaa%id%.spl" override
+		PHP_EACH eff_array AS resource=>discard BEGIN
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=177 target=1 timing=9 parameter2=2 STR_VAR resource END
+		END
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION process_favored_enemy_ini 
+	STR_VAR file=""
+			location=""
+			locbase=""
+			path=""
+BEGIN
+	LAF ini_read STR_VAR file location locbase path RET_ARRAY enemy_array=array enemy_sections=section_array END
+	ACTION_PHP_EACH enemy_sections AS label=>discard BEGIN
+		ACTION_FOR_EACH ref IN race class general BEGIN
+			ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "%ref%") BEGIN
+				OUTER_SPRINT "%ref%" $enemy_array("%label%" "%ref%")
+			END ELSE BEGIN
+				OUTER_SPRINT "%ref%" ""
+			END
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "primary_race") BEGIN
+			OUTER_SPRINT racename $enemy_array("%label%" "primary_race")
+			OUTER_SET id=IDS_OF_SYMBOL (race "%racename%" )
+			ACTION_IF id<0 BEGIN
+				WARN "Primary race %racename% in favored enemy type %label% is not present in race.ids"
+			END
+		END ELSE BEGIN
+			OUTER_SET id=1
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "spell") BEGIN
+			OUTER_SPRINT spell $enemy_array("%label%" "spell")
+		END ELSE BEGIN
+			OUTER_SPRINT spell ""
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "hit") BEGIN
+			OUTER_SET hit=$enemy_array("%label%" "hit")
+		END ELSE BEGIN
+			OUTER_SET hit=4
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "hit") BEGIN
+			OUTER_SET damage=$enemy_array("%label%" "damage")
+		END ELSE BEGIN
+			OUTER_SET damage=4
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "name") BEGIN
+			OUTER_SET name=$enemy_array("%label%" "name")
+		END ELSE BEGIN
+			FAIL "no name set for externalized ranger enemy %label%"
+		END
+		ACTION_IF VARIABLE_IS_SET $enemy_array("%label%" "desc") BEGIN
+			OUTER_SET desc=$enemy_array("%label%" "desc")
+		END ELSE BEGIN
+			FAIL "no description set for externalized ranger enemy %label%"
+		END
+		LAF define_favored_enemy_effect INT_VAR id hit damage name desc STR_VAR race class general spell label END
+	END
+	LAF sort_haterace END
+	LAF externalize_haterace END
+	LAF build_favored_enemy_applicator_spells END
+
+
+
+END
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION clear_out_haterace//internal 
+BEGIN
+
+	COPY_EXISTING "haterace.2da" override
+		LPF 2da_read RET_ARRAY racetext_rows=rows racetext_array=array END
+		PHP_EACH racetext_rows AS row=>discard BEGIN
+			id=$racetext_array("%row%" "IDS")
+			LOOKUP_IDS_SYMBOL_OF_INT race race id
+			PATCH_IF !IS_AN_INT race BEGIN
+				LPF 2da_delete_row STR_VAR array=racetext_array row RET_ARRAY racetext_array=array END
+			END
+		END
+		LPF 2da_write STR_VAR array=racetext_array END
+	BUT_ONLY
+
+END
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_favored_enemy_applicator_spells//internal
+BEGIN
+
+	LAF resolve_splprot_entry INT_VAR stat=49 value="-1" STR_VAR relation=equal RET splprot_value=value END
+
+	LAF 2da_read STR_VAR file=haterace.2da RET_ARRAY haterace_rows=rows haterace_array=array END
+	ACTION_CLEAR_ARRAY build_array
+	CREATE spl "dw-rine"
+		LPF add_basic_spell_ability END
+		PHP_EACH haterace_rows AS row=>discard BEGIN
+			id=$haterace_array("%row%" "IDS")
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=1 STR_VAR resource="dwhaa%id%" END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 parameter1=id parameter2=splprot_value STR_VAR resource="dwhaa%id%" END
+			PATCH_IF !FILE_EXISTS_IN_GAME "dwhaa%id%.spl" BEGIN
+				SPRINT $build_array("%id%") ""
+			END
+		END
+	ACTION_PHP_EACH build_array AS id=>discard BEGIN
+		CREATE spl "dwhaa%id%"
+			LPF add_basic_spell_ability END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=313 target=2 timing=9 STR_VAR resource="DWHAM%id%" END
+
+	END
+END
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION build_favored_enemy_menu//internal 
+BEGIN
+
+
+	// extract the CHARGEN_HATEDRACE menu from the existing ui.menu
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_return_object STR_VAR object=CHARGEN_HATEDRACE object_type=menu RET object_data END
+	BUT_ONLY
+
+	// make the various substitutions
+	
+	//
+	
+	OUTER_INNER_PATCH_SAVE favored_enemy_menu "%object_data%" BEGIN
+		REPLACE_TEXTUALLY ~onOpen[^"]*"[^"]*"~ ~~
+		REPLACE_TEXTUALLY "'CHARGEN_HATEDRACE'" ~'DW_HATEDRACE'%WNL%%TAB%onOpen"%WNL%%TAB%%TAB%dwRacialEnemyOnOpen()%WNL%%TAB%"~
+		REPLACE_TEXTUALLY EXACT_MATCH "chargen.hatedRace" "dwHatedRace"
+		REPLACE_TEXTUALLY "hatedRaceOrGeneralHelp" "dwHatedRaceOrGeneralHelp"
+		REPLACE_TEXTUALLY "createCharScreen:OnRacialEnemySelectButtonClick" "dwOnRacialEnemySelectButtonClick"
+		REPLACE_TEXTUALLY "createCharScreen:IsDoneButtonClickable" "dwRacialEnemyDoneButtonClickable"		
+		REPLACE_TEXTUALLY "createCharScreen:IsDoneButtonClickable" "dwRacialEnemyDoneButtonClickable"
+		REPLACE_TEXTUALLY "createCharScreen:OnDoneButtonClick" "dwRacialEnemyOnDoneButtonClick"
+		REPLACE_TEXTUALLY ~text[ %TAB%]+"BACK_BUTTON"~ ~text "BACK_BUTTON"%WNL%%TAB%%TAB%enabled false~
+		REPLACE_TEXTUALLY ~\([ %TAB%]*\)\(text style[ %TAB%]+"list"\)~ ~\1\2%WNL%\1text highlight lua "dwHatedFeat[dwHatedRace[rowNumber].id]"~
+	END
+
+	// glue it back on
+	
+	APPEND ui.menu "menu%WNL%{%WNL%%favored_enemy_menu%%WNL%}" KEEP_CRLF 
+
+END
+
+
+<<<<<<<<.../stratagems-inline/m_dw_fed.lua
+dwHatedRace={}
+
+%haterace_data%
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/m_dw_fee.lua
+dwRangerChooseRace={}
+>>>>>>>>
+
+
+<<<<<<<<.../stratagems-inline/m_dw_fef.lua
+function dwOpenRangerSelectScreen()
+
+	Infinity_PopMenu()
+	Infinity_PushMenu('DW_HATEDRACE')
+
+end
+
+function dwRecordRangerLevelOld()
+
+	dwOpenRangerFavoredEnemy=nil
+	dwRangerLevelOld=dwFindRangerLevel(false)
+
+end
+
+function dwRangerProfSetup()
+	if (dwRangerLevelOld) then
+		dwRangerLevelNew=dwFindRangerLevel(true)
+		dwOpenRangerFavoredEnemy=dwCheckRangerFavoredEnemy(dwRangerLevelOld,dwRangerLevelNew)
+	end
+end
+
+function dwHatedRaceOrGeneralHelp()
+	local race = dwHatedRace[currentChargenHatedRace]
+	if race then
+		return Infinity_FetchString(race.desc)
+	else
+		return Infinity_FetchString(17256)
+	end
+end
+
+function dwOnRacialEnemySelectButtonClick(id)
+	if dwHatedFeat[id] then
+		dwSelectedRace=nil
+	else
+		dwSelectedRace=id
+	end
+end
+
+function dwRacialEnemyDoneButtonClickable()
+	if dwSelectedRace then
+		return true
+	else
+		return false
+	end
+end
+
+function dwRacialEnemyOnDoneButtonClick()
+	local portrait_number=dwFindPortraitMatch()[currentID]
+	local str='ChangeStat(Myself,HATEDRACE,'..tostring(dwSelectedRace)..',SET)'
+	C:Eval(str,portrait_number)
+	C:Eval('ApplySpellRES("dw-rine",Myself)',portrait_number)
+	Infinity_PopMenu()
+	Infinity_PushMenu('CHARACTER')
+end
+
+function dwRacialEnemyOnOpen()
+	dwHatedFeat={}
+	dwOpenRangerFavoredEnemy=nil
+	dwSelectedRace=nil
+	currentChargenHatedRace=dwFindCurrentFavoredEnemy()
+	if currentChargenHatedRace then
+		dwSelectedRace=dwHatedRace[currentChargenHatedRace].id
+	end
+	if dwHLATable then
+		for k,v in pairs (dwHLATable) do
+			if v.count>=1 and string.find(v.resref,"DWHAM")==1 then			
+				local _,_,idstring=string.find(v.resref,"(%d+)")
+				local id = tonumber(idstring)
+				if not (id==dwSelectedRace) then 
+					dwHatedFeat[id]=true
+				end
+			end
+		end
+	end
+end
+
+-- true = after levelling, false = before levelling
+function dwFindRangerLevel(type)
+	local ranger_level=nil
+	local c1,l1,c2,l2=nil,nil,nil,nil
+	if type then
+		c1,l1,c2,l2=dwClassLevelNew()		
+	else
+		c1,l1,c2,l2=dwClassLevelOld()	
+	end
+	if c1==12 then
+		ranger_level=l1
+	elseif c2==12 then
+		ranger_level=l2
+	else
+		ranger_level=nil
+	end
+	return ranger_level
+end
+
+function dwCheckRangerFavoredEnemy(level_old,level_new)
+	local level=0
+	for level=level_old,level_new - 1,1 do
+		if dwRangerChooseRace[level] then
+			return true
+		end
+	end
+	return false
+end
+
+
+function dwFindCurrentFavoredEnemy()
+	local race_id=nil
+	local race_number=nil
+	local race_name=nil
+	for _,v in pairs (characters[currentID].proficiencies.class_skills) do
+		race_name=v.current	
+		if race_name then
+			for k,v in pairs (dwHatedRace) do
+				if race_name==Infinity_FetchString(v.name) then
+					race_id=v.id
+					race_number=k
+				end
+			end
+		end
+	end
+	return race_number,race_id
+
+end
+
+>>>>>>>>
+
+

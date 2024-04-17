@@ -276,3 +276,59 @@ DEFINE_DIMORPHIC_FUNCTION check_ini
 BEGIN
 	LAF ini_check INT_VAR silent STR_VAR ini arguments section RET value END
 END
+
+
+
+
+DEFINE_ACTION_FUNCTION ini_to_2da
+	STR_VAR ini=""
+			location=""
+			locbase=""
+			path=""
+			2da_path=""
+			2da=""
+			defaults=""
+			main_default="*"
+			first_column=""
+			force_columns=""
+BEGIN
+	// process defaults
+	LAF array_from_string STR_VAR string="%defaults%" RET_ARRAY default_array=array END
+
+	// load the ini
+	LAF ini_read STR_VAR file="%ini%" location locbase path RET_ARRAY array section_array END
+	ACTION_CLEAR_ARRAY cols
+	// add forced columns
+	OUTER_WHILE "%force_columns%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%force_columns%" RET entry force_columns=list END
+		OUTER_SPRINT $cols("%entry%") ""
+	END
+	// collect the column headers 
+	ACTION_PHP_EACH array AS k=>v BEGIN
+		OUTER_SPRINT $cols("%k_1%") ""
+	END
+
+	ACTION_CLEAR_ARRAY sfo_reserved_ini_to_table
+	// assign numbers to the rows and enter the section keys
+	OUTER_SET row=0
+	ACTION_PHP_EACH section_array AS k=>discard BEGIN
+		OUTER_SET ++row
+		OUTER_SPRINT $sfo_reserved_ini_to_table("%row%" "%first_column%") "%k%"
+		OUTER_SET $row_map("%k%")=row
+		ACTION_PHP_EACH cols AS col=>discard BEGIN
+			OUTER_SPRINT $sfo_reserved_ini_to_table("%row%" "%col%") "%main_default%"
+		END
+		ACTION_PHP_EACH default_array AS default_var=>default_val BEGIN
+			OUTER_SPRINT $sfo_reserved_ini_to_table("%row%" "%default_var%") "%default_val%"
+		END
+	END
+	// enter the data
+	ACTION_PHP_EACH array AS k=>v BEGIN
+		OUTER_SET row=$row_map("%k_0%")
+		OUTER_SPRINT $sfo_reserved_ini_to_table("%row%" "%k_1%") "%v%"
+	END
+	// write
+	COPY ".../stratagems-inline/blank" "%2da_path%/%2da%"
+		LPF 2da_write STR_VAR array=sfo_reserved_ini_to_table type=table_header END
+		PRETTY_PRINT_2DA
+END	

@@ -179,12 +179,20 @@ BEGIN
 			LAF 2da_read STR_VAR file=campaign.2da RET_ARRAY campaign_array=array campaign_rows=rows END
 			ACTION_PHP_EACH campaign_rows AS row=>discard BEGIN
 				OUTER_SPRINT clastext_here $campaign_array("%row%" "CLASTEXT")
-				LAF 2da_read STR_VAR file="%clastext_here%.2da" RET_ARRAY here_array=array here_rows=rows here_columns=columns END
-				ACTION_IF !VARIABLE_IS_SET $here_rows("%new_kit%") BEGIN
-					ACTION_PHP_EACH here_columns AS col=>discard BEGIN
-						OUTER_SPRINT $here_array("%new_kit%" "%col%") $clastext_array("%new_kit%" "%col%")
+				ACTION_IF "%clastext_here%" STR_CMP "*" && FILE_EXISTS_IN_GAME "%clastext_here%.2da" BEGIN
+					LAF 2da_read STR_VAR file="%clastext_here%.2da" RET_ARRAY here_array=array here_rows=rows here_columns=columns END
+					OUTER_SET kit_missing=1
+					ACTION_PHP_EACH here_rows AS kit_here=>discard2 BEGIN
+						ACTION_IF "%kit_here%" STR_EQ "%new_kit%" BEGIN
+							OUTER_SET kit_missing=0
+						END
 					END
-					LAF 2da_write STR_VAR file="%clastext_here%.2da" array=here_array END
+					ACTION_IF kit_missing BEGIN
+						ACTION_PHP_EACH here_columns AS col=>discard BEGIN
+							OUTER_SPRINT $here_array("%new_kit%" "%col%") $clastext_array("%new_kit%" "%col%")
+						END
+						LAF 2da_write STR_VAR file="%clastext_here%.2da" array=here_array END
+					END
 				END
 			END
 		END
@@ -255,6 +263,7 @@ DEFINE_DIMORPHIC_FUNCTION kit_write
 	STR_VAR kit=""
 			struct=""
 BEGIN
+	ACTION_TO_UPPER kit
 	// initialize clabs
 	LAF kit_clab_initialize END
 	// make sure all kits have unique LUAs
@@ -342,7 +351,6 @@ BEGIN
 			0x4040 0x4080 BEGIN
 				WITH_SCOPE BEGIN
 					LAF kit_read STR_VAR kit=FIGHTER RET_ARRAY kk=struct END
-					OUTER_SET k_any_race=0
 					LAF kit_write INT_VAR is_dummy=1 STR_VAR kit="DW_DUMMY_%idsnum%" struct=kk END
 				END
 				OUTER_SET idsnum +=1
@@ -378,7 +386,7 @@ BEGIN
 	END
 	
 	// set race tables
-	ACTION_IF !clab_only BEGIN
+	ACTION_IF !clab_only && !is_dummy BEGIN
 		LAF kit_set_race_tables INT_VAR force=is_new STR_VAR kit struct END
 	END
 	// set the main clab
@@ -660,7 +668,7 @@ END
 /*
 document{kit_get_id}
 {
-Find the kit_id of a kit. (The left-hand column of kitlist.2da.)
+Find the kit_id of a kit. (The left-hand column of kitlist.2da.) Returns a new entry if not found. Also returns 'found' as 1 if found, 0 if not
 }
 
 */
@@ -668,9 +676,10 @@ Find the kit_id of a kit. (The left-hand column of kitlist.2da.)
 
 DEFINE_DIMORPHIC_FUNCTION kit_get_id
 	STR_VAR kit=""
-	RET kit_id
+	RET kit_id found
 BEGIN
 	COPY_EXISTING "kitlist.2da" override
+		found=0
 		kit_id="-1"
 		COUNT_2DA_COLS colcount
 		READ_2DA_ENTRIES_NOW kitlist_data colcount
@@ -678,6 +687,7 @@ BEGIN
 			READ_2DA_ENTRY_FORMER kitlist_data row 1 this_kit
 			PATCH_IF "%this_kit%" STR_EQ "%kit%" BEGIN
 				READ_2DA_ENTRY_FORMER kitlist_data row 0 kit_id
+				found=1
 			END
 		END
 		PATCH_IF kit_id<0 BEGIN
@@ -1355,7 +1365,6 @@ BEGIN
 	LAF 2daq_extract INT_VAR rowname_column=1 STR_VAR resref=kitlist row="%arguments%" column=unusable RET value END
 	OUTER_SPRINT $struct("kitlist_unusable") "%value%"
 END
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*

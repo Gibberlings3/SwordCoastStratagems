@@ -89,7 +89,7 @@ BEGIN
 			OUTER_SPRINT value "%key%"
 		END
 		ACTION_IF is_ids_here<0 BEGIN
-			OUTER_SET is_ids_here=(STRING_LENGTH "%value%">8)
+			OUTER_SET is_ids_here=(STRING_LENGTH "%value%">8) && "%path%" STR_EQ "" && "%location%" STR_EQ "" && "%locbase%" STR_EQ "" 
 		END
 		ACTION_IF is_ids_here BEGIN
 			OUTER_SPRINT ids "%value%"
@@ -1316,7 +1316,7 @@ BEGIN
 		END
 		// resolve the new entry
 		LAF spl_resolve_ids STR_VAR ids="HLA_%id%" type=class RET new_resref=resref END
-		// copy over the spell
+		// copy over the spell, changing any self-reference
 		COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl"
 			PATCH_IF force_innate BEGIN
 				WRITE_SHORT 0x1c 4
@@ -1324,6 +1324,21 @@ BEGIN
 					WRITE_LONG 0x34 1 // we need this on vanilla, at least, otherwise HaveSpell() causes crashes. Probably it's safe in EE too, but this component has broken so many times that I don't want to risk it!
 				END
 			END	
+			GET_OFFSET_ARRAY ab_arr SPL_V10_HEADERS
+			PHP_EACH ab_arr AS ab_ind=>ab_off BEGIN
+				GET_OFFSET_ARRAY2 fx_arr ab_off SPL_V10_HEAD_EFFECTS
+				PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+					PATCH_MATCH SHORT_AT fx_off WITH
+					206 318 321 324 BEGIN
+						READ_ASCII fx_off+0x14 resource
+						PATCH_IF "%resource%" STR_EQ "%resref%" BEGIN
+							WRITE_ASCII (fx_off+0x14) "%new_resref%"
+						END
+					END
+					DEFAULT
+					END					
+				END
+			END
 
 		ACTION_FOR_EACH copy_spell IN projimag simulacr BEGIN
 			COPY_EXISTING "%copy_spell%.spl" override

@@ -1,9 +1,25 @@
+/*
+describe-library{
+The various functions here externalize the proficiency system, using UI edits to permit finer-grained control of that system than the core engine permits.
+
+}
+
+*/
+
 
 ////////////////////////////////////////////////////////////////
 /// shared setup
 ////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION set_up_externalized_proficiencies BEGIN
+/*
+document{set_up_externalized_proficiencies}
+{
+This function is a general setup for the ui_externalize_proficiency functions.
+}
+*/
+
+DEFINE_ACTION_FUNCTION set_up_externalized_proficiencies 
+BEGIN
 
 	// have we done it already?
 	
@@ -17,6 +33,12 @@ DEFINE_ACTION_FUNCTION set_up_externalized_proficiencies BEGIN
 	
 		LAF check_ini INT_VAR silent=1 STR_VAR ini=discard_stat RET discard_stat=value END
 		OUTER_SET discard_stat=(discard_stat=0)?125:discard_stat
+		COPY_EXISTING - "enginest.2da" nowhere
+			REPLACE_EVALUATE "STRREF_GUI_MIXED_ADDITIONALWEAPPROFS[ %TAB%]+\([0-9]+\)" BEGIN
+				SET extra_prof_strref=MATCH1
+			END
+			""
+		
 		COPY ".../stratagems-inline/m_dw_epf.lua" override EVALUATE_BUFFER
 		
 		// set up main data page
@@ -39,7 +61,16 @@ END
 /// externalize the max number of profs
 ////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION externalize_profsmax BEGIN
+/*
+document{externalize_profsmax}
+{
+This moves the functionality of profsmax.2da to the LUA, permitting control of maximum proficiencies at a finer grain than the engine permits (in particular, this is
+required for libraries like ui_add_subraces that use proficiencies to signal).
+}
+*/
+
+DEFINE_ACTION_FUNCTION externalize_profsmax 
+BEGIN
 
 	LAF set_up_externalized_proficiencies END
 
@@ -82,7 +113,12 @@ END
 /// externalize the main weapprof table
 ////////////////////////////////////////////////////////////////
 
-
+/*
+document{externalize_weapprof}
+{
+This moves the functionality of weapprof.2da to the LUA, permitting control of allowed proficiencies at a finer grain than the core engine permits.
+}
+*/
 
 DEFINE_ACTION_FUNCTION externalize_weapprof BEGIN
 
@@ -140,6 +176,7 @@ DEFINE_ACTION_FUNCTION externalize_weapprof BEGIN
 	// kits
 	ACTION_PHP_EACH kitlist_rows AS kit=>discard BEGIN
 		OUTER_SPRINT kit_label $kitlist_array("%kit%" "ROWNAME")
+		ACTION_TO_UPPER kit_label
 		ACTION_IF IS_AN_INT $kitlist_array("%kit%" "LOWER") && VARIABLE_IS_SET $weapprof_cols("%kit_label%") BEGIN // avoid dummy rows
 			OUTER_SET kit_parent_number=$kitlist_array("%kit%" "CLASS")
 			OUTER_PATCH "" BEGIN
@@ -186,7 +223,8 @@ dwKitRestrict={
 
 END
 
-DEFINE_ACTION_FUNCTION wipe_weapprof BEGIN
+DEFINE_ACTION_FUNCTION wipe_weapprof//internal
+BEGIN
 
 	COPY_EXISTING weapprof.2da override
 		LPF 2da_read RET_ARRAY rows columns array END
@@ -212,7 +250,21 @@ END
 // set the single-class kits that override multiclass kit proficiencies for dc purposes
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION set_dual_class_kit_components_for_proficiencies STR_VAR kit="" components="" BEGIN
+/*
+document{set_dual_class_kit_components_for_proficiencies}
+{
+I don't 100% recall what this does. It's described in my notes like this:
+'set the single-class kits that override multiclass kit proficiencies for dc purposes'.
+
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION set_dual_class_kit_components_for_proficiencies 
+	STR_VAR kit="" 
+			components="" 
+BEGIN
 
 	LAF set_up_externalized_proficiencies END
 	COPY_EXISTING "kitlist.2da" override
@@ -261,7 +313,17 @@ END
 // hide a proficiency
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION hide_proficiency INT_VAR id=0 BEGIN
+/*
+document{hide_proficiency}
+{
+This hides the proficiency with id 'id' so that it is not displayed on the proficiency select screen.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION hide_proficiency 
+	INT_VAR id=0 
+BEGIN
 	LAF set_up_externalized_proficiencies END
 	APPEND "m_dw_epd.lua" "dwHideProficiencies[%id%]=true%WNL%"
 END
@@ -270,7 +332,16 @@ END
 // define a stat for signalling
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION set_signalling_stat INT_VAR stat=0 BEGIN
+/*
+document{set_signalling_stat}
+{
+This sets up the stat 'stat' to be used by other UI libraries to send a signal from the chargen screen to the main game. Don't use unless you're confident you know what you're doing.
+}
+*/
+
+DEFINE_ACTION_FUNCTION set_signalling_stat 
+	INT_VAR stat=0 
+BEGIN
 
 	LAF hide_proficiency INT_VAR id=stat END
 	COPY_EXISTING weapprof.2da override
@@ -284,7 +355,9 @@ DEFINE_ACTION_FUNCTION set_signalling_stat INT_VAR stat=0 BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION set_signalling_stat_helper INT_VAR stat=0 BEGIN
+DEFINE_PATCH_FUNCTION set_signalling_stat_helper //internal
+	INT_VAR stat=0 
+BEGIN
 		COUNT_2DA_COLS colcount
 		COUNT_2DA_ROWS colcount rowcount
 		FOR (row=0;row<rowcount;row+=1) BEGIN
@@ -304,15 +377,16 @@ END
 // menu patch
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_PATCH_FUNCTION externalize_prof_patch BEGIN
+DEFINE_PATCH_FUNCTION externalize_prof_patch//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY EXACT_MATCH "chargen.proficiency" "dwProficiencyTable"
 	REPLACE_TEXTUALLY EXACT_MATCH "dwProficiencyTable[rowNumber].value" "chargen.proficiency[dwProficiencyLookup[rowNumber]].value"
-	REPLACE_TEXTUALLY ~onOpen\([^"]*\)"~ ~onOpen\1"%WNL%%TAB%dwProficiencyTable,dwProficiencyLookup,dwSpendableTotal=dwBuildProficiencyTable(chargen.proficiency)%WNL%~
-	REPLACE_TEXTUALLY ~\(OnOpen[^"]*"[^"]+\)"~ ~\1%WNL%%TAB%dwClearExcessProficiencies(dwSpendableTotal)%WNL%%TAB%dwProficienciesTotal=chargen.extraProficiencySlots%WNL%"~ // note that this is at the *end* of the OnOpen block, i.e. after any signal transmission
+	REPLACE_TEXTUALLY ~text lua[ %TAB%]+"proficiencyOrGeneralHelp()"~ ~text lua "dwFilterExcessProficiencies(proficiencyOrGeneralHelp())"~
 END
 
-DEFINE_PATCH_FUNCTION externalize_prof_function_patch BEGIN
+DEFINE_PATCH_FUNCTION externalize_prof_function_patch//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY EXACT_MATCH "chargen.proficiency" "dwProficiencyTable"
 
@@ -322,8 +396,17 @@ END
 // route to the path, if we're not sure if we're externalized or not
 /////////////////////////////////////////////////////////////////////////////////////////////
 
+/*
+document{get_weapprof_path}
+{
+This returns either 'override/weapprof.2da' or '[data_loc_shared]/weapprof.2da', depending on whether the weapprof system has been externalized.
+}
 
-DEFINE_ACTION_FUNCTION get_weapprof_path RET weapprof_path BEGIN
+*/
+
+DEFINE_ACTION_FUNCTION get_weapprof_path 
+	RET weapprof_path 
+BEGIN
 
 	ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
 		OUTER_SPRINT weapprof_path "%data_loc_shared%/weapprof.2da"
@@ -345,6 +428,13 @@ dwDCKitMap={}
 >>>>>>>>
 
 <<<<<<<< .../stratagems-inline/m_dw_epf.lua
+
+function dwProficiencyOnOpenEnd()
+
+	dwClearExcessProficiencies(dwSpendableTotal)
+	dwProficienciesTotal=chargen.extraProficiencySlots
+
+end
 
 function plusButtonClickable(row) -- overwrite the baseline one in util
 	local prof=chargen.proficiency[dwProficiencyLookup[row]]
@@ -375,7 +465,7 @@ function dwStartingProfAllowed(prof)
 		race=dwRaces[currentChargenRace]
 		subrace=subraceList(race.id)[currentChargenSubrace]
 		level_1_max = level_1_max + subrace.extraprof
-	else
+	elseif dwFindSubraceData then
 		level_1_max = level_1_max + dwFindSubraceData(characters[currentID]).extraprof
 	end
 	
@@ -496,6 +586,12 @@ function dwBuildProficiencyTable(proftable)
 
 end
 
+function dwBuildProficiencyTableWrap()
+
+	dwProficiencyTable,dwProficiencyLookup,dwSpendableTotal=dwBuildProficiencyTable(chargen.proficiency)
+
+end
+
 function dwClearExcessProficiencies(count)
 	spend=chargen.extraProficiencySlots
 	while count<spend do
@@ -505,5 +601,12 @@ function dwClearExcessProficiencies(count)
 
 end
 
+
+function dwFilterExcessProficiencies(str)
+	local intro=Infinity_FetchString(%extra_prof_strref%)
+	str=string.gsub(str,intro..":[^0-9]*[0-9][0-9]","")
+	str=string.gsub(str,intro..":[^0-9]*[7-9][0-9]*","")
+	return str
+end
 >>>>>>>>
 

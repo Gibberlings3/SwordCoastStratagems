@@ -1379,7 +1379,7 @@ LAF %function% INT_VAR %int_string% STR_VAR %str_string% END
 document{2da_sort}
 {
 Takes a 2da, sorts rows and/or columns.
-Set "rows" and/or "columns" to "lexicographically" or "numerically" (case-insensitive). Can use 'l' or 'n' as synonyms
+Set "rows" and/or "columns" to "lexicographically" or "numerically" (case-insensitive), or else feed it a function to use in array_sort. Can use 'l' or 'n' as synonyms
 
 }
 */
@@ -1407,7 +1407,7 @@ BEGIN
 		END
 		DEFAULT
 			done_anything=1
-			PATCH_WARN "2da_sort: illegal argument %rows%"
+			LPF array_sort STR_VAR array=array_rows function="%rows%" RET_ARRAY array_rows=array END
 		END
 		PATCH_MATCH "%columns%" WITH
 		"lexicographically" "l" BEGIN
@@ -1622,4 +1622,44 @@ BEGIN
 			REPLACE_TEXTUALLY "2DA[ %TAB%]+V1\.0" "2DA V1.0"
 		END
 	END
+END
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION 2da_to_ini
+	STR_VAR 2da=""
+			ini=""
+			path=""
+			location=""
+			locbase=""
+			ini_path=""
+			default="*"
+			ignores=""
+			section_key=""
+BEGIN
+	ACTION_IF "%section_key%" STR_EQ "" BEGIN
+		FAIL "2da_to_ini: section key may not be blank"
+	END
+	// process ignores
+	LAF array_from_string STR_VAR string="%ignores%" RET_ARRAY ignore_array=array END
+	// read in the 2da
+	LAF 2da_read STR_VAR file="%2da%" path location locbase type="table_header" RET_ARRAY array END
+	// prune it
+	ACTION_CLEAR_ARRAY sfo_reserved_2da_to_ini
+	// go through first to get section keys
+	ACTION_PHP_EACH array AS k=>v BEGIN
+		ACTION_IF "%k_1%" STR_EQ "%section_key%" BEGIN
+			OUTER_SPRINT $section_keys("%k_0%") "%v%"
+		END
+	END
+	// go through again to log
+	ACTION_PHP_EACH array AS k=>v BEGIN
+		ACTION_IF $ignore_array("%k_1%") STR_CMP "%v%" && "%v%" STR_CMP "%default%" && "%k_1%" STR_CMP "%section_key%" BEGIN
+			OUTER_SPRINT this_key $section_keys("%k_0%")
+			OUTER_SPRINT $sfo_reserved_2da_to_ini("%this_key%" "%k_1%") "%v%"
+		END
+	END
+	// write it
+	COPY ".../stratagems-inline/blank" "%ini_path%/%ini%"
+		LPF ini_write STR_VAR array=sfo_reserved_2da_to_ini END
 END

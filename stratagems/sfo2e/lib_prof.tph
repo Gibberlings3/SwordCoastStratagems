@@ -1,0 +1,321 @@
+/*
+describe-library
+{
+This library manipulates (largely kit) proficiencies, outside the struct format. One of its purposes is to 
+permit compatibility with mods (like Tweaks Anthology) that adjust the proficiency system.
+}
+*/
+
+/*
+
+document{prof_build_lookup}
+{
+Construct
+<ol>
+<li>a 2da lookup table (prof_lookup.2da) mapping vanilla BG2 proficiencies to actual proficiencies, using prototype weapons as a source. (e.g. we check BOW03, and map 'LONGBOW' to whatever proficiency is assigned to it). The table rows are indexed by old proficiency names,
+and has these columns: 'ID', 'NAME' (the weapprof row name for the new proficiency added), 'STRREF' (the name of the proficiency, taken from weapprof) 'WEAPON_STRREF' (the name of the actual prototype weapon in the BG2 proficiency - this is 'scimitar' for 
+SCIMITARWAKISASHININJATO), 'TYPE' (either MELEE, MISSILE, or STYLE). Styles are automatically included.</li>
+<li>a 2da lookup table (profs_used.2da) listing the actual proficiencies in use. (A proficiency is in use if either (i) it is the proficiency of any of the prototype weapons, or (ii) in the case of styles, unkitted fighters have at least one pip in it.) 
+The table rows are indexed by weapprof row names and have these columns: 'ID', 'STRREF' (the name of the proficiency, taken from weapprof) and 'TYPE' (either MELEE, MISSILE, or STYLE).</li>
+<li>a text table (profs_unused.txt) listing the unused profs in the format 'NAME ID'.</li>
+</ol>
+All these are stored in data_loc and are generated if present already only if the INT_VAR overwrite is set to 1. In any case, each is then read into memory, into the 2D arrays 'prof_lookup_array' and 'profs_used_array' and the k=>v array 'unused_profs', respectively.
+The rows of the two 2das are also returned as the arrays 'prof_lookup_rows' and 'profs_used_rows'.
+}
+
+
+*/
+
+
+DEFINE_ACTION_FUNCTION prof_build_lookup
+	INT_VAR overwrite=0//boolean
+	RET_ARRAY prof_lookup_array prof_lookup_rows profs_used_array profs_used_rows unused_profs
+BEGIN
+	ACTION_IF overwrite || !FILE_EXISTS "%data_loc%/prof_lookup.2da" || !FILE_EXISTS "%data_loc%/profs_unused.txt" || !FILE_EXISTS "%data_loc%/profs_used.2da"  BEGIN
+		// first get the actual name=>id map from weapprof.
+		// (do this manually for efficiency, it's a large table)
+		OUTER_FOR (n=89;n<=115;++n) BEGIN
+			OUTER_SET $prof_is_used("%n%")=0
+		END
+		COPY_EXISTING - weapprof.2da nowhere 
+			COUNT_2DA_COLS colcount
+			CLEAR_ARRAY new_prof_lookup
+			READ_2DA_ENTRIES_NOW weapprof_data 4
+			// find name data
+			FOR (row=1;row<weapprof_data;++row) BEGIN
+				READ_2DA_ENTRY_FORMER weapprof_data row 0 name
+				READ_2DA_ENTRY_FORMER weapprof_data row 1 id
+				READ_2DA_ENTRY_FORMER weapprof_data row 2 strref
+				PATCH_IF (id>=89 && id<=115) BEGIN
+					TO_UPPER name
+					SPRINT $new_prof_lookup("%id%" "NAME") "%name%"
+					SPRINT $new_prof_lookup("%id%" "STRREF") "%strref%"
+				END			
+			END
+			// find fighter column
+			FOR (col=3;col<colcount;++col) BEGIN
+				READ_2DA_ENTRY_FORMER weapprof_data 0 col col_header
+				PATCH_IF "%col_header%" STR_EQ "FIGHTER" BEGIN
+					FOR (row=1;row<weapprof_data;++row) BEGIN
+						READ_2DA_ENTRY_FORMER weapprof_data row 0 name
+						READ_2DA_ENTRY_FORMER weapprof_data row (col + 1) val
+						val=IS_AN_INT val?val:0
+						SET $fighter_profs("%name%")=val
+					END
+					col=colcount
+				END
+			END
+
+		//now define the array of lookups. (Criterion: weapon must be in IWDEE, BGEE, BG2EE)
+		ACTION_CLEAR_ARRAY prof_prototypes 
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY prof_prototypes BEGIN
+			BASTARDSWORD=>SW1H01
+			LONGSWORD=>SW1H04
+			SHORTSWORD=>SW1H07
+			AXE=>AX1H01
+			TWOHANDEDSWORD=>SW2H01
+			KATANA=>SW1H43
+			SCIMITARWAKISASHININJATO=>SW1H20 // deem scimitars, not wakisashis or ninja-tos, as definitional (cf CDTweaks revised profs)
+			DAGGER=>DAGG01
+			WARHAMMER=>HAMM01
+			CLUB=>BLUN01
+			SPEAR=>SPER01
+			HALBERD=>HALB01
+			FLAILMORNINGSTAR=>BLUN02   //flails, not morningstars, are definitional (cf CDTweaks again)
+			MACE=>BLUN04
+			QUARTERSTAFF=>STAF01
+			CROSSBOW=>XBOW01
+			LONGBOW=>BOW03
+			SHORTBOW=>BOW05
+			DART=>DART01
+			SLING=>SLNG01	
+		END
+		
+		// now do the lookups
+		ACTION_CLEAR_ARRAY prof_lookup_array
+		ACTION_CLEAR_ARRAY prof_lookup_rows
+		ACTION_PHP_EACH prof_prototypes AS prof=>prototype BEGIN
+			COPY_EXISTING - "%prototype%.itm" nowhere
+				wpn_name=LONG_AT 0xc
+				id=BYTE_AT 0x31
+				SET $prof_is_used("%id%")=1
+				PATCH_IF VARIABLE_IS_SET $new_prof_lookup("%id%" "NAME") BEGIN
+					TO_UPPER prof
+					SPRINT name $new_prof_lookup("%id%" "NAME")
+					SPRINT $prof_lookup_array("%prof%" "ID") "%id%"
+					SPRINT $prof_lookup_array("%prof%" "NAME") "%name%"
+					SET $prof_lookup_array("%prof%" "STRREF")=$new_prof_lookup("%id%" "STRREF")
+					SET $prof_lookup_array("%prof%" "WEAPON_STRREF")=wpn_name
+					PATCH_MATCH "%prof%" WITH
+					CROSSBOW LONGBOW SHORTBOW DART SLING BEGIN
+						SPRINT $prof_lookup_array("%prof%" "TYPE") "MISSILE"
+					END
+					DEFAULT
+						SPRINT $prof_lookup_array("%prof%" "TYPE") "MELEE"					
+					END
+					SPRINT $prof_lookup_rows("%prof%") ""
+				END ELSE BEGIN
+					PATCH_WARN "prof_build_lookup: could not find a legal proficiency for prototype weapon %prototype%"
+				END	
+		END
+		// manually add the styles
+		ACTION_CLEAR_ARRAY style_array
+		ACTION_DEFINE_ASSOCIATIVE_ARRAY style_array BEGIN
+			2HANDED=>111
+			SWORDANDSHIELD=>112
+			SINGLEWEAPON=>113
+			2WEAPON=>114
+		END
+		ACTION_PHP_EACH style_array AS name=>id BEGIN
+			OUTER_SPRINT $prof_lookup_rows("%name%") ""
+			OUTER_SET $prof_lookup_array("%name%" "ID")=id
+			OUTER_SPRINT $prof_lookup_array("%name%" "NAME") "%name%"
+			OUTER_SET $prof_lookup_array("%name%" "STRREF")=$new_prof_lookup("%id%" "STRREF")
+			OUTER_SET $prof_lookup_array("%name%" "WEAPON_STRREF")=$new_prof_lookup("%id%" "STRREF")				
+			OUTER_SPRINT $prof_lookup_array("%name%" "TYPE") "STYLE"
+		END
+		
+		// write the table
+		LAF 2da_write STR_VAR file="prof_lookup.2da" path="%data_loc%" array=prof_lookup_array END
+		
+		// generate the 2da for profs_used
+		ACTION_CLEAR_ARRAY profs_used_array
+		ACTION_CLEAR_ARRAY profs_used_rows
+		ACTION_PHP_EACH prof_lookup_rows AS prof=>discard BEGIN
+			OUTER_SPRINT type $prof_lookup_array("%prof%" "TYPE")
+			ACTION_IF "%type%" STR_EQ "STYLE" BEGIN
+				OUTER_SET proceed=(IS_AN_INT $fighter_profs("%prof%") && $fighter_profs("%prof%")>0)
+			END ELSE BEGIN
+				OUTER_SET proceed=1
+			END
+			ACTION_IF proceed BEGIN
+				OUTER_SPRINT newname $prof_lookup_array("%prof%" "NAME")
+				OUTER_SPRINT $profs_used_rows("%newname%") ""
+				OUTER_SET $profs_used_array("%newname%" "ID")=$prof_lookup_array("%prof%" "ID")
+				OUTER_SET $profs_used_array("%newname%" "STRREF")=$prof_lookup_array("%prof%" "STRREF")
+				OUTER_SPRINT $profs_used_array("%newname%" "TYPE") "%type%"
+			END
+		END
+		
+		// write the table
+		LAF 2da_write STR_VAR file="profs_used.2da" path="%data_loc%" array=profs_used_array END
+		
+		
+		// generate the array of unused profs
+		ACTION_CLEAR_ARRAY unused_profs
+		OUTER_SET extra_name_count=0
+		ACTION_PHP_EACH prof_is_used AS prof_id=>used BEGIN	
+			ACTION_IF !used BEGIN
+				ACTION_IF VARIABLE_IS_SET $new_prof_lookup("%prof_id%" "NAME") BEGIN
+					OUTER_SPRINT name $new_prof_lookup("%prof_id%" "NAME")
+				END ELSE BEGIN
+					OUTER_SET ++extra_name_count
+					OUTER_SPRINT name "DW_EXTRA_PROF_NAME_%extra_name_count%"
+				END
+				OUTER_SET $unused_profs("%name%")=prof_id
+			END
+		END
+		// write it
+		LAF array_log INT_VAR new=1 STR_VAR file=profs_unused.txt array=unused_profs END
+	END ELSE BEGIN
+		LAF 2da_read STR_VAR file="prof_lookup.2da" path="%data_loc%" RET_ARRAY prof_lookup_array=array prof_lookup_rows=rows END
+		LAF 2da_read STR_VAR file="profs_used.2da" path="%data_loc%" RET_ARRAY profs_used_array=array profs_used_rows=rows END
+		LAF array_read STR_VAR file=profs_unused.txt path="%data_loc%" RET_ARRAY unused_profs=array END
+	END
+
+END
+
+/*
+
+document{prof_copy}
+{
+Copy the proficiencies from kit 'copy_from' to kit 'copy_to'. If 'only_if_nonzero' is set to 1, proficiencies set to 0 in kit copy_to remain at zero. Only weapon proficiencies, not weapon styles, are done.</p>
+<p>If the proficiencies have been externalized (i.e. if weapprof.2da is present in data_loc_shared) then copy it over to override first. If reexternalize=1, reexternalize afterwards.
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION prof_copy
+	INT_VAR only_if_nonzero=0//boolean
+			reexternalize=1//boolean
+	STR_VAR copy_to=""
+			copy_from=""
+BEGIN
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+		OUTER_SET is_external=1
+		COPY "%data_loc_shared%/weapprof.2da" override
+	END ELSE BEGIN
+		OUTER_SET is_external=0
+	END
+	COPY_EXISTING "weapprof.2da" override
+		LPF 2da_read RET_ARRAY weapprof_array=array weapprof_rows=rows weapprof_cols=columns END
+		TO_UPPER copy_from
+		TO_UPPER copy_to
+		PATCH_IF VARIABLE_IS_SET $weapprof_cols("%copy_from%") && VARIABLE_IS_SET $weapprof_cols("%copy_to%") BEGIN
+			PHP_EACH weapprof_rows AS row=>discard BEGIN
+				id=$weapprof_array("%row%" "ID")
+				PATCH_IF id>=89 && (id<=110 || id=115) BEGIN
+					PATCH_IF !only_if_nonzero || $weapprof_array("%row%" "%copy_to%")>0 BEGIN
+						SET $weapprof_array("%row%" "%copy_to%")=$weapprof_array("%row%" "%copy_from%")
+					END
+				END
+			END
+		END ELSE BEGIN
+			PATCH_WARN "prof_copy: kits %copy_from%, %copy_to% are not both present in weapprof.2da"
+		END
+		LPF 2da_write STR_VAR array=weapprof_array END
+	BUT_ONLY
+	ACTION_IF is_external BEGIN
+		COPY_EXISTING "weapprof.2da" "%data_loc_shared%"
+		ACTION_IF reexternalize BEGIN
+			LAF externalize_weapprof END
+		END
+	END
+
+
+END
+
+/*
+
+document{prof_adjust}
+{
+Apply the SFO standard function 'patch' to all proficiencies of a certain type belonging to the kit 'kit' (can be a space-separated list). Possible arguments are (i) a space-separated list of standard prof names; (ii), 'melee', 'ranged', or 'all'. In each case prof_lookup is used to try to preserve compatibility, and each proficiency will be patched only once even if multiple BG2-style proficiencies point at the same proficiency. You can use the anonymous function construct.
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION prof_adjust
+	INT_VAR reexternalize=1//boolean
+	STR_VAR kit=""
+			patch=""
+			arguments=""
+BEGIN
+	// process anonymous function
+	LAF anon_check INT_VAR has_output=1 STR_VAR function="%patch%" RET patch=function END
+	// handle externalization
+	ACTION_IF FILE_EXISTS "%data_loc_shared%/weapprof.2da" BEGIN
+		OUTER_SET is_external=1
+		COPY "%data_loc_shared%/weapprof.2da" override
+	END ELSE BEGIN
+		OUTER_SET is_external=0
+	END
+	// get prof lookup data
+	LAF prof_build_lookup RET_ARRAY prof_lookup_array prof_lookup_rows END
+	ACTION_CLEAR_ARRAY prof_adjust_array
+	ACTION_TO_UPPER arguments
+	ACTION_TO_UPPER kit
+	ACTION_MATCH "%arguments%" WITH
+	melee BEGIN
+		ACTION_FOR_EACH prof IN BASTARDSWORD LONGSWORD SHORTSWORD AXE TWOHANDEDSWORD KATANA SCIMITARWAKISASHININJATO DAGGER WARHAMMER CLUB SPEAR HALBERD FLAILMORNINGSTAR MACE QUARTERSTAFF BEGIN
+			OUTER_SPRINT name $prof_lookup_array("%prof%" "NAME")
+			OUTER_SPRINT $prof_adjust_array("%name%") ""
+		END
+	END
+	ranged BEGIN
+		ACTION_FOR_EACH prof IN CROSSBOW LONGBOW SHORTBOW DART SLING BEGIN
+			OUTER_SPRINT name $prof_lookup_array("%prof%" "NAME")
+			OUTER_SPRINT $prof_adjust_array("%name%") ""
+		END
+	END
+	all BEGIN
+		ACTION_PHP_EACH prof_lookup_rows AS prof=>discard BEGIN
+			OUTER_SPRINT name $prof_lookup_array("%prof%" "NAME")
+			OUTER_SPRINT $prof_adjust_array("%name%") ""
+		END
+	END
+	DEFAULT
+		OUTER_WHILE "%arguments%" STR_CMP "" BEGIN
+			LAF return_first_entry STR_VAR list="%arguments%" RET prof=entry arguments=list END
+			OUTER_SPRINT name $prof_lookup_array("%prof%" "NAME")
+			OUTER_SPRINT $prof_adjust_array("%name%") ""
+		END
+	END
+	// apply
+	COPY_EXISTING "weapprof.2da" override
+		WHILE "%kit%" STR_CMP "" BEGIN
+			LPF return_first_entry STR_VAR list="%kit%" RET kit_here=entry kit=list END
+			LPF 2da_read RET_ARRAY weapprof_array=array END
+			PHP_EACH prof_adjust_array AS name=>discard BEGIN
+				old=$weapprof_array("%name%" "%kit_here%")
+				LPF "%patch%" STR_VAR arguments="%old%" RET new=value END
+				SET $weapprof_array("%name%" "%kit_here%")=new 
+			END
+			LPF 2da_write STR_VAR array=weapprof_array END
+		END
+	BUT_ONLY
+	ACTION_IF is_external BEGIN
+		COPY_EXISTING "weapprof.2da" "%data_loc_shared%"
+		ACTION_IF reexternalize BEGIN
+			LAF externalize_weapprof END
+		END
+	END
+
+
+END
+
+
+
+
+

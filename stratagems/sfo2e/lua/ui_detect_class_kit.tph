@@ -1,20 +1,33 @@
 /*
+describe-library
+{
+This is used by other SFO-lua functions; it builds LUA functions to reliably identify the class and kit of the current character, and to
+identify other features of the character. It works by appending the (mixed-case) title of each kit to add the class and kit ID in curly
+brackets, and then telling the UI to hide all curly-bracket information. (This obviously requires us to catch all cases where this happens,
+and probably we're still missing some especially on variant UIs. 
 
-Note that unlike other DW lua libraries, this one just reinstalls itself every time you build it.
-That's basically to make sure the data table stays up-to-date
+}
 
-Detection algorithm (non-chargen version)
 
-- first, see if class string is an exact match to a kit. If so, return that kit
-- if not, see if a kit name is a substring of the class string. If so, return that kit
-- either way, sub the kit name for its parent-class name in the class string
-- look up that string (watching for <MAGESCHOOL>-type problems)
+
+*/
+
+
+/*
+document{ui_detect_class_kit}
+{
+Set up all the resources to detect the class and kit (etc). Note that unlike other SFO-lua libraries, this one just reinstalls itself every time you build it (since new classes and kits may have been added).
+'Version', if set to 1, is used for debugging.
+}
 
 
 */
 
 
 DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1 is debug
+
+	LAF ui_on_open_setup END
+	LAF ui_system_call_setup END
 
 	// UI edits, only do once
 	
@@ -24,11 +37,15 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 
 		// find the 'inactive' string
 		
-		LAF 2da_read STR_VAR file=enginest.2da RET_ARRAY enginest_array=array END
-		OUTER_SET inactive_strref_long=$enginest_array(STRREF_GUI_MIXED_UNUSABLEEXPERIENCEENTRY STRREF)
+		COPY_EXISTING - "ENGINEST.2da" nowhere
+			REPLACE_EVALUATE "STRREF_GUI_MIXED_UNUSABLEEXPERIENCEENTRY[ %TAB%]+\([0-9]+\)" BEGIN
+				inactive_strref_long=MATCH1
+			END
+			""
 		ACTION_GET_STRREF inactive_strref_long inactive_string_long 
 		OUTER_PATCH_SAVE inactive_string "%inactive_string_long%" BEGIN
-			REPLACE_TEXTUALLY "<EXPERIENCE>[%WNL%%LNL%%MNL%]" ""
+			REPLACE_TEXTUALLY "<CLASS>.*[%WNL%%LNL%%MNL%]" ""
+			REPLACE_TEXTUALLY ".*<EXPERIENCE>[%WNL%%LNL%%MNL%]" ""
 		END
 		OUTER_SET inactive_strref=RESOLVE_STR_REF ("%inactive_string%")
 
@@ -42,45 +59,6 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 
 		// install the functions
 		COPY ".../stratagems-inline/m_dw_dkf.lua" override EVALUATE_BUFFER
-
-		// edit the menu to keep currentID up-to-date
-		// (it's updated when you hit the character screen, but for some reason the inventory and mage/priest spell screens use id, not currentID)
-		// likewise id gets updated when you use the select portrait but currentID doesn't
-		
-		ACTION_IF !FILE_EXISTS "weidu_external/markers/dw-update-currentID.mrk" BEGIN
-			COPY_EXISTING "spwi304.spl" "weidu_external/markers/dw-update-currentID.mrk" 
-			COPY_EXISTING "ui.menu" override
-				PATCH_FOR_EACH object IN MAGE PRIEST INVENTORY BEGIN
-					LPF UI_alter_object STR_VAR object object_type=menu patch=update_currentID END
-				END
-				REPLACE_TEXTUALLY "Infinity_OnPortraitLClick(\([0-9]\))" "Infinity_OnPortraitLClick(\1); currentID=id"
-			BUT_ONLY
-		END
-		
-		// also update the menu to run the portrait match function whenever the main world screen is opened (this is just to make sure the data is available)
-		
-		ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwPortraitMatch" BEGIN
-			COPY_EXISTING "ui.menu" override
-			LPF UI_alter_object STR_VAR object=WORLD_ACTIONBAR object_type=menu patch=~~~~~REPLACE_TEXTUALLY ~\(onOpen[^"]*"\)~  ~\1%WNL%%TAB%%TAB%dwFindPortraitMatch()%WNL%~  ~~~~~ END
-		END
-		
-		// also edit the menu to record original class/kit on dual-classing, and alignment on chargen
-		
-		ACTION_IF !RESOURCE_CONTAINS "ui.menu" "dwOriginalClass,dwOriginalKit" BEGIN
-			COPY_EXISTING "ui.menu" override
-				REPLACE_TEXTUALLY EXACT_MATCH 
-					"characterScreen:OnDualClassButtonClick()" 
-					"dwOriginalClass,dwOriginalKit=dwFindClassKit(2);characterScreen:OnDualClassButtonClick()"
-				REPLACE_TEXTUALLY EXACT_MATCH
-					"createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
-					"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(chargen.alignment[currentChargenAlignment].id)"
-				// this last one for Lefreut
-				REPLACE_TEXTUALLY EXACT_MATCH
-					"createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
-					"dwChargenAlignment=chargen.alignment[currentChargenAlignment].id;createCharScreen:OnAlignmentSelectButtonClick(allChargenAlignments[currentChargenAlignment].id)"
-
-			BUT_ONLY
-		END
 
 
 
@@ -121,6 +99,12 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 		READ_LONG 0xc name2
 		SPRINT $sfo_reserved_dk_duplicate_check("%name1%") ""
 		SPRINT $sfo_reserved_dk_duplicate_check("%name2%") ""
+	// we also specifically need to add the 'Stalker' spell
+	ACTION_IF VARIABLE_IS_SET CLERIC_STALKER BEGIN
+		COPY_EXISTING - "%CLERIC_STALKER%.spl" nowhere
+			READ_LONG 0x8 name
+			SPRINT $sfo_reserved_dk_duplicate_check("%name%") ""
+	END
 	// now go through clastext
 	ACTION_PHP_EACH clastext_rows AS row=>discard BEGIN
 		ACTION_IF IS_AN_INT $clastext_array("%row%" "MIXED") BEGIN
@@ -233,7 +217,7 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 	
 	COPY ".../stratagems-inline/m_dw_dkd.lua" override EVALUATE_BUFFER
 
-	// previously I supported the 'great druid' title change but I think my method was a bit unrobust (didn't cover multiclass, didn't handle stronghold-quest mods, etc. To be on the safe side for now we're just going to disable it
+	// previously I supported the 'great druid' title change but I think my method was a bit unrobust (didn't cover multiclass, didn't handle stronghold-quest mods, etc). To be on the safe side for now we're just going to disable it
 	
 	LAF check_label STR_VAR label=dw#great_druid_title_change_disabled RET value END
 	ACTION_IF !value BEGIN
@@ -268,12 +252,7 @@ DEFINE_ACTION_FUNCTION ui_detect_class_kit STR_VAR version="" BEGIN // version 1
 
 END
 
-////////////////////////////////////////////////////////////////
 
-
-DEFINE_PATCH_FUNCTION update_currentID BEGIN
-	REPLACE_TEXTUALLY ~onOpen\([^"]*\)"~ ~onOpen\1"%WNL%%TAB%currentID=id%WNL%~
-END
 
 ////////////////////////////////////////////////////////////////
 /// This gives you a class-dependent, kit-dependent title change
@@ -340,7 +319,9 @@ BEGIN
 END
 
 
-DEFINE_PATCH_FUNCTION make_title_change_spell_helper STR_VAR arguments="" BEGIN
+DEFINE_PATCH_FUNCTION make_title_change_spell_helper//internal 
+STR_VAR arguments="" 
+BEGIN
 	PATCH_IF SHORT_AT 0x0 = 290 BEGIN
 		READ_LONG 0x4 title_strref
 		GET_STRREF title_strref title
@@ -353,7 +334,9 @@ END
 /// we use this to clear out earlier iterations of sfo_compliant_change_title, since it needs to be rerun from scratch whenever we rebuild
 /// the lua
 
-DEFINE_ACTION_FUNCTION clear_out_title_change_subspells STR_VAR prefix=dwcct BEGIN
+DEFINE_ACTION_FUNCTION clear_out_title_change_subspells//internal
+	STR_VAR prefix=dwcct 
+BEGIN
 
 	OUTER_FOR (index=1;index<1000;++index) BEGIN
 		ACTION_IF FILE_EXISTS_IN_GAME "%prefix%%index%.spl" BEGIN
@@ -365,7 +348,8 @@ DEFINE_ACTION_FUNCTION clear_out_title_change_subspells STR_VAR prefix=dwcct BEG
 END
 
 
-DEFINE_ACTION_FUNCTION patch_character_screen_display BEGIN
+DEFINE_ACTION_FUNCTION patch_character_screen_display//internal 
+BEGIN
 
 	COPY_EXISTING "ui.menu" override
 	
@@ -438,7 +422,7 @@ DEFINE_ACTION_FUNCTION patch_character_screen_display BEGIN
 		// there is also a secondary callout to the 'getClassString() function for the 'class' screen, which returns a string
 		// and the small box displaying gender/race/class is the output of characterDescString()
 		// the character class also appears on the inventory screen as a direct call to characters[id].class, and on the dual-class screen as
-		// a call to characters[currentID].class
+		// a call to characters[currentID].class. And the level-up screen uses proficiencyOrGeneralHelp(), which includes class
 	
 			LPF UI_alter_function STR_VAR function=UpdateAttrTable patch=alter_update_attr_table_vanilla END
 			LPF UI_alter_function STR_VAR function=getClassString patch="REPLACE_TEXTUALLY ~return[ %TAB%]+out~ ~return dwFilterKitDesc(out)~" END
@@ -446,6 +430,7 @@ DEFINE_ACTION_FUNCTION patch_character_screen_display BEGIN
 			LPF UI_alter_object STR_VAR object=INVENTORY object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[id\]\.class\)~ ~dwFilterKitDesc(\1)~" END
 			LPF UI_alter_object STR_VAR object=CHARGEN_DUALCLASS object_type=menu patch="REPLACE_TEXTUALLY ~\(characters\[currentID\]\.class\)~ ~dwFilterKitDesc(\1)~" END
 			LPF UI_alter_object STR_VAR object=STORE_IDENTIFY object_type=menu patch=replace_identify_text END
+			LPF UI_alter_object STR_VAR object=CHARGEN_PROFICIENCIES object_type=menu patch="REPLACE_TEXTUALLY ~\(proficiencyOrGeneralHelp()\)~ ~dwFilterKitDesc(\1)~" END
 	
 	
 		// chargen
@@ -465,7 +450,8 @@ DEFINE_ACTION_FUNCTION patch_character_screen_display BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION alter_update_attr_table_vanilla BEGIN
+DEFINE_PATCH_FUNCTION alter_update_attr_table_vanilla//internal 
+BEGIN
 	endpoint=RINDEX_BUFFER ("end")
 	DELETE_BYTES endpoint 3
 	SPRINT insert "%TAB%helpTextString=dwFilterKitDesc(helpTextString)%WNL%end"
@@ -474,19 +460,26 @@ DEFINE_PATCH_FUNCTION alter_update_attr_table_vanilla BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION replace_identify_text BEGIN
+DEFINE_PATCH_FUNCTION replace_identify_text//internal 
+BEGIN
 	REPLACE_TEXTUALLY ~text[ %TAB%]+lua[ %TAB%]+"[ %TAB%]*store\.identifyText[ %TAB%]*"~ ~text lua "dwFilterKitDesc(store.identifyText)"~
 
 END
 
-DEFINE_PATCH_FUNCTION replace_identify_text_lefreut BEGIN
+DEFINE_PATCH_FUNCTION replace_identify_text_lefreut//internal
+BEGIN
 	REPLACE_TEXTUALLY ~text[ %TAB%]+lua[ %TAB%]+"[ %TAB%]*identifyText[ %TAB%]*"~ ~text lua "dwFilterKitDesc(identifyText)"~
 
 END
 
 <<<<<<<< .../stratagems-inline/m_dw_dkf.lua
 
--- exposed functions
+function dwUpdateCurrentID()
+
+currentID=id
+
+end
+
 
 function dwFindClassKit(var)
 
@@ -540,10 +533,12 @@ function dwFindClassKit(var)
 
 end
 
+function dwFindClassKit2()
+	dwOriginalClass,dwOriginalKit=dwFindClassKit(2)
+end
+
 
 function dwClassLevelOld()  -- return class and kit before level-up
-							-- only used by ui_externalize_hlas, but as a matter of coding practice the method
-							-- by which we detect classes ought to be localized to this library
 
 	local class,level,class2,level2,class3,level3
 	local data=characters[currentID].classlevel
@@ -589,7 +584,7 @@ function dwClassLevelNew() -- return class and kit after level-up
 
 end
 
-function dwFindAlignment()
+function dwFindAlignment(var)
 
 	if (dwIsChargen or dwIsDualClassing or var==1) and not (var==2) then
 	
@@ -625,7 +620,7 @@ function dwFindAlignment()
 
 end
 
-function dwFindRace()
+function dwFindRace(var)
 
     if (dwIsChargen or dwIsDualClassing or var==1) and not (var==2) then
 		if currentChargenRace then
@@ -646,7 +641,7 @@ end
 function dwFindDualClassData()
 
 --- returns (is_dualclassed[boolean],first_class[int],second_class_or_zero_if_inactive[int],OC kit[int])
-
+--- first class is the currently active class
 
 	if dwIsChargen then
 		return false,0,0,0
@@ -664,26 +659,24 @@ function dwFindDualClassData()
 	local char=characters[currentID]
 
 	if not char then
-		return false,0,0 -- fail gracefully
+		return false,0,0,0 -- fail gracefully
 	end
 
 	if not char.classlevel.second then
-		return false,0,0
+		return false,0,0,0
 	end
 	if char.classlevel.second.active then
-		return false,0,0
+		return false,0,0,0
 	end
-	local class_str=""
-	local _,_,first_class=string.find(char.classlevel.first.details,"{K=%d+,C=(%d+)}")
+	local _,_,oc_kit,first_class=string.find(char.classlevel.first.details,"{K=(%d+),C=(%d+)}")
 	first_class=tonumber(first_class)
-	local _,_,oc_kit,second_class=string.find(char.classlevel.first.details,"{K=(%d+),C=(%d+)}")
 	oc_kit=tonumber(oc_kit)
-	second_class=tonumber(second_class)
-	inactive_string=Infinity_GetString(%inactive_strref%)
-	if string.find(char.classlevel.second.details,inactive_string) then  --inactive
-		local second_class=0
+	local second_class=99
+	if string.find(char.classlevel.second.details,Infinity_FetchString(%inactive_strref%)) then  --inactive
+		second_class=0
 	else
-		local second_class=dwClassByName[class_str]
+		_,_,second_class=string.find(char.classlevel.second.details,"{K=%d+,C=(%d+)}")
+		second_class=tonumber(second_class)
 	end
 	return true,first_class,second_class,oc_kit
 
@@ -788,6 +781,9 @@ function dwFindPortraitMatch()
 	return dwPortraitLookup,dwPortraitLookupBackwards
 end
 
+function dwRecordChargenAlignment()
+	dwChargenAlignment=chargen.alignment[currentChargenAlignment].id
+end
 
 
 -- local functions
@@ -796,7 +792,9 @@ function dwClassKitByName(kittext)
 
 	local class,kit=0,0
 	if kittext then
-		_,_,kit,class=string.find(kittext,"K=(%d+),C=(%d+)")
+	--a certain delicacy is required to handle multiclass characters one of whose classes is kitted (specialist mages, mostly)
+		_,_,_,class=string.find(kittext,"{K=(%d+),C=(%d+)}[^}]*$") -- class should be from *last* entry
+		_,_,kit,_=string.find(kittext,"^[^}]*{K=(%d+),C=(%d+)}") -- kit should be from *first* entry
 	end
 	return tonumber(class),tonumber(kit)
 
