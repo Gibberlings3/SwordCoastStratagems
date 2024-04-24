@@ -886,3 +886,120 @@ BEGIN
 
 END
 
+
+///////////////////////////////////////////////////////////////////////
+/*
+document{data_hp_range}
+{
+Works out the minimum and maximum hit points for all classes for levels 1-40 and stores them in the arrays $class_hp_minimum(class level), $class_hp_maximum(class level), with class in uppercase. Barbarians are also included.
+
+At present this is *hard-coded*, on speed grounds: it will not allow for changes made to the HP tables.
+
+*/
+///////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_MACRO data_hp_range BEGIN
+	ACTION_TIME hp_timer BEGIN
+	LAF data_hp_range RET_ARRAY class_hp_minimum class_hp_maximum END
+	END
+END
+
+DEFINE_ACTION_FUNCTION data_hp_range//internal
+	RET_ARRAY class_hp_minimum class_hp_maximum
+BEGIN
+	ACTION_CLEAR_ARRAY class_hp_minimum
+	ACTION_CLEAR_ARRAY class_hp_maximum
+	// start with hardcoded versions
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY hp_hardcoded_array_dice BEGIN
+		MAGE => 4
+		FIGHTER => 10
+		CLERIC => 8
+		THIEF => 6
+		BARD => 6
+		PALADIN => 10
+		DRUID => 8
+		RANGER => 10
+		SORCERER => 4
+		MONK => 8
+		BARBARIAN => 12
+		FIGHTER_MAGE => 7
+		FIGHTER_CLERIC => 9
+		FIGHTER_THIEF => 8
+		CLERIC_MAGE => 6
+		CLERIC_THIEF => 7
+		MAGE_THIEF => 5
+		FIGHTER_DRUID => 9
+		CLERIC_RANGER => 9
+		FIGHTER_MAGE_CLERIC => 7
+		FIGHTER_MAGE_THIEF => 6
+	END	
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY hp_hardcoded_array_mod BEGIN
+		MAGE => 1
+		FIGHTER => 3
+		CLERIC => 2
+		THIEF => 2
+		BARD => 2
+		PALADIN => 3
+		DRUID => 2
+		RANGER => 3
+		SORCERER => 1
+		MONK => 2
+		BARBARIAN => 3
+		FIGHTER_MAGE => 2
+		FIGHTER_CLERIC => 2
+		FIGHTER_THIEF => 2
+		CLERIC_MAGE => 1
+		CLERIC_THIEF => 3
+		MAGE_THIEF => 1
+		FIGHTER_DRUID => 2
+		CLERIC_RANGER => 2
+		FIGHTER_MAGE_CLERIC => 2
+		FIGHTER_MAGE_THIEF => 2
+	END	
+	// now process hpclass
+	COPY_EXISTING - "hpclassq.2da" nowhere
+		LPF 2da_read RET_ARRAY hpclass_rows=rows hpclass_array=array END
+		PHP_EACH hpclass_rows AS row=>discard BEGIN
+			TO_UPPER row
+			SPRINT file $hpclass_array("%row%" "TABLE")
+			PATCH_IF !VARIABLE_IS_SET $sfo_reserved_hp_data("%file%" "dice") BEGIN
+				INNER_ACTION BEGIN
+					COPY_EXISTING - "%file%.2da" nowhere
+						READ_2DA_ENTRY 0 1 4 sides
+						SET $sfo_reserved_hp_data("%file%" "dice")=sides
+						READ_2DA_ENTRY 10 3 4 mod
+						SET $sfo_reserved_hp_data("%file%" "mod")=mod
+					IF_EXISTS
+				END
+			END
+			PATCH_IF VARIABLE_IS_SET $sfo_reserved_hp_data("%file%" "dice") BEGIN
+				SET $hp_hardcoded_array_dice("%row%")=$sfo_reserved_hp_data("%file%" "dice")
+				SET $hp_hardcoded_array_mod("%row%")=$sfo_reserved_hp_data("%file%" "mod")
+			END
+		END	
+	IF_EXISTS
+	// now work out range
+	ACTION_PHP_EACH hp_hardcoded_array_dice AS class=>dice BEGIN
+		OUTER_SET mod=$hp_hardcoded_array_mod("%class%")
+		ACTION_MATCH "%class%" WITH
+		MAGE SORCERER BEGIN
+			OUTER_SET dicemax=10
+		END
+		DEFAULT
+			OUTER_SET dicemax=9
+		END
+		OUTER_FOR (level=1;level<=dicemax;++level) BEGIN
+			OUTER_SET $class_hp_minimum("%class%" "%level%")=level
+			OUTER_SET $class_hp_minimum("%class%" "%level%")=level*dice
+		END
+		OUTER_FOR (level=dicemax+1;level<=40;++level) BEGIN
+			OUTER_SET $class_hp_minimum("%class%" "%level%")=( level - dicemax )* mod + dicemax
+			OUTER_SET $class_hp_minimum("%class%" "%level%")=( level - dicemax )* mod + dicemax*dice
+		END
+	END
+
+
+
+
+
+END
