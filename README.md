@@ -1,7 +1,8 @@
 # SwordCoastStratagems
 Sword Coast Stratagems (SCS) adds over 130 optional components to Baldur's Gate: Enhanced Edition, Baldur's Gate II: Enhanced Edition, Baldur's Gate II: Throne of Bhaal, Baldur's Gate Trilogy, mostly focused around improving monster AI and encounter difficulties, but also including cosmetic and ease-of-use components, tweaks to abilities or spells.
 
-PLEASE NOTE: 
+**PLEASE NOTE: **
 
-1) I make no attempt to keep this repository in an installable state, and bug reports on unreleased commits are not useful to me.
-2) I would vastly prefer to receive bugfixes and translations on the forums rather than by pull request. The latter tends to mess with my workflow, which is mostly offline.
+1) This repository is purely for archival purposes, and my workflow happens offline, with updates being pushed to the repository only when a new release is made. SCS is not a collaborative project and I do not accept proposed fixes or changes via PR. If you want to report bugs or suggest fixes, please do so at the Gibberlings 3 forums. The only exception to this is translation updates, and only when those updates just modify files in the lang/[your_language] file, i.e. do not attempt to update setup-stratagems.tp2.
+
+2) I make no attempt to keep the actual repository in a working state. Download only from the official releases.
