@@ -1,0 +1,593 @@
+DEFINE_ACTION_FUNCTION leveller_2 BEGIN
+
+	LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_SPELLS RET stat_ind END
+	LAF resolve_splprot_entry INT_VAR stat=IDS_OF_SYMBOL (stats LEVEL) val="-1" STR_VAR relation=equal description="LEVEL=n" RET splprot_number=value END
+
+	// data
+	LAF 2da_read STR_VAR file=xplevel.2da RET_ARRAY xplevel_array=array END
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_array=array END
+	LAF 2da_extract_array STR_VAR array=kitlist_array domain=KITIDS RET_ARRAY kitids_array=array END
+	OUTER_SET $kitids_array("0")=0
+	OUTER_SET $kitids_array("16384")=0
+
+	// temporary dual-class icon
+	
+	OUTER_SPRINT string @55
+	LAF resolve_statdesc STR_VAR bam="****" string RET dual_class_stat=stat_num END
+
+	// remove known/memorized spells (necessary b/c people can class-change into shaman or sorcerer)
+	
+	LAF remove_joinable_spells INT_VAR remove_known=1 remove_memorized=1 END
+
+
+	// setup general detection
+	LAF ui_detect_class_kit END
+
+	// sort out LUA changes
+	
+	INCLUDE "%MOD_FOLDER%/%component_loc%/leveller_lua.tph"
+	LAF leveller_lua END
+
+	// handle rangers' choice of favored enemy at level zero
+
+	LAF rechoose_ranger_favored_enemy STR_VAR levels=0 END
+
+
+	// sort out resources
+	
+	LAF make_levelling_resources END
+	LAF apply_resources_to_kits END
+	LAF run STR_VAR file=customise_2 END
+	
+	// sort out mage spellbooks
+	
+	LAF run STR_VAR file=mage_spell_choices_2 END
+	
+	// sort out thief skills
+	
+	LAF run STR_VAR file=handle_thieves END
+
+	// sort out NPCs
+	
+
+    COPY_EXISTING_REGEXP - GLOB ~.*\.cre~ nowhere
+		PATCH_TRY
+			SPRINT filename "%SOURCE_RES%"
+			READ_ASCII DEATHVAR dv (0x20) NULL
+			TO_LOWER dv
+			PATCH_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN
+            PATCH_MATCH "%filename%" WITH
+            cebear01 ttbran ttimoen ttjaheir ttminsc ttxan arkani cander deder mordai osprey charbase aerbod01 BEGIN
+            END
+            DEFAULT
+				SPRINT $pc_list(~%filename%~) ""
+            END
+        END
+		WITH DEFAULT
+			LPF regexp_warning STR_VAR parent=NPCs_for_levelling END
+		END
+    BUT_ONLY
+    OUTER_SET initial=0 // this is for the innate-ability remapper
+    ACTION_CLEAR_ARRAY cre_scripts_handled_already  
+    ACTION_PHP_EACH pc_list AS creature=>discard BEGIN
+		OUTER_SET script_only=VARIABLE_IS_SET $pc_script_only("%creature%")
+        LAF handle_cre_file_for_levelling INT_VAR script_only STR_VAR creature RET script_override END
+		OUTER_SPRINT $cre_scripts_handled_already("%script_override%") ""
+     //   LAF remove_known_innate_spells STR_VAR creature END
+    END
+	
+	// Imoen needs to be high enough level to get her mage levels back
+	ACTION_IF is_bg2 BEGIN
+		APPEND "m_dw_lvd.lua" "dwLevellerDualClass['imoen'].final_xp=90000"
+		APPEND "m_dw_lvd.lua" "dwLevellerDualClass['imoen2'].final_xp=90000"
+	END
+	
+	// bespoke fix - Imoen shouldn't run away till she's levelled
+	
+	COPY_EXISTING "imoen.bcs" override
+		DECOMPILE_AND_PATCH BEGIN
+			REPLACE_TEXTUALLY "HP(Myself,1)" "HP(Myself,1)CheckStatGT(Myself,1,LEVEL)"
+		END
+    
+    // bespoke fix - dorn has his innates memorised
+    
+	ACTION_FOR_EACH cre IN dorn dorn2 dorn4 dorn6 BEGIN
+		COPY_EXISTING "%cre%.cre" override
+			REMOVE_KNOWN_SPELL "%BLACKGUARD_ABSORB_HEALTH%" "%ASSASSIN_POISON%" "%BLACKGUARD_AURA_OF_DESPAIR%" 
+			REMOVE_MEMORIZED_SPELL "%BLACKGUARD_ABSORB_HEALTH%" "%ASSASSIN_POISON%" "%BLACKGUARD_AURA_OF_DESPAIR%" 
+		BUT_ONLY
+		IF_EXISTS
+	END
+
+	// on SoD, need to add the aulel spell to the initial join-party script
+	
+	COPY_EXISTING "bdintro.bcs" override
+		DECOMPILE_AND_PATCH BEGIN
+			REPLACE_TEXTUALLY ~ActionOverride(\([^,]*\),JoinPartyOverride())~ ~ApplySpellRES("dw#aulel",\1)ActionOverride(\1,JoinPartyOverride())~
+		END
+	IF_EXISTS
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION make_levelling_resources BEGIN
+
+	// core spell that sets creatures for levelling
+	// this spell is idempotent, don't be afraid of using it multiple times
+	
+	eff.make[dw#aulel]
+	[
+		m_opcode=187
+		m_target=2
+		m_timing=1
+		m_parameter1=1
+		m_variable_name:=dw#aulel
+	]
+	
+	spl.make[dw#aulel]
+	[
+		m.ab.add{}
+		// mark that this has been applied
+		m.ab_fx.add{s_opcode=177 s_target=2 s_parameter2=2 s_timing=1 s_resource:=DW#AULEL}
+		// remove flagged items
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=DW#AULE2}
+		//heal
+		m.ab_fx.add{s_opcode=17 s_target=2 s_timing=1 s_parameter1=100 s_parameter2=2}	
+		// hp=1
+		m.ab_fx.add{s_opcode=18 s_target=2 s_timing=1 s_parameter1=1 s_parameter2=1}
+		// reset CON
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=DW#AULE3}
+		// thac0=20
+		m.ab_fx.add{s_opcode=54 s_target=2 s_timing=1 s_parameter1=20 s_parameter2=1}
+		//saves=20 
+		PATCH_FOR_EACH opcode IN 33 34 35 36 37 BEGIN
+			m.ab_fx.add{s_opcode=opcode s_target=2 s_timing=1 s_parameter1=20 s_parameter2=1}		
+		END
+		// subrace spell (idempotent)
+		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_resource:=dwsubrc}
+		
+	]
+
+	// pure dw#dualc remover
+
+	spl.make[dw#duarm]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#dualc}
+	]
+
+	// remove dw#dualc on double-classed characters (i.e. catches dual-classed characters once they've dual-classed); remove customize; reduce hit points by 1
+	
+	spl.make[dw#aulrm]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=172 s_target=2 s_timing=1 s_resource:=dw#cust}
+		PATCH_FOR_EACH class IN FIGHTER_CLERIC FIGHTER_DRUID FIGHTER_MAGE FIGHTER_THIEF CLERIC_THIEF CLERIC_RANGER CLERIC_MAGE MAGE_THIEF BEGIN
+			m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class "%class%") s_parameter2=105 s_resource:=dw#duarm}
+		END
+		m.ab_fx.add{s_opcode=18 s_target=2 s_timing=1 s_duration=0 s_parameter1="-1" s_parameter2=0}
+		// only do this once
+		m.ab_fx.add{s_opcode=318 s_target=2 s_timing=9 s_resource:=dw#aulrm}
+	]	
+
+	// XP-setters
+	
+	// millions (note that these set, not just add)
+	// the odd double structure is because timing=9 shows up immediately on the character screen, but sticks around as an applied effect rather than boosting CRE-file XP
+	
+	spl.make[dwexp60]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=104 s_target=2 s_timing=9 s_parameter2=1}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dwexp60}
+		m.ab_fx.add{s_opcode=104 s_target=2 s_timing=1 s_parameter2=1}
+	]
+	
+	OUTER_FOR (n=1;n<10;++n) BEGIN
+		COPY_EXISTING "dwexp60.spl" "override/dwexp6%n%.spl"
+			LPF ALTER_EFFECT INT_VAR match_opcode=104 parameter1=n*1000000 END
+			LPF ALTER_EFFECT INT_VAR match_opcode=321 STR_VAR resource="%DEST_RES%" END
+	END
+	
+	// hundreds of thousands (these add)
+
+	OUTER_FOR (n=1;n<10;++n) BEGIN
+		COPY_EXISTING "dwexp60.spl" "override/dwexp5%n%.spl"
+			LPF ALTER_EFFECT INT_VAR match_opcode=104 parameter1=n*100000 parameter2=0 END
+			LPF ALTER_EFFECT INT_VAR match_opcode=321 STR_VAR resource="%DEST_RES%" END
+	END
+	
+	// tens of thousands (these add)
+
+	OUTER_FOR (n=1;n<10;++n) BEGIN
+		COPY_EXISTING "dwexp60.spl" "override/dwexp4%n%.spl"
+			LPF ALTER_EFFECT INT_VAR match_opcode=104 parameter1=n*10000 parameter2=0 END
+			LPF ALTER_EFFECT INT_VAR match_opcode=321 STR_VAR resource="%DEST_RES%" END
+	END
+
+	// thousands (these add)
+
+	OUTER_FOR (n=1;n<10;++n) BEGIN
+		COPY_EXISTING "dwexp60.spl" "override/dwexp3%n%.spl"
+			LPF ALTER_EFFECT INT_VAR match_opcode=104 parameter1=n*1000 parameter2=0 END
+			LPF ALTER_EFFECT INT_VAR match_opcode=321 STR_VAR resource="%DEST_RES%" END
+	END
+	
+END
+
+DEFINE_ACTION_FUNCTION apply_resources_to_kits BEGIN
+
+	LAF kit_clab_initialize END
+	ACTION_CLEAR_ARRAY all_clab_array
+	ACTION_FOR_EACH clab IN CLABBA01 CLABTH01 CLABFI01 CLABRN01 CLABPA01 CLABMA01 CLABPR01 CLABDR01 CLABSH01 BEGIN
+		OUTER_SPRINT $all_clab_array("%clab%") ""
+	END
+	
+	LAF 2da_read STR_VAR file=kitlist.2da RET_ARRAY kitlist_array=array kitlist_rows=rows END
+	ACTION_PHP_EACH kitlist_rows AS row=>discard BEGIN
+		OUTER_SPRINT clab $kitlist_array("%row%" ABILITIES)
+		OUTER_SPRINT $all_clab_array("%clab%") ""
+	END
+
+	ACTION_PHP_EACH all_clab_array AS clab=>discard BEGIN
+		ACTION_IF FILE_EXISTS_IN_GAME "%clab%.2da" && !RESOURCE_CONTAINS "%clab%.2da" "DW_AULEL" BEGIN
+			COPY_EXISTING "%clab%.2da" override
+				LPF 2da_read RET_ARRAY array END
+				SPRINT $array("DW_AULEL" "1") "AP_DW#AULRM"
+				LPF 2da_write STR_VAR array END
+		END
+	END
+
+
+
+
+END
+
+DEFINE_ACTION_FUNCTION handle_cre_file_for_levelling
+     INT_VAR script_only=0
+	 STR_VAR creature=""
+	 RET script_override
+BEGIN
+
+    COPY_EXISTING - "%creature%.cre" nowhere
+		LOOKUP_IDS_SYMBOL_OF_INT class class BYTE_AT 0x273
+		LPF cre_read_original_class RET original_class=value END
+		TO_UPPER original_class
+		PATCH_IF !("%original_class%" STR_EQ "none") && INDEX ("_" "%class%")<0 BEGIN
+			SPRINT original_class NONE
+		END
+		
+    // identify rangers
+	OUTER_SET is_ranger = ("%original_class%" STR_EQ "ranger" || "%class%" STR_EQ "ranger" || "%class%" STR_EQ "cleric_ranger")
+    // identify dualclass parameters
+	OUTER_SET level_original=0
+    ACTION_IF !("%original_class%" STRING_EQUAL_CASE none) BEGIN
+       OUTER_SET dualclass=1
+       // find final class & ensure dualclassing is legal
+       OUTER_SPRINT final_class ""
+       OUTER_WHILE "%class%" STR_CMP "" BEGIN
+          LAF return_first_entry STR_VAR list="%class%" separator="_" RET entry class=list END
+          ACTION_IF !("%entry%" STR_EQ "%original_class%") BEGIN
+                OUTER_SPRINT final_class "%entry%"
+          END
+       END
+       LAF make_dualclass_legal STR_VAR original_class final_class creature END
+       OUTER_SPRINT class "%final_class%"
+       // get original level; get kit; set new class; place icon
+       COPY_EXISTING "%creature%.cre" override
+			WRITE_BYTE 0x273 IDS_OF_SYMBOL ( class "%original_class%")
+			LPF ADD_CRE_EFFECT INT_VAR opcode=142 timing=9 target=2 parameter2=dual_class_stat STR_VAR effsource="DW#DUALC" END
+			level1=BYTE_AT 0x234
+			level2=BYTE_AT 0x235
+			READ_SHORT 0x244 bit1
+			READ_SHORT 0x246 bit2
+			READ_ASCII 0x280 dv (0x20) NULL
+			TO_LOWER dv
+			READ_LONG 0xc name_strref
+
+       BUT_ONLY
+       ACTION_MATCH "%original_class%" WITH
+       FIGHTER BEGIN
+          OUTER_SET level_original=level1
+       END
+       CLERIC BEGIN
+          ACTION_MATCH "%class%" WITH 
+          CLERIC_RANGER CLERIC_THIEF CLERIC_MAGE BEGIN
+             OUTER_SET level_original=level1
+          END
+          DEFAULT
+             OUTER_SET level_original=level2
+          END
+       END
+       DRUID THIEF RANGER BEGIN
+          OUTER_SET level_original=level2
+       END
+       MAGE BEGIN
+          ACTION_MATCH "%class%" WITH
+          CLERIC_MAGE BEGIN
+             OUTER_SET level_original=level2
+          END
+          DEFAULT
+             OUTER_SET level_original=level1
+          END
+       END
+       DEFAULT END
+		OUTER_SET final_class_id=IDS_OF_SYMBOL (class "%final_class%")
+	   OUTER_SPRINT this_record "dwLevellerDualClass['%dv%']={name=%name_strref%,disable=false,original_level=%level_original%, final_class=%final_class_id%}"
+	   APPEND "m_dw_lvd.lua" "%this_record%" UNLESS "'%dv%'"
+    END ELSE BEGIN
+       OUTER_SET dualclass=0
+    END
+    OUTER_SET level=0
+	ACTION_IF !script_only BEGIN
+		COPY_EXISTING "%creature%.cre" override
+			// mark for removal proficiencies in the appropriate range (don't just wipe all of them, we lose ToF subrace signals)
+			LPF FJ_CRE_EFF_V2 END
+			GET_OFFSET_ARRAY fx_arr CRE_V10_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN	
+				PATCH_IF LONG_AT (fx_off+0x8)=233 BEGIN
+					parameter2=LONG_AT (fx_off+0x18)
+					PATCH_IF parameter2>=89 && parameter2<=115 BEGIN
+						WRITE_ASCII (fx_off+0x8c) "DW#AULE2"
+					END
+				END
+			END
+			// level
+			READ_BYTE 0x234 level
+			WRITE_BYTE 0x234 0
+			//LPF ADD_CRE_EFFECT INT_VAR opcode=96 target=2 timing=9 parameter1=level parameter2=1 STR_VAR effsource="DW#AULE2" END
+			WRITE_BYTE 0x235 0
+			WRITE_BYTE 0x236 0
+			// hit points
+			
+			//READ_SHORT 0x24 hp
+			//WRITE_SHORT 0x24 0
+			//WRITE_SHORT 0x26 0
+			//LPF ADD_CRE_EFFECT INT_VAR opcode=18 target=2 timing=0 duration=9999999 parameter1=20 parameter2=1 STR_VAR effsource="DW#AULE2" END
+			
+			// XP
+			WRITE_LONG 0x18 0
+			// con 
+			LPF ADD_CRE_EFFECT INT_VAR opcode=10 target=2 timing=0 duration=9999999 parameter1=10 parameter2=1 STR_VAR effsource="DW#AULE3" END
+			// remove spells from sorcerers and shamans
+			PATCH_IF "%class%" STR_EQ "SHAMAN" || "%class%" STR_EQ "SORCERER" BEGIN
+				REMOVE_KNOWN_SPELLS
+			END
+			// thief skills+lore
+			WRITE_BYTE 0x45 0
+			FOR (offset=0x64;offset<=0x6a;++offset) BEGIN
+				WRITE_BYTE offset 0
+			END
+			// spells			
+			REMOVE_MEMORIZED_SPELLS
+			// mark to autogain spells (it's harmless to give it to everyone and it makes things easier for the customization tool)
+			LPF ADD_CRE_EFFECT INT_VAR opcode=328 special=1 target=1 timing=9 parameter2=stat_ind STR_VAR effsource="DW#AUSP" END
+			// ranger profs
+			PATCH_IF is_ranger BEGIN
+				SET_BG2_PROFICIENCY PROFICIENCY2WEAPON 2
+			END
+			// custom spells
+			PATCH_MATCH "%creature%" WITH
+			"wilson.*" BEGIN END // Wilson the bear can't be customised
+			DEFAULT
+				ADD_MEMORIZED_SPELL "dw#cust" #0 innate
+			END
+		BUT_ONLY
+	
+
+	END
+
+    // script
+
+  
+    LAF handle_cre_script_for_levelling INT_VAR level STR_VAR creature original_class final_class RET script_override END
+
+
+END
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///
+///   Make required changes to the creature script
+///
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION handle_cre_script_for_levelling
+     INT_VAR level=0
+	 STR_VAR creature=""
+             original_class=""
+             final_class=""
+	 RET script_override
+BEGIN
+   // get rid of any levelling content in the existing override script;
+    // check wildmage status
+
+    COPY_EXISTING - "%creature%.cre" nowhere
+        READ_ASCII 0x248 script_override
+		READ_ASCII 0x2cc dialog
+        TO_UPPER script_override
+		is_wildmage=LONG_AT 0x244=32768
+    ACTION_IF FILE_EXISTS_IN_GAME "%script_override%.bcs" && !VARIABLE_IS_SET $cre_scripts_handled_already("%script_override%") BEGIN // done it already?
+			OUTER_SPRINT $cre_scripts_handled_already("%script_override%") ""
+			// strip XP-increasing content
+			LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~ChangeStat(Myself,XP~ END
+			LAF DELETE_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~AddXPObject(Myself~ END
+			// prevent L0 characters from gaining XP
+<<<<<<<< .../stratagems-inline/leveller.baf
+IF
+	// if hostile, set level (will be a bit heuristic where NPCs have multiple levels)
+	CheckStat(Myself,0,LEVEL)
+	Allegiance(Myself,ENEMY)
+THEN
+	RESPONSE #100
+		ChangeStat(Myself,LEVEL,%level%,SET)
+		Continue()
+END
+
+IF
+	InPartyAllowDead(Myself)
+	!Global("dw#aulel","LOCALS",1) // apply setup spell if not done already (for safety)
+THEN
+	RESPONSE #100
+		ApplySpellRES("dw#aulel",Myself)
+		Continue()
+END
+
+IF
+	CheckStat(Myself,0,LEVEL)
+	CheckStatGT(Myself,0,XP)
+THEN
+	RESPONSE #100
+		ChangeStat(Myself,XP,0,SET)
+		Continue()
+END
+>>>>>>>>
+			LAF extend INT_VAR inline=1 STR_VAR script="%script_override%" top=leveller END
+			
+			
+			ACTION_IF is_wildmage BEGIN
+				OUTER_SET strref=RESOLVE_STR_REF (@45)
+<<<<<<<< .../stratagems-inline/wildmage.baf
+IF
+   !Global("wildmage_message","LOCALS",1)
+   InPartyAllowDead(Myself)
+THEN
+	RESPONSE #100
+		 SetGlobal("wildmage_message","LOCALS",1)
+		 DisplayStringHead(Myself,%strref%)
+		 Continue()
+END
+>>>>>>>>
+				LAF extend INT_VAR inline=1 STR_VAR script="%script_override%" top=wildmage END
+			END // end of is_wildmage
+			
+			// introduce a very short pause into ToB NPC conversations, so levelling script has a chance to run after the Fate Spirit summons them
+
+//			LAF ALTER_SCRIPT_BLOCK STR_VAR script="%script_override%" match=~Summoned~ match1=~StartDialogNoSet(Player1)~  patch=wait_for_autolevel END
+
+			// end of general stripdown
+
+			ACTION_IF !("%original_class%" STR_EQ none) BEGIN
+				ACTION_MATCH "%final_class%" WITH
+				MAGE CLERIC FIGHTER THIEF RANGER DRUID BEGIN
+					OUTER_SET dualclass_id=IDS_OF_SYMBOL (class "%final_class%")
+				END
+				DEFAULT
+					OUTER_SET dualclass_id=0
+				END
+				OUTER_SPRINT string1 (AT dualclass_id)
+				OUTER_SPRINT string2 @7
+				OUTER_SPRINT string "%string1% %string2%"
+				OUTER_SET strref=RESOLVE_STR_REF ("%string%")
+
+	<<<<<<<< .../stratagems-inline/dualclass.baf
+	IF
+	 !Global("dual_class_message","LOCALS",1)
+	 InParty(Myself)
+	THEN
+		RESPONSE #100
+			 SetGlobal("dual_class_message","LOCALS",1)
+			 SetGlobal("dw_dualclass_id","LOCALS",%dualclass_id%)
+			 DisplayStringHead(Myself,%strref%)
+			 Continue()
+	END
+	>>>>>>>>
+				LAF extend INT_VAR inline=1 STR_VAR script="%script_override%" top=dualclass END
+
+			END
+
+	END
+	COPY_EXISTING "%dialog%.dlg" override
+		DECOMPILE_AND_PATCH BEGIN
+			PATCH_IF INDEX_BUFFER ("dw#aulel")<0 BEGIN
+				REPLACE_TEXTUALLY "ActionOverride(\([^,]*\),JoinParty())" ~ApplySpellRES("dw#aulel",\1)SmallWait(1)ActionOverride(\1,DW_JP_PLACEHOLDER)~
+				REPLACE_TEXTUALLY "JoinParty()" ~ApplySpellRES("dw#aulel",Myself)SmallWait(1)JoinParty()~
+				REPLACE_TEXTUALLY "DW_JP_PLACEHOLDER" "JoinParty()"
+			END
+		END
+	IF_EXISTS
+
+END
+
+/////////////////////////////////////////////////////////////////////
+/// Adjust dual-classing requirements so that the current character is legal 
+/// as a dual-class character
+////////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_dualclass_legal 
+	INT_VAR adjust_2das=1
+	STR_VAR original_class=""
+			original_kit=""
+			final_class=""
+			creature=""
+BEGIN
+	ACTION_TO_UPPER original_class
+	ACTION_TO_UPPER final_class
+	OUTER_PATCH "" BEGIN
+		
+	END
+	LAF 2da_read STR_VAR file=abdcscrq.2da RET_ARRAY source_array=array END 
+	LAF 2da_read STR_VAR file=abdcdsrq.2da RET_ARRAY dest_array=array END
+	OUTER_SET source_array_changed=0
+	OUTER_SET dest_array_changed=0
+	COPY_EXISTING "%creature%.cre" override
+		LOOKUP_IDS_SYMBOL_OF_INT original_kit kit LONG_AT 0x244
+		TO_UPPER original_kit
+		PATCH_DEFINE_ASSOCIATIVE_ARRAY abil_loc BEGIN
+			STR=>0x238
+			INT=>0x23a
+			WIS=>0x23b
+			DEX=>0x23c
+			CON=>0x23d
+			CHR=>0x23e
+		END
+		PHP_EACH abil_loc AS abil=>loc BEGIN
+			val=BYTE_AT loc
+			val_changed=0
+			PATCH_IF $source_array("%original_class%" "MIN_%abil%")>val BEGIN
+				PATCH_IF adjust_2das BEGIN
+					SET $source_array("%original_class%" "MIN_%abil%")=val
+					source_array_changed=1
+				END ELSE BEGIN
+					val=$source_array("%original_class%" "MIN_%abil%")
+					val_changed=1
+				END
+			END
+			PATCH_IF VARIABLE_IS_SET $source_array("%original_kit%" "MIN_%abil%") && $source_array("%original_kit%" "MIN_%abil%")>val BEGIN
+				PATCH_IF adjust_2das BEGIN
+					SET $source_array("%original_kit%" "MIN_%abil%")=val
+					source_array_changed=1
+				END ELSE BEGIN
+					val=$source_array("%original_class%" "MIN_%abil%")
+					val_changed=1
+				END
+				
+			END
+			PATCH_IF $dest_array("%final_class%" "MIN_%abil%")>val BEGIN
+				PATCH_IF adjust_2das BEGIN
+					SET $dest_array("%final_class%" "MIN_%abil%")=val
+					dest_array_changed=1
+				END ELSE BEGIN
+					val=$dest_array("%final_class%" "MIN_%abil%")
+					val_changed=1
+				END
+			END
+			PATCH_IF val_changed BEGIN
+				WRITE_BYTE loc val
+			END
+		END
+	BUT_ONLY
+	ACTION_IF source_array_changed BEGIN
+		LAF 2da_write STR_VAR file=abdcscrq.2da array=source_array default="0" END
+	END
+	ACTION_IF dest_array_changed BEGIN
+		LAF 2da_write STR_VAR file=abdcdsrq.2da array=dest_array default="0" END
+	END
+END
+
+
+
+
+
+

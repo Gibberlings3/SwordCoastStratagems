@@ -1,0 +1,187 @@
+// mage spells need to pass through a wrap spell, partly because of MC kits and partly because we don't want them stripped away if a mage dual-classes
+
+DEFINE_ACTION_FUNCTION mage_spell_choices_2 BEGIN
+	
+	LAF kit_clab_initialize END
+	
+	// get splstate and splprot line
+	
+	LAF ds_resolve_stat STR_VAR id=AUTOLEVEL_SPELLS RET stat_ind END
+	LAF resolve_splprot_entry INT_VAR stat=152 val="-1" STR_VAR relation=equal RET splprot_entry=value END
+
+	
+	//make spell that applies it (and also removes any leftover bit of the wrapper for removing it)
+	spl.make[dw#ausp]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#ausrw}
+		m.ab_fx.add{s_opcode=328 s_special=1 s_target=2 s_timing=1 s_parameter2=stat_ind}
+	]
+
+	//make spell that removes it
+	spl.make[dw#ausrm]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=321 s_target=2 s_timing=1 s_resource:=dw#ausp}
+	]
+	
+	//make wrap that applies the remove spell on a 1-second delay
+
+	spl.make[dw#ausrw]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=4 s_duration=1 s_resource:=dw#ausrm}
+	]
+	
+	
+	// get relevant spell-level-to-caster-level data
+	LAM data_spells_by_level
+
+	// read in data
+	LAF ini_read STR_VAR file=spellchoices.ini location=data RET_ARRAY spellbook_array=array END
+
+	// make the core resources
+	ACTION_FOR_EACH type IN abjurer conjurer diviner enchanter illusionist invoker necromancer transmuter BEGIN
+		LAF spellbook_maker STR_VAR type END
+	END
+
+	// make other resources as needed
+	
+	LAF check_label STR_VAR label=dw-elementalist RET value END
+	ACTION_IF value BEGIN
+		ACTION_FOR_EACH type IN earth air fire water BEGIN
+			LAF spellbook_maker STR_VAR type END
+		END
+	END
+	
+	LAF check_label STR_VAR label=dw-force_mage RET value END
+	ACTION_IF value BEGIN
+		LAF spellbook_maker STR_VAR type=force_mage END
+	END
+	
+	// do the hardcoded clab allocations to bards
+	
+	LAF spellbook_apply STR_VAR type=enchanter clab=CLABBA01 class=bard END
+
+	// do the rest
+	
+	ACTION_CLEAR_ARRAY kit_spellbook_map
+	ACTION_CLEAR_ARRAY mage_clab_list
+	
+	OUTER_SPRINT $kit_spellbook_map("0") "generalist"
+	OUTER_SPRINT $mage_clab_list("CLABMA01") ""
+	
+	LAF 2da_read STR_VAR file=kitlist.2da rowname_column=ROWNAME RET_ARRAY kitlist_rows=rows kitlist_array=array END
+	ACTION_PHP_EACH kitlist_rows AS kit=>discard BEGIN
+		OUTER_SPRINT class $kitlist_array("%kit%" "CLASS")
+		ACTION_MATCH "%class%" WITH
+		5 BEGIN // bard - can just apply direct to the clab
+			OUTER_SPRINT clab $kitlist_array("%kit%" "ABILITIES")
+			LAF spellbook_apply STR_VAR type=enchanter clab class=bard END
+		END
+		1 7 10 13 14 17  BEGIN // mage - need to include in the wrap
+			LAF find_kit_spellbook_type STR_VAR kit RET type END
+			OUTER_SET id=$kitlist_array("%kit%" "KITIDS")
+			OUTER_SPRINT $kit_spellbook_map("%id%") "%type%"
+			ACTION_IF class=1 BEGIN // single class
+				OUTER_SPRINT clab $kitlist_array("%kit%" "ABILITIES")
+				OUTER_SPRINT $mage_clab_list("%clab%") ""
+			END
+		END
+		DEFAULT
+		END
+	END
+	
+	// assemble the wrap spells
+	
+	OUTER_SPRINT base $spellbook_array("filenames" "wrap")
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		CREATE spl "%base%%level%"
+			LPF add_basic_spell_ability END
+			PHP_EACH kit_spellbook_map AS kit=>type BEGIN
+				SPRINT base_here $spellbook_array("filenames" "%type%")
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=kit parameter2=splprot_entry STR_VAR resource="%base_here%%level%" END
+			END
+	END
+	
+	// apply them
+	
+	ACTION_PHP_EACH mage_clab_list AS clab=>discard BEGIN
+		LAF spellbook_apply STR_VAR clab type=wrap class=mage END
+	END
+	
+
+END
+
+DEFINE_ACTION_FUNCTION find_kit_spellbook_type
+	STR_VAR kit=""
+	RET type
+BEGIN
+	OUTER_SPRINT type generalist // default
+	ACTION_IF INDEX ("ELEMENTALIST" "%kit%")>=0 BEGIN
+		ACTION_FOR_EACH element IN air earth fire water BEGIN
+			ACTION_IF INDEX ("%element%" "%kit%")>=0 BEGIN
+				OUTER_SPRINT type "%element%"
+			END
+		END
+	END ELSE
+	ACTION_FOR_EACH school IN abjurer conjurer diviner enchanter illusionist invoker necromancer transmuter force_mage BEGIN
+		ACTION_IF INDEX ("%school%" "%kit%")>=0 BEGIN
+			OUTER_SPRINT type "%school%"
+		END
+	END
+END
+
+DEFINE_ACTION_FUNCTION spellbook_maker
+	STR_VAR type=""
+BEGIN
+	OUTER_SPRINT base $spellbook_array("filenames" "%type%")
+	OUTER_FOR (level=1;level<=9;++level) BEGIN
+		OUTER_SPRINT list $spellbook_array("%type%" "level%level%")
+		CREATE spl "%base%%level%"
+			LPF add_basic_spell_ability END
+			PATCH_IF "%type%" STR_EQ "generalist" BEGIN
+				LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=1 parameter1=RESOLVE_STR_REF (class SORCERER) parameter2=105 STR_VAR resource="%base%%level%" END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=1 parameter1=stat_ind parameter2=111 STR_VAR resource="%base%%level%" END
+			WHILE "%list%" STR_CMP "" BEGIN
+				LPF return_first_entry STR_VAR separator="," list RET entry list END
+				SPRINT id "WIZARD_%entry%"
+				PATCH_IF VARIABLE_IS_SET "%id%" BEGIN
+					SPRINT resref "%%id%%"
+					LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=2 timing=1 STR_VAR resource="%resref%" END
+				END ELSE BEGIN
+					PATCH_WARN "mage_spell_choices: spellbook spell %id% does not exist"
+				END
+			END
+			LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 timing=1 STR_VAR resource="dw#ausrw" END
+	END
+
+END
+
+
+DEFINE_ACTION_FUNCTION spellbook_apply
+	STR_VAR type=""
+			clab=""
+			class=""
+BEGIN
+	OUTER_SPRINT base $spellbook_array("filenames" "%type%")
+	ACTION_TO_UPPER base
+	COPY_EXISTING "%clab%.2da" override
+		LPF 2da_read RET_ARRAY array END
+		FOR (level=1;level<=9;++level) BEGIN
+			caster_level="sfo_spell_level_sl_to_cl_%class%_%level%"
+			PATCH_IF caster_level<99 BEGIN
+				SPRINT $array("DW#SPELLBOOK" "%caster_level%") "AP_%base%%level%"
+			END
+		END
+		FOR (level=1;level<=18;++level) BEGIN
+			PATCH_IF !VARIABLE_IS_SET $array("DW#SPELLBOOK" "%level%") BEGIN
+				SPRINT $array("DW#SPELLBOOK" "%level%") "AP_DW#AUSRW"
+			END
+		END
+		LPF 2da_write STR_VAR array END
+	BUT_ONLY
+	IF_EXISTS
+	
+END

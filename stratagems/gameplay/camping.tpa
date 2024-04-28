@@ -9,6 +9,11 @@ BEGIN
 	
 	LAF 2da_read STR_VAR file=provisions_difficulty.2da location=data RET_ARRAY prov_diff_array=array END
 
+	// find if we're on hardcore mode
+	
+	LAF check_ini STR_VAR ini=provisions_reset_after_sea_voyage RET provisions_reset_after_sea_voyage=value END
+	LAF check_ini STR_VAR ini=provisions_reset_in_stronghold RET provisions_reset_in_stronghold=value END
+
 	// set the difficulty strings
 	
 	WITH_TRA "%sfo_tra_loc%/english/difficulty.tra"  "%sfo_tra_loc%/%LANGUAGE%/difficulty.tra" BEGIN 
@@ -117,15 +122,82 @@ BEGIN
 		LAF extend_area_script INT_VAR inline=1 STR_VAR area="%IceIsland%" top=ice_island_add END
 	END
 	
+	// replenishing supplies after a sea voyage
 
+	ACTION_IF provisions_reset_after_sea_voyage BEGIN
+	
+		ACTION_IF is_bg2 BEGIN
+			ACTION_FOR_EACH area IN 
+				AR1600 // Brynnlaw
+				AR2300 // Sahuagin city
+			BEGIN
+				LAF extend_area_script INT_VAR inline=1 STR_VAR area top=post_sea_voyage END
+			END
+		
+		END
+		
+		ACTION_IF is_bg BEGIN
+			LAF extend_area_script INT_VAR inline=1 STR_VAR area=IsleofBalduranS top=post_sea_voyage END		
+		END
+	
+	END
+	
+	// replenishing supplies from your stronghold
+	
+	ACTION_IF is_bg2 && provisions_reset_in_stronghold BEGIN
+	
+		// hideout
+		ACTION_FOR_EACH area IN AR0321 AR0322 AR0323 AR0324 BEGIN
+			LAF stronghold_conditional INT_VAR message=24010 STR_VAR area END
+		END
+		// temples
+		ACTION_FOR_EACH area IN AR0901 AR0902 AR0904 BEGIN
+			LAF stronghold_conditional INT_VAR message=24012 STR_VAR area END
+		END	
+		// Radiant Heart
+		LAF stronghold_conditional INT_VAR message=24013 STR_VAR area=AR0903 END
+		// de'Arnise keep
+		LAF stronghold_unconditional INT_VAR message=24011 STR_VAR area=AR1304 END
+		// ranger cabin
+		LAF stronghold_unconditional INT_VAR message=24014 STR_VAR area=AR1107 END
+		// Five Flagons Inn
+		ACTION_FOR_EACH area IN ar0522 ar0523 BEGIN
+			LAF stronghold_unconditional INT_VAR message=24015 STR_VAR area END
+		END
+		// druid grove
+		LAF extend_area_script INT_VAR inline=1 STR_VAR area=AR1901 top=druid_grove_provisions END
+	END
 	
 END
 
 
 
+DEFINE_ACTION_FUNCTION stronghold_conditional 
+	INT_VAR message=0
+	STR_VAR area=""
+BEGIN
 
+	OUTER_SET replenish_message=RESOLVE_STR_REF ((AT message))
+	LAF extend_area_script INT_VAR inline=1 STR_VAR area top=stronghold_conditional END
+	COPY_EXISTING - "%area%.are" nowhere
+		READ_ASCII 0x94 script
+	COPY_EXISTING "%script%.bcs" override
+		DECOMPILE_AND_PATCH BEGIN
+			REPLACE_TEXTUALLY ~SetAreaRestFlag(1)~ ~SetAreaRestFlag(1)SetGlobal("dw_rest_possible","MYAREA",1)~
+			REPLACE_TEXTUALLY ~SetAreaRestFlag(0)~ ~SetAreaRestFlag(1)SetGlobal("dw_rest_possible","MYAREA",0)~
+		END
 
+END
 
+DEFINE_ACTION_FUNCTION stronghold_unconditional 
+	INT_VAR message=0
+	STR_VAR area=""
+BEGIN
+
+	OUTER_SET replenish_message=RESOLVE_STR_REF ((AT message))
+	LAF extend_area_script INT_VAR inline=1 STR_VAR area top=stronghold_unconditional END
+
+END
 
 
 
@@ -428,4 +500,68 @@ THEN
 END
 
 >>>>>>>>
+
+<<<<<<<<.../stratagems-inline/post_sea_voyage.baf
+IF
+	Global("dw_post_sea_voyage","MYAREA",0)
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		SetGlobal("dw_post_sea_voyage","MYAREA",1)
+		DisplayString(Player1,@24009)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/stronghold_conditional.baf
+IF
+	Global("dw_rest_possible","MYAREA",1)
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayString(Player1,%replenish_message%)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/stronghold_unconditional.baf
+IF
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayString(Player1,%replenish_message%)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+
+>>>>>>>>
+<<<<<<<<.../stratagems-inline/druid_grove_provisions.baf
+IF
+	Global("DruidStronghold","GLOBAL",1)
+	GlobalsLT("dw_supplies_count","dw_supplies_max")
+THEN
+	RESPONSE #100
+		DisplayString(Player1,@24016)
+		SetGlobal("dw_supplies_count","GLOBAL",0)
+		AddGlobals("dw_supplies_count","dw_supplies_max")
+		SetTokenGlobal("dw_supplies_count","GLOBAL","DW_SIGNAL_PROVISIONS_COUNT")
+		Continue()
+END
+
+
+>>>>>>>>
+
 

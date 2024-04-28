@@ -1,8 +1,6 @@
 DEFINE_ACTION_FUNCTION handle_thieves BEGIN
 
 	LAF make_label STR_VAR label=dw#thief_ui_tweak END
-	LAF ui_on_open_setup END
-	LAF ui_system_call_setup END
 	LAF modify_thief_skill_ui END
 	LAF make_thief_skill_spells END
 
@@ -15,89 +13,53 @@ DEFINE_ACTION_FUNCTION make_thief_skill_spells BEGIN
 	
 	LAF resolve_splprot_entry INT_VAR stat=IDS_OF_SYMBOL (stats XP) val="-1" STR_VAR relation=equal description="XP!=n" RET stat_ind=value END
 
-	// the delivery spells
-	
-	LAF 2daq_extract STR_VAR resref=XPLEVEL row=THIEF column=2 RET thief_level_2_xp=value END
-	
-	OUTER_FOR (number=0;number<=6;++number) BEGIN
-	
-		// primary delivery
-		spl.make[dwlvts%number%]
-		[
-			m.ab.add{}
-			m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class THIEF) s_parameter2=105 s_resource:=dwlvts%number%1}
-			PATCH_FOR_EACH class IN FIGHTER_THIEF MAGE_THIEF CLERIC_THIEF BEGIN
-				m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class %class%) s_parameter2=105 s_resource:=dwlvts%number%2}
-			END
-			m.ab_fx.add{s_opcode=326 s_target=3 s_timing=1 s_parameter1=IDS_OF_SYMBOL (class FIGHTER_MAGE_THIEF) s_parameter2=105 s_resource:=dwlvts%number%3}
-		]
-
-		// the secondary spells, which gate on XP (either = amount for next level, or =0) to apply only to the target creature
-
-		ACTION_FOR_EACH num_classes IN 1 2 3 BEGIN
-		spl.make[dwlvts%number%%num_classes%]
-		[
-			m.ab.add{}
-			m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=thief_level_2_xp*num_classes s_parameter2=stat_ind s_resource:=dwlvts%number%p}
-			m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_parameter1=0 s_parameter2=stat_ind s_resource:=dwlvts%number%p}
-		]
-
-		END
-
-	END
 
     // the payload spells (numbers match LUA id)
 
     // hide in shadows
-	spl.make[dwlvts4p]
+	spl.make[dwlvts4]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=275 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	]
     // move silently
-	spl.make[dwlvts3p]
+	spl.make[dwlvts3]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=59 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	]
     // detect illusion
-	spl.make[dwlvts5p]
+	spl.make[dwlvts5]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=276 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	] 
     // set traps
-	spl.make[dwlvts6p]
+	spl.make[dwlvts6]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=277 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	] 
     // find traps
-	spl.make[dwlvts2p]
+	spl.make[dwlvts2]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=91 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	] 
     // open locks
-	spl.make[dwlvts1p]
+	spl.make[dwlvts1]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=90 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	] 
 	// pick pockets
-	spl.make[dwlvts0p]
+	spl.make[dwlvts0]
 	[
 		m.ab.add{}
 		m.ab_fx.add{s_opcode=92 s_target=2 s_timing=9 s_parameter1=5 s_parameter2=0}
 	]
 	
-	/*
-	OUTER_FOR (number=0;number<=6;++number) BEGIN
-		COPY_EXISTING "dwlvts%number%p.spl" override
-			// block if already past XP=0
-			LPF ADD_SPELL_EFFECT INT_VAR insert_point=0 opcode=318 target=2 timing=0 parameter1=0 parameter2=stat_ind duration=1 STR_VAR resource="%SOURCE_RES%" END
-	END
-	*/
+
 
 
 END
@@ -152,7 +114,12 @@ DEFINE_ACTION_FUNCTION modify_thief_skill_ui BEGIN
 	// edit functions into menu
 	
 	COPY_EXISTING "ui.menu" override
-		LPF UI_alter_object STR_VAR object=CHARGEN_PROFICIENCIES object_type=menu patch=thief_sub END
+		PATCH_IF is_iwd BEGIN
+			SPRINT object LEVELUP_PROFICIENCIES
+		END ELSE BEGIN
+			SPRINT object CHARGEN_PROFICIENCIES
+		END
+		LPF UI_alter_object STR_VAR object object_type=menu patch=thief_sub END
 
 END
 
@@ -193,19 +160,33 @@ dw_starting_thief_skills_kit={}
 
 function dw_thiefskill_initialize()
 
-	xp=characters[currentID].classlevel.first.xp
 	dw_thief_skill={}
 	if not dw_thief_extra then
-		if (dwIsChargen or dwIsDualclassing or (xp>0)) then
+		if (dwIsChargen or dwIsDualclassing) then
 			true_start=0
 		else
-			class,kit=dwFindClassKit()
-			if dw_starting_thief_skills_kit[kit] then
-				true_start=dw_starting_thief_skills_kit[kit] 
-			elseif dw_starting_thief_skills_class[class] then
-				true_start=dw_starting_thief_skills_class[class]
-			else
+			portrait_table=dwFindPortraitMatch()
+			portrait_slot=portrait_table[currentID]
+
+			if not dw_first_level_profs then
+				dw_first_level_profs=true
+				for	k,prof in pairs (chargen.proficiency) do
+					if (prof.value>0) and (prof.id>=89) and (prof.id<=109) then
+						dw_first_level_profs=false
+					end
+				end	
+			end
+			if not dw_first_level_profs then
 				true_start=0
+			else
+				class,kit=dwFindClassKit()
+				if dw_starting_thief_skills_kit[kit] then
+					true_start=dw_starting_thief_skills_kit[kit] 
+				elseif dw_starting_thief_skills_class[class] then
+					true_start=dw_starting_thief_skills_class[class]
+				else
+					true_start=0
+				end
 			end
 		end
 		if true_start > chargen.extraSkillPoints then
@@ -314,12 +295,11 @@ function dw_thief_skills_implement()
 		extra=dw_thief_skill[k]
 		while (extra and (extra > 0)) do
 			extra = extra - 5
-			eval='ReallyForceSpellRES("dwlvts'..id..'",Player1)'
-			C:Eval(eval)
+			eval='ReallyForceSpellRES("dwlvts'..id..'",Myself)'
+			C:Eval(eval,portrait_slot)
 		end
 	end
 	dw_thief_extra=nil
-	--createCharScreen:OnDoneButtonClick()
 
 
 

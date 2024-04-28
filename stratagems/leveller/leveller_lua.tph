@@ -1,0 +1,304 @@
+DEFINE_ACTION_FUNCTION leveller_lua BEGIN
+
+	OUTER_SET dc_signal=RESOLVE_STR_REF (@55)
+	
+	// generate lua data for XP
+
+	OUTER_SPRINT data ""
+
+	ACTION_FOR_EACH class IN FIGHTER CLERIC DRUID RANGER THIEF MAGE BEGIN
+		OUTER_SET classid=IDS_OF_SYMBOL (class "%class%")
+		OUTER_SPRINT data "%data%dwLevelXPMap[%classid%]={"
+		OUTER_FOR (level=1;level<=50;++level) BEGIN
+			ACTION_IF VARIABLE_IS_SET $xplevel_array("%class%" "%level%") BEGIN
+				OUTER_SET xp=$xplevel_array("%class%" "%level%")
+				OUTER_SPRINT data "%data%[%level%]=%xp%, "
+			END
+		END
+		OUTER_SPRINT data "%data%}%WNL%"
+	END
+	
+	// get XP data
+	LAF 2da_read STR_VAR file=startare.2da RET_ARRAY startare_array=array END
+	OUTER_SET xpmin_main=$startare_array("START_XP" "VALUE")
+	ACTION_IF xpmin_main<1000 && is_bg2 BEGIN 
+		OUTER_SET xpmin_main=89000
+	END
+	ACTION_IF VARIABLE_IS_SET $startare_array("START_MP_XP" "VALUE") BEGIN
+		OUTER_SET xpmin_expansion=$startare_array("START_MP_XP" "VALUE")
+		ACTION_IF xpmin_expansion<1000 BEGIN
+			ACTION_IF is_bg2 BEGIN
+				OUTER_SET xpmin_expansion=2500000
+			END ELSE
+			ACTION_IF is_iwd BEGIN
+				OUTER_SET xpmin_expansion=500000
+			END 
+		END
+	END ELSE BEGIN
+		OUTER_SET xpmin_expansion=0
+	END
+	ACTION_IF FILE_EXISTS_IN_GAME "startbp.2da" BEGIN
+		LAF 2da_read STR_VAR file=startbp.2da RET_ARRAY startare_array=array END
+		OUTER_SET xpmin_black_pits=$startare_array("START_XP" "VALUE")
+		ACTION_IF xpmin_black_pits<1000 && is_bg2 BEGIN
+			OUTER_SET xpmin_black_pits=500000
+		END
+	END ELSE BEGIN
+		OUTER_SET xpmin_black_pits=0
+	END
+	OUTER_SPRINT campaign_data ""
+	ACTION_IF FILE_EXISTS_IN_GAME "campaign.2da" BEGIN
+		LAF 2da_read STR_VAR file="campaign.2da" RET_ARRAY campaign_rows=rows campaign_array=array END
+		ACTION_PHP_EACH campaign_rows AS row=>discard BEGIN
+			OUTER_SPRINT startare $campaign_array("%row%" "STARTARE")
+			ACTION_IF FILE_EXISTS_IN_GAME "%startare%.2da" BEGIN
+				LAF 2da_read STR_VAR file="%startare%.2da" RET_ARRAY startare_array=array END
+				OUTER_SET xpmin=$startare_array("START_XP" "VALUE")
+				ACTION_IF xpmin<1000 BEGIN
+					ACTION_MATCH "%row%" WITH
+					SOA BEGIN
+						OUTER_SET xpmin=89000
+					END
+					TOB BEGIN
+						OUTER_SET xpmin=2500000
+					END
+					BP2 BEGIN
+						OUTER_SET xpmin=500000
+					END
+					SOD BEGIN
+						OUTER_SET xpmin=64000
+					END
+					DEFAULT
+					END
+				END
+				OUTER_SPRINT campaign_data "%campaign_data%dwLevellerCampaignXP['%row%']=%xpmin%%WNL%"
+			END
+		END
+	END
+
+	// get the 'Experience: ' and ': Level :' string
+	
+	COPY_EXISTING - enginest.2da nowhere
+	REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRY[ %TAB%]+\([0-9]+\)" BEGIN
+		GET_STRREF MATCH1 xp_string	
+	END
+	""
+	INNER_PATCH "%xp_string%" BEGIN
+		// get the line ending with <LEVEL>
+		REPLACE_EVALUATE "<CLASS>\(.*\)<LEVEL>" BEGIN
+			lvl_strref=RESOLVE_STR_REF ("%MATCH1%")
+		END
+		""
+		// get the line ending with <EXPERIENCE>
+		REPLACE_EVALUATE "\(.*^.*\)<EXPERIENCE>" BEGIN
+			exp_strref=RESOLVE_STR_REF ("%MATCH1%")
+		END
+		""
+		
+	END
+
+	// install functions
+	COPY ".../stratagems-inline/m_dw_lvd.lua" override EVALUATE_BUFFER
+	COPY ".../stratagems-inline/m_dw_lvf.lua" override EVALUATE_BUFFER
+
+END
+
+<<<<<<<<.../stratagems-inline/m_dw_lvd.lua
+dwLevellerDualClass={}
+dwLevelXPMap={}
+dwLevellerCampaignXP={}
+%data%
+%campaign_data%
+>>>>>>>>
+
+
+<<<<<<<<.../stratagems-inline/m_dw_lvf.lua
+
+function dwXPAdjust()
+	local dw_dual_class_flag=false
+	if dwAvoidRecursion or dwAvoidRecursionPortrait then return end
+	if not xpmin then
+		xpmin=0
+	end	
+	dwAvoidRecursion=true
+	my_id=currentID
+	-- get the portrait lookup data
+	local portraitLookup=dwFindPortraitMatch()
+	-- we need to turn off the select sounds temporarily, so log their current value
+	local panelID=7 -- the sound panel
+	local currentSelectSound=60 -- default
+	for i=58,60 do
+		if Infinity_GetOption(i,panelID) ~= 0 then
+			currentSelectSound=i
+		end
+	end
+	Infinity_ChangeOption(60, 1, panelID) -- turn select sounds off
+	for n=0,Infinity_GetNumCharacters() - 1 do
+		Infinity_OnPortraitLClick(n)
+		-- the reason for this step is to load everyone's current XP into memory. But doing so causes the selection sound for
+		-- everyone to play, which is annoying - hence we turn it off temporarily
+	end
+	local myportrait=portraitLookup[my_id]
+	-- change back to it 
+	Infinity_OnPortraitLClick(myportrait)
+	dwAvoidRecursion=false	
+	-- restore select sounds
+	Infinity_ChangeOption(currentSelectSound, 1, panelID)
+	-- find target XP
+
+	local xptarget=0
+	for id,n in pairs (portraitLookup) do
+		local classcount=0
+		local myxp=0
+		if characters[id].classlevel.third then --- triple multiclass
+			myxp=characters[id].classlevel.first.xp*3
+		elseif characters[id].classlevel.second then -- double multiclass or else dual-class
+		-- check the DC list
+			local found_match=false
+			for k,v in pairs (dwLevellerDualClass) do
+				if (characters[id].name==Infinity_FetchString(v.name) and not v.disabled) then
+					found_match=true
+				end
+			end		
+			if found_match then
+				myxp=characters[id].classlevel.first.xp
+			else
+				myxp=characters[id].classlevel.first.xp
+				local _,_,extract=string.find(characters[id].classlevel.second.details,Infinity_FetchString(%exp_strref%).."(%d+)")	
+				if extract then 
+					myxp=myxp+tonumber(extract)
+				end			
+			end
+		else
+			myxp=characters[id].classlevel.first.xp
+		end
+		if xptarget<myxp then
+			xptarget=myxp
+		end
+	end		
+	-- scale it down
+	xptarget=math.floor (xptarget * 0.9)
+	-- floor it
+	if (xpmin>xptarget) then
+		xptarget=xpmin
+	end
+	-- my own xp
+	-- if we're zero level, give up		
+	local _,_,level_string=string.find(characters[currentID].classlevel.first.details,Infinity_FetchString(%lvl_strref%).."(%d+)")
+	local level=tonumber(level_string)
+	if not (level==0) then
+		local myxptarget=xptarget
+		-- find my xp
+		local myxp=characters[currentID].classlevel.first.xp
+		if characters[currentID].classlevel.second then
+			if (not characters[currentID].classlevel.second.active) or characters[currentID].classlevel.second.xp<myxp then --dual-classed
+				-- check if on the dual-class list; if so, min xp needs to allow them to reactivate their class
+				-- check if has dual-class flag
+				if not dw_dual_class_flag then
+					for k,v in pairs(characters[currentID].statusEffects) do
+						if v.strRef==%dc_signal% then
+							dw_dual_class_flag=true
+						end
+					end
+				end
+				if dw_dual_class_flag then
+					found_match=false
+					for k,v in pairs (dwLevellerDualClass) do
+						if (characters[currentID].name==Infinity_FetchString(v.name) and not v.disabled) then
+							found_match=true
+							local level=v.original_level + 1
+							local minxp=dwLevelXPMap[v.final_class][level]
+							if myxptarget<minxp then
+								myxptarget=minxp
+							end
+						end
+					end
+				end
+				if not found_match then
+					_,_,extract=string.find(characters[currentID].classlevel.second.details,Infinity_FetchString(%exp_strref%).."(%d+)")				
+					if extract then
+						myxp=myxp + tonumber(extract)
+					end
+				end
+			else
+				myxp=myxp + characters[currentID].classlevel.second.xp
+			end
+		else
+			-- check if has dual-class flag
+			if not dw_dual_class_flag then
+				for k,v in pairs(characters[currentID].statusEffects) do
+					if v.strRef==%dc_signal% then
+						dw_dual_class_flag=true
+					end
+				end
+			end
+			if dw_dual_class_flag then
+				for k,v in pairs (dwLevellerDualClass) do
+					if characters[currentID].name==Infinity_FetchString(v.name) and not v.disabled then
+						class=dwFindClassKit()
+						myxptarget=dwLevelXPMap[class][v.original_level]
+					end
+				end	
+			end				
+		end
+		if characters[currentID].classlevel.third then
+			myxp=myxp + characters[currentID].classlevel.third.xp
+		end
+		-- compare
+		if (myxp+1000<myxptarget) then
+			d6,d5,d4,d3=dwGetXPDigits(myxptarget)
+			C:Eval('ApplySpellRES("dw#ausp",Myself)',myportrait) -- sets for automatic spellbook gain
+			C:Eval('ApplySpellRES("dwexp6'..d6..'",Myself)',myportrait)
+			C:Eval('ApplySpellRES("dwexp5'..d5..'",Myself)',myportrait)
+			C:Eval('ApplySpellRES("dwexp4'..d4..'",Myself)',myportrait)
+			C:Eval('ApplySpellRES("dwexp3'..d3..'",Myself)',myportrait)
+		end
+	end
+end
+
+
+
+function dwGetXPDigits(num)
+--- returns the millions, hundred-thousands, ten-thousands, and thousands digits of a number
+
+	local numstring=tostring(num+10000000)
+	local digit6=string.sub(numstring,2,2)
+	local digit5=string.sub(numstring,3,3)
+	local digit4=string.sub(numstring,4,4)
+	local digit3=string.sub(numstring,5,5)
+	return digit6,digit5,digit4,digit3
+
+
+end
+
+function dwLevellerSoA()
+
+	xpmin=%xpmin_main%
+
+end
+
+function dwLevellerToB()
+
+	xpmin=%xpmin_expansion%
+
+end
+
+function dwLevellerTBP()
+
+	xpmin=%xpmin_black_pits%
+
+end
+
+function dwLevellerCampaign(id)
+
+	xpmin=dwLevellerCampaignXP[id]
+	if dwLevellerDualClass['imoen'] then
+		dwLevellerDualClass['imoen'].disabled=(id=="BG1" or id=="SOD")
+	end
+	if dwLevellerDualClass['imoen2'] then
+		dwLevellerDualClass['imoen2'].disabled=(id=="BG1" or id=="SOD")
+	end
+
+
+end
+>>>>>>>>

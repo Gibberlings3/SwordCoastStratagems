@@ -1,0 +1,356 @@
+DEFINE_ACTION_FUNCTION customise_2
+BEGIN
+
+
+	// make the dialog
+
+	LAF make_customise_dialog END
+
+	array.new[class_levelling_scripts]
+	[
+	   bard=>dwnpc1b
+	   cleric=>dwnpc1c
+	   druid=>dwnpc1d
+	   fighter=>dwnpc1f
+	   mage=>dwnpc1m
+	   monk=>dwnpc1n
+	   paladin=>dwnpc1p
+	   ranger=>dwnpc1r
+	   shaman=>dwnpc1h
+	   sorcerer=>dwnpc1s
+	   thief=>dwnpc1t
+	   cleric_mage=>dwnpc2c
+	   cleric_ranger=>dwnpc2r
+	   cleric_thief=>dwnpc2t
+	   fighter_cleric=>dwnpc2f
+	   fighter_druid=>dwnpc2f
+	   fighter_mage=>dwnpc2f
+	   fighter_thief=>dwnpc2t
+	   mage_thief=>dwnpc2t
+	   fighter_mage_cleric=>dwnpc3f
+	   fighter_mage_thief=>dwnpc3t
+	]
+
+    COPY "%MOD_FOLDER%/%component_loc%/resource/dw#diffi.cre" "override/dw#custo.cre"
+        WRITE_ASCII 0x2cc dw#custo
+        WRITE_ASCII 0x248 dw#custo
+
+<<<<<<<< .../stratagems-inline/dw#custo.ssl
+BEGIN LOOP(scsvar||1;2;3;4;5;6)
+	IF
+			NumberOfTimesTalkedTo(0)
+			NextTriggerObject(LastSummonerOf(Myself))
+			Global("dw_dualclass_id","LOCALS",scsvar)
+	THEN
+		RESPONSE #100
+				 SetGlobal("dw_dualclass_id","LOCALS",scsvar)
+				 Continue()
+	END
+
+END LOOP
+IF
+	NumberOfTimesTalkedTo(0)
+THEN
+	RESPONSE #100
+		StartDialogueNoSet(LastSummonerOf(Myself))
+END
+>>>>>>>>
+	LAF ssl_to_bcs INT_VAR inline=1 STR_VAR script=dw#custo END
+
+	spl.make[dw#cust]
+	[
+		m_name:=@29
+		m_description:=@37
+		m_type:=Innate
+		m_ignore_dead_magic=1
+		m_ignore_wild_surge=1
+		m_castable_when_silenced=1
+		m_non_combat=1
+		m.ab.add{s_icon:=spwi110c s_target=5 s_location=4}
+		m.ab_fx.add{s_opcode=172 s_target=1 s_timing=1 s_resource:=dw#cust}
+		m.ab_fx.add{s_opcode=171 s_target=1 s_timing=1 s_resource:=dw#cust}
+		m.ab_fx.add{s_opcode=177 s_target=1 s_timing=1 s_parameter2=2 s_resource:=dw#custo}	
+	]
+
+	spl.make[dw#cust2]
+	[
+		m.ab.add{}
+		m.ab_fx.add{s_opcode=171 s_target=2 s_timing=1 s_resource:=dw#cust}
+	]
+
+	eff.make[dw#custo]
+	[
+		m_opcode=67
+		m_target=1
+		m_timing=1
+		m_resource:=dw#custo
+		m_resource2:=NONE // this is why we do it via an EFF rather than direct: we don't want the ugly gray cloud
+	]
+
+   // handle rangers' 2-weapon dots
+   
+   LAF customise_ranger_profs END
+
+END
+
+
+
+//////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION customise_helper_kit
+      STR_VAR class=""
+	  RET kit_exists
+BEGIN
+	OUTER_SET class_num=IDS_OF_SYMBOL (class "%class%")
+	COPY ".../stratagems-inline/blank" "%workspace%/customise_kit.d"
+	APPEND_OUTER "%workspace%/customise_kit.d"  "IF ~~ THEN BEGIN class_%class%_kit_selection SAY @19"
+      APPEND_OUTER "%workspace%/customise_kit.d"  "IF ~~ THEN REPLY @20 DO ~ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO kit_acknowledge"
+	  OUTER_SET kit_exists=0
+      COPY_EXISTING "kitlist.2da" "%workspace%"
+          READ_2DA_ENTRIES_NOW kitlist_entries 10
+          FOR (row=0;row<kitlist_entries;row+=1) BEGIN
+             READ_2DA_ENTRY_FORMER kitlist_entries row 8 class_num_here
+             PATCH_IF IS_AN_INT class_num_here BEGIN
+                 PATCH_IF class_num_here=class_num BEGIN
+					  SET kit_exists=1
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 9 kit_id
+                      SET kit_id=kit_id // forces hex string into INT
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 1 kit_ident
+                      READ_2DA_ENTRY_FORMER kitlist_entries row 3 kit_name
+                      PATCH_MATCH "%kit_ident%" WITH
+                      GRIZZLY_BEAR LATHANDER_X BEGIN
+                      END
+					  WILDMAGE BEGIN
+						strref=RESOLVE_STR_REF (@54)
+                        INNER_ACTION BEGIN
+                            APPEND_OUTER "%workspace%/customise_kit.d" "IF ~~ THEN REPLY #%strref% DO ~ActionOverride(LastSummonerOf(Myself),AddKit(%kit_id%))~ GOTO kit_acknowledge"
+                        END					  
+					  END
+                      DEFAULT
+                        INNER_ACTION BEGIN
+							ACTION_GET_STRREF kit_name string
+							OUTER_PATCH_SAVE string "%string%" BEGIN
+								REPLACE_TEXTUALLY "{[^}]+}" ""
+							END
+							OUTER_SET kit_name=RESOLVE_STR_REF("%string%")
+                            APPEND_OUTER "%workspace%/customise_kit.d" "IF ~~ THEN REPLY #%kit_name% DO ~ActionOverride(LastSummonerOf(Myself),AddKit(%kit_id%))~ GOTO kit_acknowledge"
+                        END
+                      END
+                 END
+             END
+          END
+      BUT_ONLY
+      APPEND_OUTER "%workspace%/customise_kit.d" "END"
+	  ACTION_IF kit_exists BEGIN
+		COPY "%workspace%/customise.d" "%workspace%" 
+			APPEND_FILE TEXT "%workspace%/customise_kit.d"
+	  END
+END
+
+DEFINE_ACTION_FUNCTION class_select
+   STR_VAR array=""
+BEGIN
+      ACTION_PHP_EACH "%array%" AS class_id=>class_num BEGIN
+         OUTER_SET class_name=$class_names("%class_num%")
+         OUTER_SPRINT class_script $class_levelling_scripts("%class_id%")
+         APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~~ THEN REPLY #%class_name% DO ~ChangeClass(LastSummonerOf(Myself),%class_num%)ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO  class_acknowledge~~~~~
+      END
+END
+
+DEFINE_ACTION_FUNCTION customise_ranger_profs BEGIN
+
+
+OUTER_SET prof_num=IDS_OF_SYMBOL (stats PROFICIENCY2WEAPON)
+
+CREATE spl dw2wpn2
+	LPF add_basic_spell_ability END
+	LPF ADD_SPELL_EFFECT INT_VAR opcode=233 target=2 timing=9 parameter1=2 parameter2=prof_num END
+
+CREATE spl dw2wpn0
+	LPF add_basic_spell_ability END
+	LPF ADD_SPELL_EFFECT INT_VAR opcode=321 target=2 timing=1 STR_VAR resource=dw2wpn2 END
+
+
+
+COPY_EXISTING "dw#custo.dlg" override
+  DECOMPILE_AND_PATCH BEGIN
+     REPLACE_EVALUATE "ChangeClass(LastSummonerOf(Myself),\([^)]*\))" BEGIN
+           PATCH_IF INDEX (RANGER "%MATCH1%")>=0 BEGIN
+              SPRINT spell dw2wpn2
+           END ELSE BEGIN
+              SPRINT spell dw2wpn0
+           END
+     END
+     ~ChangeClass(LastSummonerOf(Myself),%MATCH1%)ApplySpellRES("%spell%",LastSummonerOf(Myself))~
+  END
+
+END
+//////////////////////////////////////////////////////////////////////
+
+DEFINE_ACTION_FUNCTION make_customise_dialog BEGIN
+
+ACTION_DEFINE_ASSOCIATIVE_ARRAY dual_class_map BEGIN
+   1=>mage
+   2=>cleric
+   3=>fighter
+   4=>thief
+   5=>ranger
+   6=>druid
+END
+
+// get relevant data
+
+ACTION_CLEAR_ARRAY class_array
+ACTION_FOR_EACH class IN FIGHTER MAGE CLERIC THIEF BARD PALADIN DRUID RANGER SORCERER MONK SHAMAN FIGHTER_MAGE FIGHTER_CLERIC FIGHTER_THIEF CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER FIGHTER_MAGE_THIEF FIGHTER_MAGE_CLERIC BEGIN
+	OUTER_SPRINT $class_array("%class%") ""
+END
+
+LAF 2da_read STR_VAR file="clastext.2da" RET_ARRAY clastext_array=array END
+ACTION_PHP_EACH class_array AS class=>discard BEGIN
+	OUTER_SET strref=$clastext_array("%class%" MIXED)
+	ACTION_GET_STRREF strref string 
+	OUTER_PATCH_SAVE string "%string%" BEGIN
+		REPLACE_TEXTUALLY "{[^}]+}" ""
+	END
+	OUTER_SET $class_names("%class%")=RESOLVE_STR_REF ("%string%")
+END
+
+LAF 2da_read STR_VAR file="clsrcreq.2da" RET_ARRAY rows columns clsrcreq_array=array END
+ACTION_PHP_EACH rows AS class=>discard BEGIN
+	ACTION_IF VARIABLE_IS_SET $class_array("%class%") BEGIN
+		OUTER_SET allow_count=0
+		OUTER_SPRINT allow_string ""
+		ACTION_PHP_EACH columns AS race=>discard2 BEGIN
+			OUTER_SET val=$clsrcreq_array("%class%" "%race%")
+			ACTION_IF val BEGIN
+				OUTER_SPRINT allow_string "%allow_string%Race(LastSummonerOf(Myself),%race%)"
+				OUTER_SET allow_count +=1
+			END
+		END
+		OUTER_SET or_count=allow_count + 1
+		OUTER_SPRINT $allow_strings("%class%") ~OR(%or_count%)%allow_string%Global("dw_customise_no_race_restrict","GLOBAL",1)~
+	END
+
+END
+
+
+// create the dialog file and add the various acknowledgement blocks
+
+<<<<<<<<  .../stratagems-inline/customise.d
+BEGIN ~dw#custo~
+
+IF ~~ THEN BEGIN class_acknowledge
+     SAY @26
+     IF ~Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN DO ~ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO main_menu
+     IF ~!Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN DO ~ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO main_menu_norestrict
+END
+
+IF ~~ THEN BEGIN kit_acknowledge
+     SAY @27
+     IF ~Global("dw_dualclass_id","LOCALS",0)Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN GOTO main_menu
+     IF ~Global("dw_dualclass_id","LOCALS",0)!Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN GOTO main_menu_norestrict
+     IF ~!Global("dw_dualclass_id","LOCALS",0)~ THEN GOTO dual_menu
+END
+
+IF ~~ THEN BEGIN restrict_off
+	SAY @50
+	IF ~~ THEN GOTO main_menu_norestrict
+END
+
+IF ~~ THEN BEGIN restrict_on
+	SAY @51
+	IF ~~ THEN GOTO main_menu
+END
+>>>>>>>>
+
+COPY ".../stratagems-inline/customise.d" "%workspace%"
+
+// add the various blocks that list kits
+
+ACTION_PHP_EACH class_array AS class=>discard BEGIN
+	LAF customise_helper_kit STR_VAR class RET kit_exists END
+	OUTER_SET $kit_exists("%class%")=kit_exists
+END
+
+// build the main selection block
+
+COPY ".../stratagems-inline/blank" "%workspace%/customise_main.d"
+APPEND_OUTER "%workspace%/customise_main.d" ~~~~~IF ~%block_condition%~ THEN BEGIN %percentage%block_id%percentage% SAY @%block_say%%WNL%~~~~~
+APPEND_OUTER "%workspace%/customise_main.d" "%block_first_reply%%WNL%"
+//APPEND OUTER "%workspace%/customise_main.d" ~~~~~IF ~~ THEN REPLY @24 GOTO select_class~~~~~ 
+ACTION_PHP_EACH kit_exists AS class=>exists BEGIN
+	ACTION_IF exists BEGIN
+		ACTION_MATCH "%class%" WITH
+       FIGHTER BEGIN  // fighter - not monk
+          APPEND_OUTER "%workspace%/customise_main.d" "IF ~Class(LastSummonerOf(Myself),FIGHTER)!Class(LastSummonerOf(Myself),MONK)~ THEN REPLY @25 GOTO class_%class%_kit_selection"
+       END
+       MAGE BEGIN  // mage -  not sorcerer
+          APPEND_OUTER "%workspace%/customise_main.d" "IF ~Class(LastSummonerOf(Myself),MAGE)!Class(LastSummonerOf(Myself),19)~ THEN REPLY @25 GOTO class_%class%_kit_selection"
+       END
+       DRUID BEGIN// druid - not shaman
+          APPEND_OUTER "%workspace%/customise_main.d" "IF ~Class(LastSummonerOf(Myself),DRUID)!Class(LastSummonerOf(Myself),SHAMAN)~ THEN REPLY @25 GOTO class_%class%_kit_selection"
+       END
+       DEFAULT
+          APPEND_OUTER "%workspace%/customise_main.d" "IF ~Class(LastSummonerOf(Myself),%class%)~ THEN REPLY @25 GOTO class_%class%_kit_selection"
+       END		
+	END
+END
+APPEND_OUTER "%workspace%/customise_main.d" ~~~~~%block_last_reply%%WNL%IF ~~ THEN REPLY @22 DO ~ActionOverride(LastSummonerOf(Myself),SetGlobal("auto_levelled","LOCALS",0))DestroySelf()~ EXIT END~~~~~
+
+// append the various copies
+
+OUTER_SPRINT block_condition ~Global("dw_dualclass_id","LOCALS",0)Global("dw_customise_no_race_restrict","GLOBAL",0)~
+OUTER_SPRINT block_id main_menu 
+OUTER_SPRINT block_say "21"
+OUTER_SPRINT block_first_reply "IF ~~ THEN REPLY @24 GOTO select_class"
+OUTER_SPRINT block_last_reply ~~~~~IF ~~ THEN REPLY @47 DO ~SetGlobal("dw_customise_no_race_restrict","GLOBAL",1)~ GOTO restrict_off ~~~~~
+COPY "%workspace%/customise.d" "%workspace%"
+	APPEND_FILE TEXT "%workspace%/customise_main.d" EVALUATE_BUFFER
+
+OUTER_SPRINT block_condition ~Global("dw_dualclass_id","LOCALS",0)!Global("dw_customise_no_race_restrict","GLOBAL",0)~
+OUTER_SPRINT block_id main_menu_norestrict
+OUTER_SPRINT block_say "49"
+OUTER_SPRINT block_first_reply "IF ~~ THEN REPLY @24 GOTO select_class"
+OUTER_SPRINT block_last_reply ~~~~~IF ~~ THEN REPLY @48 DO ~SetGlobal("dw_customise_no_race_restrict","GLOBAL",0)~ GOTO restrict_on ~~~~~
+COPY "%workspace%/customise.d" "%workspace%"
+	APPEND_FILE TEXT "%workspace%/customise_main.d" EVALUATE_BUFFER
+
+
+
+OUTER_SPRINT block_condition ~!Global("dw_dualclass_id","LOCALS",0)~
+OUTER_SPRINT block_id dual_menu 
+OUTER_SPRINT block_say "30"
+OUTER_SPRINT block_first_reply "IF ~~ THEN REPLY @31 GOTO abandon_dual_class"
+OUTER_SPRINT block_last_reply ""
+COPY "%workspace%/customise.d" "%workspace%"
+	APPEND_FILE TEXT "%workspace%/customise_main.d" EVALUATE_BUFFER
+
+// create the abandon-dual-class block
+
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN BEGIN abandon_dual_class SAY @32"
+    OUTER_FOR (dualclass_id=1;dualclass_id<=6;dualclass_id+=1) BEGIN
+       OUTER_SPRINT final_class $dual_class_map("%dualclass_id%")
+       OUTER_SET final_class_num=IDS_OF_SYMBOL (class "%final_class%")
+       APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~Global("dw_dualclass_id","LOCALS",%dualclass_id%)~ THEN REPLY @33 DO ~SetGlobal("dw_dualclass_id","LOCALS",0)ActionOverride(LastSummonerOf(Myself),SetGlobal("dw_dualclass_id","LOCALS",0))ChangeClass(LastSummonerOf(Myself),%final_class%)ApplySpellRES("dw#duarm",LastSummonerOf(Myself))~ GOTO main_menu~~~~~
+    END
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN REPLY @34 GOTO dual_menu %WNL%END%WNL%"
+
+// create the class-selection block
+
+    APPEND_OUTER "%workspace%/customise.d" "IF ~~ THEN BEGIN select_class SAY @28%WNL%"
+    ACTION_PHP_EACH class_names AS class_id=>class_name BEGIN
+		 OUTER_SPRINT lc_class_id "%class_id%"
+		 ACTION_TO_LOWER lc_class_id
+         OUTER_SPRINT class_script $class_levelling_scripts("%lc_class_id%")
+		 OUTER_SPRINT allow_string $allow_strings("%class_id%")
+		 OUTER_SET reply_strref=class_name
+         APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~%allow_string%~ THEN REPLY #%reply_strref% DO ~ChangeClass(LastSummonerOf(Myself),%class_id%)ActionOverride(LastSummonerOf(Myself),AddKit(0))~ GOTO  class_acknowledge~~~~~
+    END
+	APPEND_OUTER "%workspace%/customise.d" ~~~~~IF ~Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN REPLY @46 GOTO main_menu %WNL%IF ~!Global("dw_customise_no_race_restrict","GLOBAL",0)~ THEN REPLY @46 GOTO main_menu_norestrict %WNL%END%WNL%~~~~~
+
+
+// compile
+
+COMPILE "%workspace%/customise.d"
+
+END
