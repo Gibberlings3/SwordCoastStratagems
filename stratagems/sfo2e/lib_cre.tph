@@ -1174,3 +1174,110 @@ BEGIN
 	END
 	WRITE_LONG 0x244 value
 END
+
+
+/////////////////////////////////////////////
+/*
+document{cre_delete_spells_of_type}
+{
+NOT a struct function.
+Deletes all spells of given type(s) in the CRE file. 'arguments' should be a space-separated (case-insensitive) list containing one or more of 'wizard', 'priest', or 'innate'
+
+If core_namespace_only=1, require spells to be in the SPPR/SPWI/SPIN/SPCL namespace.
+
+By default we delete both known and memorized spells. Set known=0 or memorized=0 to override.
+}
+
+*/
+///////////////////////////////////////////////////
+
+DEFINE_PATCH_FUNCTION cre_delete_spells_of_type
+	INT_VAR core_namespace_only=0
+			known=1
+			memorized=1
+	STR_VAR arguments=""
+BEGIN
+	// parse arguments
+	
+	PATCH_IF "%arguments%" STR_EQ "" BEGIN
+		PATCH_WARN "cre_delete_spells_of_type: argument is empty"
+	END
+	wizard=0
+	priest=0
+	innate=0
+	WHILE "%arguments%" STR_CMP "" BEGIN
+		LPF return_first_entry STR_VAR list="%arguments%" RET entry arguments=list END
+		TO_LOWER entry
+		PATCH_MATCH "%entry%" WITH
+		wizard priest innate BEGIN
+			SET "%entry%"=1
+		END
+		DEFAULT
+			PATCH_FAIL "Illegal argument %entry% in cre_delete_spells_of_type"
+		END
+	END
+	// main pass - memorized spells
+	PATCH_IF memorized BEGIN
+		any_memorized=0
+		GET_OFFSET_ARRAY info_arr CRE_V10_SPELL_MEM_INFO
+		PHP_EACH info_arr AS info_ind=>info_off BEGIN
+			type=SHORT_AT (0x6+info_off)
+			PATCH_IF (type=0 && wizard) || (type=1 && priest) || (type=2 && innate) BEGIN
+				GET_OFFSET_ARRAY2 spl_arr info_off CRE_V10_SPELL_MEM
+				PHP_EACH spl_arr AS spl_ind=>spl_off BEGIN
+					PATCH_IF core_namespace_only BEGIN
+						READ_ASCII spl_off init (4)
+						PATCH_MATCH "%init%" WITH 
+						SPPR SPWI SPIN SPCL BEGIN
+							proceed=1
+						END
+						DEFAULT
+							proceed=0
+						END
+					END ELSE BEGIN
+						proceed=1
+					END
+					PATCH_IF proceed BEGIN
+						WRITE_ASCII spl_off DWREMOVE
+						any_memorized=1
+					END
+				END	
+			END
+		END
+	END
+	// main pass - known spells
+	PATCH_IF known BEGIN
+		any_known=0
+		GET_OFFSET_ARRAY known_arr CRE_V10_KNOWN_SPELLS
+		PHP_EACH known_arr AS known_ind=>known_off BEGIN
+			type=SHORT_AT (0xa+known_off)
+			PATCH_IF (type=0 && wizard) || (type=1 && priest) || (type=2 && innate) BEGIN
+				PATCH_IF core_namespace_only BEGIN
+					READ_ASCII known_off init (4)
+					PATCH_MATCH "%init%" WITH 
+					SPPR SPWI SPIN SPCL BEGIN
+						proceed=1
+					END
+					DEFAULT
+						proceed=0
+					END
+				END ELSE BEGIN
+					proceed=1
+				END
+				PATCH_IF proceed BEGIN
+					WRITE_ASCII known_off DWREMOVE
+					any_known=1
+				END
+			END
+		END
+	END
+	// enact deletion
+	PATCH_IF any_memorized BEGIN
+		REMOVE_MEMORIZED_SPELL DWREMOVE
+	END
+	PATCH_IF any_known BEGIN
+		REMOVE_KNOWN_SPELL DWREMOVE
+	END
+
+
+END
