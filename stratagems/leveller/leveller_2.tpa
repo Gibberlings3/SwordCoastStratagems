@@ -10,6 +10,12 @@ DEFINE_ACTION_FUNCTION leveller_2 BEGIN
 	OUTER_SET $kitids_array("0")=0
 	OUTER_SET $kitids_array("16384")=0
 
+	
+	// read in the list of NPCs who don't get set to level zero
+	
+	LAF 2da_read STR_VAR file=level_zero_exclude.2da location=data case=lower RET_ARRAY exclude_array=rows END
+
+
 	// temporary dual-class icon
 	
 	OUTER_SPRINT string @55
@@ -17,7 +23,7 @@ DEFINE_ACTION_FUNCTION leveller_2 BEGIN
 
 	// remove known/memorized spells (necessary b/c people can class-change into shaman or sorcerer)
 	
-	LAF remove_joinable_spells INT_VAR remove_known=1 remove_memorized=1 END
+	LAF remove_joinable_spells INT_VAR remove_known=1 remove_memorized=1 STR_VAR exclude_array END
 
 
 	// setup general detection
@@ -107,6 +113,8 @@ DEFINE_ACTION_FUNCTION leveller_2 BEGIN
 
 	// on SoD, need to add the aulel spell to the initial join-party script
 	
+	
+	
 	COPY_EXISTING "bdintro.bcs" override
 		DECOMPILE_AND_PATCH BEGIN
 			REPLACE_TEXTUALLY ~ActionOverride(\([^,]*\),JoinPartyOverride())~ ~ApplySpellRES("dw#aulel",\1)ActionOverride(\1,JoinPartyOverride())~
@@ -152,6 +160,8 @@ DEFINE_ACTION_FUNCTION make_levelling_resources BEGIN
 		END
 		// subrace spell (idempotent)
 		m.ab_fx.add{s_opcode=326 s_target=2 s_timing=1 s_resource:=dwsubrc}
+		// should only be applied once (safety, and avoids problems at the start of SoD with rejoining characters)
+		m.ab_fx.add{s_opcode=318 s_target=2 s_timing=9 s_resource:=dw#aulel}
 		
 	]
 
@@ -257,12 +267,15 @@ DEFINE_ACTION_FUNCTION handle_cre_file_for_levelling
 BEGIN
 
     COPY_EXISTING - "%creature%.cre" nowhere
+		// find class
 		LOOKUP_IDS_SYMBOL_OF_INT class class BYTE_AT 0x273
+		// find original class, and wipe the 'original class' flag
 		LPF cre_read_original_class RET original_class=value END
 		TO_UPPER original_class
 		PATCH_IF !("%original_class%" STR_EQ "none") && INDEX ("_" "%class%")<0 BEGIN
 			SPRINT original_class NONE
 		END
+		LPF cre_delete_original_class END
 		
     // identify rangers
 	OUTER_SET is_ranger = ("%original_class%" STR_EQ "ranger" || "%class%" STR_EQ "ranger" || "%class%" STR_EQ "cleric_ranger")
@@ -328,29 +341,29 @@ BEGIN
     OUTER_SET level=0
 	ACTION_IF !script_only BEGIN
 		COPY_EXISTING "%creature%.cre" override
-			// mark for removal proficiencies in the appropriate range (don't just wipe all of them, we lose ToF subrace signals)
 			LPF FJ_CRE_EFF_V2 END
+			// make sure Ranger dual-wielding is present
+			PATCH_IF is_ranger BEGIN
+				SET_BG2_PROFICIENCY PROFICIENCY2WEAPON 2
+			END			
+			// mark for removal proficiencies in the appropriate range (don't just wipe all of them, we lose ToF subrace signals)
 			GET_OFFSET_ARRAY fx_arr CRE_V10_EFFECTS
 			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN	
 				PATCH_IF LONG_AT (fx_off+0x8)=233 BEGIN
 					parameter2=LONG_AT (fx_off+0x18)
+					PATCH_IF parameter2=114 && is_ranger BEGIN
+						WRITE_ASCII (fx_off+0x8c) "DW2WPN2"
+					END ELSE
 					PATCH_IF parameter2>=89 && parameter2<=115 BEGIN
 						WRITE_ASCII (fx_off+0x8c) "DW#AULE2"
-					END
+					END 
 				END
 			END
 			// level
 			READ_BYTE 0x234 level
 			WRITE_BYTE 0x234 0
-			//LPF ADD_CRE_EFFECT INT_VAR opcode=96 target=2 timing=9 parameter1=level parameter2=1 STR_VAR effsource="DW#AULE2" END
 			WRITE_BYTE 0x235 0
 			WRITE_BYTE 0x236 0
-			// hit points
-			
-			//READ_SHORT 0x24 hp
-			//WRITE_SHORT 0x24 0
-			//WRITE_SHORT 0x26 0
-			//LPF ADD_CRE_EFFECT INT_VAR opcode=18 target=2 timing=0 duration=9999999 parameter1=20 parameter2=1 STR_VAR effsource="DW#AULE2" END
 			
 			// XP
 			WRITE_LONG 0x18 0
@@ -366,10 +379,7 @@ BEGIN
 			END
 			// mark to autogain spells (it's harmless to give it to everyone and it makes things easier for the customization tool)
 			LPF ADD_CRE_EFFECT INT_VAR opcode=328 special=1 target=1 timing=9 parameter2=stat_ind STR_VAR effsource="DW#AUSP" END
-			// ranger profs
-			PATCH_IF is_ranger BEGIN
-				SET_BG2_PROFICIENCY PROFICIENCY2WEAPON 2
-			END
+
 			// custom spells
 			PATCH_MATCH "%creature%" WITH
 			"wilson.*" BEGIN END // Wilson the bear can't be customised

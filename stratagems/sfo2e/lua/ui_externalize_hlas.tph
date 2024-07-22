@@ -3,14 +3,18 @@ describe-library{
 Functions in this library develop an externalized version of the HLA (high-level ability) system, that permits (e.g.) gaining HLAs only every few levels, or various constraints on HLA availability.
 
 }
+brief-desc{externalize the HLA system to the UI}
 */
 
 /*
 document{ui_externalize_hlas}
 {
-This (idempotent) function sets up the HLA system to grant HLAs every few levels (starting with level min, and then after every step levels). In doing so it sets up an HLA
+This (idempotent) function sets up the HLA system to grant HLAs every few levels (starting with level min, and then after every step levels) and to externalize requirements for various HLAs. In doing so it sets up an HLA
 menu if (as in IWD or BG) none is active; it also removes the icon column from the BG2 HLA menu, since that requires multiple icons for applied powers that aren't really
-needed and which push the art requirements.
+needed and which push the art requirements.</p>
+<p>
+If activate_feats=0, the low-level feats are not enabled (only the other externalizations are enabled).
+</p>
 
 }
 */
@@ -19,132 +23,174 @@ needed and which push the art requirements.
 DEFINE_ACTION_FUNCTION ui_externalize_hlas 
 	INT_VAR min=0
 			step=0
+			activate_feats=1
 BEGIN
-VERBOSE
-  LAF check_label STR_VAR label=dw-hlas-externalized RET value END
-  ACTION_IF !value BEGIN
-    LAF make_label STR_VAR label=dw-hlas-externalized END
+	VERBOSE
+	LAF check_label STR_VAR label=dw-hlas-externalized RET value END
+	ACTION_IF !value BEGIN
+		LAF make_label STR_VAR label=dw-hlas-externalized END
 
-	WITH_TRA "%MOD_FOLDER%/%lua_loc%/lang/english/sfo_lua.tra" "%MOD_FOLDER%/%lua_loc%/lang/%LANGUAGE%/sfo_lua.tra" BEGIN
-		OUTER_SET point_string=RESOLVE_STR_REF (@499)
-		OUTER_SET default_description_string=RESOLVE_STR_REF (@500)
-	END
-	
-	// make hla files unique
-
-	LAF kit_baseline_lua END
-
-
-	// on IWD/BG, set up a UI and blank the luas; on BG2, edit the UI to remove the icon column
-	
-	ACTION_IF is_iwd BEGIN
-		LAF iwd_hla_menu END
-		LAF blank_luas END
-	END ELSE
-	ACTION_IF !is_bg2 BEGIN
-		ACTION_IF is_sod BEGIN
-			LAF sod_hla_menu END
-			LAF blank_luas END
-		END ELSE BEGIN
-			LAF bg_hla_menu END
-			LAF blank_luas END
-		END	
-	END ELSE BEGIN
-		LAF bg2_hla_menu END
-	END
-
-	
-	// install class/kit detection
-	
-	LAF ui_detect_class_kit END
+		WITH_TRA "%MOD_FOLDER%/%lua_loc%/lang/english/sfo_lua.tra" "%MOD_FOLDER%/%lua_loc%/lang/%LANGUAGE%/sfo_lua.tra" BEGIN
+			OUTER_SET point_string=RESOLVE_STR_REF (@499)
+			OUTER_SET default_description_string=RESOLVE_STR_REF (@500)
+		END
 		
-	// get the 'Level' strings
-	
-	COPY_EXISTING - "enginest.2da" nowhere
-		REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRYBRIEF[ %TAB][^0-9]*\([0-9]+\)" BEGIN
-			level_line_strref_brief="%MATCH1%"		
+		// make hla files unique
+
+		LAF kit_baseline_lua END
+
+
+		// on IWD/BG, set up a UI and blank the luas; on BG2, edit the UI to remove the icon column
+		
+		ACTION_IF is_iwd BEGIN
+			LAF iwd_hla_menu END
+			LAF blank_luas END
+		END ELSE
+		ACTION_IF !is_bg2 BEGIN
+			ACTION_IF is_sod BEGIN
+				LAF sod_hla_menu END
+				LAF blank_luas END
+			END ELSE BEGIN
+				LAF bg_hla_menu END
+				LAF blank_luas END
+			END	
+		END ELSE BEGIN
+			LAF bg2_hla_menu END
 		END
-		""
-		REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRY[ %TAB][^0-9]*\([0-9]+\)" BEGIN
-			level_line_strref="%MATCH1%"		
-		END
-		""
-	BUT_ONLY
-	OUTER_SET class_token_strref=RESOLVE_STR_REF ("<CLASS>")
-	OUTER_SET level_token_strref=RESOLVE_STR_REF ("<LEVEL>")
 
-	// install functions and data file
-	
-	ACTION_IF is_iwd BEGIN
-		OUTER_SPRINT iwd_only_line "Infinity_PopMenu()"
-	END ELSE BEGIN
-		OUTER_SPRINT iwd_only_line ""
-	END
-	
-	COPY ".../stratagems-inline/m_dw_hlf.lua" override EVALUATE_BUFFER
-	COPY ".../stratagems-inline/m_dw_hld.lua" override EVALUATE_BUFFER
-
-	// set up to allow hidden HLAs
-
-	LAF hide_hla_setup END
-	
-	// add the dummy HLA used for discarding
-	
-	LAF make_discard_hla END
-
-	
-	// alter CHARGEN_PROFICIENCIES to autoskip the Abilities page if you don't need it
-	
-	LAF skip_hla_menu END
-
-	// allow the HLA name/description to be overridden
-	
-	LAF override_hla_name_description_setup END
-	
-	// collect HLA threshold data and externalize
-	
-	COPY_EXISTING "lunumab.2da" override
-		LPF 2da_read RET_ARRAY rows lunumab_array=array END
-		LPF array_copy STR_VAR array=lunumab_array RET_ARRAY lunumab_array_new=array END
-		PHP_EACH rows AS row=>discard BEGIN
-			SET $lunumab_array_new("%row%" "FIRST_LEVEL")=2 // first level causes CHARGEN problems in HoW
-		END
-		LPF 2da_write STR_VAR array=lunumab_array_new default="0" END
-	BUT_ONLY
-
-	
-	// write the data to LUA
-
-	ACTION_CLEAR_ARRAY hla_threshold
-	ACTION_FOR_EACH class IN
-	fighter mage thief cleric druid ranger paladin sorcerer monk bard shaman
-	BEGIN
-		ACTION_TO_UPPER class
-		OUTER_SET class_num=IDS_OF_SYMBOL (class "%class%")
-		OUTER_SET thr=$lunumab_array("%class%" FIRST_LEVEL) 
-		OUTER_SPRINT line "['single']=%thr%, "
-		ACTION_IF VARIABLE_IS_SET $lunumab_array("MULTI2%class%" FIRST_LEVEL) BEGIN
-			OUTER_SET thr=$lunumab_array("MULTI2%class%" FIRST_LEVEL) 
-			OUTER_SPRINT line "%line%['double']=%thr%, "
-			ACTION_IF VARIABLE_IS_SET $lunumab_array("MULTI3%class%" FIRST_LEVEL) BEGIN
-				OUTER_SET thr=$lunumab_array("MULTI3%class%" FIRST_LEVEL) 
-				OUTER_SPRINT line "%line%['triple']=%thr%, "
+		
+		// install class/kit detection
+		
+		LAF ui_detect_class_kit END
+			
+		// get the 'Level' strings
+		
+		COPY_EXISTING - "enginest.2da" nowhere
+			REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRYBRIEF[ %TAB][^0-9]*\([0-9]+\)" BEGIN
+				level_line_strref_brief="%MATCH1%"		
 			END
-		END
-		OUTER_SPRINT $hla_threshold("%class_num%") "%TAB%[%class_num%]={%line%},%WNL%"
-	END
-	ACTION_SORT_ARRAY_INDICES hla_threshold NUMERICALLY
-	OUTER_SPRINT data ""
-	ACTION_PHP_EACH hla_threshold AS k=>v BEGIN
-		OUTER_SPRINT data "%data%%v%"
-	END
-	APPEND "m_dw_hld.lua" "dwHLAThreshold={%WNL%%data%}%WNL%%WNL%"
+			""
+			REPLACE_EVALUATE "STRREF_GUI_MIXED_EXPERIENCEENTRY[ %TAB][^0-9]*\([0-9]+\)" BEGIN
+				level_line_strref="%MATCH1%"		
+			END
+			""
+		BUT_ONLY
+		OUTER_SET class_token_strref=RESOLVE_STR_REF ("<CLASS>")
+		OUTER_SET level_token_strref=RESOLVE_STR_REF ("<LEVEL>")
 
-	// work out the low-level progression
-	
-	LAF set_basic_hla_progression INT_VAR min step END
-	
-  END
+		// install functions and data file
+		
+		ACTION_IF is_iwd BEGIN
+			OUTER_SPRINT iwd_only_line "Infinity_PopMenu()"
+		END ELSE BEGIN
+			OUTER_SPRINT iwd_only_line ""
+		END
+		
+		COPY ".../stratagems-inline/m_dw_hlf.lua" override EVALUATE_BUFFER
+		COPY ".../stratagems-inline/m_dw_hld.lua" override EVALUATE_BUFFER
+
+		// set up to allow hidden HLAs
+
+		LAF hide_hla_setup END
+		
+		// add the dummy HLA used for discarding
+		
+		LAF make_discard_hla END
+
+		
+		// alter CHARGEN_PROFICIENCIES to autoskip the Abilities page if you don't need it
+		
+		LAF skip_hla_menu END
+
+		// allow the HLA name/description to be overridden
+		
+		LAF override_hla_name_description_setup END
+		
+		// collect HLA threshold data and externalize
+		
+		COPY_EXISTING "lunumab.2da" override
+			LPF 2da_read RET_ARRAY rows lunumab_array=array END
+			LPF array_copy STR_VAR array=lunumab_array RET_ARRAY lunumab_array_new=array END
+			PHP_EACH rows AS row=>discard BEGIN
+				SET $lunumab_array_new("%row%" "FIRST_LEVEL")=2 // first level causes CHARGEN problems in HoW
+			END
+			LPF 2da_write STR_VAR array=lunumab_array_new default="0" END
+		BUT_ONLY
+
+		
+		// write the data to LUA
+
+		ACTION_CLEAR_ARRAY hla_threshold
+		ACTION_FOR_EACH class IN
+		fighter mage thief cleric druid ranger paladin sorcerer monk bard shaman
+		BEGIN
+			ACTION_TO_UPPER class
+			OUTER_SET class_num=IDS_OF_SYMBOL (class "%class%")
+			OUTER_SET thr=$lunumab_array("%class%" FIRST_LEVEL) 
+			OUTER_SPRINT line "['single']=%thr%, "
+			ACTION_IF VARIABLE_IS_SET $lunumab_array("MULTI2%class%" FIRST_LEVEL) BEGIN
+				OUTER_SET thr=$lunumab_array("MULTI2%class%" FIRST_LEVEL) 
+				OUTER_SPRINT line "%line%['double']=%thr%, "
+				ACTION_IF VARIABLE_IS_SET $lunumab_array("MULTI3%class%" FIRST_LEVEL) BEGIN
+					OUTER_SET thr=$lunumab_array("MULTI3%class%" FIRST_LEVEL) 
+					OUTER_SPRINT line "%line%['triple']=%thr%, "
+				END
+			END
+			OUTER_SPRINT $hla_threshold("%class_num%") "%TAB%[%class_num%]={%line%},%WNL%"
+		END
+		ACTION_SORT_ARRAY_INDICES hla_threshold NUMERICALLY
+		OUTER_SPRINT data ""
+		ACTION_PHP_EACH hla_threshold AS k=>v BEGIN
+			OUTER_SPRINT data "%data%%v%"
+		END
+		APPEND "m_dw_hld.lua" "dwHLAThreshold={%WNL%%data%}%WNL%%WNL%"
+
+		// work out the low-level progression
+		
+		LAF set_basic_hla_progression INT_VAR min step END
+		
+		// collect needed data for multilevel advancement
+		
+		LAF data_levels_by_max_level RET_ARRAY level_array=array END
+		OUTER_SPRINT data "dwHLAmcLevelMap={}%WNL%%WNL%"
+		ACTION_FOR_EACH mc IN FIGHTER_CLERIC FIGHTER_MAGE FIGHTER_THIEF CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER BEGIN
+			LAF return_first_entry STR_VAR separator="_" list="%mc%" RET class1=entry class2=list END
+			OUTER_SET c1=IDS_OF_SYMBOL (class "%class1%")
+			OUTER_SET c2=IDS_OF_SYMBOL (class "%class2%")
+			OUTER_SPRINT data "%data%dwHLAmcLevelMap['%c1%-%c2%']={}%WNL%%WNL%"
+			OUTER_FOR (level=1;level<=40;++level) BEGIN
+				OUTER_SET l1=$level_array("%mc%" "%level%" "%class1%")
+				OUTER_SET l2=$level_array("%mc%" "%level%" "%class2%")
+				OUTER_SPRINT data "%data%dwHLAmcLevelMap['%c1%-%c2%'][%level%]={[%c1%]=%l1%,[%c2%]=%l2%}%WNL%"
+			END
+			OUTER_SPRINT data "%data%%WNL%%WNL%"
+		END
+		ACTION_FOR_EACH thirdclass IN CLERIC THIEF BEGIN
+			OUTER_SET c1=2
+			OUTER_SET c2=1
+			OUTER_SET c3=IDS_OF_SYMBOL (class "%thirdclass%")
+			OUTER_SPRINT data "%data%dwHLAmcLevelMap['%c1%-%c2%-%c3%']={}%WNL%%WNL%"
+			OUTER_FOR (level=1;level<=40;++level) BEGIN
+				OUTER_SET l1=$level_array("FIGHTER_MAGE_%thirdclass%" "%level%" "FIGHTER")
+				OUTER_SET l2=$level_array("FIGHTER_MAGE_%thirdclass%" "%level%" "MAGE")
+				OUTER_SET l3=$level_array("FIGHTER_MAGE_%thirdclass%" "%level%" "%thirdclass%")
+				OUTER_SPRINT data "%data%dwHLAmcLevelMap['%c1%-%c2%-%c3%'][%level%]={[%c1%]=%l1%,[%c2%]=%l2%, [%c3%]=%l3%}%WNL%"
+			END
+			OUTER_SPRINT data "%data%%WNL%%WNL%"
+			
+		
+		END
+
+		<<<<<<<<.../stratagems-inline/m_dw_hle.lua
+		%data%
+		>>>>>>>>
+		
+		COPY ".../stratagems-inline/m_dw_hle.lua" override EVALUATE_BUFFER
+
+	END
+	ACTION_IF activate_feats BEGIN
+		APPEND "m_dw_hld.lua" "%WNL%dwLowLevelFeats=true%WNL%" UNLESS "dwLowLevelFeats" KEEP_CRLF 
+	END
 END
 
 
@@ -181,7 +227,8 @@ BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION skip_hla_patch BEGIN
+DEFINE_PATCH_FUNCTION skip_hla_patch//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY EXACT_MATCH 
 		~createCharScreen:IsHighLevelAbilitiesButtonClickable()~
@@ -207,11 +254,20 @@ BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION hide_hla_patch BEGIN
+DEFINE_PATCH_FUNCTION hide_hla_patch//internal 
+BEGIN
 
 	REPLACE_TEXTUALLY ~chargen\.HLAs\[\([^]]+\)\]~ ~chargen.HLAs[dwHLATable[\1].index]~
-	REPLACE_TEXTUALLY ~chargenHLAPlusMinusFrame(\([^,]*\), +\([^ )]+\))~ ~chargenHLAPlusMinusFrame(\1,dwHLATable[\2].index)~
-	REPLACE_TEXTUALLY ~chargenHLAPlusMinusFrame(\([^,]*\), +\([^,]*\), +\([^ )]+\))~ ~chargenHLAPlusMinusFrame(\1,\2,dwHLATable[\3].index)~
+	REPLACE_EVALUATE ~chargenHLAPlusMinusFrame(\([^,]*\), +\([^ )]+\))~ 
+	BEGIN
+		int=(MATCH1=3 || MATCH1=4)?MATCH1+5 : MATCH1
+	END
+	~dwHLAPlusMinusFrame(%int%,%MATCH2%)~
+	REPLACE_EVALUATE ~chargenHLAPlusMinusFrame(\([^,]*\), +\([^,]*\), +\([^ )]+\))~ 
+	BEGIN
+		int=(MATCH1=3 || MATCH1=4)?MATCH1+5 : MATCH1	
+	END
+	~dwHLAPlusMinusFrame(%int%,%MATCH2%,%MATCH3%)~
 	REPLACE_TEXTUALLY EXACT_MATCH ~table "chargen.HLAs"~ ~table "dwHLATable"~
 	REPLACE_TEXTUALLY ~createCharScreen:OnHLAButtonClick(currentHLASelection~ ~createCharScreen:OnHLAButtonClick(dwHLATable[currentHLASelection].index~
 	// these last two rows are telemetry, currently used by the Ranger externalization code
@@ -220,6 +276,15 @@ DEFINE_PATCH_FUNCTION hide_hla_patch BEGIN
 
 END
 
+/*
+
+document{hide_hla}
+{
+Given the resref of a HLA, that HLA is hidden (i.e., player-unselectable) for all players on the HLA screen. (Mostly used internally; in general it will be more sensible
+just to remove the HLA from the LU files.)
+}
+
+*/
 
 DEFINE_ACTION_FUNCTION hide_hla STR_VAR resref="" BEGIN
 
@@ -240,7 +305,8 @@ BEGIN
 
 END
 
-DEFINE_PATCH_FUNCTION override_name_patch BEGIN
+DEFINE_PATCH_FUNCTION override_name_patch//internal 
+BEGIN
 	REPLACE_TEXTUALLY ~Infinity_FetchString(\([^)]+\)\.name)~ ~Infinity_FetchString(dwHLAName(\1))~
 END
 
@@ -266,8 +332,22 @@ BEGIN
 
 END
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_ACTION_FUNCTION override_hla_name INT_VAR strref=0 STR_VAR resref="" BEGIN
+/*
+document{override_hla_name}
+{
+This replaces the name shown on the HLA select screen for HLA 'resref' with the strref 'strref'. It requires ui_externalize_hlas to have been run.
+}
+
+
+
+*/
+
+DEFINE_ACTION_FUNCTION override_hla_name 
+	INT_VAR strref=0 
+	STR_VAR resref="" 
+BEGIN
 
 	ACTION_TO_UPPER resref
 	APPEND "m_dw_hld.lua" "dwHLANameOverride['%resref%']=%strref%" KEEP_CRLF
@@ -555,17 +635,19 @@ end
 
 function dwBuildHLATableWrap()
 
-	dwHLATable=dwBuildHLATable()
+	dwHLATable,HLAsNeeded,kit=dwBuildHLATable()
 
 end
 
 function dwBuildHLATable()
 
-	level_array=dwClassLevelArray()
-	_,kit=dwFindClassKit()
-	mytable={}
-	row=1
-	any_hlas_at_all=false
+	local level_array=dwClassLevelArray()
+	local _,kit=dwFindClassKit()
+	local mytable={}
+	local needed=0
+	local row=1
+	local any_hlas_at_all=false
+	-- make table
 	for k,v in pairs (chargen.HLAs) do
 		if dwIsHLAAllowed(v.resref,level_array,kit) then
 			mytable[row]={}
@@ -580,27 +662,43 @@ function dwBuildHLATable()
 			discard_row=k
 		end
 	end
-	
+	-- sort table alphabetically
 	table.sort(mytable,function(a,b) return a.name<b.name end)
+	-- work out how many HLAs there are 
 	if any_hlas_at_all then
 		needed = dwNumberHLAs(true) - dwHLANumberOld
 	else
 		needed = 0
 	end
+	-- clear the extra
 	delta = chargen.numHLAs - needed
 	while (delta>0) do
 		createCharScreen:OnHLAButtonClick(discard_row, 1)
 		delta = delta - 1
 	end
+	-- generate the class/level table
+	level_array=dwClassLevelArrayByHLA()
+	-- mark up the table with allowability 
+	for k,v in pairs (mytable) do
+		mytable[k].allowed={}
+		for n=1,needed do
+			allowed_here=dwHLAPassesClassLevel(mytable[k].resref,level_array[n],kit)
+			if allowed_here then
+				mytable[k].allow_min=n
+			end
+			mytable[k].allowed[n]=allowed_here
+		end	
+	end
+	-- exit if there are no HLAs
 	if needed==0 then
 		createCharScreen:OnDoneButtonClick()		
 		createCharScreen:OnDoneButtonClick()
 	end
-	return mytable
+	return mytable,needed,kit
 end
 
 
-function dwNumberHLAs(is_new)
+function dwNumberHLAs(is_new,c1,l1,c2,l2,c3,l3)
 
 	if is_new then
 		c1,l1,c2,l2,c3,l3=dwClassLevelNew()
@@ -625,12 +723,21 @@ function dwNumberHLAs(is_new)
 	
 	if classtype=='single' then
 	
-		thr=dwHLAThreshold[c1].single
-		if l1>thr then
-			number=dwHLABasicProgression[thr]+ (l1-thr)
-		else
-			number=dwHLABasicProgression[l1]
+		thr1=dwHLAThreshold[c1].single
+		thr2=nil
+		thr3=nil
+		high=0
+		if l1>=thr1 then
+			high=high + (l1 - thr1) +1
+			l1=thr1 - 1
 		end
+		if (dwLowLevelFeats) then
+			lmax=l1
+			number=high+dwHLABasicProgression[lmax]
+		else
+			number=high
+		end
+		
 	end
 	
 	
@@ -638,22 +745,26 @@ function dwNumberHLAs(is_new)
 	
 		thr1=dwHLAThreshold[c1].double
 		thr2=dwHLAThreshold[c2].double
+		thr3=nil
 		high=0
-		if l1>thr1 then
-			high=high + (l1 - thr1)
-			l1=thr1
+		if l1>=thr1 then
+			high=high + (l1 - thr1) + 1
+			l1=thr1 - 1
 		end
-		if l2>thr2 then
-			high=high + (l2 - thr2)
-			l2=thr2
+		if l2>=thr2 then
+			high=high + (l2 - thr2) + 1
+			l2=thr2 - 1
 		end
-		if l1>l2 then
-			lmax=l1
+		if (dwLowLevelFeats) then
+			if l1>l2 then
+				lmax=l1
+			else
+				lmax=l2
+			end
+			number=high+dwHLABasicProgression[lmax]
 		else
-			lmax=l2
+			number=high
 		end
-		number=high+dwHLABasicProgression[lmax]
-		
 
 				
 	end
@@ -664,56 +775,66 @@ function dwNumberHLAs(is_new)
 		thr2=dwHLAThreshold[c2].triple
 		thr3=dwHLAThreshold[c3].triple
 		high=0
-		if l1>thr1 then
-			high=high + (l1 - thr1)
-			l1=thr1
+		if l1>=thr1 then
+			high=high + (l1 - thr1) + 1
+			l1=thr1 - 1
 		end
-		if l2>thr2 then
-			high=high + (l2 - thr2)
-			l2=thr2
+		if l2>=thr2 then
+			high=high + (l2 - thr2) + 1
+			l2=thr2 - 1
 		end
-		if l3>thr3 then
-			high=high + (l3 - thr3)
-			l3=thr3
+		if l3>=thr3 then
+			high=high + (l3 - thr3) + 1
+			l3=thr3 - 1
 		end
-		if l1>l2 then
-			lmax=l1
+		if (dwLowLevelFeats) then
+			if l1>l2 then
+				lmax=l1
+			else
+				lmax=l2
+			end
+			if l3>lmax then
+				lmax=l3
+			end
+			number=high+dwHLABasicProgression[lmax]
 		else
-			lmax=l2
+			number=high
 		end
-		if l3>lmax then
-			lmax=l3
-		end
-		number=high+dwHLABasicProgression[lmax]
 		
 	end
 	
 	if classtype=='dual' then
 		thr1=dwHLAThreshold[c1].single
 		thr2=dwHLAThreshold[c2].single
+		thr3=nil
 		high=0
-		if l1>thr1 then
-			high=high+(l1-thr1)
-			l1=thr1
+		if l1>=thr1 then
+			high=high+(l1-thr1) + 1
+			l1=thr1 - 1
 		end
-		if l2>thr2 then
-			high=high+(l2-thr2)
-			l2=thr2
+		if l2>=thr2 then
+			high=high+(l2-thr2) + 1
+			l2=thr2 - 1
 		end	
-		if l1>l2 then
-			lmax=l1
+		if (dwLowLevelFeats) then
+			if l1>l2 then
+				lmax=l1
+			else
+				lmax=l2
+			end
+			number=high+dwHLABasicProgression[lmax]
 		else
-			lmax=l2
+			number=high
 		end
-		number=high+dwHLABasicProgression[lmax]
 	
 	end
 	
-	return number
+	return number,lmax,high
 
 
 
 end
+
 
 function dwHLAsAvailable()
 
@@ -734,6 +855,20 @@ function dwHLAName(hla)
 	else
 		return hla.name
 	end
+
+end
+
+function dwHLACanAdd(rownumber)
+
+	local row=dwHLATable[rownumber]
+	return chargen.HLAs[row.index].canAdd
+
+end
+
+function dwHLACanSubtract(rownumber)
+
+	local row=dwHLATable[rownumber]
+	return chargen.HLAs[row.index].canSubtract
 
 end
 
@@ -766,6 +901,22 @@ function dwIsHLAAllowed(resref,level_array,kit)
 			return false
 		end
 	end
+	
+	--return dwHLAPassesClassLevel(resref,level_array,kit)
+	return true
+	
+end
+
+function dwHLAPassesClassLevel(resref,level_array,kit)
+
+
+	if not dwHLANotEpic[resref] and not level_array.at_threshold then
+		return false
+	end
+
+	if not dwHLAClassLevel[resref] then
+		return true
+	end
 	-- check if there's a kit override
 	if dwHLAClassLevel[resref].kit[kit] then
 		allow_array=dwHLAClassLevel[resref].kit[kit]
@@ -780,6 +931,9 @@ function dwIsHLAAllowed(resref,level_array,kit)
 	end
 	-- if we get this far, it's blocked
 	return false
+	
+
+
 
 end
 
@@ -837,6 +991,196 @@ function dwHLAThresholdCheck()
 end
 
 
+function dwHLAPlusMinusFrame(cell, rownumber)
+
+	local row=dwHLATable[rownumber]
+	if cell == 8 then
+		local count=chargen.numHLAs
+		if not chargen.HLAs[row.index].canAdd or not row.allowed[count] then
+			return 3
+		else
+			return currentCellCheck(cell)
+		end
+
+	elseif cell == 9 then
+		local count=chargen.numHLAs+1
+		-- if the game engine forbids subtractions, so do we!
+		if not chargen.HLAs[row.index].canSubtract then 
+			return 3
+		-- if this power could itself only have been added last time, clearly it can also be subtracted
+		elseif row.allow_min==count then
+			return currentCellCheck(cell)
+		else
+			local power_count={}
+			local count_total=0
+			local highest_allow=0
+			-- collect how many powers have been added at each level, and how many in total
+			for n=1,20 do
+				power_count[n]=0
+			end
+			for k,v in pairs(dwHLATable) do
+				if v.count>0 then
+					power_count[v.allow_min]=power_count[v.allow_min] + v.count
+					count_total=count_total+v.count
+
+				end
+			end
+			-- now see how it would change if we removed this power
+			power_count[row.allow_min]=power_count[row.allow_min] - 1
+			count_total = count_total - 1
+			-- is this combination legal?
+			local total_so_far=0
+			local total_required=0
+			for n=HLAsNeeded,1,-1 do
+				total_so_far=total_so_far+power_count[n]
+				total_required=total_required+1
+				if total_so_far<total_required then -- combination is illegal
+					return 3
+				end
+				if total_so_far==count_total then -- we're done
+					return currentCellCheck(cell)
+				end
+			end
+			-- I don't think we can get to here, but fail gracefully just in case.
+			return currentCellCheck(cell)
+		end
+	
+
+	else
+		return chargenHLAPlusMinusFrame(cell, row.index)
+	end
+
+end
+	
+function dwCurrentMaxLevelByHLA(level)
+
+	local table={}
+	-- if there are no low-level abilities (probably because they're not in use) return an empty table
+	if not level then
+		return table
+	end
+	
+	
+	local level_now=level
+	
+	-- do threshold
+	
+	
+	
+	
+	local hla_total=dwHLABasicProgression[level_now]
+	for n=1,hla_total do
+		hla_count=hla_total + 1 - n
+		level_below=level_now - 1
+		while dwHLABasicProgression[level_below]==hla_count do
+			level_now=level_now - 1
+			level_below=level_now - 1
+		end
+		table[n]=level_now
+	end
+
+	return table
+
+end
+
+function dwClassLevelArrayByHLA()
+
+	local table={}
+	
+	_,level,high=dwNumberHLAs(new)
+	local hla_level_map=dwCurrentMaxLevelByHLA(level)
+	
+	if debugging then
+		if c3 then
+			print(c3..': '..l3)
+		end
+		if c2 then
+			print(c2..': '..l2)
+		end	
+
+		if c1 then
+			print(c1..': '..l1)
+		end
+	end
+	
+	-- determine the type
+	
+	if c3 then
+		classtype="triple"
+	elseif c2 then
+		if characters[currentID].classlevel.second.active then
+			classtype="double"
+		else
+			classtype="dual"
+		end
+	else
+		classtype="single"
+	end
+	
+
+	if classtype=="single" then
+	
+		for n=1,high do
+			table[n]={[c1]=l1,['at_threshold']=true}
+		end
+		for number,level in pairs (hla_level_map) do
+			table[number+high]={[c1]=level}
+		end
+	
+	end
+	
+	if classtype=="dual" then
+	
+		for n=1,high do
+			table[n]={[c1]=l1,[c2]=l2,['at_threshold']=true}
+		end
+		for number,level in pairs (hla_level_map) do
+			table[number+high]={[c1]=level,[c2]=l2}
+		end
+	
+	end
+	
+	if classtype=="double" then
+	
+		for n=1,high do
+			table[n]={[c1]=l1,[c2]=l2,['at_threshold']=true}
+		end
+		sig=tostring(c1)..'-'..tostring(c2)
+		for number,level in pairs (hla_level_map) do
+			l1=dwHLAmcLevelMap[sig][level][c1]
+			l2=dwHLAmcLevelMap[sig][level][c2]
+			table[number+high]={[c1]=l1,[c2]=l2}
+		end	
+	
+	end
+
+	if classtype=="triple" then
+	
+		for n=1,high do
+			table[n]={[c1]=l1,[c2]=l2, [c3]=l3,['at_threshold']=true}
+		end
+		sig=tostring(c1)..'-'..tostring(c2)..'-'..tostring(c3)
+		for number,level in pairs (hla_level_map) do
+			l1=dwHLAmcLevelMap[sig][level][c1]
+			l2=dwHLAmcLevelMap[sig][level][c2]
+			l3=dwHLAmcLevelMap[sig][level][c3]
+			table[number]={[c1]=l1,[c2]=l2,[c3]=l3}
+		end	
+	
+	end
+	if debugging then
+		print('output:')
+		for k,v in pairs(table) do
+			print('# is '..k)
+			for k2,v2 in pairs (v) do 
+				print(k2..': '..v2)
+			end
+		end
+	end
+	return table
+
+end	
+
 >>>>>>>>
 
 <<<<<<<< .../stratagems-inline/description_function.lua
@@ -852,4 +1196,1122 @@ function chargenHLADescription()
 		end
 	end
 end
+>>>>>>>>
+
+//// below here is the old content of the ui_hla_menus library
+
+DEFINE_ACTION_FUNCTION bg_hla_menu//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_replace_object
+			STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES
+					object_type=menu
+					replace=".../stratagems-inline/bg_hla_menu.menu"
+		END
+		LPF UI_replace_function
+			INT_VAR inline=1
+			STR_VAR function=chargenHLAPlusMinusFrame
+					new_function_path="hlafunction.lua"
+		END
+		SET hla_string=RESOLVE_STR_REF (@500)
+		REPLACE_TEXTUALLY 63817 "%default_description_string%"
+		REPLACE_TEXTUALLY 65343 "%point_string%"
+
+
+END
+
+DEFINE_ACTION_FUNCTION sod_hla_menu//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		APPEND_FILE ".../stratagems-inline/sod_hla_menu.menu"
+		LPF UI_alter_object
+			STR_VAR object=CHARGEN_PROFICIENCIES
+					object_type=menu
+					patch=ui_info_replace_sod
+		END
+		LPF UI_replace_function
+			INT_VAR inline=1
+			STR_VAR function=chargenHLAPlusMinusFrame
+					new_function_path="hlafunction.lua"
+		END
+		REPLACE_TEXTUALLY 63817 "%default_description_string%"
+
+
+END
+
+DEFINE_ACTION_FUNCTION bg2_hla_menu//internal 
+BEGIN
+
+	ACTION_IF lefreut_ui  BEGIN
+		LAF bg2_hla_menu_leui END
+	END ELSE BEGIN
+		LAF bg2_hla_menu_vanilla END
+	END
+
+END
+
+
+DEFINE_ACTION_FUNCTION bg2_hla_menu_vanilla//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_replace_object
+			STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES
+					object_type=menu
+					replace=".../stratagems-inline/bg2_hla_menu_vanilla.menu"
+		END
+
+END
+
+DEFINE_ACTION_FUNCTION bg2_hla_menu_leui//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_replace_object
+			STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES
+					object_type=menu
+					replace=".../stratagems-inline/bg2_hla_menu_leui.menu"
+		END
+
+END
+
+DEFINE_PATCH_FUNCTION ui_info_replace_sod//internal 
+BEGIN
+
+	LPF UI_replace_object
+		STR_VAR object=INFORMATION_BUTTON
+				object_type=button
+				object_name_field=text
+				replace=".../stratagems-inline/info_replace_sod.menu"
+	END
+END
+
+
+
+DEFINE_ACTION_FUNCTION iwd_hla_menu//internal 
+BEGIN
+
+	COPY_EXISTING "ui.menu" override
+		LPF UI_replace_object 
+			STR_VAR object=CHARGEN_HIGH_LEVEL_ABILITIES
+					object_type=menu
+					replace=".../stratagems-inline/iwd_hla_menu.menu"
+		END
+		LPF UI_alter_object
+			STR_VAR object=LEVELUP_PROFICIENCIES
+					object_type=menu
+					patch=ui_activate_ability_select
+		END
+		LPF UI_alter_object
+			STR_VAR object=LEVELUP_PROFICIENCIES
+					object_type=menu
+					patch=ui_info_button_wrap
+		END
+		LPF UI_replace_function
+			INT_VAR inline=1
+			STR_VAR function=chargenHLAPlusMinusFrame
+					new_function_path="hlafunction.lua"
+		END
+		REPLACE_TEXTUALLY 63817 "%default_description_string%"
+
+
+END
+
+DEFINE_PATCH_FUNCTION ui_activate_ability_select//internal 
+BEGIN
+
+	LPF UI_replace_object
+		STR_VAR object=DONE_BUTTON
+				object_type=button
+				object_name_field=text
+				replace=".../stratagems-inline/ability_select.menu"
+	END
+
+
+
+END
+
+
+DEFINE_PATCH_FUNCTION ui_info_button_wrap//internal 
+BEGIN
+
+	LPF UI_alter_object
+		STR_VAR object=INFORMATION_BUTTON
+				object_type=button
+				object_name_field=text
+				patch=info_button_move
+	END
+
+
+
+END
+
+DEFINE_PATCH_FUNCTION info_button_move//internal 
+BEGIN
+	REPLACE_TEXTUALLY "[0-9]+ 704 230 44" "279 704 230 44"
+END
+
+<<<<<<<< .../stratagems-inline/info_replace_sod.menu
+		enabled "chargen.levelingUp"
+		area 278 704 230 40
+		bam GUIBUTMT
+		text "INFORMATION_BUTTON"
+		text style "button"
+		toggle "levelUpInfoToggle"
+		action
+		"
+			currentChargenProficiency = nil
+		"
+	}
+	button
+	{
+		on return
+		area 520 704 230 44
+		bam GUIBUTMT
+		text "HIGH_LEVEL_ABILITIES_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsHighLevelAbilitiesButtonClickable()"
+		action 
+		"
+			createCharScreen:OnHighLevelAbilitiesButtonClick()
+		"
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/ability_select.menu
+		on return
+		area 521 704 230 44
+		bam GUIBUTMT
+		sequenceonce lua "getRandomButtonSequence('GUIBUTMT')"
+		text "DONE_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action 
+		"
+			Infinity_PopMenu()
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
+	button
+	{
+		on return
+		area 762 704 230 44
+		bam GUIBUTMT
+		sequenceonce lua "getRandomButtonSequence('GUIBUTMT')"
+		text "HIGH_LEVEL_ABILITIES_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsHighLevelAbilitiesButtonClickable()"
+		action 
+		"
+			createCharScreen:OnHighLevelAbilitiesButtonClick()
+		"
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/hlafunction.lua
+function chargenHLAPlusMinusFrame(cell, rownumber)
+	if cell == 8 then
+		if chargen.HLAs[rownumber].canAdd then
+			return currentCellCheck(cell)
+		else
+			return 3
+		end
+	elseif cell == 9 then
+		if chargen.HLAs[rownumber].canSubtract then
+			return currentCellCheck(cell)
+		else
+			return 3
+		end
+	end
+end
+>>>>>>>>
+
+
+<<<<<<<< .../stratagems-inline/sod_hla_menu.menu
+`
+currentHLASelection = nil
+function chargenHLADescription()
+	if currentHLASelection == nil then
+		return 104139
+	else
+		hla=chargen.HLAs[dwHLATable[currentHLASelection].index]
+		if dwHLADescriptionOverride[hla.resref] then
+			return dwHLADescriptionOverride[hla.resref]
+		else
+			return hla.description
+		end
+	end
+end
+
+function chargenHLAPlusMinusFrame(cell, rownumber)
+	if cell == 8 then
+		if chargen.HLAs[rownumber].canAdd then
+			return currentCellCheck(cell)
+		else
+			return 3
+		end
+	elseif cell == 9 then
+		if chargen.HLAs[rownumber].canSubtract then
+			return currentCellCheck(cell)
+		else
+			return 3
+		end
+	end
+end
+`
+
+menu
+{
+
+	name 'CHARGEN_HIGH_LEVEL_ABILITIES'
+	align center center
+	ignoreesc
+	modal
+	onOpen 
+	"
+		currentHLASelection = nil
+		Infinity_PlaySound('GAM_03')
+	"
+	onClose
+	"
+		Infinity_PlaySound('GAM_04')		
+	"
+	label
+	{
+		area 0 0 870 714
+		mosaic GUIPO64D
+	}
+	label
+	{
+		area 46 28 778 54
+		text "HIGH_LEVEL_ABILITIES_TITLE"
+		text style "title"
+	}
+	label
+	{
+		area 42 552 392 44
+		text 65343
+		text style "label"
+		text align right center
+	}
+	label
+	{
+		area 452 552 50 44
+		text lua "chargen.numHLAs"
+		text style "title"
+	}
+
+	
+	list
+	{
+		
+		column
+		{
+			width 51
+			label
+			{
+				area 4 0 -1 -1
+				text lua "Infinity_FetchString(chargen.HLAs[rowNumber].name)"
+				text style "normal"
+				align left center
+				
+			}
+		}
+		
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 4"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 3"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 2"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 1"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 0"
+			}
+		}
+
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(8, rowNumber)"
+				sequence 0
+			}
+		}
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(9, rowNumber)"
+				sequence 1
+
+			}
+		}
+
+
+		scrollbar	'GUISCRC'
+		rowheight 54
+		area 42 98 460 442
+		table "chargen.HLAs"
+		var currentHLASelection
+		action 
+		"
+			if cellNumber == 7 and chargenHLAPlusMinusFrame(8, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, 1)
+			elseif cellNumber == 8 and chargenHLAPlusMinusFrame(9, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, -1)
+			end
+			cellNumber = nil
+		"
+	}
+	text
+	{
+		area 514 102 314 494
+		text lua "Infinity_FetchString(chargenHLADescription())"
+		text style "normal"
+		text color 'D'
+		scrollbar	'GUISCRC'
+	}
+	button
+	{
+		area 438 652 234 46
+		bam GUIBUTMT
+		--  sequenceonce lua "getRandomButtonSequence('GUIBUTMT')"
+		text "DONE_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action 
+		"
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
+}
+
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/iwd_hla_menu.menu
+	name 'CHARGEN_HIGH_LEVEL_ABILITIES'
+	align center center
+	ignoreesc
+	modal
+	onOpen 
+	"
+		currentHLASelection = nil
+		Infinity_PlaySound('GAM_03')
+	"
+	onClose
+	"
+		Infinity_PlaySound('GAM_04')		
+	"
+	label
+	{
+		area 0 0 870 714
+		mosaic GUIPO64D
+	}
+	label
+	{
+		area 46 28 778 54
+		text "HIGH_LEVEL_ABILITIES_TITLE"
+		text style "title"
+	}
+	label
+	{
+		area 42 552 392 44
+		text 40687
+		text style "label"
+		text align right center
+	}
+	label
+	{
+		area 452 552 50 44
+		text lua "chargen.numHLAs"
+		text style "title"
+	}
+
+	
+	list
+	{
+		
+		column
+		{
+			width 51
+			label
+			{
+				area 4 0 -1 -1
+				text lua "Infinity_FetchString(chargen.HLAs[rowNumber].name)"
+				text style "normal"
+				align left center
+				
+			}
+		}
+		
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 4"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 3"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 2"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 1"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 0"
+			}
+		}
+
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(8, rowNumber)"
+				sequence 0
+			}
+		}
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(9, rowNumber)"
+				sequence 1
+
+			}
+		}
+
+
+		scrollbar	'GUISCRC'
+		rowheight 54
+		area 42 98 460 442
+		table "chargen.HLAs"
+		var currentHLASelection
+		action 
+		"
+			if cellNumber == 7 and chargenHLAPlusMinusFrame(8, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, 1)
+			elseif cellNumber == 8 and chargenHLAPlusMinusFrame(9, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, -1)
+			end
+			cellNumber = nil
+		"
+	}
+	text
+	{
+		area 514 102 314 494
+		text lua "Infinity_FetchString(chargenHLADescription())"
+		text style "normal"
+		text color 'D'
+		scrollbar	'GUISCRC'
+	}
+	button
+	{
+		area 438 652 234 46
+		bam GUIBUTMT
+		sequenceonce lua "getRandomButtonSequence('GUIBUTMT')"
+		text "DONE_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action 
+		"
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
+
+>>>>>>>>
+
+<<<<<<<< .../stratagems-inline/bg_hla_menu.menu
+	name 'CHARGEN_HIGH_LEVEL_ABILITIES'
+	align center center
+	ignoreesc
+	modal
+	onOpen 
+	"
+		currentHLASelection = nil
+		Infinity_PlaySound('GAM_03')
+	"
+	onClose
+	"
+		Infinity_PlaySound('GAM_04')		
+	"
+	label
+	{
+		area 0 0 864 710
+		mosaic GUICHISF
+	}
+	label
+	{
+		area 74 10 716 44
+		text "HIGH_LEVEL_ABILITIES_TITLE"
+		text style "title"
+	}
+	label
+	{
+		area 192 130 248 28
+		text 65343
+		text style "label"
+		text align right center
+	}
+	label
+	{
+		area 450 130 50 28
+		text lua "chargen.numHLAs"
+		text style "title"
+	}
+
+	
+	list
+	{
+		
+		column
+		{
+			width 51
+			label
+			{
+				area 4 0 -1 -1
+				text lua "Infinity_FetchString(chargen.HLAs[rowNumber].name)"
+				text style "normal"
+				align left center
+				
+			}
+		}
+		
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 4"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 3"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 2"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 1"
+			}
+		}
+		column
+		{
+			width 5
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 0"
+			}
+		}
+
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(8, rowNumber)"
+				sequence 0
+			}
+		}
+		column
+		{
+			width 12
+			label
+			{
+				area 0 6 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(9, rowNumber)"
+				sequence 1
+
+			}
+		}
+
+
+		scrollbar	'GUISCRC'
+		rowheight 54
+		area 46 194 358 417
+		table "chargen.HLAs"
+		var currentHLASelection
+		action 
+		"
+			if cellNumber == 7 and chargenHLAPlusMinusFrame(8, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, 1)
+			elseif cellNumber == 8 and chargenHLAPlusMinusFrame(9, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, -1)
+			end
+			cellNumber = nil
+		"
+	}
+	text
+	{
+		area 446 194 378 417
+		text lua "Infinity_FetchString(chargenHLADescription())"
+		text style "normal"
+		text color 'D'
+		scrollbar	'GUISCRC'
+	}
+	button
+	{
+		area 464 653 236 44
+		bam GUIOSTUR
+		sequence 0
+		text "DONE_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action 
+		"
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
+
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/bg2_hla_menu_vanilla.menu
+	name 'CHARGEN_HIGH_LEVEL_ABILITIES'
+	align center center
+	ignoreesc
+	modal
+	onOpen 
+	"
+		currentHLASelection = nil
+	"
+	label
+	{
+		area 0 0 864 710
+		mosaic GUIHSBS
+	}
+	label
+	{
+		area 74 10 716 52
+		text "HIGH_LEVEL_ABILITIES_TITLE"
+		text style "title"
+	}
+	label
+	{
+		area 36 114 448 52
+		text lua "chargen.numHLAs"
+		text style "title"
+	}
+	text
+	{
+		area 522 118 302 494
+		text lua "Infinity_FetchString(chargenHLADescription())"
+		text style "normal"
+		scrollbar	'GUISCRC'
+	}
+	
+	list
+	{
+
+		
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 4"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 3"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 2"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 1"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 0"
+			}
+		}	
+		column
+		{
+			width 56
+			label
+			{
+				area 4 0 -1 -1
+				text lua "Infinity_FetchString(chargen.HLAs[rowNumber].name)"
+				text style "normal"
+				align left center
+				
+			}
+		}
+		column
+		{
+			width 12
+			label
+			{
+				area 0 4 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(3, rowNumber)"
+				sequence 0
+			}
+		}
+		column
+		{
+			width 12
+			label
+			{
+				area 0 4 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(4, rowNumber)"
+				sequence 1
+
+			}
+		}
+
+
+		scrollbar	'GUISCRC'
+		rowheight 52
+		area 58 194 404 404
+		table "chargen.HLAs"
+		var currentHLASelection
+		action 
+		"
+			if cellNumber == 7 and chargenHLAPlusMinusFrame(3, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, 1)
+			elseif cellNumber == 8 and chargenHLAPlusMinusFrame(4, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, -1)
+			end
+			cellNumber = nil
+		"
+	}
+	button
+	{
+		area 210 652 238 44
+		bam GUIOSTUL
+		text "DONE_BUTTON"
+		text style "button"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action 
+		"
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
+>>>>>>>>
+
+
+<<<<<<<<.../stratagems-inline/bg2_hla_menu_leui.menu
+	name 'CHARGEN_HIGH_LEVEL_ABILITIES'
+	align center center
+	ignoreesc
+	onOpen
+	"
+		currentHLASelection = nil
+	"
+	label
+	{
+		area 0 0 864 710
+		mosaic GUICUSTB
+	}
+	label
+	{
+		area 82 12 700 40
+		text "LEVEL_UP_TITLE"
+		text style "title"
+	}
+	label
+	{
+		area 46 120 286 44
+		text "HIGH_LEVEL_ABILITIES_TITLE"
+		text style "label"
+		text align center center
+	}
+	label
+	{
+		area 332 120 50 44
+		text lua "chargen.numHLAs"
+		text style "label"
+		text align center center
+	}
+	text
+	{
+		area 436 128 382 478
+		text lua "Infinity_FetchString(chargenHLADescription())"
+		text style "normal"
+		scrollbar 'GUISCRC'
+	}
+
+	list
+	{
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 4"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 3"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 2"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 1"
+			}
+		}
+		column
+		{
+			width 4
+			label
+			{
+				bam GUIPFC
+				area 0 19 16 16
+				align center center
+				enabled "chargen.HLAs[rowNumber].count > 0"
+			}
+		}	
+		column
+		{
+			width 56
+			label
+			{
+				area 4 0 -1 -1
+				text lua "Infinity_FetchString(chargen.HLAs[rowNumber].name)"
+				text style "normal"
+				align left center
+			}
+		}
+		column
+		{
+			width 14
+			label
+			{
+				area 0 4 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(reverseButtonPosition, 3, rowNumber)"
+				sequence lua "reverseButtonPosition and 1 or 3"
+			}
+		}
+		column
+		{
+			width 14
+			label
+			{
+				area 0 4 45 42
+				bam GUIOSW
+				frame lua "chargenHLAPlusMinusFrame(not reverseButtonPosition, 4, rowNumber)"
+				sequence lua "reverseButtonPosition and 0 or 4"
+			}
+		}
+		scrollbar 'GUISCRC'
+		rowheight 52
+		hidehighlight
+		area 42 192 340 414
+		table "chargen.HLAs"
+		var currentHLASelection
+		action
+		"
+			local delta = reverseButtonPosition and -1 or 1
+			if cellNumber == 7 and chargenHLAPlusMinusFrame(reverseButtonPosition, 3, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, delta)
+			elseif cellNumber == 8 and chargenHLAPlusMinusFrame(not reverseButtonPosition, 4, currentHLASelection) ~= 3 then
+				createCharScreen:OnHLAButtonClick(currentHLASelection, -delta)
+			end
+			cellNumber = nil
+		"
+	}
+
+	button
+	{
+		on enter
+		bam GUIOSTCL
+		area 308 653 300 44
+		text style "button"
+		text "DONE_BUTTON"
+		clickable lua "createCharScreen:IsDoneButtonClickable()"
+		action
+		"
+			createCharScreen:OnDoneButtonClick()
+			createCharScreen:OnDoneButtonClick()
+		"
+	}
 >>>>>>>>

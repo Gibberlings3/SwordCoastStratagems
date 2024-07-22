@@ -1,3 +1,16 @@
+/*
+describe-library{This is an auxiliary library to ui_spell_system, that sets up a system of spheres.}
+brief-desc{set up a system of spheres in ui_spell_system}
+*/
+
+/*
+document{ui_spell_system_spheres}
+{
+Sets up a sphere system. See ToF for format; by default we read a 2da of spheres at sphere/sphere_list.2da, and then look for text files listing the various spells in each
+sphere in 'sphere'.
+}
+
+*/
 
 DEFINE_ACTION_FUNCTION ui_spell_system_spheres
 	STR_VAR path="sphere"
@@ -226,7 +239,10 @@ BEGIN
 		LAF set_spell_list STR_VAR class=shaman allow_learn="%sphere_defaults_shaman%" END
 		LAF adjust_priest_casting_description STR_VAR class=SHAMAN END
 		
-		ACTION_FOR_EACH class IN druid fighter_druid cleric_ranger BEGIN
+		LAF set_spell_list STR_VAR class=cleric_ranger allow_priest="%sphere_defaults_cleric_ranger%" END
+		LAF adjust_priest_casting_description INT_VAR append=1 STR_VAR class=CLERIC_RANGER END
+		
+		ACTION_FOR_EACH class IN druid fighter_druid BEGIN
 			LAF set_spell_list STR_VAR class allow_priest="%sphere_defaults_druid%" END	
 		END
 		ACTION_FOR_EACH class IN cleric fighter_cleric cleric_mage fighter_mage_cleric cleric_thief BEGIN
@@ -238,7 +254,8 @@ BEGIN
 	END
 END
 
-DEFINE_ACTION_FUNCTION get_sphere_data STR_VAR path="sphere" list="sphere_list.2da" tra="" tra_path="" RET_ARRAY sphere_ids sphere_name sphere_defaults BEGIN
+DEFINE_ACTION_FUNCTION get_sphere_data//internal
+STR_VAR path="sphere" list="sphere_list.2da" tra="" tra_path="" RET_ARRAY sphere_ids sphere_name sphere_defaults BEGIN
 
 	ACTION_CLEAR_ARRAY sphere_class_maps
 	ACTION_CLEAR_ARRAY sphere_defaults
@@ -249,6 +266,7 @@ DEFINE_ACTION_FUNCTION get_sphere_data STR_VAR path="sphere" list="sphere_list.2
 		S=>shaman
 		P=>paladin
 		R=>ranger
+		K=>cleric_ranger
 	END
 	ACTION_PHP_EACH sphere_class_maps AS discard=>class BEGIN
 		OUTER_SPRINT $sphere_defaults("%class%") ""
@@ -306,7 +324,10 @@ DEFINE_ACTION_FUNCTION get_sphere_data STR_VAR path="sphere" list="sphere_list.2
 	
 END
 
-DEFINE_ACTION_FUNCTION adjust_priest_casting_description STR_VAR class="" BEGIN
+DEFINE_ACTION_FUNCTION adjust_priest_casting_description//internal
+INT_VAR append=0
+STR_VAR class="" 
+BEGIN
 
 	COPY_EXISTING - "clastext.2da" nowhere
 		COUNT_2DA_COLS colcount
@@ -322,12 +343,16 @@ DEFINE_ACTION_FUNCTION adjust_priest_casting_description STR_VAR class="" BEGIN
 	OUTER_SPRINT s_new $sphere_default_descriptions("%class%")
 	OUTER_SPRINT s_new "%sphere_start%%s_new%."
 	ACTION_GET_STRREF strref string
-	OUTER_PATCH_SAVE string "%string%" BEGIN
-		PHP_EACH swap_array AS ind=>string BEGIN
-			REPLACE_TEXTUALLY "^\([^a-z]*\)%string%.*" "\1%s_new%"
-		END
-		PHP_EACH swap_array_keep AS ind=>string BEGIN
-			REPLACE_TEXTUALLY "^\([^a-z]*\)\(%string%.*\)" "\1\2 %s_new%"
+	ACTION_IF append BEGIN
+		OUTER_SPRINT string "%string%%WNL%%WNL%%s_new%"
+	END ELSE BEGIN
+		OUTER_PATCH_SAVE string "%string%" BEGIN
+			PHP_EACH swap_array AS ind=>string_here BEGIN
+				REPLACE_TEXTUALLY "^\([^a-z]*\)%string_here%.*" "\1%s_new%"
+			END
+			PHP_EACH swap_array_keep AS ind=>string_here BEGIN
+				REPLACE_TEXTUALLY "^\([^a-z]*\)\(%string_here%.*\)" "\1\2 %s_new%"
+			END
 		END
 	END
 	STRING_SET_EVALUATE strref "%string%"
@@ -336,6 +361,12 @@ DEFINE_ACTION_FUNCTION adjust_priest_casting_description STR_VAR class="" BEGIN
 
 END
 
+/*
+document{assign_spheres}
+{
+Allocate spheres to a given kit or class.
+}
+*/
 
 DEFINE_ACTION_FUNCTION assign_spheres
 	INT_VAR update_scroll_usability=1

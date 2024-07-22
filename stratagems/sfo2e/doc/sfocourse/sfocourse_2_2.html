@@ -1,0 +1,162 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 2.2</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - chapter 2.2</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p>
+
+<h2>ALTER_EFFECT, and an introduction to functional programming and anonymous functions</h2>
+</p>
+<p><a href="sfocourse.html">Back to contents</a></p>
+
+<p>The alter_effect library contains expanded versions of the core WEIDU function ALTER_EFFECT, CLONE_EFFECT, and DELETE_EFFECT (all written by CamDawg). Part of the point of this section is to explain their expanded functionality under SFO, but the main part is to offer an introduction to SFO's use of functions as arguments ('functional programming') and its 'anonymous function construct'.</p>
+<p>This section assumes you have basic familiarity with the ALTER/CLONE/DELETE_EFFECT functions. (They are fully documented in the weidu readme; I discuss them in my "Course on WEIDU".) Note that none of this applies to ADD_SPELL_EFFECT and the like, which SFO does not expand.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.2.1 Expanded commands for ALTER_EFFECT and friends</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+The most straightforward SFO change to these functions is to add a large group of new INT_VAR arguments that target specific bits in the 'saving throw' and 'special' fields. Specifically, SFO adds these arguments:
+<ul>
+<li>save_vs_breath (byte 0x24, bit 1)</li>
+<li>save_vs_spell (byte 0x24, bit 0)</li>
+<li>save_vs_poison (byte 0x24, bit 2)</li>
+<li>save_vs_wand (byte 0x24, bit 3)</li>
+<li>save_vs_polymorph (byte 0x24, bit 4)</li>
+<li>ignore_primary (byte 0x25, bit 2)</li>
+<li>ignore_secondary (byte 0x25, bit 3)</li>
+<li>bypass_mirror_image (byte 0x27, bit 0)</li>
+<li>ignore_difficulty (byte 0x27, bit 1)</li>
+<li>drain_hp_to_caster (byte 0x2c, bit 0)</li>
+<li>transfer_hp_to_target (byte 0x2c, bit 1)</li>
+<li>fist_damage_only (byte 0x2c, bit 2)</li>
+<li>drain_to_max_hp (byte 0x2c, bit 3)</li>
+<li>suppress_feedback (byte 0x2c, bit 5)</li>
+<li>save_for_half (byte 0x2d, bit 1)</li>
+<li>does_not_wake (byte 0x2d, bit 2)</li>
+</ul>
+There is a 'match_xx' version of each, as well. They function exactly as you'd expect: for instance, this code swaps the object being patched from poison to spell saving throws:</p>
+<p><div class="code">
+<pre><code>LPF ALTER_EFFECT INT_VAR match_save_vs_poison=1 save_vs_poison=0 save_vs_spell=1 END</code></pre></div></p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.2.2 Advanced tasks via functions</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+SFO's real expansion of these functions comes when you want to do something more sophisticated than the normal interface for ALTER_EFFECT permits. Here are four examples:
+<ol>
+<li>Delete all spell headers that use opcodes 139, 142, 174, or 215.</li>
+<li>Delete all spell headers that use opcodes other than 139, 142, 174, or 215.</li>
+<li>Double the duration of a spell.</li>
+<li>(On Magic Missile specifically) change the damage of the missiles so they do 1d4+1 damage at levels 1-4, 1d6+1 at levels 5-8, and 1d8+1 afterwards.</li>
+</ol>
+(1) can be done with DELETE_EFFECT, but quite cumbersomely: you need four separate DELETE_EFFECTs, each of which will separately pass through the file. (4) can be done with five separate ALTER_EFFECTs, each targeted at a different header. The others basically can't be done at all: you'd end up writing a manual loop.</p> 
+The SFO versions of the functions can do each task via a one-line argument, but it takes a bit of time to explain just how. The starting point is that 
+SFO introduces two new STR_VAR arguments, 'match_function' and 'function'. The first, 'match_function', names a SFO standard function: that is, a patch function that takes one STR_VAR argument, 'arguments', and returns one variable, 'value'. (In fact, usually you won't specify an argument at all.) That function is evaluated for each effect block, as if it was being run as a patch on that specific effect as a stand-alone file. If it returns '1', there's a match; if it returns '0', there isn’t. (And any changes made by the function are discarded.)</p>
+<p>This is easier to explain through examples. Here's how to do task 1 (delete several opcodes):</p>
+<p><div class="code">
+<pre><code>DEFINE_PATCH_FUNCTION delete_several_opcodes
+RET value
+BEGIN
+	READ_SHORT 0x0 opcode
+	value = (opcode=139 || opcode=142 || opcode=174 || opcode=215)
+END
+
+COPY_EXISTING "sppr603.spl" override
+	LPF DELETE_EFFECT STR_VAR match_function=delete_several_opcodes END</code></pre></div></p>
+<p>And here's how to do task 2 (delete all but a fixed list of opcodes):</p>
+<p><div class="code">
+<pre><code>DEFINE_PATCH_FUNCTION keep_only_a_few_opcodes
+RET value
+BEGIN
+	READ_SHORT 0x0 opcode
+	value = !(opcode=139 || opcode=142 || opcode=174 || opcode=215)
+END
+COPY_EXISTING "sppr603.spl" override
+	LPF DELETE_EFFECT STR_VAR match_function=keep_only_a_few_opcodes END</code></pre></div></p>
+<p>Note that the match_function is matched only after any other matches are made (this helps with speed).</p>
+<p>The other argument, 'function', names a patch function which acts on each matched effect, again treating it as if it was a stand-alone file. Here's how to do task 3 (double the duration of a spell):</p>
+<p><div class="code">
+<pre><code>DEFINE_PATCH_FUNCTION double_duration
+BEGIN
+	WRITE_LONG 0xe (THIS*2)
+END
+COPY_EXISTING "spwi305.spl" override
+	LPF ALTER_EFFECT STR_VAR function=double_duration END</code></pre></div></p>
+<p>For the last one, we need to use the 'level' variable, which is set to the minimum level of whatever spell is being patched (or to 1 for items). Here's task 4 (level-dependent per-missile damage for magic missile):</p>
+<p><div class="code">
+<pre><code>DEFINE_PATCH_FUNCTION patch_mm
+BEGIN
+	WRITE_LONG 0x20 (level<5?4:level<9?6:8)
+END
+COPY_EXISTING "spwi112.spl" override
+	LPF ALTER_EFFECT STR_VAR function=patch_mm END</code></pre></div></p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.2.3 The anonymous function construct</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>Sending functions to ALTER_EFFECT and friends as arguments is extremely powerful, but can feel cumbersome – you are writing functions that you only actually need once. The anonymous function construct greatly streamlines things: instead of sending the name of the function, you can send the function itself - or rather, the bit of the function definition between 'BEGIN' and 'END'. For instance, here's task 1 via the anonymous function construct:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "sppr603.spl" override
+	LPF DELETE_EFFECT 
+	  STR_VAR match_function="READ_SHORT 0x0 opcode ;; value=(opcode=142 || opcode=139 || opcode=174 || opcode=215)" 
+END</code></pre></div></p>
+<p>The variable 'function' now defines an anonymous function: a function with no name created just for this particular patch. (The double ;; are for readability; they can be skipped.)</p>
+<p>Similarly, here's task 2:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "sppr603.spl" override
+	LPF DELETE_EFFECT 
+	  STR_VAR match_function="READ_SHORT 0x0 opcode value=!(opcode=142 || opcode=139 || opcode=174 || opcode=215)" 
+END</code></pre></div></p>
+<p>If your anonymous function definition is just a mathematical expression, SFO will infer a 'value='. This works, for instance, as an alternative implementation of task 1:
+</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "sppr603.spl" override
+	LPF DELETE_EFFECT 
+	  STR_VAR match_function="(SHORT_AT 0x0=142 || SHORT_AT 0x0=139 || SHORT_AT 0x0=174 || SHORT_AT 0x0=215)" 
+END</code></pre></div></p>
+<p>You can use anonymous functions for 'function' as well as 'match_function'. Here's task 3:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "spwi305.spl" override
+	LPF ALTER_EFFECT STR_VAR function="WRITE_LONG 0xe (THIS*2)" END</code></pre></div></p>
+<p>And task 4:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "spwi305.spl" override
+	LPF ALTER_EFFECT STR_VAR function="WRITE_LONG 0x20 (level<5?4:level<9?6:8)" END</code></pre></div></p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.2.4 Anonymous functions more generally</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+Anonymous functions are not restricted to ALTER_EFFECT and friends: the anonymous function construct is widely available in SFO functions. In other contexts, it is important for an anonymous function to accept arguments; in that context, you can use '__' as an abbreviation for '%arguments%'. (This is useful because %arguments% will be evaluated if you happen to have it defined at the point at which you specify the anonymous function.)</p>
+<p>SFO determines heuristically whether a given 'function' string is to be processed via the anonymous function construct or is the name of an actual function: anonymous functions contain any of these symbols: '[]<>/=+%{} '. In the (unlikely!) event that you manage to write an anonymous function not containing any of them, just put an extra space in.</p>
+<p>If you need to debug an anonymous function, you can find the function fully expressed in weidu_external/workspace/sfo_anon_func_[N].tph, where  [N] is usually 0 but may be 1 or 2.</p>
+<p>In general, anonymous functions should be simple and short. If you are doing anything complicated, it's best to define the function explicitly.</p>
+
+</div>
+
+
+
+
+
+</div>
+</body>

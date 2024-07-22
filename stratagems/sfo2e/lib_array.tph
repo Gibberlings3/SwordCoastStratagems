@@ -1,9 +1,9 @@
 /* describe-library
 {Functions to manipulate WEIDU arrays.
 Functions in this library should be pure (no side effects) except insofar as they're explicitly writing array data into a file. They shouldn't interact with IE resources at all.
-Most functions here assume a simple (i.e. not multidimensional) array.
+Most functions here assume a simple (i.e. not multidimensional) array.}
 
-Functions should start with 'array_'.}
+brief-desc{functions to manipulate WEIDU arrays}
 
 */
 
@@ -292,7 +292,7 @@ END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
-document{array_log}
+document{array_write}
 {Output an array as a 2-column table. If 'new' is set, overwrite any existing file by the same name; if not, append. If 'permanent' is
 set, the table will persist even if the component is uninstalled. (This automatically sets 'new'.)}
 
@@ -300,12 +300,12 @@ set, the table will persist even if the component is uninstalled. (This automati
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-DEFINE_DIMORPHIC_FUNCTION array_log 
+DEFINE_DIMORPHIC_FUNCTION array_write
 	INT_VAR new=0//boolean
 			permanent=0//boolean
 	STR_VAR path="%data_loc%"
 			file=""
-			array=""
+			array=""//array
 BEGIN
 	
 	ACTION_IF permanent BEGIN
@@ -334,6 +334,25 @@ BEGIN
 	END
 END
 
+DEFINE_ACTION_FUNCTION array_log//deprecated
+	INT_VAR new=0//boolean
+			permanent=0//boolean
+	STR_VAR path="%data_loc%"
+			file=""
+			array=""//array
+BEGIN
+	LAF array_write INT_VAR new permanent STR_VAR path file array END
+END
+
+DEFINE_PATCH_FUNCTION array_log//deprecated
+	INT_VAR new=0//boolean
+			permanent=0//boolean
+	STR_VAR path="%data_loc%"
+			file=""
+			array=""//array
+BEGIN
+	LPF array_write INT_VAR new permanent STR_VAR path file array END
+END
 //////////////////////////////////////////////////////////////////////////////////
 /*
 document{array_2d_to_list} 
@@ -354,7 +373,9 @@ DEFINE_DIMORPHIC_FUNCTION array_2d_to_list
 	RET_ARRAY list
 BEGIN
 	ACTION_CLEAR_ARRAY list
-	LAF array_keys STR_VAR array RET_ARRAY keys1 keys2 END
+	ACTION_CLEAR_ARRAY keys1
+	ACTION_CLEAR_ARRAY keys2
+	LAF array_keys INT_VAR silent=1 STR_VAR array RET_ARRAY keys1 keys2 END
 	ACTION_SORT_ARRAY_INDICES keys2 LEXICOGRAPHICALLY
 	ACTION_PHP_EACH keys1 AS k1=>discard BEGIN
 		OUTER_SPRINT $list("%k1%") ""
@@ -418,8 +439,8 @@ BEGIN
 	ACTION_CLEAR_ARRAY array
 	ACTION_IF quick BEGIN
 		ACTION_IF "%separator%" STR_CMP " " BEGIN
-			WARN "list_to_array doesn't allow quick mode with a non-space separator"
-			LAF list_to_array STR_VAR list="%string%" separator RET_ARRAY array END
+			WARN "array_values_from_string doesn't allow quick mode with a non-space separator"
+			LAF array_values_from_string STR_VAR list="%string%" separator RET_ARRAY array END
 		END ELSE BEGIN
 			OUTER_SPRINT list "%string% "
 			OUTER_PATCH "%list%" BEGIN
@@ -472,7 +493,7 @@ document{array_copy}
 
 
 DEFINE_DIMORPHIC_FUNCTION array_copy
-	STR_VAR array=""
+	STR_VAR array=""//array
 	RET_ARRAY array
 BEGIN
 	ACTION_IF "%array%" STR_CMP "array" BEGIN
@@ -582,19 +603,25 @@ END
 //////////////////////////////////////////////////////////////////////////////////
 /*
 document{array_keys} 
-{Given an array, return arrays k=>_ of the first five levels of its keys.}
+{Given an array, return arrays k=>_ of the first five levels of its keys.</p>
+<p>WEIDU limitations mean that if the array is empty, the return value is unpredictable and may equal an already-defined array. Empty arrays lead to a WARNing, which you can suppress with silent=1. In applications where the array might be empty,
+make sure you explicitly CLEAR_ARRAY it before calling array_keys.}
 
 */
 //////////////////////////////////////////////////////////////////////////////////
 
 DEFINE_DIMORPHIC_FUNCTION array_keys
+	INT_VAR silent=0
 	STR_VAR array=""//array 
+	RET is_empty
 	RET_ARRAY keys1 keys2 keys3 keys4 keys5
 BEGIN
 	ACTION_FOR_EACH keys IN keys1 keys2 keys3 keys4 keys5 BEGIN
 		ACTION_CLEAR_ARRAY "%keys%"
 	END
+	OUTER_SET is_empty=1
 	ACTION_PHP_EACH "%array%" AS sfo_reserved_array_keys_k=>discard BEGIN
+		OUTER_SET is_empty=0
 		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_1 BEGIN
 				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
 		END ELSE
@@ -612,14 +639,16 @@ BEGIN
 				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
 				OUTER_SPRINT $keys3("%sfo_reserved_array_keys_k_2%") ""
 				OUTER_SPRINT $keys4("%sfo_reserved_array_keys_k_3%") ""
-		END ELSE
-		ACTION_IF !VARIABLE_IS_SET sfo_reserved_array_keys_k_5 BEGIN
+		END ELSE BEGIN
 				OUTER_SPRINT $keys1("%sfo_reserved_array_keys_k_0%") ""
 				OUTER_SPRINT $keys2("%sfo_reserved_array_keys_k_1%") ""
 				OUTER_SPRINT $keys3("%sfo_reserved_array_keys_k_2%") ""
 				OUTER_SPRINT $keys4("%sfo_reserved_array_keys_k_3%") ""
 				OUTER_SPRINT $keys5("%sfo_reserved_array_keys_k_4%") ""
 		END 
+	END
+	ACTION_IF is_empty && !silent BEGIN
+		WARN "array_keys run on empty array; results will be unstable unless return value of array has been explicitly cleared."
 	END
 END
 
@@ -637,8 +666,8 @@ by the values of the function. The function doesn't have to be 1:1. You can use 
 
 DEFINE_DIMORPHIC_FUNCTION array_sort
 	INT_VAR depth=1
-	STR_VAR array=""
-			function=""
+	STR_VAR array=""//array
+			function=""//function
 	RET_ARRAY array
 BEGIN
 	ACTION_CLEAR_ARRAY sorting_array

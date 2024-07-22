@@ -5,6 +5,8 @@ Resources to add 'bonus spells', i.e. additional spells known at each level by a
 
 }
 
+brief-desc{functions to add bonus spells to classes/kits}
+
 */
 
 
@@ -19,6 +21,7 @@ Set up initially-required resources to add bonus spells. Called automatically by
 
 DEFINE_ACTION_FUNCTION ui_bonus_spells_setup//internal
 BEGIN
+	
 	LAF ui_detect_class_kit END
 	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_bsf.lua" BEGIN
 		// install functions
@@ -173,6 +176,7 @@ BEGIN
 	OUTER_SPRINT data2 ""
 	OUTER_SPRINT bonus_desc ""
 	COPY_EXISTING - "m_dw_bsd.lua" nowhere
+		more_than_one_desc_entry=0
 		PHP_EACH working_array AS resref=>level BEGIN
 			SPRINT data2 ~%data2%%TAB%["%resref%"]=true,%WNL%~
 			INNER_ACTION BEGIN
@@ -188,6 +192,7 @@ BEGIN
 							SPRINT bonus_desc "%name_string%"
 						END ELSE BEGIN
 							SPRINT bonus_desc "%bonus_desc%, %name_string%"
+							more_than_one_desc_entry=1
 						END
 						READ_LONG 0x50 desc
 						READ_ASCII 0x3a icon
@@ -237,19 +242,30 @@ BEGIN
 
 			ACTION_GET_STRREF desc_strref desc
 			ACTION_MATCH "%class%" WITH
-			CLERIC DRUID PALADIN RANGER BEGIN
+			CLERIC DRUID PALADIN RANGER WHEN more_than_one_desc_entry BEGIN
 				OUTER_SPRINT preamble @130	
 			END
-			SHAMAN SORCERER BEGIN
+			CLERIC DRUID PALADIN RANGER WHEN !more_than_one_desc_entry BEGIN
+					OUTER_SPRINT preamble @133	
+			END
+			SHAMAN SORCERER WHEN more_than_one_desc_entry BEGIN
 				OUTER_SPRINT preamble @131
 			END
-			MAGE BARD BEGIN
+			SHAMAN SORCERER WHEN !more_than_one_desc_entry BEGIN
+				OUTER_SPRINT preamble @134
+			END
+			MAGE BARD WHEN more_than_one_desc_entry BEGIN
 				OUTER_SPRINT preamble @132
+			END
+			MAGE BARD WHEN !more_than_one_desc_entry BEGIN
+				OUTER_SPRINT preamble @135
 			END
 			DEFAULT
 				FAIL "assign_bonus_spells: this shouldn't happen"
 			END
-			OUTER_SPRINT new_line "%preamble% %bonus_desc%."
+			OUTER_PATCH_SAVE new_line "%preamble%" BEGIN
+				REPLACE_TEXTUALLY "PLACEHOLDER" "%bonus_desc%"
+			END
 			OUTER_PATCH_SAVE desc "%desc%" BEGIN
 				PATCH_IF INDEX ("BONUS_SPELL_PLACEHOLDER" "%desc%") >=0 BEGIN
 					REPLACE_TEXTUALLY "BONUS_SPELL_PLACEHOLDER" "%new_line%"
@@ -341,7 +357,7 @@ BEGIN
 	ACTION_IF !FILE_EXISTS_IN_GAME "%grant_resref%.spl" BEGIN
 		// make the spell
 		CREATE spl "%grant_resref%"
-			LPF spl_basic_ability_localcopy END
+			LPF add_basic_spell_ability END
 			LPF ADD_SPELL_EFFECT INT_VAR opcode=171 target=2 timing=1 STR_VAR resource="%resref%" END
 	END
 	
@@ -437,26 +453,3 @@ end
 
 
 
-
-
-/// local copies of functions
-
-DEFINE_PATCH_FUNCTION spl_basic_ability_localcopy//internal
-BEGIN
-	PATCH_IF !(BUFFER_LENGTH=0x72) BEGIN
-		PATCH_FAIL "spl_basic_ability only works on a blank, freshly-created v1 spell"
-	END
-	INNER_PATCH_SAVE ab_data "" BEGIN
-		INSERT_BYTES 0x0 0x28
-		WRITE_SHORT 0x0 1
-		WRITE_SHORT 0x2 4
-		WRITE_BYTE 0xc 1
-		WRITE_SHORT 0x22 1
-		WRITE_SHORT 0x24 1
-		WRITE_SHORT 0x26 1
-	END
-	WRITE_SHORT 0x68 1
-	WRITE_SHORT 0x6a 0x9a
-	INSERT_BYTES 0x72 0x28
-	WRITE_ASCII 0x72 "%ab_data%"
-END

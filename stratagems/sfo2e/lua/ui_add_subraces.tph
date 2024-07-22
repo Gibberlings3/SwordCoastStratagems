@@ -1,6 +1,6 @@
-/* describe-library
-{Functions to add races, subraces and pseudoraces to the game. EE-only (edits the UI).}
-
+/* 
+describe-library{Functions to add races, subraces and pseudoraces to the game. EE-only (edits the UI).}
+brief-desc{functions to add races, subraces, and pseudoraces}
 */
 
 
@@ -288,7 +288,7 @@ BEGIN
 		END
 	END
 	// combine
-	LAF array_join STR_VAR array1=new_data array2=old_data RET_ARRAY all_data=array END
+	LAF array_join STR_VAR array1=old_data array2=new_data RET_ARRAY all_data=array END
 	COPY "%to_add_to%" "%to_add_to%"
 		LPF 2da_write STR_VAR case=upper array=all_data default="-1" END
 	BUT_ONLY
@@ -328,31 +328,9 @@ BEGIN
 	LAF check_ini INT_VAR silent=1 STR_VAR ini=subrace_stat RET subrace_stat=value END
 	OUTER_SET subrace_stat=subrace_stat=0?134:subrace_stat
 
-	// get some required data from the engine strings
-	ACTION_FOR_EACH abil IN strength dexterity constitution intelligence wisdom charisma pick_pockets open_locks hide_in_shadows move_silently detect_illusion set_traps find_remove_traps proficiencies BEGIN
-		OUTER_SPRINT lua_lookup "STRREF_GUI_MIXED_%abil%"
-		ACTION_TO_UPPER lua_lookup
-		COPY_EXISTING "enginest.2da" "%workspace%"
-			REPLACE_EVALUATE "%lua_lookup%[%TAB ]+\([0-9]+\)" BEGIN
-				SET $enginest("%abil%")="%MATCH1%"
-			END
-			""
-		BUT_ONLY
-	END
+	// get engine strings
 	
-	// these aren't in the engine strings (they're directly in the description text) and need to be inferred
-
-	ACTION_GET_STRREF 9582 str_desc
-	OUTER_INNER_PATCH "%str_desc%" BEGIN
-		REPLACE_EVALUATE "^\(.*\)<MINIMUM>" BEGIN
-			SET $enginest("minimum")=RESOLVE_STR_REF ("%MATCH1%")
-		END
-		""
-		REPLACE_EVALUATE "^\(.*\)<MAXIMUM>" BEGIN
-			SET $enginest("maximum")=RESOLVE_STR_REF ("%MATCH1%")
-		END
-		""
-	END
+	LAF ui_subrace_engine_strings RET_ARRAY enginest END
 	
 	// load disabled data into memory
 
@@ -395,7 +373,7 @@ IDS V1.0
 			SPRINT $output_array("%ident%" original_race) $subrace_data("%ident%" parent_real_id)
 		END
 		LPF 2da_write STR_VAR array=output_array END
-
+	
 
 	/// make a function
 	
@@ -404,7 +382,8 @@ IDS V1.0
 
 	// general setup of ui.menu and installation of new LUA objects and functions
 
-	LAF add_subraces_lua_setup END
+	LAF add_subraces_lua_setup INT_VAR tlk_signal_start END
+
 
 	// modifications to game proficiencies (etc) 2das - has to occur after loading data as we need to know max_count
 	
@@ -425,6 +404,8 @@ IDS V1.0
 	// build the various spells and patch them into CLAB entries
 	
 	LAF add_subraces_build_spells INT_VAR delay_mode END
+	
+	
 	
 	
 END
@@ -550,8 +531,11 @@ BEGIN
 END
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// requires ui_subrace_engine_strings to have been run
+
 
 DEFINE_ACTION_FUNCTION add_subraces_lua_setup//internal 
+	INT_VAR tlk_signal_start=900000
 BEGIN
 
 	ACTION_IF !VARIABLE_IS_SET lua_loc BEGIN
@@ -566,8 +550,13 @@ BEGIN
 
 	// install relevant functions and the the 'subrace' objects
 	
+	ACTION_IF is_bg BEGIN
+		OUTER_SPRINT isbgline "dwIsBG=true"
+	END ELSE BEGIN
+		OUTER_SPRINT isbgline ""
+	END
 	COPY ".../stratagems-inline/subrace_functions.lua" "override/m_dw_sbf.lua" EVALUATE_BUFFER
-	COPY ".../stratagems-inline/subrace_objects.lua" "override/m_dw_sbd.lua"
+	COPY ".../stratagems-inline/subrace_objects.lua" "override/m_dw_sbd.lua" EVALUATE_BUFFER
 
 	// build discard and signalling stat (the ui_externalize_proficiencies library contains various resources which we need)
 	LAF check_label STR_VAR label=dw-set-up-discard-stat RET value END
@@ -627,10 +616,8 @@ BEGIN
 			REPLACE_TEXTUALLY ~Infinity_FetchString(char\.race)~ ~dwDisplayRace(char)~
 		// edit the UI to show 'correct' skill values
 			LPF UI_alter_object STR_VAR object=CHARGEN_SKILLS object_type=menu patch=ui_skill_adjusts END
-		// on BG, edit the UI to hot-swap the biography to reflect <CHARNAME>'s mother's heritage
-			PATCH_IF GAME_IS ~eet bgee~ BEGIN
-				LPF ui_edit_biography END
-			END
+
+
 
 	END
 
@@ -737,39 +724,6 @@ DEFINE_PATCH_FUNCTION ui_skill_adjusts//internal
 BEGIN
 
 	REPLACE_TEXTUALLY "chargen\.thief_skill\[rowNumber\]\.value" "dwSubraceSkillAdjust(chargen.thief_skill[rowNumber])"
-
-END
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///	Plug in biography-editor 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-DEFINE_PATCH_FUNCTION ui_edit_biography//internal 
-BEGIN
-
-	PATCH_IF !is_eet BEGIN
-		LPF UI_alter_object STR_VAR object=CHARGEN object_type=menu patch=ui_edit_biography_helper END
-	END
-
-END
-
-
-DEFINE_PATCH_FUNCTION ui_edit_biography_helper//internal 
-BEGIN  // applies to CHARGEN
-
-
-//	READ_ASCII 0x0 data (BUFFER_LENGTH)
-	//PATCH_PRINT "%data%"
-	REPLACE_TEXTUALLY 	~createCharScreen:AcceptCharacter(-1)~ 
-						~%WNL%
-		if dwUpdatedBio then 
-			createCharScreen:AcceptCharacter(-1)
-		 else
-			dwAutoBioSet=true
-			createCharScreen:OnBiographyButtonClick()
-		end%WNL%~
-	
 
 END
 
@@ -1327,6 +1281,13 @@ BEGIN
 			PATCH_IF !(final_id=race) BEGIN
 				LPF ADD_SPELL_EFFECT INT_VAR opcode=72 target=2 parameter1=final_id parameter2=2 timing=4 duration=1 END
 			END
+			// apply any skill modifiers
+			PHP_EACH skill_opcode_map AS skill=>opcode BEGIN
+				SET mod="subrace_data_%ind%_%skill%"
+				PATCH_IF !(mod=0) BEGIN
+					LPF ADD_SPELL_EFFECT INT_VAR opcode target=2 parameter1=mod timing=4 duration=1 END // timing=4 seems necessary for these not to get overriden at the start of play
+				END								
+			END
 			// block further content for joinable NPCs
 			LPF ADD_SPELL_EFFECT INT_VAR opcode=318 target=2 timing=0 duration=1 parameter1=stat_ind parameter2=splprot_num STR_VAR resource="%spell%" END
 
@@ -1343,13 +1304,7 @@ BEGIN
 					LPF ADD_SPELL_EFFECT INT_VAR opcode=326 target=2 parameter1=class parameter2=105 timing=4 duration=1 STR_VAR resource="%spl_set_str_ex_to_100%" END
 				END
 			END
-			// apply any skill modifiers
-			PHP_EACH skill_opcode_map AS skill=>opcode BEGIN
-				SET mod="subrace_data_%ind%_%skill%"
-				PATCH_IF !(mod=0) BEGIN
-					LPF ADD_SPELL_EFFECT INT_VAR opcode target=2 parameter1=mod timing=4 duration=1 END // timing=4 seems necessary for these not to get overriden at the start of play
-				END								
-			END
+
 
 
 	END
@@ -1452,6 +1407,7 @@ BEGIN
 END
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// also makes sure saving throws are correct
 
 DEFINE_ACTION_FUNCTION subrace_label_joinable_npcs//internal 
 BEGIN
@@ -1496,12 +1452,13 @@ BEGIN
       END
      BUT_ONLY
   END
-
+LAM data_saving_throws
 COPY_EXISTING_REGEXP ".*\.cre" "override"
 	READ_ASCII 0x280 dv
 	TO_LOWER dv
 	PATCH_IF VARIABLE_IS_SET $npc_dv("%dv%") BEGIN
 		LPF ADD_CRE_EFFECT INT_VAR opcode=328 target=2 timing=9 parameter2=stat_ind special=1 END
+		LPF cre_enforce_saves_notstruct END
 	END
 
 BUT_ONLY
@@ -1695,8 +1652,133 @@ BEGIN
 
 END
 
+/*
+document{ui_subrace_item_use}
+{
+Goes through all items in the game to make sure that they're appropriately marked as unusable by new races. We assume that the new race can use something iff humans can (except that if <b>only</b> humans are prohibited from using it, we assume new races can use it). This is idempotent but not called automatically.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION ui_subrace_item_use
+BEGIN
+
+	LAF 2da_read STR_VAR file=item_use.2da RET_ARRAY npc_items=rows END
+	LAF 2da_read STR_VAR file=racetext.2da RET_ARRAY racetext_rows=rows racetext_array=array END
+
+	ACTION_DEFINE_ASSOCIATIVE_ARRAY race_ex_arr BEGIN
+		ELF=>23
+		DWARF=>24
+		HALF_ELF=>25
+		HALFLING=>26
+		HUMAN=>27
+		GNOME=>28
+		HALF_ORC=>31
+	END
+
+	COPY_EXISTING_REGEXP ".*\.itm" override
+		TO_UPPER SOURCE_RES
+		// only patch droppable items that are not marked as NPC-specific and that are unusable by humans
+		PATCH_IF !VARIABLE_IS_SET $npc_items("%SOURCE_RES%") && ((BYTE_AT 0x18) BAND BIT2) &&((BYTE_AT 0x21) BAND BIT3) BEGIN
+			// check for character-specific, general-specific, or race-specific restriction via 319
+			proceed=1
+			GET_OFFSET_ARRAY fx_arr ITM_V10_GEN_EFFECTS
+			PHP_EACH fx_arr AS fx_ind=>fx_off BEGIN
+				PATCH_IF proceed && (SHORT_AT fx_off)=319 && (BYTE_AT (fx_off+0x3))=1 BEGIN
+					type=LONG_AT (fx_off+0x8)
+					proceed=proceed && ! (type=4 || type=11 || type=3)
+				END
+			END
+			PATCH_IF proceed BEGIN
+				// get the bits
+				READ_LONG 0x1e bits
+				// check if it's just totally unusable
+				proceed= ! (bits = "-1")
+			END
+			PATCH_IF proceed BEGIN
+				// collect and count races
+				racecount=0
+				humans_only=1
+				PHP_EACH race_ex_arr AS race=>bit BEGIN
+					PATCH_IF !(bits BAND (2**bit) ) BEGIN
+						++racecount
+						PATCH_IF racecount=1 BEGIN
+							SPRINT only_race "%race%"
+						END 				
+					END ELSE BEGIN
+						PATCH_MATCH "%race%" WITH
+						HUMAN BEGIN
+						END
+						DEFAULT
+							humans_only=0
+						END									
+					END
+				END
+				// if it really does just block humans, we skip it
+				PATCH_IF !humans_only BEGIN
+					// if only one race, mark it up with a 319
+					PATCH_IF racecount=1 BEGIN
+						LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=4 match_parameter1=$racetext_array("%only_race%" "ID") END // tidy up and stay idempotent
+						LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=1 timing=2 power=1 parameter2=4 parameter1=$racetext_array("%only_race%" "ID") special=$racetext_array("%only_race%" "UPPERCASE") END
+					END ELSE BEGIN
+						// in this case we're going to have to do a block-as-unusable based on all playable races
+						PHP_EACH racetext_rows AS race=>discard BEGIN
+							PATCH_IF !VARIABLE_IS_SET $race_ex_arr("%race%") BEGIN // not one of the core 7
+								PATCH_MATCH "%race%" WITH
+								VAMPIRE BEGIN 
+									special=0 // vampire marker is invisible
+								END
+								DEFAULT
+									special=$racetext_array("%race%" "UPPERCASE")
+								END
+								LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=4 match_parameter1=$racetext_array("%race%" "ID") END // tidy up and stay idempotent
+								LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 power=0 parameter2=4 parameter1=$racetext_array("%race%" "ID") special END
+							END
+						END
+					END
+				END
+				
+			END
+			
+		END
+	BUT_ONLY
+
+END
+
+DEFINE_ACTION_FUNCTION ui_subrace_engine_strings//internal
+	RET_ARRAY enginest
+BEGIN
+
+	ACTION_CLEAR_ARRAY enginest
+	// get some required data from the engine strings
+	ACTION_FOR_EACH abil IN strength dexterity constitution intelligence wisdom charisma pick_pockets open_locks hide_in_shadows move_silently detect_illusion set_traps find_remove_traps proficiencies BEGIN
+		OUTER_SPRINT lua_lookup "STRREF_GUI_MIXED_%abil%"
+		ACTION_TO_UPPER lua_lookup
+		COPY_EXISTING - "enginest.2da" nowhere
+			REPLACE_EVALUATE "%lua_lookup%[%TAB ]+\([0-9]+\)" BEGIN
+				SET $enginest("%abil%")="%MATCH1%"
+			END
+			""
+		BUT_ONLY
+	END
+	
+	// these aren't in the engine strings (they're directly in the description text) and need to be inferred
+
+	ACTION_GET_STRREF 9582 str_desc
+	OUTER_INNER_PATCH "%str_desc%" BEGIN
+		REPLACE_EVALUATE "^\(.*\)<MINIMUM>" BEGIN
+			SET $enginest("minimum")=RESOLVE_STR_REF ("%MATCH1%")
+		END
+		""
+		REPLACE_EVALUATE "^\(.*\)<MAXIMUM>" BEGIN
+			SET $enginest("maximum")=RESOLVE_STR_REF ("%MATCH1%")
+		END
+		""
+	END
 
 
+
+END
 
 
 ////// inlined LUA
@@ -1709,12 +1791,30 @@ END
 
 function dwSubraceChargenBio()
 
-	createBioEdit=dwSubraceBioSwap(createBioEdit)
-	dwUpdatedBio=true
-	if dwAutoBioSet then
-		createCharScreen:OnDoneButtonClick()
-		createCharScreen:AcceptCharacter(-1)
+	if dwIsBG then
+		createBioEdit=dwSubraceBioSwap(createBioEdit)
+		dwUpdatedBio=true
+		if dwAutoBioSet then
+			dwNotInChargen()
+			createCharScreen:OnDoneButtonClick()
+			createCharScreen:AcceptCharacter(-1)
+		end
 	end
+
+
+end
+
+function dwSubraceChargenBioBypassCheck()
+
+	return (dwIsBG and not dwUpdatedBio)
+
+end
+
+
+function dwSubraceChargenBioBypass()
+
+	dwAutoBioSet=true
+	createCharScreen:OnBiographyButtonClick()
 
 
 end
@@ -1970,9 +2070,9 @@ function dwFindSubraceData(char)
 	subrace=false
 	if next(char.statusEffects) ~= nil then
 		for k, v in pairs(char.statusEffects) do
-			 if v.strRef>900000 then
+			 if v.strRef>%tlk_signal_start% then
 				subrace=true
-				id= v.strRef - 900000
+				id= v.strRef - %tlk_signal_start%
 			 end
 		end
 	end
@@ -2162,6 +2262,7 @@ dwPseudoRaces={}
 subraces = {}
 subraceIcons ={}
 defaultSubrace={}
+%isbgline%
 >>>>>>>>
 
 

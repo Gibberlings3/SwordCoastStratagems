@@ -1,4 +1,12 @@
 /*
+describe-library{This library contains some tools to do core/miscellaneous manipulations of IE files. By convention functions here don't have ietool_ as a prefix.</p>
+<p>Functions here should have no external dependencies.}
+brief-desc{core IE-file manipulation tools}
+*/
+
+
+
+/*
 document{ext}
 {Returns the extension of the currently-being-patched file, if we can tell.
 (we can tell for 2da, are, chr, cre, dlg, gam, itm, pro, spl, sto, vef, vvc, wed, and wmp)
@@ -307,7 +315,7 @@ END
 document{install}
 {
 'arguments' (synonym: 'files'; synonym:'file') is a list of files (including extensions) located at the location given by path/location/locbase. Each is copied over to the override;
-if any are BAF/D, they are COMPILE EVALUATE_BUFFERred; if they are SSL, they are compiled to BCS; if they are v1 CREs, we run FJ_CRE_EFF_V2 to force V2 effects. 
+if any are BAF/D, they are COMPILE EVALUATE_BUFFERred; if they are SSL, they are compiled to BCS; if they are v1 CREs, we run FJ_CRE_EFF_V2 to force V2 effects.  If they are 2da/ids/ini files, we EVALUATE_BUFFER.
 If none of 'location', 'locbase', and 'path' are set, set location=resource. 
 If overwrite=0, don't overwrite already-present files (does not affect scripts).
 
@@ -371,7 +379,12 @@ BEGIN
 				END
 				LAF ssl_to_bcs INT_VAR inline STR_VAR script location locbase path END
 			END
-			
+			".*\.2da" ".*\.ini" ".*\.ids" BEGIN
+				ACTION_IF overwrite || !FILE_EXISTS_IN_GAME "%file%" BEGIN
+					COPY "%file_path%" override
+						EVALUATE_BUFFER
+				END			
+			END
 			DEFAULT
 				ACTION_IF overwrite || !FILE_EXISTS_IN_GAME "%file%" BEGIN
 					COPY "%file_path%" override
@@ -736,7 +749,9 @@ BEGIN
 	// get list
 	ACTION_CLEAR_ARRAY worldscript_array
 	OUTER_SPRINT $worldscript_array("BALDUR") ""
-	OUTER_SPRINT $worldscript_array("BALDUR25") ""
+	ACTION_IF FILE_EXISTS_IN_GAME "BALDUR25.BCS" BEGIN
+		OUTER_SPRINT $worldscript_array("BALDUR25") ""
+	END
 	COPY_EXISTING - campaign.2da nowhere
 		LPF 2da_read RET_ARRAY campaign_array=array campaign_rows=rows END
 		PHP_EACH campaign_rows AS row=>discard BEGIN
@@ -821,7 +836,7 @@ OBSOLETE: use resolve_sectype instead
 */
 ////////////////////////////////////////////////////////////////////////////////
 
-DEFINE_DIMORPHIC_FUNCTION add_silent_sectype
+DEFINE_DIMORPHIC_FUNCTION add_silent_sectype//deprecated
    STR_VAR sectype=""
 			arguments=""
    RET sectype_value
@@ -864,7 +879,7 @@ BEGIN
 		SPRINT sectype "%sectype%%arguments%"
 		PATCH_IF "%string%" STR_CMP "" BEGIN
 			PATCH_IF strref>=0 BEGIN
-				LPF warn STR_VAR warning="resolve_sectype warning: both string and strref were specified" END
+				LPF warning STR_VAR warning="resolve_sectype warning: both string and strref were specified" END
 			END
 			strref=RESOLVE_STR_REF ("%string%")
 		END 
@@ -978,7 +993,7 @@ END
 document{all_to_utf8}
 {
 Given the (full) path to your tra files (default: %MOD_FOLDER%/lang), convert
-all the files in all languages to (lowercased) UTF-8, leaving no detritus (no
+all the files in all languages to UTF-8 (with lowercased filenames), leaving no detritus (no
 fl#utf files). If permanent=1, will persist through uninstall.
 }
 */
@@ -1099,7 +1114,7 @@ END
 /*
 document{remove_joinable_spells}
 {
-Deletes the 'known' and 'memorized' spell lists (SPPR/SPWI namespace only) from all party-joinable NPCs
+Deletes the 'known' and 'memorized' spell lists (SPPR/SPWI namespace only) from all party-joinable NPCs, making an exception for any NPC with a dv on the k=>_ list 'exclude_array'
 }
 */
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1107,7 +1122,11 @@ Deletes the 'known' and 'memorized' spell lists (SPPR/SPWI namespace only) from 
 DEFINE_ACTION_FUNCTION remove_joinable_spells
 	INT_VAR remove_known=1
 			remove_memorized=1
+	STR_VAR exclude_array=""
 BEGIN
+	ACTION_IF "%exclude_array%" STR_CMP "" BEGIN
+		LAF array_map STR_VAR array="%exclude_array%" keymap=tolower RET_ARRAY "%exclude_array%"=array END
+	END
 	ACTION_IF !sfo_data_joinable_dvs_loaded BEGIN
 		LAM data_joinable_dvs
 	END
@@ -1115,7 +1134,7 @@ BEGIN
 		READ_ASCII DEATHVAR dv (0x20) NULL
 		PATCH_IF "%dv%" STR_CMP "" BEGIN
 			TO_LOWER dv
-			PATCH_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") BEGIN
+			PATCH_IF VARIABLE_IS_SET $sfo_joinable_dvs("%dv%") && ("%exclude_array%" STR_EQ "" || !VARIABLE_IS_SET $"%exclude_array%"("%dv%")) BEGIN
 				PATCH_IF remove_memorized BEGIN
 					GET_OFFSET_ARRAY info_arr CRE_V10_SPELL_MEM_INFO
 					PHP_EACH info_arr AS info_ind=>info_off BEGIN

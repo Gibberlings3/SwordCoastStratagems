@@ -1,0 +1,219 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 2.6</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - chapter 2.6</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p>
+
+<h2>lib_include and lib_sugar: smoother mod structuring, and syntactic sugar for WEIDU</h2>
+<p><a href="sfocourse.html">Back to contents</a></p>
+
+<p>The lib_include function contains the 'include' and 'run' functions, which aim to simplify the organization of your mod into separate pieces of code. One way they do this is through the lib_sugar library, which aims to make WEIDU syntax easier by introducing 'syntactic sugar' –i.e., abbreviations for WEIDU code that make code easier to write and more readable. (Even WEIDU's greatest fans (i.e., me) will concede that its syntax leaves a lot to be desired.).</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.6.1 Using 'include' and 'run'</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p><h4><strong>include</strong></h4></p>
+<p>The 'include' function is just a variant of WEIDU's core 'INCLUDE' command. Instead of including a piece of code with</p>
+<p><div class="code">
+<pre><code>INCLUDE "%MOD_FOLDER%/lib/mycode.tph"</code></pre></div></p>
+instead do
+<p><div class="code">
+<pre><code>LAF include STR_VAR file=mycode.tph location=lib END</code></pre></div></p>
+<p>(you can specify the location of the file in the usual SFO way). This automatically applies SFO's syntactic sugar (see below), which is the main reason to use 'include'; if for some reason you <em>don't</em> want it applied, you can set the INT_VAR 'literal' to 1. Note that because 'include' is a function, the scope of the included file is automatically restricted to the function call. (If you actually want to set variables in an included file to use elsewhere, use WEIDU's native functionality - but usually you should not do this.)</p>
+<p>Instead of a single file, 'file' can be a space-separated list of files, in which case 'include' includes them all, in order. The same location/locbase/path applies to each.</p>
+<p><h4><strong>run</strong></h4></p>
+<p>'run' is a more powerful tool for including files. It specifically applies to so-called 'tpa' files - a tpa file is a file containing WEIDU code (possibly including SFO syntactic sugar) that contains a 'main function': an action function <strong>that has the same name as the file itself</strong>. So minsc.tpa should contain the action function 'minsc'. That action function should have no arguments (except possibly the STR_VAR 'version'; see below), and should return nothing. Any other functions defined in a tpa should be used only in the main function (though I can't enforce this requirement).</p>
+<p>'run' loads the tpa file into memory, applying SFO syntactic sugar if appropriate (as with 'include', set literal=0 to skip this), and then runs the main function. The idea is that a tpa file contains a delineated part of your mod, and execution of a mod component is just the running of one or more tpa files.</p>
+<p>An example use of run:</p>
+<p><div class="code">
+<pre><code>LAF run STR_VAR file=minsc location=npcs END</code></pre></div></p>
+<p>The location of 'minsc.tpa' is determined in the usual SFO (location/locbase/path) way.</p>
+<p>As with 'include', 'file' can be a space-separated list of tpa files (all omitting the '.tpa' suffix).</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.6.2 Using 'run' to structure your mod</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>SFO's intended mod style is that each component is given by a tpa. (That tpa might call other components in turn.) For instance, Talent's of Faerun's 'Add subraces' component's entry in the main TP2 file, in its entirety, is</p>
+<p><div class="code">
+<pre><code>//////////////////////////////////////////////////////////////////////
+/// New races and subraces
+//////////////////////////////////////////////////////////////////////
+
+BEGIN @200 DESIGNATED 20000 GROUP @2
+
+REQUIRE_PREDICATE GAME_IS "bgee bg2ee eet iwdee" @50
+FORBID_COMPONENT "setup-stratagems.tp2" 5900 @70
+
+LAF run STR_VAR file=subrace location=subrace END</code></pre></div></p>
+<p>The component specification is the various require and forbid instructions, and then a single 'run' call - everything else is outsourced to the file 'subrace.tpa', which is found in dw_talents/subrace. (Note that since 'run' is a function, this automatically encapsulates the component: nothing in it can affect other components.</p>
+<p>When 'run' is used this way, it has some extra features. Any time 'run' is used <b>outside the scope of any other 'run' command</b> (the idea is this happens only when you use 'run' in your tp2 file to call the whole component, though I can't enforce that), the following things happen:
+<ul>
+<li>If the variable 'sfo_marker_prefix' has been set (you would normally do this in your ALWAYS block), then a label file is placed in weidu_external/markers to indicate that the component is installed. The name of the label file is sfo_marker_prefix, followed by the name of the file called by 'run'. For instance, Talents of Faerun sets sfo_marker_prefix to 'dw-' in its ALWAYS block, so when the subrace component is installed, the file 'dw-subrace.mrk' is automatically created. Labels can be checked with check_label. If you don't want a marker created, set marker=0.</li>
+<li>SFO tries to load a tra file, which it assumes lives in either %sfo_tra_loc%/%default_language% or %sfo_tra_loc%/%LANGUAGE% (with the latter taking precedence) - recall that these variables are set when SFO is first installed). By default, it assumes the tra variable has the same name as the main file (so when the subrace component is run, subrace.tra is loaded). You can override this using the 'tra' STR_VAR (if, for instance, one tra file is shared among several components). Tra files are loaded via WITH_TRA, so they are forgotten after the run command concludes.</li>
+<li>The 'component_loc' variable is set to 'location', so that any further location checks are relative to that location.</li>
+</ul>
+</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.6.3 Including syntactic sugar</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+There are two main ways to apply SFO's syntactic sugar. One is to include a file via the 'include' or 'run' functions, in which case it is automatically applied: what happens is that the file is copied over to weidu_external/workspace, a bunch of substitutions replace the syntactic sugar with legal WEIDU code, and then the file is reincluded. A consequence is that if your code has bugs, you may need to look at the copy in weidu_external/workspace to decipher WEIDU's error message. (In general debugging code can be more of a nuisance with lib_include, which is one of its downsides.)</p>
+<p>The other way is to define an anonymous function: here you don't need to do anything special to use syntactic sugar, it's included automatically.</p>
+<p>If for some reason you want to apply syntactic sugar directly, the patch function 'sugar_apply' will carry out substitutions on the current file.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.6.4 Syntactic sugar</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>For this section, code fragments will be assumed to be included via lib_include or an anonymous function.</p>
+<p><h4><strong>Quickly setting strings</strong></h4></p>
+<p>You can set a string variable in action context like this:</p>
+<p><div class="code">
+<pre><code>myvar:=="Minsc is a ranger"</code></pre></div></p>
+<p>(This just abbreviates OUTER_SPRINT myvar "Minsc is a ranger".) In patch context, use ':=' instead of ':=='.</p>
+<p><h4><strong>Simpler string comparisons</h4></strong></p>
+<p>You can write "%string1%"=="%string2%" (and similar) as an abbreviation for "%string1%" STR_EQ "%string2%". Similarly, "%string1%"!=="%string2%" abbreviates "%string1%" STR_CMP "%string2%.</p>
+<p><h4><strong>Begin/End</h4></strong></p>
+<p>Instead of doing BEGIN … END, you can do [[… ]] in action context and {{ … }} in patch context. (This is a general feature of SFO syntactic sugar: [,] are used in action contexts, {,} in patch contexts.)</p>
+<p><h4><strong>Control flow</strong></h4></p>
+<p>You can do an ACTION_IF loop like this:</p>
+<p><div class="code">
+<pre><code>IF [condition] 
+[[
+	action
+]]</code></pre></div></p>
+<p>and a PATCH_IF loop like this:</p>
+<p><div class="code">
+<pre><code>IF {condition}
+{{
+	action
+}}</code></pre></div></p>
+<p><h4><strong>Context changes</h4></strong></p>
+<p><div class="code">
+<pre><code>[[[
+	code
+]]]</code></pre></div></p>
+<p>abbreviates</p>
+<p><div class="code">
+<pre><code>OUTER_PATCH "" BEGIN
+	code
+END</code></pre></div></p>
+<p>Similarly,</p>
+<p><div class="code">
+<pre><code>{{{
+	code
+}}}</code></pre></div></p>
+abbreviates 
+<p><div class="code">
+<pre><code>INNER_ACTION BEGIN
+	code
+END</code></pre></div></p>
+<p><strong><h4>Defining arrays</h4></strong></p>
+<p>You can define a new array by </p>
+<p><div class="code">
+<pre><code>array.new[my_array]
+[[
+	key1=>val1
+	key2=>val2
+	…
+]]</code></pre></div></p>
+which abbreviates</p>
+<p><div class="code">
+<pre><code>ACTION_CLEAR_ARRAY my_array
+ACTION_DEFINE_ASSOCIATIVE_ARRAY my_array BEGIN
+key1=>val1
+	key2=>val2
+	…
+END</code></pre></div></p>
+<p>To add to an existing array (i.e. skip the ACTION_CLEAR_ARRAY), use array.add instead. To do it all in patch context, just use {{,}} instead of [[,]].
+<p><h4><strong>Getting ids file entries</strong></h4></p>
+You can get entries from the ids file like this:</p>
+<p><div class="code">
+<pre><code>var=race.int[DWARF]</code></pre></div></p>
+abbreviates</p>
+<p><div class="code">
+<pre><code>var=IDS_OF_SYMBOL (race DWARF)</code></pre></div></p>
+while</p>
+<p><div class="code">
+<pre><code>var=race.sym[3]</code></pre></div></p>
+abbreviates</p>
+<p><div class="code">
+<pre><code>OUTER_PATCH "" BEGIN
+	LOOKUP_IDS_SYMBOL_OF_INT var race 3
+END</code></pre></div></p>
+<p>Again, just swap square brackets to curly brackets to work in patch context. (I'm mostly going to stop saying that from here on.)</p>
+<p><h4><strong>Editing strrefs</h4></strong></p>
+<p>This code reads in the string at the given strref, applies the code to it as a patch function, and resets the strref to the new string.</p>
+<p><div class="code">
+<pre><code>strref.patch[9501]
+[
+	REPLACE_TEXTUALLY "Minsc" "Minsc the Awesome"
+]</code></pre></div></p>
+<p><h4><strong>Working with strings</strong></h4></p>
+<p>You can patch a string like this:</p>
+<p><div class="code">
+<pre><code>myvar2=myvar.patch[REPLACE_TEXTUALLY "Minsc" "Minsc the Awesome"]</code></pre></div>
+<p>Alternatively you can write the string into dialog.tlk (after patching) and return the strref:</p>
+<p><div class="code">
+<pre><code>myvar_strref=myvar.strref[REPLACE_TEXTUALLY "Minsc" "Minsc the Awesome"]</code></pre></div></p>
+<p>You can also display the result of a patch:</p>
+<p><div class="code">
+<pre><code>myvar.print[REPLACE_TEXTUALLY "Minsc" "Minsc the Awesome"]</code></pre></div></p>
+<p>In each case, you can leave the [] empty if you want.</p>
+<p><h4><strong>Function calls</strong></h4></p>
+<p>A function with no arguments can be called like this:</p>
+<p><div class="code">
+<pre><code>run_this[]</code></pre></div></p>
+<p>which is equivalent to</p>
+<p><div class="code">
+<pre><code>LAF run_this END</code></pre></div></p>
+<p>If the function takes a STR_VAR argument 'arguments', you can set the argument like this:</p>
+<p><div class="code">
+<pre><code>run_this[cat]</code></pre></div></p>
+<p>which is equivalent to</p>
+<p><div class="code">
+<pre><code>LAF run_this STR_VAR arguments="cat" END</code></pre></div></p>
+<p>Other arguments can be included in this form:</p>
+<p><div class="code">
+<pre><code>run_this[cat| number_of_cats:i=4 size_of_cats="large"]</code></pre></div></p>
+<p>which abbreviates</p>
+<p><div class="code">
+<pre><code>LAF run_this INT_VAR number_of_cats=4 STR_VAR arguments="cat" size_of_cats="large" END</code></pre></div></p>
+<p>You can leave out the 'arguments' bit entirely, but you still need the |, as in</p>
+<p><div class="code">
+<pre><code>run_this[| number_of_cats:i=4 size_of_cats="large"]</code></pre></div></p>
+<p>which abbreviates</p>
+<p><div class="code">
+<pre><code>LAF run_this INT_VAR number_of_cats=4 STR_VAR size_of_cats="large" END</code></pre></div></p>
+<p>If the function returns 'value', you can do</p>
+<p><div class="code">
+<pre><code>out=run_this[cat]</code></pre></div></p>
+<p>which abbreviates</p>
+<p><div class="code">
+<pre><code>LAF run_this STR_VAR arguments=cat RET out=value END</code></pre></div></p>
+<p>(SFO has other syntactic sugar related to functions, but it is specific to the various struct functions used in lib_struct, which is discussed elsewhere.)</p>
+</div>
+
+
+</div>
+</body>

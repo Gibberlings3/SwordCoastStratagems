@@ -1,0 +1,157 @@
+/*
+document{ui_externalize_usability_descriptions}
+
+
+
+
+
+
+*/
+
+
+
+DEFINE_DIMORPHIC_FUNCTION ui_externalize_usability_descriptions
+	INT_VAR strref="-1"
+	STR_VAR kit=""
+			item=""
+			item_array="sfo_reserved_usability_array"
+BEGIN
+	// install
+	LAF ui_externalize_usability_descriptions_setup END
+	// get hardcoded entries
+	LAF array_read INT_VAR inline=1 STR_VAR file=".../stratagems-inline/class_name_hardcoded.txt" RET_ARRAY hardcoded_array=array END
+	// find strref
+	ACTION_IF strref<0 BEGIN
+		ACTION_TO_UPPER kit
+		ACTION_MATCH "%kit%" WITH
+		".*" WHEN VARIABLE_IS_SET $hardcoded_array("%kit%") BEGIN
+			OUTER_SET strref=$hardcoded_array("%kit%")
+		END
+		"" BEGIN
+			FAIL "ui_externalize_usability_descriptions: called without any value of strref or kit"
+		END
+		DEFAULT
+			LAF 2daq_extract STR_VAR resref=clastext row="%kit%" column=MIXED RET strref=value END
+		END
+	END
+	
+	// get array of items
+	OUTER_WHILE "%item%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%item%" RET entry item=list END
+		OUTER_SPRINT $"%item_array%"("%entry%") ""
+	END	
+	// open m_dw_itd.lua to read and write
+		COPY_EXISTING "m_dw_itd.lua" override
+			// initialize extra data 
+			SPRINT data ""
+			// go through array
+			PHP_EACH "%item_array%" AS this_item=>discard BEGIN
+				// enforce uppercase
+				TO_UPPER this_item
+				// add original table if not yet present
+				PATCH_IF INDEX_BUFFER ("'%this_item%'")<0 BEGIN
+					SPRINT data "%data%dwUnusable['%this_item%']={}%WNL%"
+				END
+				// add new entry if not yet present
+				PATCH_IF INDEX_BUFFER ("['%this_item%'][%strref%]")<0 BEGIN
+					SPRINT data "%data%dwUnusable['%this_item%'][%strref%]=true%WNL%"
+				END			
+			END
+			// append new data
+			end=BUFFER_LENGTH
+			INSERT_BYTES end STRING_LENGTH "%data%"
+			WRITE_ASCII end "%data%"
+		BUT_ONLY
+END
+
+<<<<<<<<.../stratagems-inline/class_name_hardcoded.txt
+FIGHTER				10174		
+MAGE				10176		
+FIGHTER_MAGE		10189		
+FIGHTER_CLERIC		10187		
+FIGHTER_THIEF		10178
+FIGHTER_DRUID		10188
+CLERIC_MAGE			10180
+MAGE_THIEF			10193
+FIGHTER_MAGE_CLERIC	10190
+FIGHTER_MAGE_THIEF	10191
+>>>>>>>>
+
+
+
+DEFINE_ACTION_FUNCTION ui_externalize_usability_descriptions_setup BEGIN
+	
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_itf.lua" BEGIN
+	
+		COPY ".../stratagems-inline/m_dw_itf.lua" override
+		COPY ".../stratagems-inline/m_dw_itd.lua" override
+	
+		// make needed menu change
+		COPY_EXISTING "ui.menu" override
+			REPLACE_TEXTUALLY EXACT_MATCH "itemDesc.item.description" "dwItemDescription(itemDesc.item)"
+		BUT_ONLY
+	
+	END
+
+END
+
+
+
+
+
+
+
+
+
+<<<<<<<< .../stratagems-inline/m_dw_itf.lua
+
+function dwItemDescription(item)
+	-- only bother if item is actually in dwUnusable
+	local resref=item.res
+	if (dwUnusable[resref]) then
+		-- initialize table of 'unusable' lines
+		local ks={}
+		-- extract the 'not usable by' bit
+		local threshold_line=Infinity_FetchString(31522)
+		local found_threshold=nil
+		for line in string.gmatch(item.description, "%C+") do 
+			if found_threshold then
+				table.insert(ks,line)
+			elseif line==threshold_line then
+				found_threshold=true
+			end
+		end
+		-- get the bit up to 'not usable by'	
+		local desc=string.gsub(item.description,threshold_line..'.*',threshold_line)
+		-- add the new lines to the table
+		for k,_ in pairs(dwUnusable[resref]) do
+			table.insert(ks,Infinity_FetchString(k))
+		end
+		-- sort table alphabetically (but with multiclass after single class)
+		table.sort(ks,dwItemDescriptionSort)
+		-- add lines back
+		for _,k in ipairs(ks) do
+			desc=desc.."\n".. k
+		end
+		return desc
+	else
+		return item.description
+	end
+end
+
+function dwItemDescriptionSort(a,b)
+
+	if string.find(a,'/') and not string.find(b,'/') then
+		return false
+	end
+	if not string.find(a,'/') and string.find(b,'/') then
+		return true
+	end
+	return a<b
+
+end
+>>>>>>>>
+<<<<<<<< .../stratagems-inline/m_dw_itd.lua
+dwUnusable={}
+
+>>>>>>>>

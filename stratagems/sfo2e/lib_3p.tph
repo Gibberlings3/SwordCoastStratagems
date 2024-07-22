@@ -1,8 +1,18 @@
+////////////////////////////////////////////////////////////////////////////////////////
+/*
+describe-library{Functions in this library are used to save and load third-party data, to be used by SFO mods to tweak their own installation.}
+
+brief-desc{save and load third-party data for tweaking an SFO mod}
+
+*/
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
 ///////////////////////////////////////////////////////////////////////////////////
 /*
 document{3p_load_data}
 {
-Loads all the inis in the folders '%MOD_FOLDER%/sfo_3p_folder_internal' (by default '%MOD_FOLDER%/3p') and '%data_loc_shared%/sfo_3p_folder' (by default weidu_external/data/dw_shared/%MOD_FOLDER%3p), with the latter overriding the former.
+Loads all the inis in the folders '%MOD_FOLDER%/%sfo_3p_folder_internal%' (by default '%MOD_FOLDER%/3p') and '%data_loc_shared%/%sfo_3p_folder%' (by default weidu_external/data/dw_shared/%MOD_FOLDER%3p), with the latter overriding the former.
 Returns them as a series of arrays, labelled by ini sections - so all the entries in [sphere], across all the
 inis, get returned in $sfo_3p_sphere. If the key has the form firstbit:secondbit, instead we return a 2D array
 using secondbit as a key: so entries in [kit:dw_cleric_mask] would get returned as values of $sfo_3p_kit("dw_cleric_mask" [whatever])
@@ -23,7 +33,7 @@ BEGIN
 
 	ACTION_IF !VARIABLE_IS_SET sfo_3p_data_loaded BEGIN
 		OUTER_SET sfo_3p_data_loaded=1
-		// get the ata
+		// get the data
 		ACTION_IF !VARIABLE_IS_SET "sfo_3p_folder_internal" BEGIN
 			OUTER_SPRINT sfo_3p_folder_internal "3p"
 		END
@@ -89,16 +99,33 @@ DEFINE_ACTION_FUNCTION 3p_kit BEGIN
 	
 	LAM 3p_load_data
 	
+	// cre files, and set uppercase entries
 	ACTION_PHP_EACH sfo_3p_npc_kit AS resref=>kit BEGIN
 		OUTER_SET kitnum=IDS_OF_SYMBOL (kit "%kit%")
 		ACTION_IF kitnum>=0 BEGIN
+			ACTION_TO_UPPER resref
+			OUTER_SET $sfo_3p_npc_uc("%resref%")=kitnum
 			COPY_EXISTING "%resref%.cre" override
 				LPF cre_set_kit INT_VAR kitnum END
 			BUT_ONLY
 			IF_EXISTS
-		END
-	
+		END	
 	END
+	// script entries
+	COPY_EXISTING_REGEXP ".*\.cre" override
+		SPRINT resref "%SOURCE_RES%"
+		PATCH_IF !VARIABLE_IS_SET $sfo_3p_npc_uc("%resref%") BEGIN // only if not already done
+			READ_ASCII DEATHVAR dv (0x20) NULL
+			PATCH_IF "%dv%" STR_CMP "" BEGIN
+				TO_UPPER dv
+				PATCH_IF VARIABLE_IS_SET $sfo_3p_npc_uc("%dv%") BEGIN
+					LPF cre_set_kit INT_VAR kitnum=$sfo_3p_npc_uc("%dv%") END
+				END
+			END
+		END
+		
+	BUT_ONLY
+	
 END
 
 ///////////////////////////////////////////////////////////////////////////////////

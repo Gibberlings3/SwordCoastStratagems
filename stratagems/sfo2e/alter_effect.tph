@@ -7,8 +7,12 @@ check the value of a function ('match_function') and apply one ('function'). Fun
 Technically this library depends on lib_anon (and, via that, on lib_sugar, lib_tools and lib_fn),
 but this only applies if you use anonymous functions. Without them, this is self-contained.
 }
-ignore-dependencies{anon_define}
+ignoore-dependencies{anon_define}
 
+*/
+
+/*
+brief-desc{modified versions of WEIDU's DELETE/CLONE/ALTER_EFFECT functions}
 */
 
 /*
@@ -18,6 +22,15 @@ end; (iii) calls to those functions and macro inserted into the code; (iv) a
 small insert into the big AND loop that checks if a match is found; (v) allowing parameter1
 and parameter2 to take negative values up to -10
 }
+*/
+
+/*
+document{CLONE_EFFECT}
+{
+Edited version of Cam's CLONE_EFFECT (shipped with WEIDU) that allows for finer control on the savingthrow and special fields, and also to check the value of a function ('match_function') and apply one ('function'). Functions can be anonymous.
+
+}
+
 */
 
 DEFINE_PATCH_FUNCTION CLONE_EFFECT
@@ -386,6 +399,15 @@ BEGIN
 
 END
 
+/*
+document{DELETE_EFFECT}
+{
+Edited version of Cam's DELETE_EFFECT (shipped with WEIDU) that allows for finer control on the savingthrow and special fields, and also to check the value of a function ('match_function'). Functions can be anonymous.
+
+}
+
+*/
+
 DEFINE_PATCH_FUNCTION DELETE_EFFECT
 
   // defines what we're going to check
@@ -661,6 +683,15 @@ BEGIN
   END
 
 END
+
+/*
+document{ALTER_EFFECT}
+{
+Edited version of Cam's ALTER_EFFECT (shipped with WEIDU) that allows for finer control on the savingthrow and special fields, and also to check the value of a function ('match_function') and apply one ('function'). Functions can be anonymous.
+
+}
+
+*/
 
 DEFINE_PATCH_FUNCTION ALTER_EFFECT
 
@@ -1034,18 +1065,24 @@ BEGIN
 END
 
 DEFINE_PATCH_FUNCTION dw_internal_set_bit//internal
+INT_VAR fx_off_override="-1"
 BEGIN
-            PHP_EACH bit_array AS bit_var=>bit_loc BEGIN
+            PATCH_IF fx_off_override>=0 BEGIN
+				fx_off_here=fx_off_override
+			END ELSE BEGIN
+				fx_off_here=fx_off+(abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type))
+			END
+			PHP_EACH bit_array AS bit_var=>bit_loc BEGIN
              SET bit_val=EVAL "%bit_var%"
              PATCH_IF bit_val>=0 BEGIN
                 SET bit_binary =$bit_array_binary("%bit_var%")
-                  READ_BYTE  (fx_off + bit_loc + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type)))) bit_value
+                  READ_BYTE  (fx_off_here + bit_loc + (0x14 * fx_type))  bit_value
                 PATCH_IF bit_val=0 BEGIN
                     SET bit_value = (bit_value BAND bit_binary )
                 END ELSE BEGIN
                     SET bit_value = (bit_value BOR (BNOT bit_binary) )
                 END
-                WRITE_BYTE (fx_off + bit_loc + (0x14 * fx_type) + ((abil_fx_idx + index2) * (0x30 + (0xd8 * fx_type))))  bit_value
+                WRITE_BYTE (fx_off_here + bit_loc + (0x14 * fx_type))  bit_value
              END
             END
 END
@@ -1110,122 +1147,3 @@ BEGIN
 
   END
 END
-
-DEFINE_PATCH_FUNCTION ADD_SPELL_EFFECT 
-  INT_VAR opcode = 0
-          target = 0
-          timing = 0
-          parameter1 = 0
-          parameter2 = 0
-		  parameter2a = 0
-		  parameter2b = 0
-          power = 0
-          resist_dispel = 0
-          duration = 0
-          probability1 = 100
-          probability2 = 0
-          dicenumber = 0
-          dicesize = 0
-          savingthrow = 0
-          savebonus = 0
-          header = 0
-          insert_point = "-1"
-          special = 0
-		  ___#special = special
-  // DavidW's additional variables for the new effect
-  
-          save_vs_spell       = "-1"
-          save_vs_breath      = "-1"
-          save_vs_poison      = "-1"
-          save_vs_wand        = "-1"
-          save_vs_polymorph   = "-1"
-          ignore_primary      = "-1"
-          ignore_secondary    = "-1"
-          bypass_mirror_image = "-1"
-          ignore_difficulty   = "-1"
-          drain_hp_to_caster  = "-1"
-          transfer_hp_to_target = "-1"
-          fist_damage_only    = "-1"
-          drain_to_max_hp     = "-1"
-          suppress_feedback   = "-1"
-          save_for_half       = "-1"
-          made_save           = "-1"
-          does_not_wake       = "-1"
-  STR_VAR resource = ~~
-BEGIN
-    LPM dw_internal_initialise_bit
-   // set variables and offsets based on the file type
-    SET new_fx = 0
-    READ_ASCII 0x04 version (4)
-	PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
-	  SET min_size       = 0x82
-	END ELSE BEGIN
-	  SET min_size       = 0x72
-	END
-	READ_LONG   0x6a fx_off   ELSE 0
-	SET counter_offset = 0x70
-	SET abil_length    = 0x28
-	SET fx_type        = 0
-	READ_LONG   0x64 abil_off ELSE 0
-	READ_SHORT  0x68 abil_num ELSE 0
-
-  PATCH_IF (BUFFER_LENGTH >= min_size) THEN BEGIN
-
-    FOR (index1 = 0 ; index1 < abil_num ; index1 = index1 + 1) BEGIN
-
-      PATCH_IF (index1 = (header - 1)) OR (header = 0) BEGIN //header=1 means index1=0
-        READ_SHORT  (abil_off + 0x1e + (0x28 * index1)) abil_fx_num
-        READ_SHORT  (abil_off + 0x20 + (0x28 * index1)) abil_fx_idx
-
-        insert_point = !VARIABLE_IS_SET insert_point OR !IS_AN_INT insert_point OR insert_point < 0 OR insert_point > abil_fx_num ? abil_fx_num : insert_point
-
-        INSERT_BYTES (fx_off +        (0x30 * (insert_point + abil_fx_idx))) 0x30
-
-        WRITE_SHORT  (fx_off +        (0x30 * (insert_point + abil_fx_idx))) opcode
-        WRITE_BYTE   (fx_off + 0x02 + (0x30 * (insert_point + abil_fx_idx))) target
-        WRITE_BYTE   (fx_off + 0x03 + (0x30 * (insert_point + abil_fx_idx))) power
-        WRITE_LONG   (fx_off + 0x04 + (0x30 * (insert_point + abil_fx_idx))) parameter1
-        WRITE_LONG   (fx_off + 0x08 + (0x30 * (insert_point + abil_fx_idx))) parameter2	
-		PATCH_IF !(parameter2a=0) BEGIN
-			WRITE_SHORT   (fx_off + 0x08 + (0x30 * (insert_point + abil_fx_idx))) parameter2a
-		END
-		PATCH_IF !(parameter2b=0) BEGIN
-			WRITE_SHORT   (fx_off + 0x0a + (0x30 * (insert_point + abil_fx_idx))) parameter2b
-		END
-        WRITE_BYTE   (fx_off + 0x0c + (0x30 * (insert_point + abil_fx_idx))) timing
-        WRITE_BYTE   (fx_off + 0x0d + (0x30 * (insert_point + abil_fx_idx))) resist_dispel
-        WRITE_LONG   (fx_off + 0x0e + (0x30 * (insert_point + abil_fx_idx))) duration
-        WRITE_BYTE   (fx_off + 0x12 + (0x30 * (insert_point + abil_fx_idx))) probability1
-        WRITE_BYTE   (fx_off + 0x13 + (0x30 * (insert_point + abil_fx_idx))) probability2
-        WRITE_EVALUATED_ASCII (fx_off + 0x14 + (0x30 * (insert_point + abil_fx_idx))) ~%resource%~ #8
-        WRITE_LONG   (fx_off + 0x1c + (0x30 * (insert_point + abil_fx_idx))) dicenumber
-        WRITE_LONG   (fx_off + 0x20 + (0x30 * (insert_point + abil_fx_idx))) dicesize
-        WRITE_LONG   (fx_off + 0x24 + (0x30 * (insert_point + abil_fx_idx))) savingthrow
-        WRITE_LONG   (fx_off + 0x28 + (0x30 * (insert_point + abil_fx_idx))) savebonus
-        PATCH_IF IS_AN_INT special BEGIN
-          WRITE_LONG (fx_off + 0x2c + (0x30 * (insert_point + abil_fx_idx))) special
-        END
-		index2=insert_point 
-		LPF dw_internal_set_bit END
-
-
-        //correcting effects number
-        WRITE_SHORT (abil_off + 0x1e + (0x28 * index1)) (abil_fx_num + 1)
-
-        //correcting 1st effect indexes
-        FOR (index2 = 0 ; index2 < abil_num ; index2 = index2 + 1) BEGIN
-          READ_SHORT (abil_off + index2 * 0x28 + 0x20) 1effect_index
-          PATCH_IF (1effect_index > abil_fx_idx) //if abilility after current effect
-                OR ((1effect_index = abil_fx_idx)
-                AND (abil_fx_num = 0)
-                AND (index2 != index1)) BEGIN
-            WRITE_SHORT (abil_off + index2 * 0x28 + 0x20) (1effect_index + 1) //increase 1 effect index1 by 1
-          END
-        END
-        //no offsets to correct
-      END
-    END
-
-  END
-END
-

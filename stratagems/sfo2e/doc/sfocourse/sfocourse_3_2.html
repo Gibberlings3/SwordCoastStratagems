@@ -1,0 +1,337 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 3.2</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - chapter 3.2</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p><h2>ui_spell_system - bespoke allocation of spells</h2></p>
+<p><a href="sfocourse.html">Back to contents</a></p>
+<p>This component edits the UI to allow kit-specific allocations of learnable and/or memorizable spells, to allow kits to require certain groups of spells to be memorized, and to allow spell-group-specific modifiers to the chance of learning a spell from a scroll.</p>
+
+</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.1 What ui_spell_system does</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>The underlying idea is a ‘list’ – a collection of spells in the SPPR or SPWI namespace (including the extended namespace introduced by ui_spell_system_extension), labelled by a key. For instance, a list might be:
+<ul>
+<li>'abjuration' – all the mage spells in the Abjuration school</li>
+<li>'healing' – a list of priest spells, like Cure Light Wounds, that heal wounds.</li>
+<li>'mage_fire' – a list of mage spells associated with elemental fire.</li>
+</ul>
+</p>
+<p>
+You can define lists, and then assign lists to particular kits or classes, either to define the spells they can use, or that they can’t use. And you can require a kit to learn a certain number of spells from certain lists.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.2 Setting up ui_spell_system</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+In general all you need to do to set up ui_spell_system is to install SFO; calling any function in this library will run the install system automatically. However, when ui_spell_system is first set up, it needs to collect a list of all scrolls in the game. For this reason, it’s best to use ui_spell_system functions only after all new spells have been installed. If for some reason you can’t do this, you’ll need to do this after you’ve installed any new spells with scrolls:
+<div class="code">
+<pre><code>LAF spell_system_scroll_data END
+</code></pre>
+</div>
+
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.3 Defining spell lists</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>To define a spell list, use the define_spell_list action function. In its simplest form, you call it like this:
+<div class="code">
+<pre><code>LAF define_spell_list
+	STR_VAR 
+		spells="SPPR103 SPPR217 SPPR315 SPPR401 SPPR502 SPPR514 SPPR607"
+		key=healing
+		list_name="Healing"
+END</code></pre>
+</div>
+This defines a list 'healing' that contains all those listed spells (basically, the Cure_wounds spells, plus Heal). And it assigns a string, 'Healing', to that list. (Normally you would use a tra reference for list_name; list_name is stored in weidu_external/data/dw_shared/dw_spell_list_names.txt, to be used by code that alters kit descriptions.)</p>
+<p>
+Alternatively, you can input spells as an array, like this:
+<div class="code">
+<pre><code>ACTION_CLEAR_ARRAY healing_spells 
+ACTION_DEFINE_ASSOCIATIVE_ARRAY healing_spells BEGIN
+	SPPR103=>1
+	SPPR217=>1
+	SPPR315=>1
+	SPPR401=>1
+	SPPR502=>1
+	SPPR514=>1
+	SPPR607=>1
+END
+LAF define_spell_list
+	STR_VAR 
+		key=healing
+		list_name=”Healing”
+		spell_array=healing_spells
+END</code></pre>
+</div>
+It doesn’t matter what value the array entries take; only the keys are read in.</p>
+<p>Instead of using the resrefs, you can use the ids entries (this takes advantage of SFO's built-in functionality, which sets (e.g.) WIZARD_FIREBALL to SPWI304). So this also works:
+<div class="code">
+<pre><code>LAF define_spell_list
+	STR_VAR 
+		spells=”CLERIC_CURE_LIGHT_WOUNDS CLERIC_CURE_MODERATE_WOUNDS
+		CLERIC_CURE_MEDIUM_WOUNDS CLERIC_CURE_SERIOUS_WOUNDS 
+		CLERIC_CURE_CRITICAL_WOUNDS CLERIC_MASS_CURE_LIGHT_WOUNDS 
+		CLERIC_HEAL"
+	key=healing
+	list_name=”Healing”
+END</code></pre>
+</div>
+</p>
+<p>
+If you set INT_VAR 'determine_empty_levels' to 1, the tool also determines which levels have no spell in the list, and records this; you should do this for any list you intend to use for spell requirements, otherwise the character creation screen will hang if in fact some level is empty. (Setting empty_level_max restricts its determination to levels no higher than this level.)</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.4 Assigning spell lists</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>You assign spell lists using the 'set_spell_list' action function. The STR_VAR 'kit' (an entry from kit.ids – exception: for speciality mages, just use the clastext.2da entry, e.g. ABJURER rather than MAGESCHOOL_ABJURER) specifies the kit that gets assigned the list; alternately, the STR_VAR 'class' specifies the class that gets the list. Kit assignments override class assignments; you can’t use both 'kit' and 'class' in the same set_spell_list function call.</p>
+<p>There are four STR_VARs that assign spell lists: allow_learn, block_learn, allow_priest, block_priest. Each is a space-separated or comma-separated list of spell-list keys.
+<ul>
+<li>Lists in allow_learn contain spells that the character can add to their spellbook on creation (mages) or on creation/level-up (sorcerers). If it’s set to ‘allow_all’, all spells can be added (subject to the restrictions from block_learn).</li>
+<li>Lists in block_learn contain spells that, irrespective of what’s in allow_learn, cannot be learned.</li>
+<li>allow_priest and block_priest work the same way, but for memorizable priest spells.</li>
+</ul>
+There are some optional additional arguments:
+<ul>
+<li>update_scroll_usability (INT_VAR; default=1): if set to 1, scrolls will be edited to stop the class/kit using illegal scrolls.</li>
+<li>silent (INT_VAR; default=0); if silent=1, we don’t WARN if a nonexistent spell list is assigned.</li>
+<li>kit_clastext (STR_VAR; default=””); set this to the clastext.2da id for the kit, in the (rare) case where kit.ids and clastext.2da diverge.</li>
+</ul>
+</p>
+<p></p>
+If you define a list for both a class and a kit associated to that class:
+<ul>
+<li>The 'allow' lists for the kit override those for the class.</li>
+<li>A list blocked for the class is also blocked for the kit unless it is specifically specified on the kit's 'allow' list.</li>
+</ul>
+<p>
+Some examples (both assume some appropriate lists have been predefined):
+
+
+<div class="code">
+<pre><code>LAF set_spell_list STR_VAR class=ranger allow_priest="animal plant fey all nature" END</code></pre>
+</div>
+This requires all rangers to choose their memorized spells from this relatively-short list.
+<div class="code">
+<pre><code>LAF set_spell_list STR_VAR kit=DW_BERSERKER_INVOKER block_learn=conjuration END</code></pre>
+</div>
+This edits the new kit, 'DW_BERSERKER_INVOKER', so that characters with that kit can’t learn conjuration spells. 
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.5 Assigning spell requirements</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+You assign a spell requirement using the 'set_specialist_spells' action function. The STR_VAR 'kit' is set to the kit (an entry from kitlist.2da). The STR_VAR 'spell_list' is set to a space-separated list of already-defined spell lists. The INT_VAR 'number_required' (default=1) is set to the number of spells which must be learned from those lists.</p>
+<p>
+Some examples (both assume appropriate lists have been predefined):
+<div class="code">
+<pre><code>LAF set_specialist_spells STR_VAR kit=INVOKER spell_list=invocation END</code></pre>
+</div>
+This imposes the D&D requirement that invokers learn at least one invocation spell.
+<div class="code">
+<pre><code>LAF set_specialist_spells INT_VAR number_required=2 STR_VAR kit=LATHANDER spell_list="healing good" END</code></pre>
+</div>
+This requires priests of Lathander to learn their first two spells from the Healing or Good lists.</p>
+<p>The set_specialist_spells function will also attempt to update the kit description (you can tell it not to by setting the INT_VAR 'update_description' to 0). The update is controlled by a bunch of variables (see the full function documentation for the details); the short version is that the description will probably update successfully if you’re doing something like a specialist mage, and will need tweaking otherwise.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.6 Adjusting spell learnability chances</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+For kits that learn spells from scrolls (i.e., mage and bard kits) you can apply a modifier to the percentage chance of learning a spell, by spell list. You do so with the set_spell_learn_modifiers function, like this:
+<div class="code">
+<pre><code>LAF set_spell_learn_modifiers STR_VAR class=DW_ELEMENTALIST_FIRE modifiers="mage_fire=25, mage_air=15, mage_earth=15, default=-15" END</code></pre>
+</div>
+(default applies to all lists not explicitly called out.)
+</p>
+<p>Note that for technical reasons, using this function disables the intelligence-based maximum on the number of spells you can learn per level.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.7 Predefined spell lists</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+SFO ships with 3 predefined functions that generate spell lists: ui_spell_system_schools, ui_spell_system_elemental, ui_spell_system_spheres. (Each is used in my Talents of Faerun mod.) Here I describe the first two (the third, ui_spell_system_spheres, is more complicated and has its own section). 
+<p><h3>ui_spell_system_schools</h3></p>
+<p>
+Use like this:
+<div class="code">
+<pre><code>LAF ui_spell_system_schools END</code></pre>
+</div>
+<p>This generates a list of mage spells of each school, with the obvious keys: abjuration, alteration, conjuration, divination, enchantment, illusion, invocation, necromancy. The list is calculated at install time, so it’s sensitive to any mod-added or mod-altered spells. The function also allows for a few spells that are allocated to multiple schools (this is hardcoded), and it tweaks a very few of these spells to synchronize school choices between IWD and BG2. The multi-school lists are:
+<ul>
+<li>abjuration_alteration (Lower Resistance)</li>
+<li>conjuration_invocation (Limited Wish, Wish)</li>
+<li>divination_alteration (Wizard Eye)</li>
+<li>conjuration_necromancy (Summon Shadow)</li>
+<li>invocation_alteration (Melf’s Minute Meteors, Fire Shield:Red, Fire Shield:Blue, Death Fog, Otiluke’s Freezing Sphere, Tenser’s Transformation)</li>
+</ul>
+<p>The function has these optional arguments:
+<ul>
+<li>force_rebuild (INT_VAR): if set to 1, we build the spell lists even if we’ve built them already.</li>
+<li>tra (STR_VAR): set to the name of the tra file from which the strings used to make the multischool spell tweaks is drawn (by default, it’s sfo_lua).</li>
+<li>tra_path (STR_VAR): set to the path to the tra files (by default, it’s set to %MOD_FOLDER%/sfo/lua/lang).</li>
+</ul>
+</p>
+<p><h3>ui_spell_system_elemental</h3></p>
+<p>
+Use like this:
+<div class="code">
+<pre><code>LAF ui_spell_system_elemental END
+</code></pre></div>
+</p>
+<p>This generates a list of mage spells associated with earth, air, fire, and water, with keys 'mage_air', 'mage_earth', 'mage_fire', 'mage_water'. It also generates lists 'mage_air_shared' (etc) containing spells that are associated with both air and other elements (etc). The list includes any mage spell that does damage of type=fire, electricity(air), acid(earth), or cold(water). The function makes some effort to auto-determine the appropriate element for mod-added spells. Spells get [air], [earth], [fire] or [water] added as a school in the documentation (deactivate this by setting the INT_VAR adjust_description to 0).</p>
+<p>The function returns variables earth_names, air_names, fire_names, water_names, all_names, listing the names of all spells in each list as an alphabetized, comma-separated list, which can be used to update descriptions. (Calling it multiple times returns these arrays without rebuilding the actual lua lists.)</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.8 Priest spell spheres</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+SFO has built-in functions to set up a 'sphere system' for allocating priest spells, where each priest spell is assigned to a sphere and each priest kit gets access to some spheres. To define a sphere system, you need the following objects (look at the 'sphere' folder in Talents of Faerun for an example):
+<ul>
+<li>a collection of text files, each named for the lua id of the sphere, each consisting of a list of spell.ids (or dw_ext_spell.ids) entries for cleric spells without the initial ‘cleric’, all collected together in one folder. (In the sfo_lua sample mod, this is ‘sphere’.) You must include these spheres: all, nature, divine, since these are placeholder spheres for any spells that you do not allocate manually (e.g., mod-added spells you didn’t allow for). They can be empty if you want. </li>
+<li>A tra file, kept wherever your mod normally keeps tra files.</li>
+<li>In the same folder as the text files, a 2da file, formatted like ‘sphere/sphere_list.2da’ in ToF. In each row, the first column is the number of an entry in your tra file (naming a sphere), the second column is the lua id of the sphere, and the third column lists which classes get the sphere by default. (They’re identified by letters: C=Cleric, etc. B is Blackguard.) The default assumption is that every class has access to the 'all' sphere, that clerics/paladins/blackguards have access to the 'divine' sphere, and that druids/rangers/shamans have access to the 'nature' sphere, but this is not enforced.</li>
+</ul>
+</p>
+<p>Once these are created, you set up the sphere system like this: 
+
+<div class="code">
+<pre><code>LAF ui_spell_system_spheres 
+STR_VAR 
+	path="sphere"
+	list="sphere_list.2da"
+	tra="sphere"
+	tra_path=”%MOD_FOLDER%/lang”
+END
+</code></pre></div>
+The variables here point to, respectively: the folder where your spheres are defined; the 2da file that lists them; the tra file with the sphere names; the path to where your tra files live. (In each case, the values above are the defaults, and can be omitted if you’re using those defaults.)</p>
+<p>
+Once this is run:
+<ul>
+<li>All the spells listed in your sphere files will be assigned to those spheres. Their explicit class exclusion flags are removed.</li>
+<li>Any priest spells not listed in your sphere files will be assigned to spheres according to who can use them: cleric-only spells are assigned to Divine, druid-only spells to Nature, other spells to All.</li>
+<li>All the spells will have their new spheres recorded in their descriptions (overwriting any previous spheres).</li>
+<li>Clerics, druids, shamans, paladins, blackguards and rangers will be able to use spells in their spheres, and their descriptions will be updated to reflect this. (Empty spheres will not be listed in the description.)</li>
+</ul>
+</p>
+<p>Once you have installed the sphere system, you can assign spheres to kits (overwriting the class defaults). You can do so using ui_spell_system’s core functions, but it’s simpler to use the ‘assign_spheres’ function. For instance, the following code removes the spheres of Evil and Necromantic from clerics of Lathander, and assigns them the sphere of Sun.
+<div class="code">
+<pre><code>LAF assign_spheres
+STR_VAR 
+	default="" // the class list used as the baseline (if left blank, this is fixed by the kit’s class)
+	kit=lathander // the entry in kitlist.2da
+	kit_clastext=godlathander // the entry in clastext.2da, only if it differs from the kitlist one
+	add=sun // spheres to add, relative to the baseline
+	subtract="evil necromantic" // spheres to subtract, relative to the baseline
+	spheres="" // use this if you want to ignore the defaults and just list all spheres manually
+	block="" // you don’t get spells from any of these lists even if you have access to the sphere they're in
+END
+</code></pre></div>
+In most cases you can leave ‘default’, ‘spheres’ and ‘block’ unset: the following code is equivalent to the above:
+
+<div class="code">
+<pre><code>LAF assign_spheres STR_VAR kit=lathander kit_clastext=godlathander add=sun subtract="evil necromantic" END
+</code></pre></div>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.9 Case study: kit-specific spell lists.</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+Suppose you want some group of kits to use spells from a different list from most characters. For instance, suppose that your mod implements 'shadow magic' (as does Artisan's impressive 'Shadow Adept' mod), so that some mage kits use only shadow magic and, conversely, no other mages can use shadow magic.</p>
+<p>You implement this as follows:
+<ul>
+<li>Add all the shadow magic spells to the game normally, using SFO's 'extended_add_spell' function (or the SFO struct paradigm).</li>
+<li>Create a list, 'shadow', containing all and only the shadow spells.</li>
+<li>If there are some spells that both shadow casters and ordinary casters can use, create a list of them, 'shadow_shared'.</li>
+<li>Use the set_spell_list function to bar mages (and bards and sorcerers, if your mod applies to them too) from using the 'shadow' list.</li>
+<li>For each shadow-magic kit, use the set_spell_list function to allow them to use spells from the shadow and shadow_shared lists.</li>
+</ul>
+</p>
+<p>
+A slightly different use case is where you have a list of spells that are only available to a certain kit. In that case, you proceed as in the shadow magic case, but you allow the kit access to the 'every_spell' list as well as the bespoke list. 
+</p>
+
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.10 How it works.</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>As far as the engine is concerned, all characters are capable of memorizing all spells (all 'unusable' flags are removed from spells). Everything is done at the level of the UI: the spell lists presented to a character, either at character generation or when memorizing a spell, are filtered to permit only spells on the allowed lists and to remove spells on the blocked lists. Scroll use is handled via opcode 319; scroll learning is handled by a UI tweak that grays out the 'learn spell' button unless the spell is allowed.</p>
+<p>Spell requirements are handled on the character-generation screen by not permitting advancement unless requirements are satisfied, and on the spell-memorization screen by graying out any spells not on the required list unless requirements are satisfied.</p>
+<p>
+Modifiers to spell-learning chances work by applying a spell that modifies the whole party's Intelligence score whenever you open a scroll of an appropriate spell, and then applying a spell that cancels it when you leave that page. (Yes, this is a bit hacky; I'm open to better ideas.)
+</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>3.2.11 Edits to ui.menu</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<ul>
+	<li>CHARGEN_MEMORIZE_PRIEST (the screen in character generation where you choose which priest spells to memorize) is modified to:
+	<ul>
+		<li>run the function buildChargenPriestChooseSpell() when the screen is first triggered</li>
+		<li>allow the 'done' button to be pressed only if the function dwChargenSpecialistRequirementsSatisfied(priestSpells) returns true</li>
+		<li>initially set the boolean variable chargenIsPriest to true</li>
+		<li>If the function 'shouldShowSpecialistMessage()' exists, add a new label to the screen showing a message if you haven't learned enough specialist spells</li>
+	</ul>
+	</li>
+	<li>CHARGEN_MEMORIZE_MAGE (the screen in character generation where you choose which mage spells to memorize) is modified to:
+	<ul>
+		<li>allow the 'done' button to be pressed only if the function dwChargenSpecialistRequirementsSatisfied(mageSpells) returns true</li>
+		<li>initially set the boolean variable chargenIsPriest to false</li>
+		<li>If the function 'shouldShowSpecialistMessage()' exists, add a new label to the screen showing a message if you haven't learned enough specialist spells</li>
+	</ul>
+	</li>
+	<li>CHOOSE_SPELLS (used in character generation to choose learned spells) is modified to:
+	<ul>
+		<li>run the dwLearnSpecialistSpells() an dwBuildChooseSpell() on first opening</li>
+		<li>allow the 'done' button to be pressed only if the function dwChargenSpecialistRequirementsSatisfied(priestSpells) returns true</li>
+		<li>replace the hardcoded display of the string 'SPECIALIST_SPELL_REQ' with a call to the function dwSpecialistSpellMessage() (which displays a more tailored warning)</li>
+	</ul>
+	</li>
+	<li>MAGE (the in-game mage spellbook page) and PRIEST (the in-game priest spellbook page) are edited to:
+	<ul>
+		<li>gray out any spell that doesn't pass a dwSpellEnabled() check, and block the action memorization button and the display of a memorization flash in the same situation (this uses different code on BG(2) and IWD, due to significant differences in how their memorize-spell screens are structured)</li>
+		<li>Run the (hacky) function dwRefreshMageHack() to force the game to regenerate the variable that tracks who the current character is (it doesn't always refresh when changing character on this page)</li>
+	</ul>
+	</li>
+	<li>ITEM_DESCRIPTION (used to show items, e.g. learnable scrolls) is edited to run the function dwLearnChange() on opening, and dwCancelLearnChance() on closing.</li>
+	<li>The function refreshPriestBook() is edited so that the list of learnable spells is filtered by the build_dwPriestSpell() function (this edit looks quite different in BG and IWD as the function is defined differently in the two)</li>
+	<li>The function itemDescRightButtonEnabled() is edited so as to return false (disabling scrolls) whenever a learnable scroll should not be available to the character</li>
+	<li>The function specialistFrame() is edited so that in situations where it should return 0, it instead returns dwSpecialistSpellExtra().</li>
+	<li>If it exists, the function shouldShowSpecialistMessage() is edited so as to replace a check for createCharScreen:IsDoneButtonClickable() with a check for that and dwChargenSpecialistRequirementsSatisfied(spellBook))</li>
+</ul>
+</div>
+</body>

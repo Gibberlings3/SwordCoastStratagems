@@ -1,0 +1,476 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 2.8</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - Chapter 2.8</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p><h2>lib_struct: introduction to the struct paradigm</h2></p>
+<p><a href="sfocourse.html">Back to contents</a></p>
+<p>This explains the basics of the 'struct paradigm', an alternative way of editing IE files by loading them into a WEIDU data structure, editing that structure, and writing it back.</p>
+<p>A quick reminder: 'struct' is my name for a collection of WEIDU integer and string variables with a common prefix, like 'm_whatever'. An array ranges over a struct but you can have struct elements that aren't ranged over by any array.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.1 The core idea</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+<p><h4><strong>WEIDU's editing paradigm</strong></h4></p>
+<p>Suppose you want to design a new spell, Edwin's Overpowered Fireball. It's based on Fireball, but it's a 4th level spell that does 1d8 damage per level if you're 10th level or lower, and 1d10 damage per level if you're level 11 or higher (maximum level 20).</p>
+<p>The basic way you'd do this in WEIDU is to COPY_EXISTING the original Fireball spell to a new spell, and make the edits you need to turn it into the new spell. Each of those edits is, at its core, a byte-level edit to the unstructured mass of data that - as far as WEIDU is concerned - comprises the Fireball spell file. For instance, to change the description you'd do SAY 0x8 ~Edwin's Overpowered Fireball~. WEIDU doesn't know anything about the fact that the four bytes at 0x8 are actually the strref for the spell - all it knows is that there's four bytes of data there that you want to overwrite.</p>
+<p>The limitations of this become particularly clear when you start editing the headers and extended headers of a file. You have to look up the slots in the file which record where the headers are stored in the raw data, do some math to calculate where the particular header you want lives, and then do some more math to translate header-relative locations to absolute locations. If you're planning not just to edit a header but to add or delete headers, then you have to adjust the entire file so as to update the header-location data for every header. And each new edit requires a new adjustment.</p>
+<p>Modern WEIDU hides a fair amount of this from the end user. Functions like CLONE_EFFECT do all the calculations for you and just present you with a user-friendly interface. But under the hood, WEIDU's basic editing paradigm is unchanged. And as soon as you step outside the specific functionality offered by WEIDU's function library, you end up back having to do those manual lookups and calculations.</p>
+<p><h4><strong>The struct paradigm</strong></h4></p>
+<p>Most modern programming languages do things differently. What happens is that the file is loaded into some kind of data structure (an array or similar), which stores not only the raw data but its logical structure. The structure is then edited, and finally written back out. (If you've read <a href="sfocourse_2_4.html">chapter 2.4</a>, on lib_2da, you'll have seen the same distinction made there.) The calculations are made once and for all when the file is read in (and again when it's written back to file), and all intermediate manipulations are of high-level, structured data. The 'struct paradigm' implements this in WEIDU, reading most common IE files into a WEIDU struct. This can make for drastically more readable code; it also makes it drastically easier to do tasks that don't happen to fall under the ambit of a predefined WEIDU function.</p>
+<p><h4><strong>Performance issues</strong></h4></p>
+<p>I need to flag one limitation of the struct paradigm. WEIDU is not natively designed to work this way, and that means there is a run-time overhead: struct-paradigm edits are several times slower than edits using WEIDU's native commands and functions. Often this doesn't matter (it's still a fraction of a second per file) but if you're making lots of small edits, it can add up. (In particular, it is almost never a good idea to combine struct-paradigm editing with COPY_EXISTING_REGEXP - though generally you should be cautious even using WEIDU functions with COPY_EXISTING_REGEXP on performance grounds). For what it's worth, my own approach is usually to use ADD_EFFECT and friends when something can be done straightforwardly with them, and the struct paradigm otherwise. </p>
+<p>(For extremely complicated edits the struct paradigm can actually be quicker than the alternatives: its runtime consists almost entirely of the cost to read the file into a struct and write it again, whereas WEIDU's core paradigm takes a fixed time per task performed. I'll be honest, though: this isn't all that common.)</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.2 A sneak preview</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+It's going to take a bit of work to systematically explain the struct paradigm, and I'm concerned it might be off-putting. So here's a sneak preview of how it works: the code to make Edwin's Overpowered Fireball. This code uses SFO syntactic sugar (see <a href="sfocourse_2_2.html">chapter 2.2</a>) and will only work if included via lib_include.
+<p><div class="code">
+<pre><code>spl.copy[%WIZARD_FIREBALL%=>WIZARD_EDWIN_FIREBALL]
+[
+	// update header
+	m_name:=@1
+	m_description:=@2
+	m_level=4
+	// adjust casting time and power
+	m.ab.alter{s_casting_time=4}
+	m.ab_fx.alter{s_power=4}
+	// add new spell headers at levels 11-20
+	m.ab.clone{s_level=entry_index+11|number:i=10 match="s_level=10"}
+	// set damage
+	m.ab_fx.alter{s_dicesize=(p_level<11?8:10) s_dicenumber=(p_level=1?5:p_level)|match="s_opcode=12"}
+]</code></pre></div>
+</p>
+<p>(The automatic assignment of a SPWI code to the 'WIZARD_EDWIN_FIREBALL' spell is a separate function to the core struct paradigm, discussed in xx.)</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.3 Reading a file into a struct</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+The 'struct_read' function reads a file, or (in patch context) the current file, into a struct. The format looks like this:
+<p><div class="code">
+<pre><code>LAF struct_read STR_VAR file="spwi304.spl" RET_ARRAY str=struct END
+</code></pre></div></p>
+Once this is run, the contents of spwi304.spl are read into the 'str' struct (which can be accessed via the 'str' array at this point). Exactly <strong>how</strong> it's read into that struct is a complicated matter that varies by file, so take a moment to look at <a href="struct/spl_v1.html">the SFO data description</a> for spl files. Ignore the extended headers for now and just look at the main header: you'll see a table that looks something like this (but much longer).
+<table><tr><th width="40%">Key</th><th width="60%">Type</th></tr>
+<tr><td>name</td><td>Strref</td></tr>
+<tr><td>name_unused</td><td>Strref</td></tr>
+<tr><td>completion_sound</td><td>String (8 bytes)</td></tr>
+<tr><td>break_sanctuary</td><td>Boolean</td></tr></table>
+<p>This lists all the data stored for the (main header part of) the file. These are all stored as struct entries; for instance, when SPWI304.SPL is loaded, str_break_sanctuary=1.</p>
+<p>Each stored item has a type, which determines how it is recorded. The (pretty much) full list of types is:
+<ul>
+<li><strong>boolean:</strong> Either 1 or 0</li>
+<li><strong>byte:</strong> A one-byte integer</li>
+<li><strong>short:</strong> A two-byte integer</li>
+<li><strong>long:</strong> A four-byte integer</li>
+<li><strong>sbyte,sshort,slong:</strong> A signed version of (respectively) byte, short, or long</li>
+<li><strong>ascii(n):</strong>An N-character ASCII string</li>
+<li><strong>strref:</strong>A strref entry, stored as text. The associated sound, if any, of strref 'var', is stored in struct_var_sound
+<li><strong>id lookup (file):</strong>An entry from the ids file 'file'. Stored as text, not the associated integer.</li>
+<li><strong>lookup (list of lookups):</strong>A string that is associated to an integer in the raw data, and can have one of a fixed number of settings</li>
+<li><strong>projectile:</strong>An entry from projectl.ids</li>
+<li><strong>strength:</strong>A strength score: either an integer or a string of form '18/xy'</li>
+
+</ul></p>
+
+<p>In each case, you can access the item as an integer or string entry in the struct, and can change it as usual via SPRINT or SET.</p>
+<p>The full list of IE structure specifications known to SFO is available at <a href="struct/struct_index.html">%MOD_FOLDER%/sfo/doc/struct/struct_index.html</a>. (It includes all the BG2/EE specifications for ARE, CRE, DLG, EFF, ITM, PRO, STO, SPL, and VVC files; it would be straightforward but tedious to add other specifications.) The documentation is generated automatically; if for some reason you need to regenerate it, just run the 'strdoc_document_all_strtypes' function.</p> 
+
+<p>SFO infers the struct type it's reading from the signature in the file; if for some reason you want to set it manually, you can do so via the 'strtype' STR_VAR. The syntax is (e.g.) strtype="are_v1" or strtype="cre_v1_1".</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.4 Writing a struct into a file</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>The inverse of struct_read is struct_write, which dumps the entire struct (not just any array tracking the struct) into the file. Again, normally the structure type is inferred, but you can override manually by setting strtype.</p>
+<p>There are a few subtleties in how a struct is written:
+<ul>
+<li>If you set a strref variable equal to a string, that string is written into dialog.tlk and its assigned strref is written to file</li>
+<li>If you set an id lookup variable equal to a string, that string is looked up in the appropriate .ids file and the integer associated is written to file (or -1 if it can't be found)</li>
+<li>A lookup variable can be set to an integer (which is written directly to the file) or one of the strings in the lookup (in which case the associated integer is written to file)</li>
+<li>A projectile set to a string is looked up in projectl.ids, and the appropriate integer (i.e. the IDS entry minus 1) is written to file.</li>
+</ul>
+</p>
+<p>With struct_read and struct_write in hand, we can start editing files. Here's code to copy the Fireball spell to a new innate spell, altering several features:</p>
+<p><div class="code">
+<pre><code>
+WITH_SCOPE BEGIN
+	COPY_EXISTING "%WIZARD_FIREBALL%.spl" "override/dw-infb.spl"
+		LPF struct_read RET_ARRAY m=struct END
+		SPRINT m_name @1
+		SPRINT m_description @2
+		SPRINT m_type Innate
+		SPRINT m_primary Necromancer
+		m_can_target_invisible=1
+		m_ignore_wild_surge=1
+		m_ignore_dead_magic=1
+		m_level=1
+		LPF struct_write STR_VAR struct=m END
+	BUT_ONLY
+END
+</code></pre></div></p>
+<p>(The 'WITH_SCOPE' is because struct_read dumps a <em>lot</em> of data into a large number of strings in the struct, and unless we explicitly want to edit them elsewhere it makes sense to keep them confined.</p>
+<p>There are also two so-called 'virtual' data types that can be written to; both abbreviate multiple datatypes. A 'commalist' is a string of entries separated by commas; a 'multiple' sends the same string to multiple locations in file. Here's code to edit the name, abilities, and saving throws of a creature:</p>
+<p><div class="code">
+<pre><code>WITH_SCOPE BEGIN
+	COPY_EXISTING "firarc01.cre" "override.cre"
+		LPF struct_read RET_ARRAY m=struct END
+		SPRINT m_both_names @1
+		SPRINT m_abils "18/76,6,10,14,16,8"
+		SPRINT m_saves "16,15,10,12,14"
+		LPF struct_write STR_VAR struct=m END
+	BUT_ONLY
+END
+</code></pre></div></p>
+<p>struct_write carries an optional INT_VAR (boolean) argument, edit_strrefs_in_place. If this is set to 1, any strref variable is not written to a new strref; instead, the existing strref in the slot being edited is altered to match the strref variable. (For instance, if editing a spell description, edit_strrefs_in_place=1 will normally ensure that the scroll description is automatically changed to match.)</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.5 Using struct_edit</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>
+In most cases, it is easier to edit files using the struct_edit function (and its friends, struct_copy and struct_make, which are discussed below). Here's a simple example (we'll soon see how to do this more briefly).</p>
+<p><div class="code">
+<pre><code>DEFINE_PATCH_FUNCTION patch_firarc RET_ARRAY m BEGIN
+	SPRINT m_both_names @1
+	SPRINT m_abils "18/76,6,10,14,16,8"
+	SPRINT m_saves "16,15,10,12,14"
+END
+
+LAF struct_edit INT_VAR edit_strrefs_in_place=1 STR_VAR file=firarc01.cre edits=patch_firarc END
+</code></pre></div></p>
+<p>Here, the file 'firarc01.cre' is read into struct m using struct_read. The function 'patch_firarc' is then run, and returns m as an array. Then m is written back into the struct. (The choice of 'm' is hardcoded.)</p>
+<p>SFO comes with various file-type-specific wraps for lib_struct. For instance, cre_edit basically just calls struct_edit with the extension fixed to be 'cre'. Similarly, we have are_edit, sto_edit, and so forth. (Some versions of these edit functions have extra functionality, as discussed below.) So we can do the same edit like this (taking patch_firarc as already defined):</p>
+<p><div class="code">
+<pre><code>LAF cre_edit INT_VAR edit_strrefs_in_place=1 STR_VAR file=firarc01 edits=patch_firarc END
+</code></pre></div></p>
+<p>This probably doesn't look like much of an improvement on just using struct_read and struct_write (or just the normal WEIDU paradigm!) There are two further steps that greatly simplify it. The first is that we can use the anonymous function construct (which in this context automatically includes a RET_ARRAY m), like so:</p>
+<p><div class="code">
+<pre><code>LAF struct_edit 
+	INT_VAR edit_strrefs_in_place=1 
+	STR_VAR file=firarc01.cre 
+	edits=~
+		m_both_names:=@1
+		m_abils:="18/76,6,10,14,16,8"
+		m_saves:="16,15,10,12,14"
+	~
+END
+</code></pre></div></p>
+<p>(Here we're also using a bit of SFO syntactic sugar to abbreviate the SPRINT commands.)</p>
+<p>The second step is to use SFO's syntactic sugar for struct_edit itself (or, rather, for the wrap functions like cre_edit), like this:
+<p><div class="code">
+<pre><code>cre.edit[firarc01|edit_strrefs_in_place:i=1]
+[
+	m_both_names:=@1
+	m_abils:="18/76,6,10,14,16,8"
+	m_saves:="16,15,10,12,14"
+]
+</code></pre></div></p>
+<p>This is getting a bit more manageable. Here's the syntax: 'ext.edit[myfile][myedits]' abbreviates 'LAF ext_edit STR_VAR file=myfile edits=myedits END'. Any additional arguments to the function 'ext_edit' are placed after the file name, separated by '|', as in the edit_strrefs_in_place argument above. (Note the ':i' to mark edit_strrefs_in_place as an INT_VAR; STR_VARs don't require any such marker.)</p>
+<p>Three other useful features of struct_edit (and its wraps): firstly, you can use the usual SFO 'location', 'locbase', 'path' way to tell SFO where the file you want to edit lives. (By default SFO assumes it's an in-game file, as with all the examples above). This code would edit a file in the workspace:
+<p><div class="code">
+<pre><code>spl.edit[SPWI304|path="%workspace%"]
+[
+		m_type:=Innate
+		m_primary:=Necromancer
+		m_can_target_invisible=1
+		m_ignore_wild_surge=1
+]
+</code></pre></div></p>
+<p>(Assuming your mod is immutable you'll never want to use 'location' or 'locbase', but they do work.)</p>
+<p>Secondly, the file being edited can be a space-separated list of files, as in:</p>
+<p><div class="code">
+<pre><code>cre.edit[minsc minsc2 minsc4 minsc6 minsc7]
+[
+	m_class:=FIGHTER
+	m_kit:=BERSERKER
+]
+</code></pre></div></p>
+<p>Finally, SFO tries to do a bit of basic error-checking. If your anonymous function refers to 'm_something' and 'm_something' isn't in fact a valid field of this struct, it will throw a warning.</p>
+<p>One quick bit of debugging advice: it is extremely easy to forget the 'm_' prefix, as in:
+<p><div class="code"><font color="red">
+<pre><code>cre.edit[minsc minsc2 minsc4 minsc6 minsc7]
+[
+	class:=FIGHTER
+	kit:=BERSERKER
+]
+</code></pre></font></div>
+</p>
+<p>This does nothing (the anonymous function sets the variables 'class' and 'kit' to those stated values, but they don't exit the function) and SFO's error-correction code can't catch it.
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.6 struct_make and struct_copy</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p><h4><strong>struct_make</strong></h4></p>
+<p>struct_make is a variant of struct_edit: instead of editing an existing file, it creates a new one. It has wrap functions just like struct_edit (cre_edit, spl_edit and the like) and uses the same syntactic-sugar syntax as struct_edit (you will normally want to access it this way). Normally SFO assigns default values of 0 to integer-valued datatypes and "" to string-valued datatypes, but in many cases there are other defaults. These are indicated in the documentation for each IE structure in [square brackets]: for instance, here is part of the documentation for the EFF structure.
+<table><tr><th width="40%">Key</th><th width="60%">Type</th></tr>
+<tr><td>opcode</td><td>Integer</td></tr>
+<tr><td>target[2]</td><td>Lookup (0=None, 1=Self, 2=PresetTarget, 3=Party, 4=Everyone, 5=EveryoneExceptParty, 6=CasterGroup, 7=TargetGroup, 8=EveryoneExceptSelf, 9=OriginalCaster)</td></tr>
+<tr><td>power</td><td>Integer</td></tr>
+<tr><td>parameter1</td><td>Integer</td></tr>
+<tr><td>parameter2</td><td>Integer</td></tr>
+<tr><td>parameter2a</td><td>Integer</td></tr>
+<tr><td>parameter2b</td><td>Integer</td></tr>
+<tr><td>timing</td><td>Lookup (0=InstantLimited, 1=InstantPermanent, 2=Equipped, 3=DelayLimited, 4=DelayPermanent, 5=DelayEquipped, 6=LimitedAfterDuration, 7=PermanentAfterDuration, 9=InstantPermanentAfterDeath)</td></tr>
+<tr><td>duration</td><td>Integer</td></tr>
+<tr><td>probability1[100]</td><td>Integer</td></tr></table>
+</p>
+<p>Most of these datatypes are initialized set to 0, but 'target' is initially set to 2 and 'probability1' is initially set to 100.</p>
+<p>Here is some code to build an effect to do 3d6 fire damage with a save vs. spells for half at a -2 penalty:</p>
+<p><div class="code">
+<pre><code>eff.make[dw-fire]
+[
+	m_opcode=12
+	m_parameter2b=8
+	m_timing=1
+	m_save_vs_spells=1
+	m_save_bonus="-4"
+]
+</code></pre></div>
+</p>
+<p>By default, files are created in the override directory; if you want them somewhere else, use location/locbase/path.</p>
+<p><h4><strong>struct_copy</strong></h4></p>
+struct_copy is another variant of struct_edit, that copies a struct from one file into a new file; again, it has wrap functions and syntactic sugar like struct_edit and struct_make. Here's code to make a uniquely-named copy of the generic longsword+3:
+<p><div class="code">
+<pre><code>itm.copy[sw1h73=>dw-sword]
+[
+	m_identified_name:=@1
+	m_identified_description:=@2
+]
+</code></pre></div>
+</p>
+<p>A few details of the struct_copy function:
+<ul>
+<li>By default, copies are placed in override; you can use path/location/locbase to put them elsewhere.</li> 
+<li>The <em>source</em> of the copy is assumed by default to be an in-game file, but you can use source_location, source_locbase, source_path to source the copy from elsewhere. (Same syntax as location/locbase/path.)</li>
+<li>If the argument of struct_copy is not a k=>v pair (e.g. sw1h73=>dw-sword) but just a file, it is interpreted as file=>file (i.e. the source and the copy have the same name).</li>
+<li>The argument can also be a space-separated list of k=>v pairs (or just of files) in which case each is processed separately.</li>
+</ul>
+<p>Here is code to copy an item file into override from your mod, filling in its name and description:</p>
+<p><div class="code">
+<pre><code>itm.copy[dw-item1|source_location=item]
+[
+	m_identified_name:=@1
+	m_identified_description:=@2
+]
+</code></pre></div>
+</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.7 Editing extended headers</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p><h4><strong>Theory of extended headers in SFO</strong></h4></p>
+<p>SFO stores extended headers as raw data: if you read ppinn01.sto into a struct m using struct_read, for instance, m_drink_0 is an 0x14-byte string containing the unprocessed data in the first 'drink' header in ppinn.sto. And m_drink_blockcount stores how many drink blocks there are in total.</p>
+<p>(There is a further subtlety about how SFO stores extended headers when they are added or deleted; see the documentation if you're interested.)
+</p>
+<p>In turn, SFO treats each extended header as an IE structure of its own: the 'drink' header in sto_v1, for instance, is IE structure 'sto_v1_drink'. In principle these can be edited manually with struct_read and struct_write: here is code to triple the prices of all the drinks in ppinn01.sto:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "ppinn01.sto" override
+	LPF struct_read RET_ARRAY m=struct END
+	FOR (index=0;index&lt;m_drink_blockcount;++index) BEGIN
+		SPRINT drink_struct EVAL "%m_drink_%index%%"
+		INNER_PATCH_SAVE "m_drink_%index%" "%drink_struct%" BEGIN
+			LPF struct_read STR_VAR strtype=sto_v1_drink RET_ARRAY s=struct END
+			s_price=s_price*3
+			LPF struct_write STR_VAR struct=s END
+		END
+	END
+	LPF struct_write STR_VAR struct=m END
+BUT_ONLY
+</code></pre></div>
+</p>
+<p>In practice you'll almost never want to do it this way.</p>
+<p><h4><strong>struct_alter</strong></h4></p>
+<p>The simple way to edit extended headers is with the struct_alter function (which you can think of as SFO's answer to ALTER_EFFECT). struct_alter will cycle through <em>all</em>extended headers of a given type, read it into a struct (hardcoded to be 's'), execute a (usually anonymous) function on it, and write it back again. Here's the same patch using struct_alter:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "ppinn01.sto" override
+	LPF struct_read RET_ARRAY m=struct END
+	LPF struct_alter STR_VAR struct=m type=drink patch="s_price *=3" RET_ARRAY m=struct END
+	LPF struct_write STR_VAR struct=m END
+BUT_ONLY
+</code></pre></div>
+</p>
+<p>Here 's_price *=3' is actually an anonymous function specification and could, for instance, contain multiple commands.</p>
+<p>struct_alter takes an optional argument, 'patch', which is again an anonymous function; it is first run on each struct and the patch is applied only if the match function returns value 1. (Normally the patch will just be a WEIDU logical expression). For instance, here's code that patches only drinks that cost >1 gold piece:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "ppinn01.sto" override
+	LPF struct_read RET_ARRAY m=struct END
+	LPF struct_alter STR_VAR struct=m type=drink patch="s_price *=3" match="s_price&gt;1" RET_ARRAY m=struct END
+	LPF struct_write STR_VAR struct=m END
+BUT_ONLY
+</code></pre></div>
+</p>
+<p>Note that 'match' does not make any permanent changes to the header it acts on: any temporary changes it makes are discarded.</p>
+<p><h4><strong>Syntactic sugar for struct_alter</strong></h4></p>
+<p>Normally struct_alter itself will be used via SFO syntactic sugar. 'm.drink.alter{args}' abbreviates</p>
+<p><div class="code">
+<pre><code>LPF struct_alter STR_VAR struct=m type=drink patch=args END
+</code></pre></div>
+</p>
+<p>so that, using also syntactic sugar for struct_edit, we can write our unconditional more-expensive-drinks patch as</p>
+<p><div class="code">
+<pre><code>sto.edit[ppinn01][m.drink.alter{s_price *=3}]
+</code></pre></div>
+</p>
+<p>As usual with SFO's function-abbreviation sugar, other arguments (here, 'match') can be added, after a '|', in the argument of struct_alter: our conditional patch looks like</p>
+<p><div class="code">
+<pre><code>sto.edit[ppinn01]
+[
+	m.drink.alter{s_price *=3|match="s_price&gt;1"}
+]
+</code></pre></div>
+</p><p>Again, SFO attempts some basic error catching: if you have a string 's_something' and s_something is not a data type in the struct, SFO will complain.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.8 Deleting, copying, and adding extended headers</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>SFO provides struct functions to do each of these tasks - the SFO versions of DELETE_EFFECT, CLONE_EFFECT, ADD_ITEM_EFFECT and the like. At this point I'll just give their abbreviated syntax directly.</p>
+<p><h4><strong>struct_delete</strong></h4></p>
+<p>struct_delete takes a single argument, 'match', which defines an anonymous function that is run on each headers (reading each header into struct 's', as usual). Any headers for which the function returns '1' is deleted. If it has child headers (like the effect sub-headers of a spell or item ability header) these are deleted too. As with struct_edit, 'match' has no permanent effects on the header (except perhaps to mark it for deletion).</p>
+<p>For instance, this code removes all but the first ability block on Fireball:</p>
+<p><div class="code">
+<pre><code>spl.edit[%WIZARD_FIREBALL%][m.ab.delete{s_level>1}]
+</code></pre></div>
+</p>
+<p><h4><strong>struct_add</strong></h4></p>
+<p>struct_add adds a header (using the default values to fill its data types), and then runs the function 'patch' on it (reading the header into struct 's', as usual). Here's code to add a new drink to a store:</p>
+<p><div class="code">
+<pre><code>sto.edit[ppinn01]
+[
+	m.drink.add{s_name:=@1 s_price=15 s_rumor_rate=6}
+]
+</code></pre></div>
+</p>
+<p>struct_add takes two optional INT_VAR arguments, 'insert_point' and 'number'. 'insert_point' specifies where in the existing headers the new header should be added: 0, for instance, puts it before heading 0, i.e. first. (By default, insert_point=-1, which means that the new header is added last). Here's code that puts the new drink second:</p>
+<p><div class="code">
+<pre><code>sto.edit[ppinn01]
+[
+	m.drink.add{s_name:=@1 s_price=15 s_rumor_rate=6|insert_point:i=1}
+]
+</code></pre></div>
+</p>
+<p>'number' specifies how many entries should be added (the default is 1). struct_add also defines an internal variable, 'entry_index', which counts up from 0 and tracks which entry is being added; this allows you to make different patches to different added structures. For instance, here's code to add multiple items to a store:</p>
+<p><div class="code">
+<pre><code>sto.edit[ppinn01]
+[
+	DEFINE_ARRAY item_list BEGIN blun01 blun02 potn14 potn15 sw1h05 END
+	m.item.add{s_number_in_stock=5 s_resref:=$item_list("%entry_index%")|number:i=5}
+]
+</code></pre></div>
+</p>
+<p><h4><strong>struct_clone</strong></h4></p>
+<p>struct_clone copies an extended header. The syntax is very similar to struct_edit: On each header, an (optional) function 'match' is implemented and if its return value is 1 (or if no match function is given) then the header is copied (along with any child headers it has, e.g. the associated effects of a spell or item header) and the function 'patch' is applied to the copy. In each case the header is unpacked into the struct 's'.</p>
+<p>For instance, here's code that takes the Ring of Fire Control (which grants +50% resistance to fire) so that it also grants 50% resistance to cold.</p>
+<p><div class="code">
+<pre><code>itm.edit[ring27]
+[
+	m.fx.clone{s_opcode=28|match="s_opcode=30"}
+]
+</code></pre></div>
+</p>
+<p>By default, new headers are added immediately after the original header; if you set the INT_VAR clone_above to 1, the new header is instead added immediately before the original header.</p>
+<p>
+You can use the same format as for struct_add to make multiple copies. Here's code that clones the level 1 block from fireball to levels 11-20:</p>
+<p><div class="code">
+<pre><code>spl.edit[%WIZARD_FIREBALL%]
+[
+	m.ab.clone{s_level=entry_index+11|match="s_level=1" number:i=10}
+]
+</code></pre></div></p>
+
+
+
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.9 Working with child headers</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>SFO treats child headers as a sort of 'virtual header type'. For instance, the effect child headers of spell or item abilities have type 'ab_fx', whereas the casting-effect or on-equip effects are just type fx. You can then use struct_alter, struct_clone, struct_add and struct_delete to manipulate the child headers. For instance, here's code to make the saving throw penalty for Symbol: Stun -3:</p>
+<p><div class="code">
+<pre><code>spl.edit[%WIZARD_SYMBOL_STUN%]
+[
+	m.ab_fx.alter{s_savebonus="-3"|match="s_save_vs_spell=1"}
+]
+</code></pre></div></p>
+<p>The struct_ functions have two extra features when used to edit child headers. Firstly, the <em>parent</em> header is unpacked into the struct 'p' and can then be accessed. Here's code to extend Fireball to level 20:</p>
+<p><div class="code">
+<pre><code>spl.edit[%WIZARD_FIREBALL%]
+[
+	m.ab.clone{s_level=entry_index+11|match="s_level=1" number:i=10}
+	m.ab_fx.alter{s_dicenumber = (p_level=1?5:p_level)|match="s_opcode=12"}
+]
+</code></pre></div></p>
+<p>Secondly, each function has a new STR_VAR argument, match_parent. You can use it to specify a (normally anonymous) function that acts on the parent header (unpacked into struct 'p'). The action will be carried out only if the parent is matched.
+
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.8.10 Special features of spell editing</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+<div class="section">
+<p>The spl_make and spl_copy functions have some extra functionality. 
+<p><h4><strong>Interaction with spell.ids</strong></h4></p>
+If we give an IDS entry (like WIZARD_EDWIN_FIREBALL) as the argument of spl_make, or as the destination argument of spl_copy, SFO will automatically add the spell to spell.ids and assign it a SPPR, SPWI, SPIN or SPCL entry to it. </p>
+<p>
+SFO determines whether an argument is supposed to be an IDS entry heuristically (basically, it assumes an IDS entry if it has more than 8 characters), and assigns SPPR, SPWI or SPCL based on the spell type (in the file). Setting the INT_VAR is_ids to 1 or 0 overrides this. You can also set the STR_VAR 'type' to 'wizard', 'priest', 'innate' or 'class' to force the spell to resolve in (respectively) SPWI, SPPR, SPIN or SPCL (one useful reason to do this is to force a spell into the SPCL namespace rather than the SPIN namespace.</p>
+<p>
+The resref of the new spell is returned by the function as the variable 'spell_resref' (also as 'value'). SFO's abbreviated syntax offers this way to collect that value:</p>
+<p><div class="code">
+<pre><code>new_resref=spl.copy[%WIZARD_FIREBALL%=>WIZARD_EDWIN_FIREBALL]
+[
+	...
+]</code></pre></div>
+</p>
+<p>
+The new spell will be assigned a resref in the SPWI... namespace, and new_resref will be set to that resref. ('new_resref' can be anything you like; setting WIZARD_EDWIN_FIREBALL itself to the resref is often a good plan.)</p>
+<p><h4><strong>Automated management of spell icons</strong></h4></p>
+<p>>If spl_copy or spl_make is used to place a spell in the SPWI or SPPR namespace, SFO will by default set the BAM entries for the spell to the standard naming conventions: if the spell is SPPR345, say, then the icons will be set to SPPR345B and SPPR345C, as appropriate. (You can disable this by setting the INT_VAR standard_icons to zero).</p>
+<p>You can also tell SFO to look for the BAM files themselves, and copy them to the appropriate new names. The variable 'icon_base_name' says what filename we should look for: if icon_base_name is set to myicon, SFO will look for MYICONA, MYICONB, and MYICONC. It will look in the location specified by the variables icon_location, icon_locbase and icon_path, using normal SFO conventions.</p>
+<p>For instance, in the following code</p>
+<p><div class="code">
+<pre><code>spl.copy[%WIZARD_FIREBALL%=>WIZARD_EDWIN_FIREBALL|icon_base_name=edwin_fireball icon_location=resource icon_locbase=shared]
+[
+	...
+]</code></pre></div>
+</p>
+<p>then SFO will look for the files edwin_fireballa.bam, edwin_fireballb.bam, and edwin_fireballc.bam in %MOD_FOLDER%/shared/resource.</p>
+<p><h4><strong>Scroll creation</strong></h4></p>
+<p>If spl_copy or spl_make is used to place a spell in the SPWI or SPPR namespace, by default SFO will create a scroll for the spell. (You can override this default by setting the INT_VAR create_scroll to 0.) The scroll will match the spell's usability and targeting; its price is set by the table 'scroll_prices.2da' in %MOD_FOLDER%/sfo/data, and its name will follow CamDawg's naming conventions: the spell SPWIabc will have scroll CDIAabc and the spell SPPRabc will have scroll CDIDabc. The BAM file for the scroll is assumed to have the format '[spell_resref]A', as per the game's normal conventions, e.g. SPWI304A. (Note the interplay with the previous section on icons.)</p>
+<p>The resref of the scroll is returned as the 'scroll_resref' argument (also 'scroll'); SFO's abbreviated syntax lets you return it like this:</p>
+<p><div class="code">
+<pre><code>new_resref,new_scroll_resref=spl.copy[%WIZARD_FIREBALL%=>WIZARD_EDWIN_FIREBALL]
+[
+	...
+]</code></pre></div>
+</p>
+<p>
+You can also make spells manually, using the spl_make_scroll function, and doing so gives you some more options, e.g. to set the name and price directly. See the main documentation for details.</p>
+</p>
+<p>
+<p><h4><strong>Overwriting previous spells</strong></h4></p>
+If you try to create a spell in the spell.ids namespace that already exists (say if you copy a spell to, or make, WIZARD_COMBUST, and some other mod has already added a spell with that name), then by default SFO will ignore your attempt and do nothing. If you set the INT_VAR overwrite to 1, SFO will instead overwrite the old spell with your spell. As an intermediate, if overwrite=0 but overwrite_on_mismatch=1, SFO will overwrite the old spell only if your spell is of a different type and/or level.</p>
+</div>
+
+
+</div>
+</body>

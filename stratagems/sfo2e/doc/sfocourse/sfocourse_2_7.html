@@ -1,0 +1,119 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 2.7</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - chapter 2.7</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p>
+
+<h2>alter_script and disjunctive_substitution: tools for script and dialog editing</h2>
+
+<p><a href="sfocourse.html">Back to contents</a></p>
+<p>These two libraries (the second is really a single function) simplify various tasks involving script and dialog files.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.7.1 alter_script: fine-grained editing of BCS files</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>The alter_script library lets you make fine-grained alterations to scripts (i.e., .bcs files) – specifically, it lets you alter, add, clone, or remove script blocks on a block-by-block basis. There are five different functions in alter_script, but they all operate in a similar way.</p>
+<p><h4><strong>delete_script_block</strong></h4></p>
+<p>This is the simplest alter_script function, but it serves as a good illustration of the way the other functions work. You specify the name of the script you want to alter, and up to six regexps (labelled by STR_VARs match, match1, match2, match3, match4, match5). The script is decompiled, and the regexps are checked on each script block separately, Any block that matches all specified regexps is deleted.</p>
+<p>For instance, the wtasight script in BG2EE contains a block that responds to Shouts from creatures giving Shout=111. You could delete this block like this:</p>
+<p><div class="code">
+<pre><code>LAF delete_script_block STR_VAR script=wtasight match1=”111” match2=”Heard” END</code></pre></div></p>
+<p>SFO checks all four blocks in the script. Only one matches both ‘Heard’ and ‘111’; that block is deleted. (In fact either regexp alone would be sufficient.)</p>
+<p>A more advanced option is to use the STR_VAR match_function, which specifies an SFO standard patch function that is run sequentially on each block. Blocks that return value=1 are deleted. You can use the anonymous function construct.</p>
+<p>Two more occasionally-useful arguments:
+<ul>
+<li>INT_VAR only_once: defaults to 0, if set to 1 the function stops matching after the first match.</li>
+<li>INT_VAR recompile: defaults to 1, if set to 0 the script is left in BAF rather than recompiled. (The main use for this is debugging.)</li>
+</ul></p>
+<p><h4><strong>alter_script_block</strong></h4></p>
+<p>This function finds blocks exactly as does delete_script_block, but when a block is found, it is edited rather than deleted. Editing is via up to six pairs of STR_VARs (swap_out/swap_in, swap_out1/swap_in1, etc.). On any matched block, we do a REPLACE_TEXTUALLY for each pair.</p>
+<p>For instance, this adds a go-hostile command to all blocks that use Attack or AttackReevaluate:</p>
+<p><div class="code">
+<pre><code>LAF alter_script_block
+	STR_VAR 
+		script=wtasight 
+		match="\(Attack(\|AttackReevaluate(\)"
+		swap_out="RESPONSE #\([0-9]+\)"
+		swap_in="RESPONSE #\1 Enemy()"
+END</code></pre></div></p>
+(Incidentally, these are all pretty elementary examples that could just as well be done by a standard REPLACE_TEXTUALLY, but of course there are much more complicated applications.)
+A more advanced option is to set the STR_VAR ‘function’ to a patch function that acts on every matched block. You can use the anonymous function construct.
+<p><h4><strong>clone_script_block</strong></h4></p>
+This function matches blocks in the usual way, and then makes a copy of any matched block. The copy then gets patched in exactly the same way as alter_script_block, and the original gets patched using six other pairs of STR_VARs (original_swap_out/original_swap_in, original_swap_out1/original_swap_in1, etc). (You can also specify a function, original_function, to act on the original block).
+
+For instance, this code edits wtasight so that humanoid creatures shout for help before attacking.</p>
+<p><div class="code">
+<pre><code>LAF clone_script_block
+	STR_VAR 
+		script=wtasight
+		match="\(Attack(\|AttackReevaluate\)"
+		swap_out1="ActionListEmpty()"
+		swap_in1="ActionListEmpty() General(Myself,HUMANOID)"
+		swap_out2="RESPONSE #\([0-9]+\)"
+		swap_in2="RESPONSE #\1 Help()"
+		original_swap_out="ActionListEmpty()"
+		original_swap_in="ActionListEmpty() !General(Myself,HUMANOID)"
+END</code></pre></div></p>
+ 
+<p><h4><strong>insert_script_block</strong></h4></p>
+<p>This function inserts a new BAF file immediately after (or, if you set INT_VAR insert_above=1, immediately before) any matched block. Set ‘insert’ to the name of a BAF file to be inserted (without the .baf) and specify its location in the usual SFO style via ‘location’, ‘locbase’, and ‘path’.</p>
+<p><h4><strong>replace_script_block</strong></h4></p>
+<p>Like insert_script_block, except that the new script replaces any matched block.</p>
+
+
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.7.2 disjunctive_substitution: smooth handling of OR() blocks under substitution
+</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+A general problem with editing IE scripts is handling their Boolean logic. For instance, suppose you’ve introduced a Paladin of Tyr and you want it to be treated like clerics of Tyr in certain scripts/dialogs. The natural inclination is to do something like</p>
+<p><div class="code">
+<pre><code>REPLACE_TEXTUALLY "Class(\([^,]*\),OHTYR)" "OR(2)Class(\1,OHTYR)Class(\1,DW_TYR_PALADIN)"</code></pre></div></p>
+That works when the original Class([whatever],OHTYR) just appears simply in a script’s triggers. But it will give you a compile-time error if that text appears negated, or inside an OR() block of its own.
+Similarly, suppose you want to restrict something to lawful good clerics of Tyr. The temptation is to do</p>
+<p><div class="code">
+<pre><code>REPLACE_TEXTUALLY "Class(\([^,]*\),OHTYR)" "Class(\1,OHTYR)Alignment(\1,LAWFUL_GOOD)"</code></pre></div></p>
+ 
+That will compile if the original Class() check is in an OR block or negated, but it won’t give the right logic.</p>
+SFO’s disjunctive_substitution function solves this problem. Here’s how it does the second substitution:</p>
+<p><div class="code">
+<pre><code>
+LAF disjunctive_substitution 
+STR_VAR script="script1 script2"
+   dialog="dialog1 dialog2"
+   match="Class(\([^,]*\),OHTYR)"
+   replace="Class(\1,OHTYR)|Alignment(\1,LAWFUL_GOOD)"
+END</code></pre></div></p>
+Here, ‘script’ is a space-separated list of scripts to be substituted; ‘dialog’ is a space-separated list of dialogs. ‘match’ is the term to be matched, while ‘replace’ is the multiple lines to be subbed in, separated by ‘|’.
+To do the first kind of substitution, prepend ‘OR()’ to the ‘replace’ string, like this:</p>
+<p><div class="code">
+<pre><code>LAF disjunctive_substitution 
+STR_VAR script=”script1 script2” 
+   dialog=”dialog1 dialog2”
+   match=”Class(\([^,]*\),OHTYR)”
+   replace=”OR()Class(\1,OHTYR)|Class(\1,DW_TYR_PALADIN)”
+END</code></pre></div></p>
+<p>Note that you need not (indeed, must not) use OR(2) here. Just use OR(), and SFO will take care of the rest.</p>
+<p>You can set ‘script’ and/or ‘dialog’ to ‘all’, and then SFO will do all the scripts/dialogs. Use with caution, though: it’s a bit slow.</p>
+<p>(Incidentally, WEIDU theoretically has native support for this task, via REFACTOR_TRIGGER. My experience is that it’s ridiculously slow and not that reliable, though, whereas disjunctive_substitution is pretty fast unless you’re patching thousands of scripts.)</p>
+</div>
+
+</div>
+</body>

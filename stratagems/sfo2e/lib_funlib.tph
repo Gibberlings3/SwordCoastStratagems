@@ -34,12 +34,18 @@ STR_VAR<br>
 */
 
 /*
+
+brief-desc{documents WEIDU function libraries}
+
+*/
+
+/*
 document{funlib_get_functions_used}
 {Return a k=>_ array of all functions used (via LAF/LPF) in the specified library. Also return an array of dependencies we're directed to ignore (via ignore_dependencies). }
 */
 
 
-DEFINE_ACTION_FUNCTION funlib_get_functions_used//internal
+DEFINE_ACTION_FUNCTION funlib_get_functions_used
 	STR_VAR file="" 
 			path=""
 			location=""
@@ -55,14 +61,13 @@ BEGIN
 		END
 		""
 		CLEAR_ARRAY functions_used
-		REPLACE_EVALUATE "\(LPF\|LAF\|LAUNCH_ACTION_FUNCTION\|LAUNCH_PATCH_FUNCTION\)[ %TAB%%WNL%%MNL%%LNL%]+\([^ %TAB%%WNL%%MNL%%LNL%]+\)[ %TAB%%WNL%%MNL%%LNL%]" BEGIN
-			PATCH_IF INDEX ("%" "%MATCH2%")<0 BEGIN
-				INNER_PATCH_SAVE fn "%MATCH2%" BEGIN
-					REPLACE_TEXTUALLY "~" ""
-					REPLACE_TEXTUALLY ~"~ ""
-				END
-				SPRINT $functions_used("%fn%") ""
+		REPLACE_TEXTUALLY "//.*" ""
+		REPLACE_EVALUATE "\(LPF\|LAF\|LAUNCH_ACTION_FUNCTION\|LAUNCH_PATCH_FUNCTION\)[ %TAB%%WNL%%MNL%%LNL%]+\([^ %%TAB%%WNL%%MNL%%LNL%]+\)[ %TAB%%WNL%%MNL%%LNL%]" BEGIN
+			INNER_PATCH_SAVE fn "%MATCH2%" BEGIN
+				REPLACE_TEXTUALLY "~" ""
+				REPLACE_TEXTUALLY ~"~ ""
 			END
+			SPRINT $functions_used("%fn%") ""
 		END
 		""
 END
@@ -90,7 +95,7 @@ Also return 'library_doc' and 'technical_doc', which code more advanced details}
 
 DEFINE_ACTION_FUNCTION funlib_get_functions_documented//internal
 	STR_VAR file="" path=""
-	RET library_doc technical_note
+	RET library_doc technical_note brief_desc
 	RET_ARRAY function_docs
 BEGIN 
 	COPY - "%path%/%file%" nowhere
@@ -118,6 +123,16 @@ BEGIN
 			END
 		END
 		""
+		SPRINT brief_desc ""
+		found_desc=0
+		REPLACE_EVALUATE "brief-desc[^{]*{\([^}]*\)}" BEGIN
+			PATCH_IF !found_desc BEGIN
+			
+				SPRINT brief_desc "%MATCH1%"
+				found_desc=1
+			END
+		END
+		""
 END
 
 /*
@@ -126,7 +141,7 @@ document{funlib_get_function_locations}
 get where each function is. Return it in a 2d array in the form (function,library)=>_. Also return a 1d array in the form function=>_ of all the internal functions.
 Also return a 1d array in the form function=>library, that contains an arbitrary library where the function is.</p>
 
-<p>(I mean, functions shouldn't be multiply defined. But sometimes they are.)}
+<p>(I mean, functions shouldn't be multiply defined. But sometimes they are. If they are, also throw a WARNING and record it in the SFO logfile.</p>}
 */
 
 DEFINE_ACTION_FUNCTION funlib_get_function_locations//internal
@@ -150,6 +165,10 @@ BEGIN
 			END
 			PATCH_IF !VARIABLE_IS_SET $function_locations_singular("%function%") BEGIN
 				SPRINT $function_locations_singular("%function%") "%file%"
+			END ELSE BEGIN
+				PATCH_WARN "Namespace collision detected"
+				SPRINT file2 $function_locations_singular("%function%")
+				LPF warning STR_VAR warning="lib_funlib: function %function% is defined in %file% and %file2%" END
 			END
 		END
 	END
@@ -159,13 +178,13 @@ END
 /*
 document{funlib_get_dependencies}
 {Given an array of libraries in the format file=>path, find all the dependencies
-and return them in a 2d array in format (dependent_library,required_library)=>_.
+and return them in a 2d array in format (dependent_library,required_library)=>_.</p>
 
-Also return a 2d array of functions that are used in the libraries but not defined in any of them, in the format (library, function_it_uses)=>_.
+<p>Also return a 2d array of functions that are used in the libraries but not defined in any of them, in the format (library, function_it_uses)=>_.</p>
 
-Also return a 2d array of libraries that use internal functions, in the format (library,function_it_uses)=>_
+<p>Also return a 2d array of libraries that use internal functions, in the format (library,function_it_uses)=>_</p>
 
-Functions in the zeroth column of the 2da file 'ignore' (by default, a list of all the predefined WEIDU functions) are ignored.
+<p>Functions in the zeroth column of the 2da file 'ignore' (by default, a list of all the predefined WEIDU functions) are ignored.</p>
 }
 */
 
@@ -191,10 +210,12 @@ BEGIN
 			OUTER_SET $dependency_map("%lib1%" "%lib2%")=0
 		END	
 	END
+	ACTION_CLEAR_ARRAY collision_check_array
 	ACTION_PHP_EACH "%library_array%" AS file=>path BEGIN
 		ACTION_CLEAR_ARRAY functions_used
 		LAF funlib_get_functions_used STR_VAR file path RET_ARRAY functions_used ignore_dependencies END
 		ACTION_PHP_EACH functions_used AS function=>discard BEGIN
+
 			LAF array_contains STR_VAR array=ignore_dependencies key="%function%" RET value END
 			ACTION_IF !value BEGIN
 				ACTION_IF VARIABLE_IS_SET $function_locations_singular("%function%") BEGIN
@@ -336,6 +357,7 @@ BEGIN
 					SPRINT function_name "%MATCH3%"
 					SPRINT function_comment ""
 					INNER_PATCH_SAVE function_name "%function_name%" BEGIN
+						REPLACE_TEXTUALLY "%" "SFO_PERCENTAGE"
 						REPLACE_EVALUATE "//\(.*\)" BEGIN
 							SPRINT function_comment "%MATCH1%"
 						END
@@ -357,7 +379,7 @@ BEGIN
 				REPLACE_TEXTUALLY "\(INT_VAR\|STR_VAR\|RET\)" "%WNL%\1"
 			END
 		END
-		PATCH_IF INDEX ("%" "%function_name%") <0 BEGIN
+		PATCH_IF INDEX ("SFO_PERCENTAGE" "%function_name%") <0 BEGIN
 			SPRINT $function_data("%function_name%" "%function_type%" "%function_comment%") "%data%"
 		END
 	END
@@ -489,8 +511,8 @@ END
 /*
 document{funlib_get_library_array}
 {Go through the given directories and return an array of tpa/tph files, in the format
-file->path (path is the same for all).}
-EXCLUDE lib_batch
+file->path.}
+EXCLUDE lib_batch and 1e's sfo_autofunc
 */
 
 DEFINE_DIMORPHIC_FUNCTION funlib_get_library_array//internal
@@ -504,7 +526,7 @@ BEGIN
 		ACTION_PHP_EACH directory_array AS path=>discard BEGIN
 			ACTION_BASH_FOR "%path%" ".*\.\(tpa\|tph\)$" BEGIN
 				ACTION_MATCH "%BASH_FOR_RES%" WITH
-				lib_batch BEGIN
+				lib_batch sfo_autofunc BEGIN
 				END
 				DEFAULT
 					OUTER_SPRINT file "%BASH_FOR_FILE%"
@@ -528,7 +550,7 @@ in the data_loc directory on dependencies, missing functions, and use of interna
 }
 */
 
-DEFINE_DIMORPHIC_FUNCTION funlib_report_dependencies//internal
+DEFINE_DIMORPHIC_FUNCTION funlib_report_dependencies
 	INT_VAR recursive=1
 	STR_VAR	library_path=""
 			library_array=""//array
@@ -564,9 +586,10 @@ END
 /*
 document{funlib_document_libraries}
 {Given either  an array of libraries in the form file=>path, or a path to a directory of libraries (assumed to be all and only the tph/tpa files)
-generate HTML documentation for each library. %template_path% points to the HTML template into which we substitute the data. %style_path% points to the location of the css files and
+generate HTML documentation for each library (and also check for namespace collisions). %template_path% points to the HTML template into which we substitute the data. %style_path% points to the location of the css files and
 similar. doc_path is where you want them to go. Functions listed in the 'ignore' 2da (by default, the weidu built-in functions) are ignored. If 'extra_array' or 'extra_path' are set, the 
-libraries contained in the array or on the path are included for dependencies but not documented.}
+libraries contained in the array or on the path are included for dependencies but not documented.</p>
+<p>'menu_data' and 'menu_path' point to the file that describes which overall lists of functions are to be generated. (The default file lists the SFO functions, the SFO-LUA functions, all the functions, and all the functions including deprecated and internal ones.}
 */
 
 DEFINE_DIMORPHIC_FUNCTION funlib_document_libraries
@@ -577,10 +600,20 @@ DEFINE_DIMORPHIC_FUNCTION funlib_document_libraries
 			style_path="../../doc/files"
 			resource_path="%library_path%"
 			template_path="%resource_path%/resource/doc_template.html"
-			doc_path="%library_path%/doc"
+			index_template_path="%resource_path%/resource/index_template.html"
+			doc_path="%library_path%/doc/functions"
 			ignore="%resource_path%/data/weidu_functions.2da"
+			menu_data="menu_data.ini"
+			menu_path="%resource_path%/data"
 			
 BEGIN
+
+	// read in the menu-data file 
+	ACTION_IF "%menu_data%" STR_CMP "" BEGIN
+		LAF ini_read STR_VAR file="%menu_data%" path="%menu_path%" RET_ARRAY menu_array=array menu_sections=section_array END
+	END	
+
+	
 	OUTER_SPRINT curly_left "{"
 	OUTER_SPRINT curly_right "}"
 	ACTION_IF "%library_array%" STR_EQ "" BEGIN
@@ -591,6 +624,7 @@ BEGIN
 		OUTER_SPRINT extra_array SFO_extra_array_from_path
 		LAF funlib_get_library_array STR_VAR library_path="%extra_path%" RET_ARRAY "%extra_array%"=library_array END	
 	END
+	
 	// get the dependencies
 	ACTION_IF "%extra_array%" STR_CMP "" BEGIN
 		LAF array_join STR_VAR array1="%library_array%" array2="%extra_array%" RET_ARRAY total_array=array END
@@ -606,10 +640,13 @@ BEGIN
 		OUTER_PATCH_SAVE textfile "%file%" BEGIN
 			REPLACE_TEXTUALLY "\..*" ""
 		END
+		OUTER_PATCH_SAVE shortpath "%path%" BEGIN
+			REPLACE_TEXTUALLY "%MOD_FOLDER%[\/]" ""
+		END
 		OUTER_SPRINT dep_text ""
 		ACTION_IF VARIABLE_IS_SET $dependency_list("%file%") BEGIN
 			OUTER_SPRINT dep $dependency_list("%file%")
-			OUTER_SPRINT dep_text "%dep_text%<p><strong>Dependencies:</strong> %dep%</p>"
+			OUTER_SPRINT dep_text ~%dep_text%<p><strong>Dependencies:</strong> %dep%</p>~
 		END
 		ACTION_IF VARIABLE_IS_SET $missing_list("%file%") BEGIN
 			OUTER_SPRINT missing $missing_list("%file%")
@@ -625,15 +662,11 @@ BEGIN
 		ACTION_CLEAR_ARRAY function_descriptions
 		LAF funlib_get_function_descriptions STR_VAR file path RET_ARRAY function_descriptions END
 		ACTION_PHP_EACH function_descriptions AS k=>v BEGIN
-			ACTION_MATCH "%k_2%" WITH
-			internal deprecated dynamical BEGIN
-			END
-			DEFAULT
-				OUTER_SPRINT $all_function_descriptions("%k_0%" "%k_1%" "%k_2%" "%textfile%") "%v%"
-			END
+			OUTER_SPRINT $all_function_descriptions("%k_0%" "%k_1%" "%k_2%" "%textfile%" "%path%") "%v%"
 		END	
 		ACTION_CLEAR_ARRAY function_docs
-		LAF funlib_get_functions_documented STR_VAR file path RET library_doc technical_note RET_ARRAY function_docs END
+		LAF funlib_get_functions_documented STR_VAR file path RET library_doc technical_note brief_desc RET_ARRAY function_docs END
+		OUTER_SPRINT $brief_descs("%textfile%") "%brief_desc%"
 		ACTION_PHP_EACH function_docs AS k=>v BEGIN
 			OUTER_SPRINT $all_function_docs("%k%") "%v%"
 		END	
@@ -686,28 +719,137 @@ BEGIN
 			REPLACE_TEXTUALLY "---!!!SFO_DEPENDENCY_TEXT!!!---" "%dep_text%"
 			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" "%header_text%"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS1!!!---" "%data_external%"
+			REPLACE_TEXTUALLY "---!!!SFO_PUBLIC_HEADER_TEXT!!!---" "Public functions"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2_TITLE!!!---" "%internal_title%"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2!!!---" "%data_internal%"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3_TITLE!!!---" "%technical_title%"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3!!!---" "%technical_text%"
 			
 	END
-	LAF funlib_process_document_lines INT_VAR include_origin=1 STR_VAR type="" documentations=all_function_docs descriptions=all_function_descriptions RET data END
 
-	// make the combined file
-	COPY + "%template_path%" "%doc_path%/all_sfo_functions.html"
+	// make a master list
+	OUTER_SPRINT master_list ""
+	ACTION_PHP_EACH menu_sections AS section=>discard BEGIN
+		ACTION_IF "%section%" STR_CMP "main_menu" BEGIN
+			OUTER_SPRINT title $menu_array("%section%" "title")
+			OUTER_SPRINT file $menu_array("%section%" "file")
+			OUTER_SPRINT master_list ~%master_list%<li><a href="%file%.html">%title%</a></li>~		
+			OUTER_SPRINT path $menu_array("%section%" "path")
+			ACTION_IF "%path%" STR_CMP "" BEGIN
+				OUTER_SPRINT list_title $menu_array("%section%" "list_title")			
+				OUTER_SPRINT $title_lookup("%path%") "%list_title%" 
+			END
+		END
+	END
+	
+	// make a library list
+	ACTION_CLEAR_ARRAY path_data
+	ACTION_PHP_EACH "%library_array%" AS discard=>path BEGIN
+		OUTER_SPRINT $path_data("%path%") ""
+	END
+	ACTION_PHP_EACH "%library_array%" AS library=>path BEGIN
+		OUTER_PATCH_SAVE library_stripped "%library%" BEGIN
+			REPLACE_TEXTUALLY "\.\(tph\|tpa\)" ""
+		END
+		
+		OUTER_SPRINT extra $brief_descs("%library_stripped%")
+		ACTION_IF "%extra%" STR_CMP "" BEGIN
+			OUTER_SPRINT extra " (%extra%)"
+		END
+		OUTER_SPRINT entry ~<li><a href="%library_stripped%.html">%library_stripped%</a>%extra%</li>%WNL%~
+		OUTER_SPRINT temp $path_data("%path%")
+		OUTER_SPRINT $path_data("%path%") "%temp%%entry%"
+	END
+	ACTION_SORT_ARRAY_INDICES path_data LEXICOGRAPHICALLY
+	OUTER_SPRINT all_content ~<div class="ribbon_rectangle_h2"><h2>Master lists</h2> </div><div class="ribbon_triangle_h2-l"></div><div class="ribbon_triangle_h2-r"></div><div class="section"><ul>%master_list%</ul></div>~
+	ACTION_PHP_EACH path_data AS path=>content BEGIN
+		ACTION_IF VARIABLE_IS_SET $title_lookup("%path%") BEGIN
+			OUTER_SPRINT path $title_lookup("%path%")
+		END
+		OUTER_SPRINT all_content ~%all_content%<div class="ribbon_rectangle_h2"><h2>%path%</h2> </div><div class="ribbon_triangle_h2-l"></div><div class="ribbon_triangle_h2-r"></div><div class="section"><ul>%content%</ul></div>~
+
+	END
+	OUTER_SPRINT all_content ~%all_content%<div class="ribbon_rectangle_h2"><h2>Function count</h2> </div><div class="ribbon_triangle_h2-l"></div><div class="ribbon_triangle_h2-r"></div><div class="section"><ul>---!!!FUNCTION_COUNT!!!---</ul></div>~
+
+	ACTION_IF VARIABLE_IS_SET $menu_array("main_menu" "intro") BEGIN
+		OUTER_SPRINT intro $menu_array("main_menu" "intro")
+	END ELSE BEGIN
+		OUTER_SPRINT intro ""
+	END
+	// actually make the file
+	ACTION_IF VARIABLE_IS_SET $menu_array("main_menu" "title") BEGIN
+		OUTER_SPRINT title $menu_array("main_menu" "title")
+	END ELSE BEGIN
+		OUTER_SPRINT title "Function library index"
+	END
+	COPY + "%index_template_path%" "%doc_path%/index.html"
 			REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
-			REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "All SFO functions"
-			REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "All SFO functions"
-			REPLACE_TEXTUALLY "---!!!SFO_DEPENDENCY_TEXT!!!---" ""
-			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" ""
-			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS1!!!---" "%data%"
+			REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "%title%"
+			REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "%title%"
+			REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" "%intro%"
+			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS1!!!---" "%all_content%"
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2_TITLE!!!---" ""
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2!!!---" ""
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3_TITLE!!!---" ""
 			REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3!!!---" ""
+	
+	// make the combined files
 
 
+	ACTION_PHP_EACH menu_sections AS section=>discard BEGIN
+		ACTION_IF "%section%" STR_CMP "main_menu" BEGIN
+			OUTER_SPRINT require_path $menu_array("%section%" "path")
+			OUTER_SPRINT type $menu_array("%section%" "type")
+			LAF funlib_process_document_lines INT_VAR include_origin=1 STR_VAR type documentations=all_function_docs descriptions=all_function_descriptions require_path RET data END
+			ACTION_IF VARIABLE_IS_SET $menu_array("%section%" "public_header") BEGIN
+				OUTER_SPRINT header $menu_array("%section%" "public_header")
+			END ELSE BEGIN
+				OUTER_SPRINT header "Public Functions"
+			END
+			OUTER_SPRINT filename $menu_array("%section%" "file")
+			OUTER_SPRINT title $menu_array("%section%" "title")
+			OUTER_SPRINT desc $menu_array("%section%" "text")
+			OUTER_SPRINT desc ~%desc%</p><p><ul>%master_list%<li><a href="index.html">Main menu</a></li></ul>~
+
+			COPY + "%template_path%" "%doc_path%/%filename%.html"
+					REPLACE_TEXTUALLY "---!!!SFO_PATH!!!---" "%style_path%/"
+					REPLACE_TEXTUALLY "---!!!SFO_TITLE!!!---" "%title%"
+					REPLACE_TEXTUALLY "---!!!SFO_MAIN_HEADER!!!---" "%title%"
+					REPLACE_TEXTUALLY "---!!!SFO_DEPENDENCY_TEXT!!!---" ""
+					REPLACE_TEXTUALLY "---!!!SFO_INTRO_TEXT!!!---" "%desc%"
+					REPLACE_TEXTUALLY "---!!!SFO_PUBLIC_HEADER_TEXT!!!---" "%header%"
+					REPLACE_TEXTUALLY "---!!!SFO_CONTENTS1!!!---" "%data%"
+					REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2_TITLE!!!---" ""
+					REPLACE_TEXTUALLY "---!!!SFO_CONTENTS2!!!---" ""
+					REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3_TITLE!!!---" ""
+					REPLACE_TEXTUALLY "---!!!SFO_CONTENTS3!!!---" ""
+
+		END
+	
+	END
+	
+	// count functions
+	
+	LAF funlib_process_document_lines INT_VAR count_functions=1 STR_VAR descriptions=all_function_descriptions RET_ARRAY function_counts END
+	
+	COPY + "%doc_path%/index.html" "%doc_path%"
+		public_count=$function_counts("public")
+		PATCH_IF VARIABLE_IS_SET $function_counts("internal") BEGIN
+			internal_count=$function_counts("internal")
+			REPLACE_TEXTUALLY "---!!!FUNCTION_COUNT!!!---" "%public_count% public functions, %internal_count% internal functions"
+		END ELSE BEGIN
+			REPLACE_TEXTUALLY "---!!!FUNCTION_COUNT!!!---" "%public_count% functions"	
+		END
+
+	// report on missing list
+	OUTER_SET reported=0
+	ACTION_PHP_EACH missing_list AS file=>data BEGIN
+		ACTION_IF !reported BEGIN
+			OUTER_SET reported=1
+			PRINT "Report on missing functions:"
+		END
+		PRINT "%file%: %data%"
+	END
 
 END
 
@@ -743,21 +885,37 @@ END
 
 DEFINE_DIMORPHIC_FUNCTION funlib_process_document_lines//internal
 	INT_VAR include_origin=0
+			count_functions=0
 	STR_VAR type=""
 			descriptions="function_descriptions"
 			documentations="function_docs"
+			require_path=""
 	RET data
+	RET_ARRAY function_counts
 BEGIN
 	ACTION_CLEAR_ARRAY lines
+	ACTION_CLEAR_ARRAY count_list
 	ACTION_PHP_EACH "%descriptions%" AS k=>v BEGIN
-		ACTION_IF include_origin BEGIN
-			OUTER_SPRINT v ~%v% (<a href="%k_3%.html">%k_3%</a>)~
-		END 
-		ACTION_IF "%k_2%" STR_EQ "%type%" BEGIN
-			ACTION_IF !VARIABLE_IS_SET $lines("%k_0%") BEGIN
-				OUTER_SPRINT $lines("%k_0%") "%v%<br>"
-			END ELSE BEGIN
-				OUTER_SPRINT $lines("%k_0%") EVAL "%lines_%k_0%%%v%<br>"
+		ACTION_IF "%k_2%" STR_EQ "" BEGIN
+			OUTER_SPRINT $count_list("%v%") "public"
+		END ELSE BEGIN
+			OUTER_SPRINT $count_list("%v%") "%k_2%"
+		END
+		ACTION_IF "%require_path%" STR_EQ "" || "%require_path%" STR_EQ "%k_4%" BEGIN
+			ACTION_IF include_origin BEGIN
+				OUTER_SPRINT v ~%v% (<a href="%k_3%.html">%k_3%</a>)~
+			END 
+			ACTION_IF "%type%" STR_EQ "all" || "%k_2%" STR_EQ "%type%" BEGIN
+				ACTION_IF "%type%" STR_EQ "all" && "%k_2%" STR_CMP "" BEGIN
+					OUTER_SPRINT extra " [%k_2%]"
+				END ELSE BEGIN
+					OUTER_SPRINT extra ""
+				END
+				ACTION_IF !VARIABLE_IS_SET $lines("%k_0%") BEGIN
+					OUTER_SPRINT $lines("%k_0%") "%v%%extra%<br>"
+				END ELSE BEGIN
+					OUTER_SPRINT $lines("%k_0%") EVAL "%lines_%k_0%%%v%%extra%<br>"
+				END
 			END
 		END
 	END
@@ -782,6 +940,18 @@ BEGIN
 	OUTER_PATCH_SAVE data "%data%" BEGIN
 		REPLACE_TEXTUALLY "%MOD_FOLDER%" "MOD_FOLDER"
 	END
+	ACTION_PHP_EACH function_counts AS k=>v BEGIN
+		OUTER_SET $function_counts("%k%")=0
+	END
+	ACTION_IF count_functions BEGIN
+		ACTION_PHP_EACH count_list AS function=>type BEGIN
+			ACTION_IF !IS_AN_INT $function_counts("%type%") BEGIN
+				OUTER_SET $function_counts("%type%")=0
+			END
+			OUTER_SET $function_counts("%type%") +=1
+		END
+	END
+	
 END
 
 /*

@@ -1,0 +1,370 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<title>A Course on SFO 2.4</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="files/g3readme_cam_022916_dwedit.css" type="text/css" />
+<link href="../../doc/files/g3icon.ico" rel="icon" type="image/bmp" />
+</head>
+<body>
+<div id="container">
+
+<div class="ribbon_bubble">
+    <div class="ribbon_rectangle">
+<h1>A course on SFO - chapter 2.4</h1>
+</div>
+    <div class="ribbon_triangle-l"></div>
+    <div class="ribbon_triangle-r"></div>
+<div class="section">
+<p>
+
+<h2>lib_2da: better handling of 2-dimensional array data</h2>
+</p>
+<p><a href="sfocourse.html">Back to contents</a></p>
+<p>The functions in lib_2da are designed to interact with two-dimensional tables: reading them into a WEIDU array, manipulating that array, or writing the array back to a file. The main purpose of the library is to edit '2da' files, the standard format used by the Infinity Engine to store structured data. But lib_2da is not restricted to files in the strict .2da format. It can handle several other formats of table, and offers a powerful function – 2da_process_table – that allows for very simple, clean code/data separation in doing repetitive tasks.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.1 Introduction</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>
+WEIDU’s basic table-editing functions (READ_2DA_ENTRY and friends) just treat tables as largely-unstructured arrays. But the .2da files used by the IE to store game data have a rather more specific structure than that. For instance, here is (a part of) alignmnt.2da, the 2da that controls which classes can choose which alignments:</p>
+<p><div class="code">
+<pre><code>2DA V1.0
+0
+		L_G		L_N		L_E		N_G                 
+MAGE		1		1		1		1                   
+FIGHTER		1		1		1		1               
+CLERIC		1		1		1		1                 
+THIEF		0		1		1		1                   
+BARD		0		1		0		1                
+PALADIN		1		0		0		0                  
+DRUID		0		0		0		0</code></pre></div></p>
+<p>
+(The full table extends to the right to cover all nine alignments, and extends down to cover all classes and kits.)</p>
+<p>The <a href="https://gibberlings3.github.io/iesdp/file_formats/ie_formats/2da.htm">official spec</a> for this table is in the IESDP  but to summarise:
+<ul>
+<li>The first line, '2DA V1.0', is the signature, telling the engine that this is a 2da file. (Sometimes this is not present.)</li>
+<li>The second line is the 'default value', the value that the engine will assume is present if an entry is blank. (See below.)</li>
+<li>After that you have a row of column headers: almost-invariably-upper-case labels for each column.</li>
+<li>After that row, on the left is a column of row headers: almost-invariably-upper-case labels for each row.</li>
+<li>The main table data lives in the 2-dimensional space between the column headers and row headers. Each entry is uniquely labelled by a row header and a column header. Although it is not widely used in-game, it's permissible for a row of data entries to be incomplete – if so, the engine uses the 'default value' in place of any blank entries.</li>
+</ul>
+The idea of lib_2da is that this whole structure gets read into a 2-key array, with each entry having a row header and a column header as its key. It's then very easy to alter entries just by specifying their row and column headers, and the resultant table can then be written back to file. The result is  easier-to-write, easier-to-read code.</p>
+<p>As a simple example, suppose you want to allow paladins to be neutral good and chaotic good. Doing this using lib_2da looks like this:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+	LPF 2da_read RET_ARRAY align_array=array END
+	SET $align_array(PALADIN N_G)=1
+	SET $align_array(PALADIN C_G)=1
+	LPF 2da_write STR_VAR array=align_array
+BUT_ONLY</code></pre></div></p>
+<p>The lib_2da library consists of functions that read 2das into 2-dimensional WEIDU arrays, manipulate these arrays, and write them back.</p>
+</div><div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.2 Reading from 2das with 2da_read</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p><h4><strong>Overview</strong></h4>
+<p>The 2da_read function is the main tool for reading a 2da file into an array. Used in patch context, it reads in the current file (the code above is an example of this). In action context, it reads a specified file (where the file location is specified by path, location, locbase, in the usual SFO fashion). For instance, if you use the 2da file format yourself to store some data, you might read it in like this:</p>
+<p><div class="code">
+<pre><code>LAF 2da_read STR_VAR file=mydata.2da location=data RET_ARRAY mydata_array=array END</code></pre></div></p>
+<p>If you use 2da_read in action context without specifying any of location, locbase and path, SFO assumes you want to read an existing file and will use COPY_EXISTING. The code below reads the alignment table directly into memory (in case you want to look at it but not edit it):</p>
+<p><div class="code">
+<pre><code>LAF 2da_read STR_VAR file=alignmnt.2da RET_ARRAY align_array=array END</code></pre></div></p>
+<p><h4><strong>Reading in column and row headers</strong></h4></p>
+<p>2da_read also returns arrays of the column headers and row headers, in the format k=>"" (i.e., the headers are put in as keys, the values are blank), via the returned arrays 'rows' and 'columns'. For instance, this code would let you (implausibly) make every class available to lawful good characters:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+	LPF 2da_read RET_ARRAY align_array=array align_rows=rows END
+	PHP_EACH align_rows AS kit=>discard BEGIN
+		SET $align_array("%kit%" L_G)=1
+	END      	
+	LPF 2da_write STR_VAR array=align_array
+BUT_ONLY  </code></pre></div></p>
+<p>Finally, 2da_read returns the default character for the 2da in the variable 'default'. (For instance, if you read in alignmnt.2da, you get default=-1.)
+<p><h4><strong>Using an alternative column as the key column</strong></h4></p>
+<p>In a very few cases (the most important is kitlist.2da) the natural column to use for column headers is not the official 2da column. For kitlist, for instance, the entries in the 'ROWNAME' column are the actual human-readable IDs for the kits. If you set the STR_VAR 'rowname_column' equal to the name of a column in the 2da, 2da_read will use that column as the column headers. (In this case, a new column, 'ROWNUMBER', is added, which stores the actual row headers.)</p>
+<p>For instance, this code reads kitlist.2da into an array keyed by kit names and columns:</p>
+<p><div class="code">
+<pre><code>LAF 2da_read 
+	STR_VAR 
+		file=kitlist.2da 
+		rowname_column=ROWNAME 
+	RET_ARRAY 
+		kitlist_data=array 
+		kitlist_rows=rows
+END</code></pre></div></p>
+<p>kitlist_data will contain entries like $kitlist_data(BLACKGUARD ABILITIES)=CLABPA06; kitlist_rows will contain entries like $kitlist_rows(BLACKGUARD)="". Note that the original rowname column is still present: we have $kitlist_data(BLACKGUARD ROWNAME)=BLACKGUARD, for instance.</p>
+<p><h4><strong>Other 2da_read options</strong></h4></p>
+<p>2da_read has a number of other options:
+<ul>
+<li>If INT_VAR reflect=1 (default is 0) the array will be returned reflected, with the columns and rows transposed. </li>
+<li>By default, row and column headers are returned in UPPERCASE (following in-game practice). But if you specify STR_VAR case=mixed or case=lower, you can override this.</li>
+<li>In action context, if you set INT_VAR inline=1 then 2da_read will assume the file is an inline file with full name '…\stratagems-inline\%file%'.</li>
+<li>In action context, if you try to read from a nonexistent 2da file, WEIDU will throw a WARNING. You can suppress this by setting silent=1.</li>
+<li>The STR_VAR 'type' is used to explicitly set the datatype of the table (see chapter xx for more on this).</li>
+<li>If INT_VAR remove_comments=1 (default is 0) then anything formatted like a WEIDU 1-line comment (i.e. the string '//' and anything following it) is removed before the data is read in.</li>
+<li>(Advanced!) The 'rowmap' and 'colmap' STR_VARs can be used to name SFO-standard functions which operate on (respectively) the row and column headers before the data is read in. You can use the anonymous function construct.</li>
+</ul>
+</p>
+<p><h4><strong>Repairing broken 2da files</h4></strong></p>
+<p>A very small number of 2da files in the unmodified game are slightly malformed; much more commonly, another mod breaks the 2da format. 2da_read tries to fix broken files, using this algorithm:
+<ol>
+<li>force the first line to be '2DA V1.0'</li>
+<li>remove any entry beyond the first on the second line</li>
+<li>truncate any entries that lie beyond the range defined by the columns on the third line</li>
+</ol>
+These fixes are done by the 2da_fix function, which is called automatically by 2da_read but which can also be used independently; see the lib_2da documentation if you want to use it.</p>
+</div>
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.3 Writing back to 2das with 2da_write</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>2da_write is the inverse of 2da_read, and works about as you'd expect. (In particular, it works in action and patch context, and if used in action context with no specification of the file location, it assumes it's an in-game file.)</p>
+<p><strong><h4>The default entry</h4></strong></p>
+<p>You can specify the default entry via the STR_VAR 'default'. If it isn't specified, 2da_write reads it from the existing file (so you can freely write to an existing in-game file without worrying about the default). If there isn't an existing file or it's not already formatted as a 2da file, we guess '*'. (The default is looked for using the find_2da_default patch function, which is called automatically by 2da_write).</p>
+<p><strong><h4>Renumbering rows</h4></strong></p>
+<p>If you set the INT_VAR number_rows=1, 2da_write will ignore the actual column headers, and instead number them sequentially starting from zero. This is in effect the inverse of using rowname_column: the following code, for instance, edits kitlist.2da to change the Blackguard's CLAB file.</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "kitlist.2da" override
+	LPF 2da_read STR_VAR rowname_column=ROWNAME RET_ARRAY array END
+	SPRINT $array(BLACKGUARD ABILITIES) DW_BLGRD
+	LPF 2da_write INT_VAR number_rows=1 STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+<p>(Note also that here we've not bothered to rename the 'array' return and are just using the default, which works fine.)</p>
+<p><h4><strong>Other commands</strong></h4></p>
+<p>
+<ul>
+<li>INT_VAR reflect works as in 2da_read: the table is transposed before being written</li>
+<li>STR_VAR type again explicitly sets the datatype of the table (see below under 'Other datatypes')</li>
+<li>'case' forces the case of all entries mixed (the default is 'mixed', i.e. use whatever case is in the file).</li>
+
+</div>
+
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.4 Manipulating 2-dimensional WEIDU arrays</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>These lib_2da functions are all designed to manipulate 2-dimensional arrays: that is, arrays with two lists of keys labelling rows and columns. (The obvious application is to the arrays read in from 2da files, of course.) All are dimorphic.</p>
+<p><h4><strong>2da_delete_column</strong></h4></p>
+<p>This deletes an entire column from an array. For instance, this code (unwisely) deletes the 'SHADOWDANCER' column from weapprof.2da.</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "weapprof.2da" override
+	LPF 2da_read RET_ARRAY array END
+	LPF 2da_delete_column STR_VAR array column=SHADOWDANCER RET_ARRAY array END
+	LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+<p><h4><strong>2da_delete_row</strong></h4></p>
+<p>Similarly, this deletes an entire row. For instance, this code (even more unwisely) removes the PALADIN entry from alignmnt.2da altogether:
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+	LPF 2da_read RET_ARRAY array END
+	LPF 2da_delete_row STR_VAR array row=PALADIN RET_ARRAY array END
+	LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+<p><h4><strong>2da_insert_column</strong></h4></p>
+<p>Given a column label, this inserts a new column into the array, all of whose entries are filled with 'entry' (by default, -1). You need to tell 2da_insert_column where to put the column, using the 'location' STR_VAR: options are 'first', 'last', 'before [column_label]', or 'after [column_label]'. For instance, this code adds a new empty kit entry to weapprof.2da:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "weapprof.2da" override
+	LPF 2da_read RET_ARRAY array END
+	LPF 2da_insert_column 
+		STR_VAR 
+			array 
+			column=MYKIT 
+			location=last 
+			entry=0 
+		RET_ARRAY array 
+	END
+LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+<p><h4><strong>2da_insert_row</strong></h4></p>
+<p>Similarly, this inserts a new row. The syntax is the same as for 2da_insert_column except that we need to specify 'row' instead of 'column'.</p>
+<p><h4><strong>2da_clone_column, 2da_clone_row</strong></h4></p>
+<p>Instead of injecting blank columns /rows, these functions copy an existing column/row. The format is identical in both cases: as well as the array being edited, you need to specify 'clone_from' (the target column/row to copy), 'clone_to' (the label for the copied column/row) and 'location', which again can be 'first', 'last', 'before [label]', or 'after [label].</p>
+<p>For instance, this code adds a new entry to alignmnt.2da, with the same alignment requirements as the druid:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+	LPF 2da_read RET_ARRAY array END
+	LPF 2da_clone_row 
+		STR_VAR 
+			array
+			clone_from=DRUID  
+			clone_to=MYKIT 
+			location=last 
+		RET_ARRAY array 
+	END
+	LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+
+<p><h4><strong>2da_column_to_array, 2da_row_to_array</strong></h4></p>
+<p>These functions extract an entire row or column from a 2-dimensional array. You need to supply 'row' or 'column' as appropriate. For instance, this code gives you an array that stores all the alignment options for paladins:</p>
+<p><div class="code">
+<pre><code>LAF 2da_read STR_VAR file=alignmnt.2da RET_ARRAY array END
+LAF 2da_row_to_array STR_VAR array row=PALADIN RET_ARRAY paladin_aligns=array_out END</code></pre></div></p>
+<p>We now have $paladin_aligns(L_G)=1, etc.</p>
+<p>Note that we need two different arrays in the function call. 'array' is the 2-dimensional array we're working with. 'array_out' is the 1-dimensional array being extracted.</p>
+<p><h4><strong>2da_inject_array</strong></h4></p>
+<p>This is a sort of inverse to 2da_column_to_array and 2da_row_to_array. You specify a row ('row') and an array ('array_in') whose keys are column headers. The values of those keys are then slotted into the main array. Alternatively, you specify a column ('column') and an array whose keys are row headers.</p>
+<p>For instance, this code allows paladins to be neutral good or chaotic good, but not lawful good:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+	LPF 2da_read RET_ARRAY array END
+	DEFINE_ASSOCIATIVE_ARRAY align_array BEGIN
+		L_G=>0
+		N_G=>1
+		C_G=>1
+	END
+	LPF 2da_inject_array 
+		STR_VAR 
+			array 
+			array_in=align_array 
+			row=PALADIN 
+		RET_ARRAY array 
+	END
+	LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+<p>And this code lets paladins and rangers, but not fighters, be chaotic evil:
+<p><div class="code">
+<pre><code>COPY_EXISTING "alignmnt.2da" override
+LPF 2da_read RET_ARRAY array END
+	DEFINE_ASSOCIATIVE_ARRAY align_array BEGIN
+		PALADIN=>1
+		RANGER=>1
+		FIGHTER=>0
+	END
+	LPF 2da_inject_array 
+		STR_VAR 
+			array 
+			array_in=align_array 
+			column=C_E 
+		RET_ARRAY array 
+	END
+	LPF 2da_write STR_VAR array END
+BUT_ONLY</code></pre></div></p>
+
+<p>For somewhat obscure legacy reasons, by default 2da_inject_array uppercases the keys of array_in. If you don't want it to, set INT_VAR force_uppercase=0.</p>
+</div>
+
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.5 Other lib_2da datatypes</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+The lib_2da library is not restricted to files in the strict .2da format. It can handle several other formats of table. These datatypes are all supported by lib_2da:
+<p><strong><h4>2da</h4></strong></p>
+<p>This is a standardly-formatted .2da file. We've already seen how lib_2da reads it into an array.</p>
+<p><h4><strong>ids</strong></h4></p>
+<p>This is a standardly formatted .ids file. A .ids file is an IE game file that begins with the header 'IDS V1.0' (though actually many in-game files omit it) and then two columns of data. The first column consists of integers and the second consists of strings associated with those integers.</p>
+<p>For instance, here's the first few lines of class.ids:</p>
+<p><div class="code">
+<pre><code>IDS V1.0
+1 MAGE
+2 FIGHTER
+3 CLERIC
+4 THIEF
+5 BARD
+6 PALADIN</code></pre></div></p>
+<p>lib_2da reads an ids file into an array with two column headers, 'int' and 'sym'. The row headers are added automatically and are numbered sequentially from zero. For instance, if we read class.ids in to 'array', we'd have</p>
+<p><div class="code">
+<pre><code>$array(0 int)=1
+$array(0 sym)=MAGE</code></pre></div></p>
+<p>(Cases where you want to read in an ids file using lib_2da are relatively rare – mostly when you want to allow explicitly for repeated entries.)</p>
+<p><h4><strong>table_header</strong></h4></p>
+<p>This is an SFO datatype that does not occur in IE. It's basically a 2da file without the header information and the row headers: its first row consists of column headers, and its subsequent rows consist of data, like this:</p>
+<p><div class="code">
+<pre><code>resref		fire:i	cold:i	acid:i	electricity:i
+dragred		125	-50	0	0
+dragblue	0	0	0	100
+icasa		-50	125	0	0</code></pre></div></p>
+<p>
+(The column headers can be any strings without spaces, and needn't be uppercased - this particular table is for an example I want to use later.)</p>
+<p>lib_2da reads a table_header file into an array as follows: the column headers become column keys in the array, and the row headers are automatically added as integers starting from zero. So for instance, in the above table we have</p>
+<p><div class="code">
+<pre><code>$array(1 resref)=dragblue</code></pre></div></p>
+<p><h4><strong>table_noheader</strong></h4></p>
+<p>This is another, minimal, SFO datatype: it just consists of a rectangular array of data, with no row or column headers. lib_2da reads it into an array with automatically-added row and column keys, in both cases integers starting at zero.</p>
+<p><h4><strong>Reading and writing datatypes with 2da_read and 2da_write</strong></h4></p>
+<p>By default, 2da_read tries to heuristically detect the datatype it's reading in, using the following algorithm:
+<ol>
+<li>If the first three letters of the file are '2DA' or 'IDS', 2da_read interprets that as a signature and treats the file as a 2da or ids file, as appropriate.</li>
+<li>Otherwise, if the file's extension is .2da or .ids, 2da_read treats it as a 2da or ids file, as appropriate</li>
+<li>Otherwise, 2da_read assumes it's a table_header file.</li>
+</ol</p>
+<p>When writing an array, 2da_write uses this algorithm:
+<ol>
+<li>If the file it's writing to has a '.2da' or '.ids' extension, use that to determine the datatype.</li>
+<li>Otherwise, if the first column header is 'int' and the second is 'sym', treat it as an ids file.</li>
+<li>Otherwise, if the first column header is an integer, treat it as table_noheader.</li>
+<li>Otherwise, if the first row_header is an integer, treat it as table_header.</li>
+<li>Otherwise, treat it as 2da.</li>
+</ol>
+<p>
+You can override heuristic detection by specifying the datatype explicitly, using the 'type' STR_VAR: it can be '2da', 'ids', 'table_header' or 'table_noheader'. (Note the lower case.)</p>
+
+</div>
+
+<div class="ribbon_rectangle_h3"><a name="setup" id="setup"></a><h3>2.4.6 Using 2da_process_table to process many tasks</h3> </div>
+    <div class="ribbon_triangle_h2-l"></div>
+    <div class="ribbon_triangle_h2-r"></div>
+
+<div class="section">
+<p>The 2da_process_table function lets you feed a table_header table, line-by-line, to a function. The column headers are interpreted as variables (with integer variables indicated by :i) and then the values in each entry on the line are interpreted as the values of those variables.</p>
+<p>For instance, suppose we want to patch the elemental resistances of a large number of creatures. The elementary way to do it is like this:</p>
+<p><div class="code">
+<pre><code>COPY_EXISTING "dragred.cre" override
+	WRITE_BYTE 0x59 125 // fire
+	WRITE_BYTE 0x5e 125 // magic fire
+	WRITE_BYTE 0x5a "-50" // cold
+	WRITE_BYTE 0x5f "-50" // magic cold
+	WRITE_BYTE 0x5b 0 // electricity
+	WRITE_BYTE 0x5c 0 // acid
+BUT_ONLY
+
+COPY_EXISTING "dragblue.cre" override
+	WRITE_BYTE 0x59 0 // fire
+	WRITE_BYTE 0x5e 0 // magic fire
+	WRITE_BYTE 0x5a 0 // cold
+	WRITE_BYTE 0x5f 0 // magic cold
+	WRITE_BYTE 0x5b 100 // electricity
+	WRITE_BYTE 0x5c 0 // acid
+BUT_ONLY
+…</code></pre></div></p>
+<p>This is tedious to write, risks typos, and mixes up code and data, which is usually best avoided.</p>
+<p>A better way would be to encode the data in a table – like my example table_header, above, read the table in, and treat each line as instructions for how to patch a specific creature. 2da_process_table makes this extremely easy. Just define a function that does the patch, and then feed that function, and the file, to 2da_process_table.
+For instance, suppose that our table of resistances is stored in some file 'resistances.txt' and has the format used in the above example (but is much longer – if we only have 3 entries, this is overkill). Then our code is just</p>
+<p><div class="code">
+<pre><code>DEFINE_ACTION_FUNCTION resistance_patch
+	INT_VAR cold=0
+		fire=0
+		acid=0
+		electricity=0
+	STR_VAR resref
+BEGIN
+	ACTION_IF !FILE_EXISTS_IN_GAME "%resref%.cre" BEGIN
+		WARN "resistance_patch: tried to patch resistances to %resref%.cre but it doesn't exist"
+	END ELSE BEGIN
+		COPY_EXISTING "%resref%.cre" override
+			WRITE_BYTE 0x59 fire
+			WRITE_BYTE 0x5e fire
+			WRITE_BYTE 0x5a cold
+			WRITE_BYTE 0x5f cold
+			WRITE_BYTE 0x5b electricity
+			WRITE_BYTE 0x5c acid
+		BUT_ONLY	
+	END
+END
+
+LAF 2da_process_table 
+	STR_VAR 
+		file=resistances.txt 
+		location=resource 
+		function=resistance_patch 
+END</code></pre></div></p>
+</div>
+
+
+</div>
+</body>

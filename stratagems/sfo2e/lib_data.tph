@@ -1,3 +1,11 @@
+/*
+
+describe-library{Contains macros and functions that load various bits of game data (saves, dvs, spell resrefs, etc etc) into WEIDU data structures.}
+brief-desc{load game data into WEIDU structures}
+*/
+
+
+
 ///////////////////////////////////////////////////////////////////////////////
 /*
 document{data_spell_resrefs}
@@ -341,7 +349,7 @@ END
 document{data_thac0}
 {
 Read in thac0 for all classes and store in a 2da, in the form 
-$sfo_thac0("class" "level")=n up to level 50, padding out if necessary
+$sfo_thac0("class" "level")=n up to level 50, padding out if necessary. 'class' is lowercased.
 }
 */
 ///////////////////////////////////////////////////////////////////////////////
@@ -868,7 +876,7 @@ END
 document{data_priest_spells_by_type}
 {
 Goes through all spells in the SPPR namespace and returns a resref=>discard array of druid and cleric spells. We don't return spells in HIDESPL or in the hardcoded list of spells in the 50-99 namespace that aren't in use
-
+}
 */
 ///////////////////////////////////////////////////////////////////////
 
@@ -903,7 +911,7 @@ document{data_hp_range}
 Works out the minimum and maximum hit points for all classes for levels 1-40 and stores them in the arrays $class_hp_minimum(class level), $class_hp_maximum(class level), with class in uppercase. Barbarians are also included.
 
 At present this is *hard-coded*, on speed grounds: it will not allow for changes made to the HP tables.
-
+}
 */
 ///////////////////////////////////////////////////////////////////////
 
@@ -1006,6 +1014,81 @@ BEGIN
 			OUTER_SET $class_hp_minimum("%class%" "%level%")=( level - dicemax )* mod + dicemax*dice
 		END
 	END
+
+
+
+
+
+END
+
+
+/*
+document{data_levels_by_max_level}
+{
+Returns an array that identifies, for each multiclass and each level N, what level the individual classes are when the highest-level class is level N. For instance, $array(CLERIC_THIEF 10 CLERIC)=8, because thieves reach level 10 before clerics and when a thief has enough XP for level 10, a cleric would be level 8.
+}
+
+*/
+
+DEFINE_ACTION_FUNCTION data_levels_by_max_level
+RET_ARRAY array
+BEGIN
+
+	// load XP table into memory
+	LAF 2da_read STR_VAR file=xplevel.2da RET_ARRAY xp_array=array END
+	// go through each MC
+	ACTION_FOR_EACH mc IN FIGHTER_CLERIC FIGHTER_MAGE FIGHTER_THIEF CLERIC_MAGE CLERIC_THIEF MAGE_THIEF FIGHTER_DRUID CLERIC_RANGER FIGHTER_MAGE_CLERIC FIGHTER_MAGE_THIEF BEGIN
+		// go through each level
+		OUTER_FOR (level=1;level<=50;++level) BEGIN
+			// find XP at each level; get the minimum XP to reach that level
+			OUTER_SPRINT list "%mc%"
+			OUTER_SET xp_min=10000000
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list separator="_" RET entry list END
+				ACTION_IF VARIABLE_IS_SET $xp_array("%entry%" "%level%") BEGIN
+					OUTER_SET xp_here=$xp_array("%entry%" "%level%")
+				END ELSE BEGIN
+					OUTER_SET xp_here=999999
+				END
+				ACTION_IF xp_here<xp_min BEGIN
+					OUTER_SPRINT leading_class "%entry%"
+					OUTER_SET xp_min=xp_here
+				END
+			END
+			// find the level of each class at that XP, using previous level as starting point
+			OUTER_SPRINT list "%mc%"
+			OUTER_WHILE "%list%" STR_CMP "" BEGIN
+				LAF return_first_entry STR_VAR list separator="_" RET entry list END
+				ACTION_IF "%entry%" STR_EQ "%leading_class%" BEGIN
+					OUTER_SET $array("%mc%" "%level%" "%entry%")=level
+				END ELSE BEGIN
+					ACTION_IF level=1 BEGIN
+						OUTER_SET min_level=1
+					END ELSE BEGIN
+						OUTER_SET last_level=level - 1
+						OUTER_SET min_level=$array("%mc%" "%last_level%" "%entry%")
+					END
+					OUTER_SET success=0
+					OUTER_WHILE !success BEGIN
+						ACTION_IF VARIABLE_IS_SET $xp_array("%entry%" "%min_level%") BEGIN
+							OUTER_SET xp_here=$xp_array("%entry%" "%min_level%")
+						END ELSE BEGIN
+							OUTER_SET xp_here=9999999
+						END
+						ACTION_IF xp_here>xp_min BEGIN
+							OUTER_SET success=1
+							OUTER_SET $array("%mc%" "%level%" "%entry%")=min_level - 1
+						END ELSE BEGIN
+							OUTER_SET min_level +=1
+						END
+					END
+				END
+			END
+		
+		
+		END
+	END
+
 
 
 

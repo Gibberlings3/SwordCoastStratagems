@@ -2,7 +2,7 @@
 
 describe-library{Functions specifically aimed at editing .spl files.}
 
-
+brief-desc{functions to make and edit spell files}
 */
 
 /*
@@ -47,6 +47,9 @@ to determine where the spell icons are, and copy them over if they're in the for
 (But this only determines where the spell ends up; it doesn't change its internal type.</p>
 <p>If tv=1, we prepend "_" onto each k and v on BGTUTU installs. </p>
 <p>If debug=1, we try to debug the anonymous function to detect any nonexistent field writes.</p>
+<p>If overwrite=1, we install the spell if it's already present, overwriting any previous copy (or giving that previous copy a new
+placeholder IDS if it's at the wrong level/of the wrong type). If overwrite=0 and overwrite_on_mismatch=1, we overwrite only if there's a 
+level or type mismatch. If overwrite=0 and overwrite_on_mismatch=0, we never overwrite.</p>
 <p>Returns the resref of the last spell created (value; synonym:spell_resref), and its scroll (scroll; synonym:scroll_resref) if any. (Only really useful if you're copying to an ids, and only if you're only doing it once.)
 }
 
@@ -194,7 +197,7 @@ add icons in the standard format (unless standard_icons=1) and (unless create_sc
 <p>If force_extended=1, we add the spell to the extended namespace even if there's space in standard namespace.</p>
 <p>If overwrite=1, we install the spell if it's already present, overwriting any previous copy (or giving that previous copy a new
 placeholder IDS if it's at the wrong level/of the wrong type). If overwrite=0 and overwrite_on_mismatch=1, we overwrite only if there's a 
-level or type mismatch. If overwrite_always=0 and overwrite_on_mismatch=0, we never overwrite. 
+level or type mismatch. If overwrite=0 and overwrite_on_mismatch=0, we never overwrite.</p>
 <p>Returns the resref of the spell, and its scroll if any.}
 
 */
@@ -323,7 +326,8 @@ Given an ids entry (WIZARD_THIS_SPELL, etc) find its id resref (or dw_ext_spell 
 <p>On EE, if full, or if force_extended=1, add it to the extended namespace instead.</p>
 
 <p>If it's already present, return already_present=1. Check if its level and type match the requested level and type. If not, return 'mismatch=1' (otherwise, return 0). If 'replace_on_mismatch' is set to 1,
-instead replace the old id with a placeholder and add the new id in the correct place (and return mismatch=0, already_present=0).
+instead replace the old id with a placeholder and add the new id in the correct place (and return mismatch=0, already_present=0).</p>
+<p>By default the ids file is resorted, so that the new entry appears in the right place. Skip this by setting ids_sort=0. (This is sensible for bulk additions, where you'll want to sort once at the end.)
 }
 
 */
@@ -332,6 +336,7 @@ DEFINE_DIMORPHIC_FUNCTION spl_resolve_ids
 	INT_VAR level=0
 			force_extended=0//boolean
 			replace_on_mismatch=0//boolean
+			ids_sort=1
 	STR_VAR ids=""
 			type=""//[wizard|priest|innate|class|1|2|3|4|5]
 	RET resref
@@ -372,38 +377,47 @@ BEGIN
 				wizard 1 BEGIN
 					OUTER_SET base=2000
 					OUTER_SET delta=enhanced_edition?98:48
+					OUTER_SPRINT prefix SPWI
 				END
 				priest 2 BEGIN
 					OUTER_SET base=1000
 					OUTER_SET delta=enhanced_edition?98:48
+					OUTER_SPRINT prefix SPPR
 				END
 				innate 3 4 BEGIN
 					OUTER_SET base=3000
 					OUTER_SET delta=898
 					OUTER_SET level=1
+					OUTER_SPRINT prefix SPIN
 				END
 				class BEGIN
 					OUTER_SET base=4000
 					OUTER_SET delta=898
 					OUTER_SET level=1
+					OUTER_SPRINT prefix SPCL
 				END
 				DEFAULT
 					WARN "type undeclared in spl_resolve_ids; assuming WIZARD"
 					OUTER_SET base=2000
 					OUTER_SET delta=enhanced_edition?98:48
+					OUTER_SPRINT prefix SPWI
 				END
-				OUTER_SET min=base+level*100+1
+				OUTER_SET min=level*100+1
 				OUTER_SET max=min+delta
-				OUTER_SET ids_int=min
-				LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
-				OUTER_WHILE RESOURCE_CONTAINS "spell.ids" "%ids_int%" || FILE_EXISTS_IN_GAME "%spell_res%.spl" BEGIN
+				OUTER_SET ids_int=min	
+				OUTER_SET ids_int_full=ids_int+base
+				OUTER_SPRINT spell_res "%prefix%%ids_int%"
+				OUTER_WHILE RESOURCE_CONTAINS "spell.ids" "%ids_int_full%" || FILE_EXISTS_IN_GAME "%spell_res%.spl" BEGIN
 					OUTER_SET ids_int +=1
-					LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET spell_res END
+					OUTER_SET ids_int_full +=1
+					OUTER_SPRINT spell_res "%prefix%%ids_int%"
 				END
 				ACTION_IF ids_int<=max BEGIN
-					APPEND spell.ids "%ids_int%%TAB%%ids%" KEEP_CRLF
-					LAF RES_NAME_OF_SPELL_NUM INT_VAR spell_num=ids_int RET resref=spell_res END
-					LAF ids_sort STR_VAR idsfile=spell END
+					APPEND spell.ids "%ids_int_full%%TAB%%ids%" KEEP_CRLF
+					OUTER_SPRINT resref "%prefix%%ids_int%"
+					ACTION_IF ids_sort BEGIN
+						LAF ids_sort STR_VAR idsfile=spell END
+					END
 				END ELSE BEGIN
 					ACTION_IF enhanced_edition BEGIN
 						LAF spl_resolve_ids INT_VAR level force_extended=1 STR_VAR ids type RET resref END
@@ -636,6 +650,8 @@ BEGIN
 			target=2
 		END
 		// work out the caster level
+		// 5-21-24 - scrolls all seem to cast at L10, and avoiding this seems to cause trouble!
+		/*
 		PATCH_IF !VARIABLE_IS_SET sfo_data_spells_by_level_set BEGIN
 			INNER_ACTION BEGIN
 				LAM data_spells_by_level
@@ -649,6 +665,8 @@ BEGIN
 		END ELSE BEGIN
 			casterlevel="sfo_spell_level_sl_to_cl_cleric_%spl_level%"
 		END
+		*/
+		casterlevel=10
 		// add the payload structure
 		LPF struct_add STR_VAR type=ab_fx struct=scrl patch="s_opcode=opcode;; s_target=target;; s_timing:=InstantPermanent;; s_resource:=%spell_resref%;; s_parameter1=casterlevel" RET_ARRAY scrl=struct END
 		///////////////////
@@ -1287,7 +1305,8 @@ document{spl_make_hla_class_ability}
 Copy a spell (assumed to be a wizard/priest spell, though we don't enforce this) to the SPCL namespace.
 and optionally make it innate. (Set force_innate=0 if you don't want to.)
 You need to specify the resref. Optionally you can specify the id; if not we'll infer it or make it up. Strip it from any
-clone (i.e., in simulacr/projimag) in the process. The new spell will have id HLA_[old_id]
+clone (i.e., in simulacr/projimag) in the process. The new spell will have id HLA_[old_id]</p>
+<p>Because we expect to use this in bulk applications, it adds new IDS entries unsorted. (Sort at the end using ids_sort.)
 }
 
 */
@@ -1308,14 +1327,14 @@ BEGIN
 	END ELSE
     ACTION_IF FILE_EXISTS_IN_GAME "%resref%.spl" BEGIN
 		// find its id if we don't know it
-		ACTION_IF "%id%" STR_EQ "" BEGIN
+		ACTION_IF "%id%" STR_EQ "" && !("%resref%" STRING_MATCHES_REGEXP "SP\(IN\|PR\|WI\)[0-9][0-9][0-9]") BEGIN
 			LAF NAME_NUM_OF_SPELL_RES INT_VAR silent=1 STR_VAR spell_res="%resref%" RET id=spell_name END
-			ACTION_IF "%id%" STR_EQ "" BEGIN
-				OUTER_SPRINT id "%resref%"
-			END	
 		END
+		ACTION_IF "%id%" STR_EQ "" BEGIN
+			OUTER_SPRINT id "%resref%"
+		END	
 		// resolve the new entry
-		LAF spl_resolve_ids STR_VAR ids="HLA_%id%" type=class RET new_resref=resref END
+		LAF spl_resolve_ids INT_VAR ids_sort=0 STR_VAR ids="HLA_%id%" type=class RET new_resref=resref END
 		// copy over the spell, changing any self-reference
 		COPY_EXISTING "%resref%.spl" "override/%new_resref%.spl"
 			PATCH_IF force_innate BEGIN

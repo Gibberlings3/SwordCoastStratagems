@@ -1,3 +1,19 @@
+/*
+
+describe-library{Functions specifically aimed at editing .itm files.}
+brief-desc{functions for editing item files}
+
+*/
+
+
+/*
+document{itm_edit}
+{
+General editer for itm files. No special features.
+}
+
+*/
+
 DEFINE_ACTION_FUNCTION itm_edit
 	INT_VAR tv=0
 			allow_missing=0
@@ -11,7 +27,15 @@ DEFINE_ACTION_FUNCTION itm_edit
 BEGIN
 	LAF struct_edit INT_VAR edit_strrefs_in_place tv allow_missing debug STR_VAR file="%itm%" ext=itm path location locbase edits END
 END
-			
+	
+/*
+document{itm_copy}
+{
+General copier for itm files. No special features.
+}
+
+*/
+	
 DEFINE_ACTION_FUNCTION itm_copy
 	INT_VAR tv=0
 			allow_missing=0
@@ -28,6 +52,14 @@ BEGIN
 	LAF struct_copy INT_VAR tv allow_missing debug STR_VAR file="%itm%" ext=itm path location locbase source_path source_location source_locbase edits END
 END
 
+/*
+document{itm_make}
+{
+General maker for itm files. No special features.
+}
+
+*/
+
 DEFINE_ACTION_FUNCTION itm_make
 	INT_VAR debug=1
 	STR_VAR	itm=""
@@ -40,3 +72,58 @@ BEGIN
 	LAF struct_make INT_VAR debug STR_VAR file="%itm%" ext=itm path location locbase edits END
 END
 
+/*
+
+document{itm_bespoke_restriction}
+{
+(NOT A STRUCT FUNCTION.) Attaches a 319 opcode to an item to make it usable only by a certain race or by a creature with a certain scriptname. Specify 'race' (an entry from race.ids, e.g. TIEFLING) or 'scriptname' (e.g. 'keldorn'). If you specify a scriptname, you should also specify display_strref, the string to display in the 'usable' field (probably a specific creature name). </p>
+<p>The function strips any previous race/scriptname 319s, and by default removes any other unusability flags from the item. (Set strip_other_restrictions=0 to skip this.)
+}
+
+*/
+
+DEFINE_PATCH_FUNCTION itm_bespoke_restriction 
+	INT_VAR strip_other_restrictions=1
+			display_strref=0
+	STR_VAR race=""
+			scriptname=""
+BEGIN
+
+	PATCH_IF "%race%" STR_CMP "" && "%scriptname%" STR_CMP "" BEGIN
+		PATCH_WARN "itm_bespoke_restriction: both race and scriptname arguments are set (use only one)"
+		strip_other_restrictions=0
+	END ELSE
+	PATCH_IF "%race%" STR_CMP "" BEGIN
+		LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=4 END
+		LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=11 END
+		INNER_ACTION BEGIN
+			LAF 2da_read STR_VAR file=racetext.2da RET_ARRAY racetext_data=array END
+		END
+		TO_UPPER race
+		PATCH_IF VARIABLE_IS_SET $racetext_data("%race%" "UPPERCASE") BEGIN
+			special=$racetext_data("%race%" "UPPERCASE")
+		END ELSE BEGIN
+			special=0
+		END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 power=1 parameter1=IDS_OF_SYMBOL (race "%race%") parameter2=4 special END
+	END ELSE
+	PATCH_IF "%scriptname%" STR_CMP "" BEGIN
+		LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=4 END
+		LPF DELETE_EFFECT INT_VAR match_opcode=319 match_parameter2=11 END
+		LPF ADD_ITEM_EQEFFECT INT_VAR opcode=319 target=2 timing=2 power=1 parameter2=11 special=display_strref STR_VAR resource="%scriptname%" END
+	END ELSE BEGIN
+		PATCH_WARN "itm_bespoke_restriction: no restriction specified"
+		strip_other_restrictions=0
+	END
+	PATCH_IF strip_other_restrictions BEGIN
+		WRITE_BYTE 0x1e 0
+		WRITE_BYTE 0x1f 0
+		WRITE_BYTE 0x20 0
+		WRITE_BYTE 0x21 0
+		WRITE_BYTE 0x29 0
+		WRITE_BYTE 0x2b 0
+		WRITE_BYTE 0x2d 0
+		WRITE_BYTE 0x2f 0
+	END
+
+END
