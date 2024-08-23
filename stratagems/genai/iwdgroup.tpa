@@ -1,0 +1,202 @@
+DEFINE_ACTION_FUNCTION iwdgroup BEGIN
+
+	OUTER_SET telemetry=0
+
+	// main automated patch
+
+	//load data
+	LAF ini_read STR_VAR file=groups.ini location=iwd RET_ARRAY group_array=array group_areas=section_array END
+
+	// initialize list of new GNTEAMs
+	ACTION_FOR_EACH ind IN A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+		OUTER_SET $ever_used_array("%ind%")=0
+	END
+	
+	// go through each area
+	
+	ACTION_PHP_EACH group_areas AS are=>discard BEGIN
+		COPY_EXISTING - "%are%.ini" nowhere
+			LPF ini_read RET_ARRAY "%are%_array"=array END
+		IF_EXISTS
+		COPY_EXISTING "%are%.are" override
+			edit_ini=0
+			PATCH_IF telemetry BEGIN
+				PATCH_PRINT "Doing groups for area %are%"
+			END
+			// initialize group list
+			PATCH_FOR_EACH ind IN 1 2 3 4 5 6 7 8 9 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z BEGIN
+				SET $in_use_array("%ind%")=0
+			END
+			// get all the actor offsets
+			GET_OFFSET_ARRAY actor_arr ARE_V10_ACTORS
+			// identify which groups are already in use; find spare slot
+			PHP_EACH actor_arr AS actor_ind=>actor_off BEGIN
+				default="-1"
+				READ_ASCII (actor_off+0x80) resref
+				TO_UPPER resref
+				FOR (n=0;n<6;++n) BEGIN
+					READ_ASCII (actor_off+n*8+0x50) script_here
+					PATCH_MATCH "%script_here%" WITH
+					"GNTEAM.*" BEGIN 
+						INNER_PATCH "%script_here%" BEGIN
+							READ_ASCII 0x6 number (1)
+							SET $in_use_array("%number%")=1
+						END
+						default=n // in case we want to overwrite
+					END
+					".+" BEGIN
+					END
+					DEFAULT
+						PATCH_IF default<0 BEGIN
+							default=n
+						END
+					END
+				END
+				SET $free_slot("%actor_ind%")=default
+			END			
+			// go through ini data
+			PHP_EACH group_array AS k=>actor_list BEGIN
+				PATCH_IF "%k_0%" STR_EQ "%are%" BEGIN
+					PATCH_MATCH "%k_1%" WITH 
+					"vanilla.*" BEGIN
+						found_group=1
+						INNER_PATCH_SAVE group_id "%k_1%" BEGIN
+							REPLACE_TEXTUALLY "vanilla_" ""
+						END
+					END
+					DEFAULT
+						SPRINT group_id ""
+						found_group=0
+						PHP_EACH in_use_array AS ind=>value BEGIN
+							PATCH_IF !found_group && value=0 BEGIN
+								found_group=1
+								SET $in_use_array("%ind%")=1
+								PATCH_IF !(IS_AN_INT ind) BEGIN
+									SET $ever_used_array("%ind%")=1
+								END
+								SPRINT group_id "%ind%"
+								PATCH_IF telemetry BEGIN
+									PATCH_PRINT "assigning group ID %group_id% to group %k_1%"
+								END
+								SPRINT $group_id_record("%are%" "%k_1%") "%group_id%"
+							END
+						END
+					END					
+					PATCH_IF !found_group BEGIN
+						PATCH_WARN "Unable to assign group ID to group %k_1%; all group IDs in use"
+					END ELSE BEGIN
+						WHILE "%actor_list%" STR_CMP "" BEGIN
+							LPF return_first_entry STR_VAR list="%actor_list%" separator="," RET entry actor_list=list END
+							PATCH_IF IS_AN_INT entry BEGIN
+								SET actor_off=$actor_arr("%entry%")
+								PATCH_IF $free_slot("%entry%")>=0 BEGIN
+									SET n=$free_slot("%entry%")
+									WRITE_ASCII (actor_off+n*8+0x50) "GNTEAM%group_id%M"
+									PATCH_IF telemetry BEGIN
+										PATCH_PRINT "assigning actor %entry% to group %group_id%"
+									END
+								END ELSE BEGIN
+									PATCH_WARN "unable to patch group in for actor %entry% in area %are%"
+								END
+							END ELSE BEGIN
+								SPRINT $"%are%_array"("%entry%" "script_override") "GNTEAM%group_id%M"
+								edit_ini=1
+							END
+						END
+					END
+				END
+			END
+		BUT_ONLY	
+		ACTION_IF edit_ini BEGIN
+			PRINT "Applying edits to %are%.ini"
+			LAF ini_write STR_VAR file="%are%.ini" array="%are%_array" END
+		END
+	END
+	
+	// make any required new scripts
+	
+	ACTION_PHP_EACH ever_used_array AS ind=>value BEGIN
+		ACTION_IF value BEGIN
+			COPY_EXISTING "GNTEAM1M.BCS" "override/GNTEAM%ind%M.BCS"
+				DECOMPILE_AND_PATCH BEGIN
+					REPLACE_TEXTUALLY "MAP_GROUP_HOSTILE1" "MAP_GROUP_HOSTILE%ind%"
+				END
+		END
+	END
+
+
+	// bespoke
+	
+	
+	//AR2001 - assign a bunch of goblins to teams, and fix a couple of misallocations (do this manually)
+	
+	are.edit[ar2001]
+	[
+		m.actor.alter{s_script_override:=GNTEAM1M|match="entry_index=7 OR entry_index=8 OR entry_index=9 OR entry_index=10"}
+		m.actor.alter{s_script_override:=GNTEAM2M|match="entry_index=0 OR entry_index=12 OR entry_index=13 OR entry_index=14 OR entry_index=15"}
+	
+	]
+	
+	//AR3301 - zombies with Therik should start blue, make some skeletons archers
+	
+	COPY_EXISTING "ktzom1.cre" "override/dw#ktzmn.cre"
+		WRITE_BYTE 0x270 128
+		
+	are.edit[ar3301]
+	[
+		m.actor.alter{s_resref:=dw#ktzmn|match="entry_index=0 OR entry_index=1"}	
+		m.actor.alter{s_resref:=ktska1|match="entry_index=7 OR entry_index=9 OR entry_index=10 OR entry_index=11 OR entry_index=13"}
+	]
+	
+
+
+
+
+
+
+
+END
+
+
+// this function isn't used in live code
+DEFINE_ACTION_FUNCTION audit_help_groups BEGIN
+
+
+	COPY_EXISTING_REGEXP - ".*\.cre" nowhere
+		PATCH_IF (BYTE_AT 0x270)=255 && !((BYTE_AT 0x21) BAND BIT3) BEGIN
+			TO_UPPER SOURCE_RES
+			SPRINT $hostiles("%SOURCE_RES%") ""
+		END
+	OUTER_SET count=0
+	COPY_EXISTING_REGEXP  "AR.*\.are" override
+		GET_OFFSET_ARRAY actor_arr ARE_V10_ACTORS
+		PHP_EACH actor_arr AS actor_ind=>actor_off BEGIN
+			READ_ASCII (actor_off+0x80) resref
+			TO_UPPER resref
+			PATCH_IF VARIABLE_IS_SET $hostiles("%resref%") BEGIN
+				match=0
+				FOR (n=0;n<6;++n) BEGIN
+					READ_ASCII (actor_off+n*8+0x50) script_here
+					PATCH_MATCH "%script_here%" WITH
+					"GNTEAM.*" "GNTRP.*" BEGIN 
+						match=1
+						SPRINT team_name "%script_here%"
+					END
+					DEFAULT
+					END
+				END
+				READ_ASCII actor_off name (0x20) NULL
+				PATCH_IF !match BEGIN
+					PATCH_PRINT "%name% - %resref% (%SOURCE_RES% actor %actor_ind%)"
+					++count
+					WRITE_ASCII actor_off "%actor_ind%: ANOMALOUS!!!" (0x20)
+				END ELSE BEGIN
+					WRITE_ASCII actor_off "%actor_ind%: %team_name%" (0x20)			
+				END
+			END	
+		END	
+	
+
+
+END
+
