@@ -1,0 +1,109 @@
+/*
+describe-library{
+
+This library contains a function to disable spellbook and spell use on a per-kit basis. (This needs a UI edit to disable the spellbook itself.)</p>
+}
+brief-desc{allows some kits to disable the mage/priest spellbook}
+
+*/
+
+/*
+document{ui_hide_spellbook_setup}
+{
+Sets up the ui_hide_spellbook function
+}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION ui_hide_spellbook_setup
+BEGIN
+
+	ACTION_IF !FILE_EXISTS_IN_GAME "m_dw_hsd.lua" BEGIN
+		
+		// copy over LUA entries
+		COPY ".../stratagems-inline/m_dw_hsd.lua" override EVALUATE_BUFFER
+		COPY ".../stratagems-inline/m_dw_hsf.lua" override EVALUATE_BUFFER
+		
+		// initialize on_open
+		LAF ui_on_open_setup END		
+		
+		// make spell to disable quickbar buttons
+		CREATE spl "dwhdspl"
+			LPF add_basic_spell_ability END
+			LPF ADD_EFFECT INT_VAR opcode=144 target=1 timing=9 parameter2=2 END // disable spell select
+			LPF ADD_EFFECT INT_VAR opcode=145 target=1 timing=9 special=1 parameter2=0 END // disable wizard spellcasting ability
+			LPF ADD_EFFECT INT_VAR opcode=145 target=1 timing=9 special=1 parameter2=1 END // disable priest spellcasting ability
+	END
+
+
+END
+
+/*
+document{ui_hide_spellbook_}
+{
+Given a space-separated list of kits (identified by their KITLIST ID), block all spellcasting for those kits, including access to the spellbook. At present doesn't block spell selection in character creation.
+
+By default we reload the kit detection code; put skip_dk_reload=1 to skip.}
+
+
+*/
+
+DEFINE_ACTION_FUNCTION ui_hide_spellbook
+	INT_VAR skip_dk_reload=0
+	STR_VAR kit=""
+BEGIN
+	
+	// initialize
+	LAF ui_hide_spellbook_setup END
+	
+	// sort out class/kit detection
+	ACTION_IF !skip_dk_reload BEGIN
+		LAF ui_detect_class_kit END
+	END
+
+	// load kits for ID lookup
+
+	LAF 2daq_extract STR_VAR resref=kitlist column=ROWNAME RET_ARRAY kitmap=array END
+	LAF array_invert STR_VAR array=kitmap RET_ARRAY kitmap_reversed=array END
+	
+	// go through entries 
+	
+	OUTER_WHILE "%kit%" STR_CMP "" BEGIN
+		LAF return_first_entry STR_VAR list="%kit%" RET this_kit=entry kit=list END
+		
+		// get kit number 
+		ACTION_TO_UPPER this_kit
+		OUTER_SET kitnumber=$kitmap_reversed("%this_kit%")
+		
+		// add block spell to CLAB
+		
+		LAF kit_edit STR_VAR kit="%this_kit%" edits="k.kit_apply_powers{dwhdspl 1}" END
+		
+		// mark up kit for UI block
+		
+		APPEND "m_dw_hsd.lua" "dwHideSpellbookByKit[%kitnumber%]=true%WNL%" KEEP_CRLF
+		
+		
+	END
+
+
+
+END
+
+
+
+<<<<<<<<.../stratagems-inline/m_dw_hsd.lua
+dwHideSpellbookByKit={}
+>>>>>>>>
+
+<<<<<<<<.../stratagems-inline/m_dw_hsf.lua
+function dwHideSpellbookSetup()
+
+	local _,k=dwFindClassKit()
+
+	priestBookEnabled = priestBookEnabled and not dwHideSpellbookByKit[k]
+	mageBookEnabled = mageBookEnabled and not dwHideSpellbookByKit[k]
+
+end
+>>>>>>>>

@@ -988,6 +988,232 @@ BEGIN
 
 END
 
+/*
+document{ADD EFFECT}
+{
+SFO function with the same syntax as CLONE/ALTER effect. By default, effect is added to headers but not globals. Set globals=1 to add to globals instead. If you set header=n, effect is added only to nth header (counting from 1, to match ADD_SPELL_EFFECT syntax). 
+By default, effect is added as last effect. Set insert_point=n to add it as effect n (counting from zero).
+}
+
+*/
+
+DEFINE_PATCH_FUNCTION ADD_EFFECT
+  // insert variables
+  INT_VAR header              = 0
+		  insert_point	      = "-1"
+		  global		  = 0
+  // everything from below here just copied from the CLONE_EFFECT var block
+
+  // variables for the new effect
+          opcode              = 0 // force opcode, so as to change our dummy value to zero
+          target              = "-1"
+          power               = "-1"
+          parameter1          = "-11"
+          parameter2          = "-11"
+          timing              = "-1"
+          resist_dispel       = "-1"
+          duration            = "-1"
+          duration_high       = "-1"
+          probability1        = 100
+          probability2        = "-1"
+          dicenumber          = "-1"
+          dicesize            = "-1"
+          savingthrow         = "-1"
+          savebonus           = "-11"
+          special             = "-1"
+          
+  // DavidW's additional variables for the new effect
+  
+          save_vs_spell       = "-1"
+          save_vs_breath      = "-1"
+          save_vs_poison      = "-1"
+          save_vs_wand        = "-1"
+          save_vs_polymorph   = "-1"
+          ignore_primary      = "-1"
+          ignore_secondary    = "-1"
+          bypass_mirror_image = "-1"
+          ignore_difficulty   = "-1"
+          drain_hp_to_caster  = "-1"
+          transfer_hp_to_target = "-1"
+          fist_damage_only    = "-1"
+          drain_to_max_hp     = "-1"
+          suppress_feedback   = "-1"
+          save_for_half       = "-1"
+          made_save           = "-1"
+          does_not_wake       = "-1"
+
+  // same for match and new STR_VAR
+  STR_VAR resource            = "SAME"
+          
+  // DavidW's additional functional variables
+
+          function            = ""
+
+BEGIN  
+	check_globals=global
+	check_headers=!global
+
+	//  get parameters (from CamDawg's code)
+  SET new_fx = 0
+  READ_ASCII 0 sig ELSE "fail" (4)
+  READ_ASCII 0x04 version (4)
+  PATCH_MATCH "%sig%" WITH
+    "SPL "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.0" = 0) BEGIN // iwd2, spl 2.0
+        SET min_size       = 0x82
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x28
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "ITM "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.1" = 0) BEGIN // pst, itm v1.1
+        SET min_size       = 0x9a
+      END ELSE BEGIN
+        SET min_size       = 0x72
+      END
+      READ_LONG   0x6a fx_off   ELSE 0
+      SET counter_offset = 0x70
+      SET abil_length    = 0x38
+      SET fx_type        = 0
+      READ_LONG   0x64 abil_off ELSE 0
+      READ_SHORT  0x68 abil_num ELSE 0
+    END
+
+    "CRE "
+    BEGIN
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V1.2" = 0) BEGIN // pst, cre v1.2
+        SET min_size       = 0x378
+        READ_LONG  0x368 fx_off
+        SET counter_offset = 0x36c
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V2.2" = 0) BEGIN // iwd2, cre v2.2
+        SET min_size       = 0x62e
+        READ_LONG  0x61e fx_off
+        SET counter_offset = 0x622
+      END ELSE
+      PATCH_IF ("%version%" STRING_COMPARE_CASE "V9.0" = 0) BEGIN // iwd, cre v9.0
+        SET min_size       = 0x33c
+        READ_LONG  0x32c fx_off
+        SET counter_offset = 0x330
+      END ELSE BEGIN                                               // everything else, cre v1.0
+        SET min_size = 0x2d4
+        READ_LONG  0x2c4 fx_off
+        SET counter_offset = 0x2c8
+      END
+      SET abil_off = 0 // basically prevents the ability effect loop
+      SET abil_num = 0
+      SET abil_length = 0
+      SET check_globals = 1
+      READ_BYTE 0x33 fx_type ELSE 2
+    END
+    "fail"
+    BEGIN
+      PATCH_FAIL "ERROR: ADD_EFFECT does not think %SOURCE_FILE% appears to be a valid file"
+    END
+    DEFAULT
+      SET min_size = "-1" // kill macro as the file type is not recognized
+      PATCH_FAIL "ERROR: ADD_EFFECT does not support file type %sig%"
+    END
+
+	fx_length=(0x30 + (0xd8 * fx_type))
+	delta=0
+	global_count=SHORT_AT counter_offset
+	// add the effect - global	
+	PATCH_IF check_globals BEGIN
+		PATCH_IF global_count<insert_point || insert_point<0 BEGIN
+			insert_point=global_count
+		END
+		INSERT_BYTES (fx_off + fx_length * insert_point) fx_length
+		WRITE_SHORT (fx_off + fx_length * insert_point) 21731
+		++global_count
+		++delta
+		WRITE_SHORT counter_offset global_count
+	END
+	
+	// add the effect - header
+	FOR (header_number=0;header_number<abil_num;++header_number) BEGIN
+		index=SHORT_AT (0x20 + abil_off + header_number*abil_length)
+		num_here=SHORT_AT (0x1e + abil_off + header_number*abil_length)
+		index +=delta
+		WRITE_SHORT (0x20 + abil_off + header_number*abil_length) index
+		PATCH_IF check_headers && (header = 0 || header_number + 1 = header) BEGIN
+			PATCH_IF num_here<insert_point || insert_point<0 BEGIN
+				insert_point_here=num_here
+			END ELSE BEGIN
+				insert_point_here=insert_point
+			END
+			insert_point_here +=index
+			INSERT_BYTES (fx_off + fx_length * insert_point_here) fx_length
+			WRITE_SHORT (fx_off + fx_length * insert_point_here) 21731
+			++delta
+			++num_here
+			WRITE_BYTE (0x1e + abil_off + header_number*abil_length) num_here
+		
+		
+		END	
+	END
+	// now the payload
+	LPF ALTER_EFFECT
+	INT_VAR
+		  match_opcode=21731
+  // variables for the new effect
+          opcode             
+          target             
+          power               
+          parameter1          
+          parameter2         
+          timing             
+          resist_dispel      
+          duration           
+          duration_high     
+          probability1      
+          probability2      
+          dicenumber        
+          dicesize          
+          savingthrow       
+          savebonus         
+          special           
+          
+  // DavidW's additional variables for the new effect
+  
+          save_vs_spell      
+          save_vs_breath     
+          save_vs_poison      
+          save_vs_wand        
+          save_vs_polymorph   
+          ignore_primary      
+          ignore_secondary   
+          bypass_mirror_image 
+          ignore_difficulty   
+          drain_hp_to_caster  
+          transfer_hp_to_target 
+          fist_damage_only    
+          drain_to_max_hp    
+          suppress_feedback   
+          save_for_half      
+          made_save           
+          does_not_wake     
+
+  // same for match and new STR_VAR
+  STR_VAR resource           
+          
+  // DavidW's additional functional variables
+
+          function           	
+    END
+
+
+END
+
 DEFINE_PATCH_MACRO dw_internal_initialise_bit//internal 
 BEGIN
    //  DavidW: once and for all set the variables used by bit checks
