@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 my $scsline="";
 # my $defaultlibraryfile="scsii/ssl/library.slb";
